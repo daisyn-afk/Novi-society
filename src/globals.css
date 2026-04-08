@@ -1,0 +1,87 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&display=swap');
+
+:root {
+  --novi-lime: #C8E63C;
+  --novi-coral: #DA6A63;
+  --novi-periwinkle: #7B8EC8;
+  --novi-periwinkle-light: #e8e4f5;
+  --novi-teal: #2D6B7F;
+  --novi-cream: #f5f3ef;
+  --novi-cream-dark: #ede9e2;
+  --novi-dark: #1e2535;
+  --novi-bg: #f5f3ef;
+
+}
+
+html {
+  background: linear-gradient(150deg, #ede9fb 0%, #f5f2ff 40%, #eaf5c8 75%, #C8E63C 100%) !important;
+  background-attachment: fixed !important;
+  min-height: 100%;
+}
+
+body {
+  font-family: 'DM Sans', sans-serif;
+  background: transparent !important;
+  background-color: transparent !important;
+  min-height: 100vh;
+  color: #1e2535;
+  position: relative;
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  top: -20%;
+  left: -5%;
+  width: 50%;
+  height: 130%;
+  border-radius: 60% 40% 70% 30% / 50% 60% 40% 50%;
+  background: rgba(210, 200, 250, 0.4);
+  filter: blur(60px);
+  pointer-events: none;
+  z-index: 0;
+}
+
+body::after {
+  content: '';
+  position: fixed;
+  bottom: -10%;
+  right: -5%;
+  width: 40%;
+  height: 100%;
+  border-radius: 40% 60% 30% 70% / 60% 40% 60% 40%;
+  background: rgba(200, 230, 60, 0.45);
+  filter: blur(70px);
+  pointer-events: none;
+  z-index: 0;
+}
+
+#root, #app {
+  background: transparent !important;
+  min-height: 100vh;
+  position: relative;
+  z-index: 1;
+}
+
+/* Override Tailwind's bg-background (white) that index.css applies to body */
+html body,
+body.bg-background,
+body[class*="bg-"] {
+  background-color: transparent !important;
+  background-image: none !important;
+}
+
+/* Make sure the gradient root variable resolves to transparent */
+:root {
+  --background: transparent;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'DM Serif Display', Georgia, serif;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(123,142,200,0.3); border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(123,142,200,0.5); }
