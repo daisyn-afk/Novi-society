@@ -179,7 +179,7 @@ export default function NoviLanding() {
             lineHeight: 0.9,
             marginBottom: "24px",
           }}>
-            NOVI
+            NOVI test develop
           </h1>
 
           <p style={{
