@@ -1,6 +1,6 @@
 import { Toaster } from "@/components/ui/toaster"
 import { QueryClientProvider } from '@tanstack/react-query'
-import { queryClientInstance } from '@/lib/query-client'
+import { queryClientInstance, queryClientAdmincourses } from '@/lib/query-client'
 import NavigationTracker from '@/lib/NavigationTracker'
 import { pagesConfig } from './pages.config'
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
@@ -22,7 +22,8 @@ import ProviderLaunchPad from './pages/ProviderLaunchPad';
 import AdminLaunchPad from './pages/AdminLaunchPad';
 import AdminCourseStyling from './pages/AdminCourseStyling';
 import AdminWizardConfig from './pages/AdminWizardConfig';
-import AdminPortal, { AdminUsersSection, AdminCoursesSection } from './pages/AdminPortal';
+import AdminDashboard from './pages/AdminDashboard';
+import AdminCoursesAdminRoute from './pages/AdminCoursesAdminRoute';
 
 const { Pages, Layout, mainPage } = pagesConfig;
 const mainPageKey = mainPage ?? Object.keys(Pages)[0];
@@ -129,11 +130,26 @@ const AuthenticatedApp = () => {
       } />
       <Route path="/AdminCourseStyling" element={<LayoutWrapper currentPageName="AdminCourseStyling"><AdminCourseStyling /></LayoutWrapper>} />
       <Route path="/AdminWizardConfig" element={<LayoutWrapper currentPageName="AdminWizardConfig"><AdminWizardConfig /></LayoutWrapper>} />
-      <Route path="/admin" element={<AdminPortal />}>
-        <Route index element={<AdminUsersSection />} />
-        <Route path="users" element={<AdminUsersSection />} />
-        <Route path="courses" element={<AdminCoursesSection />} />
-      </Route>
+      <Route
+        path="/admin"
+        element={
+          <LayoutWrapper currentPageName="AdminDashboard">
+            <AdminDashboard />
+          </LayoutWrapper>
+        }
+      />
+      <Route
+        path="/admincourses"
+        element={
+          <LayoutWrapper currentPageName="admincourses">
+            <QueryClientProvider client={queryClientAdmincourses}>
+              <AdminCoursesAdminRoute />
+            </QueryClientProvider>
+          </LayoutWrapper>
+        }
+      />
+      <Route path="/admin/courses" element={<Navigate to="/admincourses" replace />} />
+      <Route path="/admin/users" element={<Navigate to="/AdminProviders" replace />} />
       {Object.entries(Pages).map(([path, Page]) => (
         <Route
           key={path}

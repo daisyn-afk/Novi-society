@@ -1,7 +1,10 @@
-// @ts-nocheck — Base44 + checkJs
+// @ts-nocheck — checkJs + untyped base44/react-query patterns produce false positives here
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useToast } from "@/components/ui/use-toast";
 import { base44 } from "@/api/base44Client";
+import { adminCoursesApi } from "@/api/adminCoursesApi";
+import { templateCoursesApi } from "@/api/templateCoursesApi";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -72,9 +75,10 @@ function SessionRow({ s, showCodes, setShowCodes, regenCode, setConfirmAttendanc
   );
 }
 
-export default function AdminCourses() {
+export default function Admincourses() {
   const [tab, setTab] = useState("templates");
   const qc = useQueryClient();
+  const { toast } = useToast();
 
   const [templateOpen, setTemplateOpen] = useState(false);
   const [templateForm, setTemplateForm] = useState(EMPTY_TEMPLATE);
@@ -92,68 +96,196 @@ export default function AdminCourses() {
   const [confirmAttendanceDialog, setConfirmAttendanceDialog] = useState(null);
   const [sessionForm, setSessionForm] = useState({ enrollment_id: "", course_id: "", course_title: "", provider_id: "", provider_name: "", provider_email: "", session_date: "", session_code: generateCode() });
 
+  const { data: templates = [], isLoading: loadingTemplates } = useQuery({
+    queryKey: ["template-courses"],
+    queryFn: () => templateCoursesApi.list()
+  });
   const { data: allCourses = [], isLoading: loadingCourses } = useQuery({
-    queryKey: ["courses", "base44"],
-    queryFn: () => base44.entities.Course.list("-created_date"),
+    queryKey: ["courses", "admin-api-scheduled"],
+    queryFn: () => adminCoursesApi.list(),
   });
   const { data: enrollments = [], isLoading: loadingEnrollments } = useQuery({ queryKey: ["enrollments"], queryFn: () => base44.entities.Enrollment.list("-created_date") });
   const { data: sessions = [], isLoading: loadingSessions } = useQuery({ queryKey: ["class-sessions"], queryFn: () => base44.entities.ClassSession.list("-created_date") });
   const { data: serviceTypes = [] } = useQuery({ queryKey: ["service-types"], queryFn: () => base44.entities.ServiceType.list() });
 
-  const templates = allCourses.filter(c => c.type === "template");
-  const scheduledCourses = allCourses.filter(c => c.type === "scheduled");
-  const courseMap = Object.fromEntries(allCourses.map(c => [c.id, c]));
+  const scheduledCourses = allCourses.filter((c) => c.type === "scheduled");
+  const courseMap = Object.fromEntries([...templates, ...scheduledCourses].map((c) => [c.id, c]));
   const enrollCountFor = (id) => enrollments.filter(e => e.course_id === id).length;
   const templateFor = (scheduled) => templates.find(t => t.id === scheduled.template_id);
+  const buildScheduledPayload = (data) => {
+    const tmpl = templates.find(t => t.id === data.template_id);
+    return {
+      type: "scheduled",
+      template_id: data.template_id,
+      title: data.title || tmpl?.title,
+      description: tmpl?.description,
+      category: tmpl?.category,
+      level: tmpl?.level,
+      price: data.price ? Number(data.price) : tmpl?.price,
+      duration_hours: tmpl?.duration_hours,
+      location: data.location || tmpl?.location,
+      max_seats: data.max_seats ? Number(data.max_seats) : undefined,
+      available_seats: data.max_seats ? Number(data.max_seats) : undefined,
+      instructor_name: data.instructor_name || tmpl?.instructor_name,
+      instructor_bio: tmpl?.instructor_bio,
+      cover_image_url: tmpl?.cover_image_url,
+      syllabus: tmpl?.syllabus,
+      requirements: tmpl?.requirements,
+      certifications_awarded: tmpl?.certifications_awarded,
+      linked_service_type_ids: tmpl?.linked_service_type_ids,
+      pre_course_materials: tmpl?.pre_course_materials,
+      tags: tmpl?.tags,
+      getting_ready_info: tmpl?.getting_ready_info,
+      what_to_bring: tmpl?.what_to_bring,
+      session_dates: data.session_dates,
+      is_active: data.is_active,
+      is_featured: data.is_featured,
+    };
+  };
 
   const saveTemplate = useMutation({
-    mutationFn: (data) =>
-      editingTemplate
-        ? base44.entities.Course.update(editingTemplate, data)
-        : base44.entities.Course.create({ ...data, type: "template" }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["courses", "base44"] });
+    mutationFn: ({ data, editingId }) => {
+      const usedServiceTypeIds = new Set([
+        ...(data.linked_service_type_ids || []),
+        ...((data.certifications_awarded || []).map((c) => c?.service_type_id).filter(Boolean)),
+      ]);
+      const relevantServiceTypes = (serviceTypes || [])
+        .filter((s) => usedServiceTypeIds.has(s.id))
+        .map((s) => ({ id: s.id, name: s.name, category: s.category }));
+      const payload = {
+        ...data,
+        _service_types: relevantServiceTypes,
+      };
+      delete payload.type;
+      return editingId
+        ? templateCoursesApi.update(editingId, payload)
+        : templateCoursesApi.create(payload);
+    },
+    onMutate: async ({ data, editingId }) => {
+      const isEditing = Boolean(editingId);
+      const tempId = `temp-${Date.now()}`;
+      await qc.cancelQueries({ queryKey: ["template-courses"] });
+      const previousTemplates = qc.getQueryData(["template-courses"]) || [];
+
+      const optimisticTemplate = {
+        ...data,
+        id: editingId || tempId,
+        type: "template",
+        template_id: null,
+        updated_date: new Date().toISOString(),
+      };
+
+      qc.setQueryData(["template-courses"], (current = []) => {
+        if (isEditing) {
+          return current.map((t) => (t.id === editingId ? { ...t, ...optimisticTemplate } : t));
+        }
+        return [optimisticTemplate, ...current];
+      });
+
       setTemplateOpen(false);
       setTemplateForm(EMPTY_TEMPLATE);
       setEditingTemplate(null);
+      return { previousTemplates, tempId, isEditing, editingId };
+    },
+    onSuccess: (savedTemplate, _vars, context) => {
+      qc.setQueryData(["template-courses"], (current = []) => {
+        if (context?.isEditing) {
+          return current.map((t) => (t.id === context.editingId ? savedTemplate : t));
+        }
+        return current.map((t) => (t.id === context?.tempId ? savedTemplate : t));
+      });
+    },
+    onError: (err, _vars, context) => {
+      if (context?.previousTemplates) {
+        qc.setQueryData(["template-courses"], context.previousTemplates);
+      }
+      toast({
+        title: "Could not save template",
+        description: err?.message || "Check that migrations are applied, DATABASE_URL is set, and the admin API is running (port 8787).",
+        variant: "destructive",
+      });
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ["template-courses"] });
     },
   });
   const removeTemplate = useMutation({
-    mutationFn: (id) => base44.entities.Course.delete(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["courses", "base44"] }),
+    mutationFn: (id) => templateCoursesApi.remove(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["template-courses"] });
+    },
+    onError: (err) => {
+      toast({ title: "Delete failed", description: err?.message || "Try again.", variant: "destructive" });
+    },
   });
   const saveScheduled = useMutation({
     mutationFn: (data) => {
-      const tmpl = templates.find(t => t.id === data.template_id);
-      const merged = {
-        type: "scheduled", template_id: data.template_id,
-        title: data.title || tmpl?.title, description: tmpl?.description,
-        category: tmpl?.category, level: tmpl?.level,
-        price: data.price ? Number(data.price) : tmpl?.price,
-        duration_hours: tmpl?.duration_hours,
-        location: data.location || tmpl?.location,
-        max_seats: data.max_seats ? Number(data.max_seats) : undefined,
-        available_seats: data.max_seats ? Number(data.max_seats) : undefined,
-        instructor_name: data.instructor_name || tmpl?.instructor_name,
-        cover_image_url: tmpl?.cover_image_url,
-        certifications_awarded: tmpl?.certifications_awarded,
-        linked_service_type_ids: tmpl?.linked_service_type_ids,
-        pre_course_materials: tmpl?.pre_course_materials,
-        platform_coverage: tmpl?.platform_coverage,
-        getting_ready_info: tmpl?.getting_ready_info,
-        what_to_bring: tmpl?.what_to_bring,
-        session_dates: data.session_dates,
-        is_active: data.is_active, is_featured: data.is_featured,
-      };
-      return editingSchedule
-        ? base44.entities.Course.update(editingSchedule, merged)
-        : base44.entities.Course.create(merged);
+      const payload = buildScheduledPayload(data);
+      return editingSchedule ? adminCoursesApi.update(editingSchedule, payload) : adminCoursesApi.create(payload);
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["courses", "base44"] });
+    onMutate: async (data) => {
+      const isEditing = Boolean(editingSchedule);
+      const tempId = `temp-scheduled-${Date.now()}`;
+      const payload = buildScheduledPayload(data);
+      await qc.cancelQueries({ queryKey: ["courses", "admin-api-scheduled"] });
+      const previousCourses = qc.getQueryData(["courses", "admin-api-scheduled"]) || [];
+
+      const optimisticCourse = {
+        ...payload,
+        id: editingSchedule || tempId,
+        updated_date: new Date().toISOString(),
+      };
+
+      qc.setQueryData(["courses", "admin-api-scheduled"], (current = []) => {
+        if (isEditing) {
+          return current.map((course) => (course.id === editingSchedule ? { ...course, ...optimisticCourse } : course));
+        }
+        return [optimisticCourse, ...current];
+      });
+
       setScheduleOpen(false);
       setScheduleForm(EMPTY_SCHEDULED);
       setEditingSchedule(null);
+      return { previousCourses, tempId, isEditing, editingId: editingSchedule };
+    },
+    onSuccess: (savedCourse, _vars, context) => {
+      qc.setQueryData(["courses", "admin-api-scheduled"], (current = []) => {
+        if (context?.isEditing) {
+          return current.map((course) => (course.id === context.editingId ? savedCourse : course));
+        }
+        return current.map((course) => (course.id === context?.tempId ? savedCourse : course));
+      });
+    },
+    onError: (err, _vars, context) => {
+      if (context?.previousCourses) {
+        qc.setQueryData(["courses", "admin-api-scheduled"], context.previousCourses);
+      }
+      toast({
+        title: "Could not save scheduled course",
+        description: err?.message || "Ensure the scheduled_courses table exists and the admin API is reachable.",
+        variant: "destructive",
+      });
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ["courses", "admin-api-scheduled"] });
+    },
+  });
+  const removeScheduled = useMutation({
+    mutationFn: (id) => adminCoursesApi.remove(id),
+    onMutate: async (id) => {
+      await qc.cancelQueries({ queryKey: ["courses", "admin-api-scheduled"] });
+      const previousCourses = qc.getQueryData(["courses", "admin-api-scheduled"]) || [];
+      qc.setQueryData(["courses", "admin-api-scheduled"], (current = []) => current.filter((course) => course.id !== id));
+      return { previousCourses };
+    },
+    onError: (err, _id, context) => {
+      if (context?.previousCourses) {
+        qc.setQueryData(["courses", "admin-api-scheduled"], context.previousCourses);
+      }
+      toast({ title: "Delete failed", description: err?.message || "Try again.", variant: "destructive" });
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ["courses", "admin-api-scheduled"] });
     },
   });
   const updateEnrollmentStatus = useMutation({
@@ -237,7 +369,7 @@ export default function AdminCourses() {
 
       {/* ── TEMPLATES TAB ── */}
       {tab === "templates" && (
-        loadingCourses ? (
+        loadingTemplates ? (
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">{[1,2,3].map(i => <div key={i} className="h-48 rounded-3xl animate-pulse" style={{ background: "rgba(0,0,0,0.05)" }} />)}</div>
         ) : templates.length === 0 ? (
           <div className="rounded-3xl py-16 text-center" style={{ background: "#fff", border: "1px solid rgba(0,0,0,0.06)" }}>
@@ -406,7 +538,7 @@ export default function AdminCourses() {
                       onClick={() => { setScheduleForm({ template_id: c.template_id, title: c.title, price: c.price, location: c.location, max_seats: c.max_seats, instructor_name: c.instructor_name, session_dates: c.session_dates||[], is_active: c.is_active, is_featured: c.is_featured }); setEditingSchedule(c.id); setScheduleOpen(true); }}>
                       <Pencil className="w-3.5 h-3.5" /> Edit
                     </button>
-                    <button className="py-2 px-3 text-xs font-semibold rounded-xl hover:opacity-70 transition-opacity" style={{ background: "rgba(218,106,99,0.08)", color: "#DA6A63" }} onClick={() => removeTemplate.mutate(c.id)}>
+                    <button className="py-2 px-3 text-xs font-semibold rounded-xl hover:opacity-70 transition-opacity" style={{ background: "rgba(218,106,99,0.08)", color: "#DA6A63" }} onClick={() => removeScheduled.mutate(c.id)}>
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
@@ -485,7 +617,7 @@ export default function AdminCourses() {
       <CourseTemplateForm
         open={templateOpen} onOpenChange={setTemplateOpen}
         form={templateForm} setForm={setTemplateForm}
-        onSave={() => saveTemplate.mutate(templateForm)}
+        onSave={() => saveTemplate.mutate({ data: templateForm, editingId: editingTemplate })}
         saving={saveTemplate.isPending} editing={editingTemplate}
         serviceTypes={serviceTypes}
       />
