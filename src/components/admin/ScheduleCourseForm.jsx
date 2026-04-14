@@ -153,7 +153,7 @@ export default function ScheduleCourseForm({ open, onOpenChange, form, setForm, 
 
           <div className="flex gap-3 pt-2 justify-end">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button onClick={onSave} disabled={saving || !form.template_id} style={{ background: "linear-gradient(135deg, #DA6A63, #FA6F30)", color: "#fff" }}>
+            <Button onClick={onSave} disabled={saving || !form.template_id || (form.session_dates || []).length === 0} style={{ background: "linear-gradient(135deg, #DA6A63, #FA6F30)", color: "#fff" }}>
               {saving ? "Saving..." : editing ? "Save Changes" : "Schedule Course"}
             </Button>
           </div>

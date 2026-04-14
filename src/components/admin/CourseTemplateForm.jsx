@@ -16,6 +16,9 @@ export const EMPTY_TEMPLATE = {
   what_to_bring: "", getting_ready_info: "",
   certifications_awarded: [], linked_service_type_ids: [],
   pre_course_materials: [], platform_coverage: [],
+  session_dates: [],
+  tags: [],
+  certification_name: "",
   is_active: true, is_featured: false,
 };
 
@@ -344,6 +347,31 @@ export default function CourseTemplateForm({ open, onOpenChange, form, setForm, 
             </div>
 
 
+
+            {/* ── Tags & legacy cert name (schema) ── */}
+            <div className="md:col-span-2">
+              <Label className="text-xs font-semibold text-slate-600">Tags (comma separated)</Label>
+              <Input
+                className="mt-1"
+                value={(form.tags || []).join(", ")}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    tags: e.target.value.split(",").map((t) => t.trim()).filter(Boolean)
+                  })
+                }
+                placeholder="e.g. hands-on, certification"
+              />
+            </div>
+            <div className="md:col-span-2">
+              <Label className="text-xs font-semibold text-slate-600">Certification name (legacy)</Label>
+              <Input
+                className="mt-1"
+                value={form.certification_name || ""}
+                onChange={(e) => setForm({ ...form, certification_name: e.target.value })}
+                placeholder="Optional single cert label for older flows"
+              />
+            </div>
 
             {/* ── SECTION: Visibility ── */}
             <div className="md:col-span-2 flex items-center gap-2 pb-1 border-b border-slate-100 pt-2">
