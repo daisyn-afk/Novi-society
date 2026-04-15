@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { X, Award, FileText, Plus, BookOpen, Users, Clock, DollarSign, ImageIcon } from "lucide-react";
+import { adminUploadsApi } from "@/api/adminUploadsApi";
 
 export const EMPTY_TEMPLATE = {
   type: "template",
@@ -26,6 +27,8 @@ export default function CourseTemplateForm({ open, onOpenChange, form, setForm, 
   const [newCert, setNewCert] = useState({ service_type_id: "", cert_name: "" });
   const [newMaterial, setNewMaterial] = useState({ title: "", type: "pdf", url: "", content: "", required: true });
   const [newCoverage, setNewCoverage] = useState("");
+  const [uploadingCover, setUploadingCover] = useState(false);
+  const [coverUploadError, setCoverUploadError] = useState("");
 
   const eligibleServiceTypes = serviceTypes.filter(s =>
     s.is_active && s.md_agreement_text?.trim() &&
@@ -65,6 +68,33 @@ export default function CourseTemplateForm({ open, onOpenChange, form, setForm, 
     const ids = f.linked_service_type_ids || [];
     return { ...f, linked_service_type_ids: ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id] };
   });
+
+  const uploadCover = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    setCoverUploadError("");
+    if (!file) return;
+
+    if (file.size > 2 * 1024 * 1024) {
+      setCoverUploadError("Image must be 2MB or smaller.");
+      return;
+    }
+
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      setCoverUploadError("Only JPG, PNG, and WEBP images are allowed.");
+      return;
+    }
+
+    try {
+      setUploadingCover(true);
+      const { url } = await adminUploadsApi.uploadCourseCoverImage(file);
+      setForm((prev) => ({ ...prev, cover_image_url: url }));
+    } catch (error) {
+      setCoverUploadError(error?.message || "Cover image upload failed.");
+    } finally {
+      setUploadingCover(false);
+    }
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -130,9 +160,26 @@ export default function CourseTemplateForm({ open, onOpenChange, form, setForm, 
             </div>
 
             <div>
-              <Label className="text-xs font-semibold text-slate-600 flex items-center gap-1"><ImageIcon className="w-3 h-3" /> Cover Image URL</Label>
-              <Input value={form.cover_image_url} onChange={e => setForm({ ...form, cover_image_url: e.target.value })} placeholder="https://..." className="mt-1" />
-              <p className="text-xs text-slate-400 mt-1">Shown as the course thumbnail in the catalog.</p>
+              <Label className="text-xs font-semibold text-slate-600 flex items-center gap-1"><ImageIcon className="w-3 h-3" /> Cover Image</Label>
+              <Input type="file" accept="image/jpeg,image/png,image/webp" onChange={uploadCover} className="mt-1" disabled={uploadingCover} />
+              <p className="text-xs text-slate-400 mt-1">Upload JPG, PNG, or WEBP. Max size 2MB. Shown as the course thumbnail in the catalog.</p>
+              {uploadingCover && <p className="text-xs mt-1 text-blue-600">Uploading cover image...</p>}
+              {coverUploadError && <p className="text-xs mt-1 text-red-500">{coverUploadError}</p>}
+              {form.cover_image_url && (
+                <div className="mt-2 rounded-xl border border-slate-200 p-2 bg-white space-y-2">
+                  <img src={form.cover_image_url} alt="Course cover preview" className="w-full max-h-40 object-cover rounded-lg" />
+                  <div className="flex justify-end">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setForm((prev) => ({ ...prev, cover_image_url: "" }))}
+                    >
+                      Remove image
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="md:col-span-2">

@@ -23,13 +23,19 @@ const API_BASE_URL = resolveAdminApiBaseUrl();
 
 export async function adminApiRequest(path, options = {}) {
   const url = `${API_BASE_URL}${path}`;
+  const headers = { ...(options.headers || {}) };
+  const hasContentType =
+    Object.prototype.hasOwnProperty.call(headers, "Content-Type") ||
+    Object.prototype.hasOwnProperty.call(headers, "content-type");
+
+  if (!(options.body instanceof FormData) && !hasContentType) {
+    headers["Content-Type"] = "application/json";
+  }
+
   let response;
   try {
     response = await fetch(url, {
-      headers: {
-        "Content-Type": "application/json",
-        ...(options.headers || {}),
-      },
+      headers,
       ...options,
     });
   } catch (e) {

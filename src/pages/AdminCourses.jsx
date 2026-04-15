@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   Plus, Pencil, Trash2, Users, DollarSign, BookOpen, Award,
-  Calendar, Search, CheckCircle, Eye, EyeOff, RefreshCw, CalendarDays, LayoutTemplate, Clock, Package, MapPin, Key
+  Calendar, Search, CheckCircle, Eye, EyeOff, RefreshCw, CalendarDays, LayoutTemplate, Clock, Package, MapPin, Key, ChevronDown, ChevronRight
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import CourseTemplateForm, { EMPTY_TEMPLATE } from "@/components/admin/CourseTemplateForm";
@@ -19,6 +19,33 @@ import TrainerPrepView from "@/components/admin/TrainerPrepView";
 function generateCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   return Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+}
+
+function groupSessionDatesBySession(sessionDates = []) {
+  if (!Array.isArray(sessionDates) || sessionDates.length === 0) return [];
+
+  const groups = [];
+  const indexByKey = new Map();
+
+  sessionDates.forEach((entry) => {
+    const sessionKey = entry.session_id || entry.session_name || "session-1";
+    if (!indexByKey.has(sessionKey)) {
+      const sessionNumber = groups.length + 1;
+      indexByKey.set(sessionKey, groups.length);
+      groups.push({
+        id: entry.session_id || `session-${sessionNumber}`,
+        name: entry.session_name || `Session ${sessionNumber}`,
+        days: [],
+      });
+    }
+    const idx = indexByKey.get(sessionKey);
+    groups[idx].days.push(entry);
+  });
+
+  return groups.map((group) => ({
+    ...group,
+    days: [...group.days].sort((a, b) => (a.date || "") > (b.date || "") ? 1 : -1),
+  }));
 }
 
 const enrollmentStatusColor = {
@@ -86,6 +113,7 @@ export default function AdminCourses() {
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [collapsedSessionsByCourse, setCollapsedSessionsByCourse] = useState({});
 
   const [sessionOpen, setSessionOpen] = useState(false);
   const [showCodes, setShowCodes] = useState({});
@@ -123,7 +151,7 @@ export default function AdminCourses() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["courses", "base44"] }),
   });
   const saveScheduled = useMutation({
-    mutationFn: (data) => {
+    mutationFn: ({ data, editingId }) => {
       const tmpl = templates.find(t => t.id === data.template_id);
       const merged = {
         type: "scheduled", template_id: data.template_id,
@@ -145,8 +173,8 @@ export default function AdminCourses() {
         session_dates: data.session_dates,
         is_active: data.is_active, is_featured: data.is_featured,
       };
-      return editingSchedule
-        ? base44.entities.Course.update(editingSchedule, merged)
+      return editingId
+        ? base44.entities.Course.update(editingId, merged)
         : base44.entities.Course.create(merged);
     },
     onSuccess: () => {
@@ -188,6 +216,13 @@ export default function AdminCourses() {
 
   const isUpcoming = (s) => { try { return s.session_date && parseISO(s.session_date) >= new Date(); } catch { return false; } };
   const isPastSession = (s) => { try { return !s.session_date || parseISO(s.session_date) < new Date(); } catch { return true; } };
+  const toggleSessionInCard = (courseId, sessionId) => {
+    const key = `${courseId}:${sessionId}`;
+    setCollapsedSessionsByCourse((prev) => {
+      const isCollapsed = prev[key] ?? true;
+      return { ...prev, [key]: !isCollapsed };
+    });
+  };
 
   const tabs = [
     { id: "templates", label: "Templates", count: templates.length, icon: LayoutTemplate },
@@ -316,7 +351,7 @@ export default function AdminCourses() {
             {scheduledCourses.map(c => {
               const tmpl = templateFor(c);
               const enrollCount = enrollCountFor(c.id);
-              const dates = (c.session_dates || []).sort((a, b) => a.date > b.date ? 1 : -1);
+              const sessionGroups = groupSessionDatesBySession(c.session_dates || []);
               return (
                 <div key={c.id} className={`rounded-3xl p-5 ${!c.is_active ? "opacity-60" : ""}`} style={{ background: "rgba(255,255,255,0.3)", backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)", border: "1px solid rgba(255,255,255,0.6)", boxShadow: "0 4px 24px rgba(30,37,53,0.1)" }}>
                   <div className="flex items-center gap-1.5 mb-1">
@@ -332,70 +367,104 @@ export default function AdminCourses() {
                   </div>
                   {/* Session dates with per-date class codes */}
                   <div className="space-y-2 mb-4">
-                    {dates.length === 0 ? (
+                    {sessionGroups.length === 0 ? (
                       <p className="text-xs italic" style={{ color: "#b0b8cc" }}>No dates scheduled</p>
-                    ) : dates.map((d, i) => {
-                      // Find a session record keyed by course + date (enrollment_id = "class_date:<courseId>:<date>")
-                      const dateKey = `class_date:${c.id}:${d.date}`;
-                      const dateSession = sessions.find(s => s.enrollment_id === dateKey);
+                    ) : sessionGroups.map((sessionGroup) => {
+                      const sessionKey = `${c.id}:${sessionGroup.id}`;
+                      const isCollapsed = collapsedSessionsByCourse[sessionKey] ?? true;
                       return (
-                        <div key={i} className="rounded-xl overflow-hidden" style={{ border: "1px solid rgba(74,95,160,0.12)" }}>
-                          {/* Date header row */}
-                          <div className="flex items-center gap-2 px-3 py-2.5" style={{ background: "rgba(74,95,160,0.05)" }}>
-                            <Calendar className="w-3 h-3 flex-shrink-0" style={{ color: "#4a5fa0" }} />
-                            {d.label && <span className="text-xs font-bold" style={{ color: "#4a5fa0" }}>{d.label}</span>}
-                            <span className="text-xs font-medium" style={{ color: "#1a2540" }}>{d.date}</span>
-                            {(d.start_time || d.end_time) && <span className="text-xs" style={{ color: "#8891a8" }}>{d.start_time}{d.end_time ? `–${d.end_time}` : ""}</span>}
-                            {d.location && <span className="text-xs" style={{ color: "#8891a8" }}>· {d.location}</span>}
+                        <div key={sessionGroup.id} className="rounded-xl overflow-hidden border" style={{ borderColor: "rgba(74,95,160,0.16)" }}>
+                          <div className="px-3 py-2 text-xs font-semibold uppercase tracking-wider flex items-center justify-between gap-2" style={{ background: "rgba(74,95,160,0.08)", color: "#4a5fa0" }}>
+                            <span>{sessionGroup.name}</span>
+                            <button
+                              type="button"
+                              onClick={() => toggleSessionInCard(c.id, sessionGroup.id)}
+                              className="inline-flex items-center gap-1 text-[11px] font-semibold hover:opacity-80"
+                              style={{ color: "#4a5fa0" }}
+                            >
+                              {isCollapsed ? (
+                                <>
+                                  <ChevronRight className="w-3.5 h-3.5" />
+                                  Expand
+                                </>
+                              ) : (
+                                <>
+                                  <ChevronDown className="w-3.5 h-3.5" />
+                                  Collapse
+                                </>
+                              )}
+                            </button>
                           </div>
-                          {/* Code section */}
-                          <div className="px-3 py-2.5 flex items-center gap-2">
-                            {dateSession ? (
-                              <>
-                                <Key className="w-3.5 h-3.5 flex-shrink-0" style={{ color: dateSession.code_used ? "#22c55e" : "#FA6F30" }} />
-                                <span className="text-xs font-semibold" style={{ color: "rgba(30,37,53,0.5)" }}>Class Code:</span>
-                                <span className={`font-mono text-base font-bold tracking-[0.2em] px-3 py-1 rounded-lg ${dateSession.code_used ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-800"}`}>
-                                  {showCodes[dateSession.id] ? dateSession.session_code : "••••••"}
-                                </span>
-                                <button onClick={() => setShowCodes(p => ({ ...p, [dateSession.id]: !p[dateSession.id] }))} className="text-slate-400 hover:text-slate-600">
-                                  {showCodes[dateSession.id] ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                                </button>
-                                {!dateSession.code_used && (
-                                  <button onClick={() => regenCode(dateSession)} className="p-1 rounded hover:bg-slate-100 transition-colors" title="Regenerate code">
-                                    <RefreshCw className="w-3.5 h-3.5" style={{ color: "#8891a8" }} />
-                                  </button>
-                                )}
-                                {dateSession.code_used && !dateSession.attendance_confirmed && (
-                                  <button className="ml-auto text-xs font-semibold px-2.5 py-1 rounded-lg text-white" style={{ background: "#4a5fa0" }} onClick={() => setConfirmAttendanceDialog(dateSession)}>
-                                    Confirm All
-                                  </button>
-                                )}
-                                {dateSession.attendance_confirmed && <CheckCircle className="w-4 h-4 text-green-500 ml-auto" />}
-                              </>
-                            ) : (
-                              <>
-                                <Key className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#b0b8cc" }} />
-                                <span className="text-xs flex-1" style={{ color: "#b0b8cc" }}>No code generated yet</span>
-                                <button
-                                  className="text-xs font-semibold px-3 py-1.5 rounded-lg text-white whitespace-nowrap"
-                                  style={{ background: "linear-gradient(135deg, #DA6A63, #FA6F30)" }}
-                                  onClick={() => createSession.mutate({
-                                    enrollment_id: dateKey,
-                                    course_id: c.id,
-                                    course_title: c.title,
-                                    provider_id: "",
-                                    provider_name: "All enrolled providers",
-                                    provider_email: "",
-                                    session_date: d.date,
-                                    session_code: generateCode(),
-                                  })}
-                                  disabled={createSession.isPending}
-                                >
-                                  Generate Code
-                                </button>
-                              </>
-                            )}
-                          </div>
+                          {!isCollapsed && (
+                            <div className="space-y-2 p-2.5" style={{ background: "rgba(255,255,255,0.7)" }}>
+                              {sessionGroup.days.map((d, dayIdx) => {
+                                // Find a session record keyed by course + date (enrollment_id = "class_date:<courseId>:<date>")
+                                const dateKey = `class_date:${c.id}:${d.date}`;
+                                const dateSession = sessions.find(s => s.enrollment_id === dateKey);
+                                const dayLabel = d.label || `Day ${dayIdx + 1}`;
+                                return (
+                                  <div key={`${sessionGroup.id}-${d.date}-${dayIdx}`} className="rounded-xl overflow-hidden" style={{ border: "1px solid rgba(74,95,160,0.12)" }}>
+                                    {/* Date header row */}
+                                    <div className="flex items-center gap-2 px-3 py-2.5" style={{ background: "rgba(74,95,160,0.05)" }}>
+                                      <Calendar className="w-3 h-3 flex-shrink-0" style={{ color: "#4a5fa0" }} />
+                                      <span className="text-xs font-bold" style={{ color: "#4a5fa0" }}>{dayLabel}</span>
+                                      <span className="text-xs font-medium" style={{ color: "#1a2540" }}>{d.date}</span>
+                                      {(d.start_time || d.end_time) && <span className="text-xs" style={{ color: "#8891a8" }}>{d.start_time}{d.end_time ? `–${d.end_time}` : ""}</span>}
+                                      {d.location && <span className="text-xs" style={{ color: "#8891a8" }}>· {d.location}</span>}
+                                    </div>
+                                    {/* Code section */}
+                                    <div className="px-3 py-2.5 flex items-center gap-2">
+                                      {dateSession ? (
+                                        <>
+                                          <Key className="w-3.5 h-3.5 flex-shrink-0" style={{ color: dateSession.code_used ? "#22c55e" : "#FA6F30" }} />
+                                          <span className="text-xs font-semibold" style={{ color: "rgba(30,37,53,0.5)" }}>Class Code:</span>
+                                          <span className={`font-mono text-base font-bold tracking-[0.2em] px-3 py-1 rounded-lg ${dateSession.code_used ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-800"}`}>
+                                            {showCodes[dateSession.id] ? dateSession.session_code : "••••••"}
+                                          </span>
+                                          <button onClick={() => setShowCodes(p => ({ ...p, [dateSession.id]: !p[dateSession.id] }))} className="text-slate-400 hover:text-slate-600">
+                                            {showCodes[dateSession.id] ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                                          </button>
+                                          {!dateSession.code_used && (
+                                            <button onClick={() => regenCode(dateSession)} className="p-1 rounded hover:bg-slate-100 transition-colors" title="Regenerate code">
+                                              <RefreshCw className="w-3.5 h-3.5" style={{ color: "#8891a8" }} />
+                                            </button>
+                                          )}
+                                          {dateSession.code_used && !dateSession.attendance_confirmed && (
+                                            <button className="ml-auto text-xs font-semibold px-2.5 py-1 rounded-lg text-white" style={{ background: "#4a5fa0" }} onClick={() => setConfirmAttendanceDialog(dateSession)}>
+                                              Confirm All
+                                            </button>
+                                          )}
+                                          {dateSession.attendance_confirmed && <CheckCircle className="w-4 h-4 text-green-500 ml-auto" />}
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Key className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#b0b8cc" }} />
+                                          <span className="text-xs flex-1" style={{ color: "#b0b8cc" }}>No code generated yet</span>
+                                          <button
+                                            className="text-xs font-semibold px-3 py-1.5 rounded-lg text-white whitespace-nowrap"
+                                            style={{ background: "linear-gradient(135deg, #DA6A63, #FA6F30)" }}
+                                            onClick={() => createSession.mutate({
+                                              enrollment_id: dateKey,
+                                              course_id: c.id,
+                                              course_title: c.title,
+                                              provider_id: "",
+                                              provider_name: "All enrolled providers",
+                                              provider_email: "",
+                                              session_date: d.date,
+                                              session_code: generateCode(),
+                                            })}
+                                            disabled={createSession.isPending}
+                                          >
+                                            Generate Code
+                                          </button>
+                                        </>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -492,7 +561,7 @@ export default function AdminCourses() {
       <ScheduleCourseForm
         open={scheduleOpen} onOpenChange={setScheduleOpen}
         form={scheduleForm} setForm={setScheduleForm}
-        onSave={() => saveScheduled.mutate(scheduleForm)}
+        onSave={() => saveScheduled.mutate({ data: scheduleForm, editingId: editingSchedule })}
         saving={saveScheduled.isPending} editing={editingSchedule}
         templates={templates}
       />
