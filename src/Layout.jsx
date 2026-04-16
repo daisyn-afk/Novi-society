@@ -7,7 +7,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   LayoutDashboard, BookOpen, Award, FileText, Users,
   Calendar, Star, ShieldCheck, ClipboardList, Settings,
-  Menu, X, LogOut, ChevronRight, User, Lock, Stethoscope, Sparkles, Clock, AlertTriangle, ShoppingBag, Mail, Eye, Rocket
+  Menu, X, LogOut, ChevronRight, User, Lock, Stethoscope, Sparkles, Clock, AlertTriangle, ShoppingBag, Mail, Eye, Rocket, TicketPercent
 } from "lucide-react";
 import { useProviderAccess } from "@/components/useProviderAccess";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -21,6 +21,7 @@ const navByRole = {
     { label: "Providers", icon: Users, page: "AdminProviders" },
     { label: "Licenses & Certifications", icon: FileText, page: "AdminLicenses" },
     { label: "Service Types", icon: Settings, page: "AdminServiceTypes" },
+    { label: "Promo Codes", icon: TicketPercent, page: "AdminPromoCodes" },
     { label: "Manufacturer Marketplace", icon: ShoppingBag, page: "AdminManufacturers" },
     { label: "Email Automation", icon: Mail, page: "AdminEmailTemplates" },
     { label: "Growth Studio Editor", icon: Rocket, page: "AdminLaunchPad" },
