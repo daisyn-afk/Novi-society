@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { adminCoursesApi } from "@/api/adminCoursesApi";
 import {
   Sparkles, Award, Shield, Users, Heart, ArrowRight, Check,
   BookOpen, Clock, MapPin, ChevronRight, Calendar, Zap, CheckCircle2, User, Upload, ImageIcon
@@ -77,6 +78,11 @@ const differentiators = [
 
 const BLANK_FORM = { customer_name: "", customer_email: "", phone: "", notes: "", license_type: "RN", license_number: "", license_state: "", license_image_url: "" };
 
+const normalizeCourseRecord = (course) => ({
+  ...course,
+  session_dates: Array.isArray(course?.session_dates) ? course.session_dates : [],
+});
+
 export default function NoviLanding() {
   const [selectedCourse, setSelectedCourse] = useState(null);
   const [selectedService, setSelectedService] = useState(null);
@@ -85,9 +91,14 @@ export default function NoviLanding() {
   const [selectedCourseDate, setSelectedCourseDate] = useState(null);
   const [form, setForm] = useState(BLANK_FORM);
 
-  const { data: courses = [] } = useQuery({
+  const { data: courses = [], isLoading: isLoadingCourses } = useQuery({
     queryKey: ["landing-courses"],
-    queryFn: () => base44.entities.Course.filter({ type: "scheduled", is_active: true }),
+    queryFn: async () => {
+      const scheduledCourses = await adminCoursesApi.list("scheduled");
+      return (scheduledCourses || [])
+        .filter((course) => course?.is_active !== false)
+        .map(normalizeCourseRecord);
+    },
   });
 
   const { data: serviceTypes = [] } = useQuery({
@@ -604,6 +615,12 @@ export default function NoviLanding() {
 
             <TabsContent value="courses">
               <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5">
+                {isLoadingCourses && (
+                  <div className="col-span-3 text-center py-14 rounded-2xl" style={{ background: "rgba(0,0,0,0.02)" }}>
+                    <BookOpen className="w-10 h-10 mx-auto mb-3 opacity-20" />
+                    <p style={{ color: "rgba(30,37,53,0.4)" }}>Loading scheduled courses...</p>
+                  </div>
+                )}
                 {courses.map(course => (
                   <div key={course.id}
                     onClick={() => openCourseModal(course)}
@@ -638,7 +655,7 @@ export default function NoviLanding() {
                     </div>
                   </div>
                 ))}
-                {courses.length === 0 && (
+                {!isLoadingCourses && courses.length === 0 && (
                   <div className="col-span-3 text-center py-14 rounded-2xl" style={{ background: "rgba(0,0,0,0.02)" }}>
                     <BookOpen className="w-10 h-10 mx-auto mb-3 opacity-20" />
                     <p style={{ color: "rgba(30,37,53,0.4)" }}>Courses coming soon</p>

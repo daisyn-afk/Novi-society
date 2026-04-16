@@ -57,12 +57,26 @@ const navByRole = {
   ],
 };
 
+const ROLE_ALIASES = {
+  md: "medical_director",
+};
+
+const DASHBOARD_BY_ROLE = {
+  admin: "AdminDashboard",
+  provider: "ProviderDashboard",
+  patient: "PatientJourney",
+  medical_director: "MDDashboard",
+};
+
+const normalizeRole = (role) => ROLE_ALIASES[role] || role;
+
 const BARE_PAGES = ["Onboarding", "ProviderBasicOnboarding", "ProviderGettingStarted", "LandingPage", "ProviderApplication", "NoviLanding"];
 const PUBLIC_PAGES = ["NoviLanding", "LandingPage"];
 const PROVIDER_FREE_PAGES = ["ProviderDashboard", "CourseCatalog", "ProviderProfile", "ProviderGettingStarted"];
 
 export default function Layout({ children, currentPageName }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [roleOverride, setRoleOverride] = useState(null);
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
@@ -81,7 +95,7 @@ export default function Layout({ children, currentPageName }) {
     }
   }, [isSuccess, user, currentPageName]);
 
-  const role = user?.role || "provider";
+  const role = normalizeRole(roleOverride || user?.role || "provider");
   /** URL-based admin shell: /admin and /admincourses must show admin nav even if user.role is still provider */
   const forceAdminNav =
     location.pathname === "/admin" ||
@@ -294,17 +308,28 @@ export default function Layout({ children, currentPageName }) {
           </p>
           <div className="grid grid-cols-2 gap-1">
             {[
-              { value: "admin", label: "Admin", page: "AdminDashboard" },
-              { value: "provider", label: "Provider", page: "ProviderDashboard" },
-              { value: "patient", label: "Patient", page: "PatientJourney" },
-              { value: "medical_director", label: "MD", page: "MDDashboard" },
-            ].map(({ value, label, page }) => (
+              { value: "admin", label: "Admin" },
+              { value: "provider", label: "Provider" },
+              { value: "patient", label: "Patient" },
+              { value: "medical_director", label: "MD" },
+            ].map(({ value, label }) => (
               <button
                 key={value}
                 onClick={async () => {
-                  await base44.auth.updateMe({ role: value });
-                  await queryClient.invalidateQueries({ queryKey: ["me"] });
-                  navigate(createPageUrl(page));
+                  const normalizedRole = normalizeRole(value);
+                  setRoleOverride(normalizedRole);
+                  const dashboardPage = DASHBOARD_BY_ROLE[normalizedRole] || "ProviderDashboard";
+                  const dashboardUrl = createPageUrl(dashboardPage);
+
+                  navigate(dashboardUrl, { replace: true });
+
+                  try {
+                    await base44.auth.updateMe({ role: value });
+                  } catch (error) {
+                    console.error("Failed to persist role change:", error);
+                  } finally {
+                    await queryClient.invalidateQueries({ queryKey: ["me"] });
+                  }
                 }}
                 className={`role-btn ${role === value ? "role-btn-active" : "role-btn-inactive"}`}
               >
