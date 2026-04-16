@@ -55,6 +55,7 @@ import AdminDashboard from './pages/AdminDashboard';
 import AdminEnrollments from './pages/AdminEnrollments';
 import AdminLicenses from './pages/AdminLicenses';
 import AdminProviders from './pages/AdminProviders';
+import AdminPromoCodes from './pages/AdminPromoCodes';
 import AdminReviews from './pages/AdminReviews';
 import AdminServiceTypes from './pages/AdminServiceTypes';
 import CourseCatalog from './pages/CourseCatalog';
@@ -101,6 +102,7 @@ export const PAGES = {
     "AdminEnrollments": AdminEnrollments,
     "AdminLicenses": AdminLicenses,
     "AdminProviders": AdminProviders,
+    "AdminPromoCodes": AdminPromoCodes,
     "AdminReviews": AdminReviews,
     "AdminServiceTypes": AdminServiceTypes,
     "CourseCatalog": CourseCatalog,

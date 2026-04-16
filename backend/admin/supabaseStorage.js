@@ -56,3 +56,36 @@ export async function uploadCourseCoverImage({ buffer, mimeType, extension }) {
     url: data.publicUrl
   };
 }
+
+export async function uploadLicenseDocument({ buffer, mimeType, extension }) {
+  const client = getSupabaseClient();
+  const cleanExt = (extension || "bin").replace(/^\./, "");
+  const objectPath = `license-photos/${Date.now()}-${randomUUID()}.${cleanExt}`;
+
+  const { error: uploadError } = await client.storage
+    .from(SUPABASE_STORAGE_BUCKET)
+    .upload(objectPath, buffer, {
+      contentType: mimeType,
+      cacheControl: "3600",
+      upsert: false
+    });
+
+  if (uploadError) {
+    const err = new Error(`Supabase upload failed: ${uploadError.message}`);
+    err.statusCode = 502;
+    throw err;
+  }
+
+  const { data } = client.storage.from(SUPABASE_STORAGE_BUCKET).getPublicUrl(objectPath);
+  if (!data?.publicUrl) {
+    const err = new Error("Supabase upload succeeded but public URL could not be generated.");
+    err.statusCode = 502;
+    throw err;
+  }
+
+  return {
+    bucket: SUPABASE_STORAGE_BUCKET,
+    path: objectPath,
+    url: data.publicUrl
+  };
+}

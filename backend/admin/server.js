@@ -12,22 +12,32 @@ const { coursesRouter } = await import("./courses/routes.js");
 const { templateCoursesRouter } = await import("./template-courses/routes.js");
 const { uploadsRouter } = await import("./uploads/routes.js");
 const { locationsRouter } = await import("./locations/routes.js");
+const { checkoutRouter } = await import("./checkout/routes.js");
+const { webhooksRouter } = await import("./webhooks/routes.js");
+const { promoCodesRouter } = await import("./promo-codes/routes.js");
 
 const app = express();
 app.use(cors());
+
+// Stripe signature verification requires the exact raw body.
+app.use("/webhooks/stripe", express.raw({ type: "application/json" }));
+app.use("/webhooks", webhooksRouter);
+
 app.use(express.json({ limit: "2mb" }));
 
 app.use("/admin/template-courses", templateCoursesRouter);
 app.use("/admin/courses", coursesRouter);
 app.use("/admin/uploads", uploadsRouter);
 app.use("/admin/locations", locationsRouter);
+app.use("/admin/checkout", checkoutRouter);
+app.use("/admin/promo-codes", promoCodesRouter);
 
 app.use((error, _req, res, _next) => {
   // eslint-disable-next-line no-console
   console.error("[admin-api] request failed:", error);
   if (error instanceof multer.MulterError && error.code === "LIMIT_FILE_SIZE") {
     return res.status(400).json({
-      error: "Image exceeds max size of 2MB."
+      error: "File exceeds max allowed size."
     });
   }
   const statusCode = error.statusCode || 500;

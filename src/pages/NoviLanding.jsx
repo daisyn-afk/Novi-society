@@ -6,9 +6,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { adminCoursesApi } from "@/api/adminCoursesApi";
+import { courseCheckoutApi } from "@/api/courseCheckoutApi";
 import {
   Sparkles, Award, Shield, Users, Heart, ArrowRight, Check,
   BookOpen, Clock, MapPin, ChevronRight, Calendar, Zap, CheckCircle2, User, Upload, ImageIcon
@@ -76,12 +77,28 @@ const differentiators = [
   },
 ];
 
-const BLANK_FORM = { customer_name: "", customer_email: "", phone: "", notes: "", license_type: "RN", license_number: "", license_state: "", license_image_url: "" };
+const BLANK_FORM = {
+  first_name: "",
+  last_name: "",
+  customer_email: "",
+  phone: "",
+  promo_code: "",
+  license_type: "RN",
+  license_number: "",
+  license_image_url: "",
+  rn_confirmation: false,
+  refund_policy_confirmation: false,
+};
 
 const normalizeCourseRecord = (course) => ({
   ...course,
   session_dates: Array.isArray(course?.session_dates) ? course.session_dates : [],
 });
+
+const isCourseSoldOut = (course) =>
+  course?.available_seats !== null &&
+  course?.available_seats !== undefined &&
+  Number(course.available_seats) <= 0;
 
 export default function NoviLanding() {
   const [selectedCourse, setSelectedCourse] = useState(null);
@@ -90,6 +107,8 @@ export default function NoviLanding() {
   const [courseStep, setCourseStep] = useState("dates");
   const [selectedCourseDate, setSelectedCourseDate] = useState(null);
   const [form, setForm] = useState(BLANK_FORM);
+  const [licenseUploadError, setLicenseUploadError] = useState("");
+  const [promoPreview, setPromoPreview] = useState(null);
 
   const { data: courses = [], isLoading: isLoadingCourses } = useQuery({
     queryKey: ["landing-courses"],
@@ -107,15 +126,23 @@ export default function NoviLanding() {
   });
 
   const submitMutation = useMutation({
-    mutationFn: (payload) => base44.functions.invoke("submitPreOrderRequest", payload),
-    onSuccess: () => setCourseStep("submitted"),
+    mutationFn: (payload) => courseCheckoutApi.createCheckout(payload),
+    onSuccess: (response) => {
+      if (response?.checkout_url) {
+        window.location.href = response.checkout_url;
+        return;
+      }
+      throw new Error("Stripe checkout URL was not returned.");
+    },
   });
 
   const openCourseModal = (course) => {
+    if (isCourseSoldOut(course)) return;
     setSelectedCourse(course);
     setCourseStep("dates");
     setSelectedCourseDate(null);
     setForm(BLANK_FORM);
+    setPromoPreview(null);
   };
 
   const closeCourseModal = () => {
@@ -123,33 +150,52 @@ export default function NoviLanding() {
     setCourseStep("dates");
     setSelectedCourseDate(null);
     setForm(BLANK_FORM);
+    setPromoPreview(null);
   };
 
   const [licenseUploading, setLicenseUploading] = useState(false);
 
+  const promoMutation = useMutation({
+    mutationFn: () =>
+      courseCheckoutApi.validatePromoCode({
+        course_id: selectedCourse?.id,
+        promo_code: form.promo_code
+      }),
+    onSuccess: (result) => setPromoPreview(result)
+  });
+
   const handleLicenseUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setLicenseUploading(true);
-    const { file_url } = await base44.integrations.Core.UploadFile({ file });
-    setForm(f => ({ ...f, license_image_url: file_url }));
-    setLicenseUploading(false);
+    try {
+      setLicenseUploading(true);
+      setLicenseUploadError("");
+      const uploaded = await courseCheckoutApi.uploadLicensePhoto(file);
+      setForm(f => ({ ...f, license_image_url: uploaded.url }));
+    } catch (error) {
+      setLicenseUploadError(error?.message || "License upload failed. Please try again.");
+    } finally {
+      setLicenseUploading(false);
+    }
   };
 
   const handleSubmitApplication = () => {
-    if (!form.customer_name || !form.customer_email || !form.license_number || !form.license_image_url) return;
+    if (!form.first_name || !form.last_name || !form.customer_email || !form.phone || !form.license_number || !form.license_image_url || !form.rn_confirmation || !form.refund_policy_confirmation) return;
+    const fullName = `${form.first_name} ${form.last_name}`.trim();
     submitMutation.mutate({
-      customer_name: form.customer_name,
+      course_id: selectedCourse.id,
+      course_date: selectedCourseDate || null,
+      customer_name: fullName,
+      first_name: form.first_name,
+      last_name: form.last_name,
       customer_email: form.customer_email,
       phone: form.phone || null,
-      notes: form.notes || null,
-      order_type: "course",
-      course_id: selectedCourse.id,
-      course_date: selectedCourseDate,
       license_type: form.license_type,
       license_number: form.license_number,
-      license_state: form.license_state || null,
       license_image_url: form.license_image_url || null,
+      promo_code: form.promo_code || null,
+      terms_confirmed: form.rn_confirmation,
+      refund_policy_confirmed: form.refund_policy_confirmation,
     });
   };
 
@@ -622,13 +668,21 @@ export default function NoviLanding() {
                   </div>
                 )}
                 {courses.map(course => (
+                  (() => {
+                    const soldOut = isCourseSoldOut(course);
+                    return (
                   <div key={course.id}
-                    onClick={() => openCourseModal(course)}
-                    className="group cursor-pointer rounded-2xl overflow-hidden transition-all duration-200 hover:-translate-y-1 hover:shadow-md"
+                    onClick={() => !soldOut && openCourseModal(course)}
+                    className={`group rounded-2xl overflow-hidden transition-all duration-200 ${soldOut ? "opacity-70 cursor-not-allowed" : "cursor-pointer hover:-translate-y-1 hover:shadow-md"}`}
                     style={{ background: "#f9f8f6", border: "1px solid rgba(0,0,0,0.07)" }}>
                     {course.cover_image_url && (
                       <div className="relative h-44 overflow-hidden">
                         <img src={course.cover_image_url} alt={course.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                        {soldOut && (
+                          <div className="absolute top-3 right-3 px-2.5 py-1 rounded-lg font-bold text-xs text-white" style={{ background: "#DA6A63" }}>
+                            Sold Out
+                          </div>
+                        )}
                         {course.price && (
                           <div className="absolute bottom-3 left-3 px-3 py-1.5 rounded-lg font-bold text-white text-sm" style={{ background: "rgba(0,0,0,0.5)", backdropFilter: "blur(8px)" }}>
                             ${Number(course.price).toLocaleString()}
@@ -649,11 +703,13 @@ export default function NoviLanding() {
                         {course.location && <span className="flex items-center gap-1"><MapPin className="w-3.5 h-3.5" />{course.location}</span>}
                       </div>
                       <div className="flex items-center justify-between mt-4 pt-4 text-sm font-semibold" style={{ borderTop: "1px solid rgba(0,0,0,0.06)", color: "#2D6B7F" }}>
-                        <span>View & Reserve</span>
+                        <span>{soldOut ? "Sold Out" : "View & Reserve"}</span>
                         <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
                       </div>
                     </div>
                   </div>
+                    );
+                  })()
                 ))}
                 {!isLoadingCourses && courses.length === 0 && (
                   <div className="col-span-3 text-center py-14 rounded-2xl" style={{ background: "rgba(0,0,0,0.02)" }}>
@@ -774,6 +830,11 @@ export default function NoviLanding() {
 
           {selectedCourse && courseStep === "dates" && (
             <div className="space-y-4 pt-2">
+              {isCourseSoldOut(selectedCourse) && (
+                <div className="px-4 py-3 rounded-xl text-sm font-semibold" style={{ background: "rgba(218,106,99,0.1)", border: "1px solid rgba(218,106,99,0.25)", color: "#DA6A63" }}>
+                  This course is sold out. Registration is closed.
+                </div>
+              )}
               {selectedCourse.description && (
                 <p className="text-sm leading-relaxed" style={{ color: "rgba(30,37,53,0.65)" }}>{selectedCourse.description}</p>
               )}
@@ -846,7 +907,7 @@ export default function NoviLanding() {
                 className="w-full py-5 text-base font-bold rounded-xl"
                 style={{ background: "#C8E63C", color: "#1a2540" }}
                 onClick={() => setCourseStep("info")}
-                disabled={(() => { const t = new Date(); t.setHours(0,0,0,0); return selectedCourse.session_dates?.filter(s => s.date && new Date(s.date.split('T')[0] + 'T12:00:00') >= t).length > 0 && !selectedCourseDate; })()}
+                disabled={isCourseSoldOut(selectedCourse) || (() => { const t = new Date(); t.setHours(0,0,0,0); return selectedCourse.session_dates?.filter(s => s.date && new Date(s.date.split('T')[0] + 'T12:00:00') >= t).length > 0 && !selectedCourseDate; })()}
               >
                 Continue <ArrowRight className="ml-2 w-4 h-4" />
               </Button>
@@ -873,10 +934,16 @@ export default function NoviLanding() {
                 <p className="text-xs font-bold uppercase tracking-wider mb-3 flex items-center gap-2" style={{ color: "#2D6B7F" }}>
                   <User className="w-3.5 h-3.5" /> Personal Information
                 </p>
-                <div className="space-y-3">
-                  <div>
-                    <Label className="text-sm font-semibold mb-1.5 block" style={{ color: "#1e2535" }}>Full Name *</Label>
-                    <Input value={form.customer_name} onChange={e => setForm(f => ({ ...f, customer_name: e.target.value }))} placeholder="Jane Smith" className="h-11 rounded-xl" style={{ border: "1.5px solid rgba(0,0,0,0.1)" }} />
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <Label className="text-sm font-semibold mb-1.5 block" style={{ color: "#1e2535" }}>First Name *</Label>
+                      <Input value={form.first_name} onChange={e => setForm(f => ({ ...f, first_name: e.target.value }))} placeholder="John" className="h-11 rounded-xl" style={{ border: "1.5px solid rgba(0,0,0,0.1)" }} />
+                    </div>
+                    <div>
+                      <Label className="text-sm font-semibold mb-1.5 block" style={{ color: "#1e2535" }}>Last Name *</Label>
+                      <Input value={form.last_name} onChange={e => setForm(f => ({ ...f, last_name: e.target.value }))} placeholder="Doe" className="h-11 rounded-xl" style={{ border: "1.5px solid rgba(0,0,0,0.1)" }} />
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
@@ -884,7 +951,7 @@ export default function NoviLanding() {
                       <Input type="email" value={form.customer_email} onChange={e => setForm(f => ({ ...f, customer_email: e.target.value }))} placeholder="jane@example.com" className="h-11 rounded-xl" style={{ border: "1.5px solid rgba(0,0,0,0.1)" }} />
                     </div>
                     <div>
-                      <Label className="text-sm font-semibold mb-1.5 block" style={{ color: "#1e2535" }}>Phone</Label>
+                      <Label className="text-sm font-semibold mb-1.5 block" style={{ color: "#1e2535" }}>Phone *</Label>
                       <Input type="tel" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} placeholder="(555) 123-4567" className="h-11 rounded-xl" style={{ border: "1.5px solid rgba(0,0,0,0.1)" }} />
                     </div>
                   </div>
@@ -923,14 +990,10 @@ export default function NoviLanding() {
                       <Input value={form.license_number} onChange={e => setForm(f => ({ ...f, license_number: e.target.value }))} placeholder="e.g. RN-123456" className="h-11 rounded-xl" style={{ border: "1.5px solid rgba(0,0,0,0.1)" }} />
                     </div>
                   </div>
-                  <div>
-                    <Label className="text-sm font-semibold mb-1.5 block" style={{ color: "#1e2535" }}>Issuing State</Label>
-                    <Input value={form.license_state} onChange={e => setForm(f => ({ ...f, license_state: e.target.value.toUpperCase() }))} placeholder="e.g. TX" maxLength={2} className="h-11 rounded-xl uppercase w-28" style={{ border: "1.5px solid rgba(0,0,0,0.1)" }} />
-                  </div>
                 </div>
 
                 {/* License photo upload */}
-                <div>
+                <div className="mt-2">
                   <Label className="text-sm font-semibold mb-1.5 block" style={{ color: "#1e2535" }}>License Photo *</Label>
                   {form.license_image_url ? (
                     <div className="flex items-center gap-3 p-3 rounded-xl" style={{ background: "rgba(200,230,60,0.08)", border: "1px solid rgba(200,230,60,0.3)" }}>
@@ -948,17 +1011,78 @@ export default function NoviLanding() {
                       <span className="text-sm font-medium" style={{ color: "#2D6B7F" }}>
                         {licenseUploading ? "Uploading..." : "Click to upload license photo"}
                       </span>
-                      <span className="text-xs" style={{ color: "rgba(30,37,53,0.4)" }}>JPG, PNG or PDF</span>
+                      <span className="text-xs" style={{ color: "rgba(30,37,53,0.4)" }}>JPG, PNG, WEBP, HEIC, HEIF or PDF (max 12MB)</span>
                       <input type="file" accept="image/*,.pdf" className="hidden" onChange={handleLicenseUpload} disabled={licenseUploading} />
                     </label>
+                  )}
+                  {licenseUploadError && (
+                    <p className="text-xs mt-2" style={{ color: "#DA6A63" }}>{licenseUploadError}</p>
                   )}
                 </div>
               </div>
 
-              {/* Notes */}
+              <div className="p-4 rounded-xl space-y-3 mt-4" style={{ background: "rgba(200, 230, 60, 0.08)", border: "1px solid rgba(200,230,60,0.2)" }}>
+                  <div className="flex items-start gap-3">
+                    <Checkbox
+                      id="rn-confirmation"
+                      checked={form.rn_confirmation}
+                      onCheckedChange={(checked) => setForm((f) => ({ ...f, rn_confirmation: Boolean(checked) }))}
+                      className="mt-0.5"
+                    />
+                    <Label htmlFor="rn-confirmation" className="text-sm font-normal cursor-pointer whitespace-nowrap" style={{ color: "rgb(61, 90, 10)" }}>
+                      I confirm that I am licensed at the RN level or above and agree to the terms of service.
+                    </Label>
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <Checkbox
+                      id="refund-policy-confirmation"
+                      checked={form.refund_policy_confirmation}
+                      onCheckedChange={(checked) => setForm((f) => ({ ...f, refund_policy_confirmation: Boolean(checked) }))}
+                      className="mt-0.5"
+                    />
+                    <Label htmlFor="refund-policy-confirmation" className="text-sm leading-relaxed font-normal cursor-pointer" style={{ color: "rgb(61, 90, 10)" }}>
+                      I have read and agree to the NOVI Society Refund Policy.
+                    </Label>
+                  </div>
+              </div>
+
+              {/* Promo code */}
               <div>
-                <Label className="text-sm font-semibold mb-1.5 block" style={{ color: "#1e2535" }}>Questions or Special Requests</Label>
-                <Textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} placeholder="Anything you'd like us to know..." rows={3} className="rounded-xl resize-none text-sm" style={{ border: "1.5px solid rgba(0,0,0,0.1)" }} />
+                <Label className="text-sm font-semibold mb-1.5 block" style={{ color: "rgb(45, 107, 127)" }}>Promo Code (Optional)</Label>
+                <div className="flex gap-2">
+                  <Input
+                    value={form.promo_code}
+                    onChange={e => {
+                      const value = e.target.value;
+                      setForm(f => ({ ...f, promo_code: value }));
+                      setPromoPreview(null);
+                    }}
+                    placeholder="Enter promo code"
+                    className="h-11 rounded-xl"
+                    style={{ border: "1.5px solid rgba(0,0,0,0.1)" }}
+                  />
+                  <Button
+                    type="button"
+                    className="h-11 rounded-xl px-5 font-bold"
+                    style={{
+                      background: "rgb(45, 107, 127)",
+                      color: "#fff",
+                      opacity: form.promo_code.trim() ? 1 : 0.45,
+                    }}
+                    onClick={() => promoMutation.mutate()}
+                    disabled={!form.promo_code.trim() || promoMutation.isPending}
+                  >
+                    {promoMutation.isPending ? "Applying..." : "Apply"}
+                  </Button>
+                </div>
+                {promoMutation.error && (
+                  <p className="text-xs mt-2" style={{ color: "#DA6A63" }}>{promoMutation.error.message}</p>
+                )}
+                {promoPreview && (
+                  <div className="mt-2 text-xs rounded-lg p-2.5" style={{ background: "rgba(200,230,60,0.1)", border: "1px solid rgba(200,230,60,0.3)", color: "#3d5a0a" }}>
+                    Promo <strong>{promoPreview.code}</strong> applied: -${Number(promoPreview.discount_amount || 0).toLocaleString()} · New total <strong>${Number(promoPreview.total || 0).toLocaleString()}</strong>
+                  </div>
+                )}
               </div>
 
               {submitMutation.error && (
@@ -967,13 +1091,17 @@ export default function NoviLanding() {
                 </div>
               )}
 
-              {(!form.customer_name || !form.customer_email || !form.license_number || !form.license_image_url) && (
+              {(!form.first_name || !form.last_name || !form.customer_email || !form.phone || !form.license_number || !form.license_image_url || !form.rn_confirmation || !form.refund_policy_confirmation) && (
                 <div className="px-4 py-3 rounded-xl flex flex-col gap-1" style={{ background: "rgba(250,111,48,0.08)", border: "1px solid rgba(250,111,48,0.2)" }}>
-                  <p className="text-xs font-bold" style={{ color: "#FA6F30" }}>Please complete the following required fields:</p>
-                  {!form.customer_name && <p className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>• Full Name</p>}
-                  {!form.customer_email && <p className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>• Email Address</p>}
+                  <p className="text-xs font-bold" style={{ color: "#FA6F30" }}>Please complete the following:</p>
+                  {!form.first_name && <p className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>• First Name</p>}
+                  {!form.last_name && <p className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>• Last Name</p>}
+                  {!form.customer_email && <p className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>• Email</p>}
+                  {!form.phone && <p className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>• Phone</p>}
                   {!form.license_number && <p className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>• License Number</p>}
                   {!form.license_image_url && <p className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>• License Photo</p>}
+                  {!form.rn_confirmation && <p className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>• Confirm your license level and terms</p>}
+                  {!form.refund_policy_confirmation && <p className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>• Acknowledge the Refund Policy</p>}
                 </div>
               )}
               <div className="flex gap-3 pt-2">
@@ -983,13 +1111,13 @@ export default function NoviLanding() {
                 <Button
                   className="flex-1 py-5 text-base font-bold rounded-xl"
                   style={{ background: "#C8E63C", color: "#1a2540" }}
-                  disabled={!form.customer_name || !form.customer_email || !form.license_number || !form.license_image_url || submitMutation.isPending || licenseUploading}
+                  disabled={isCourseSoldOut(selectedCourse) || !form.first_name || !form.last_name || !form.customer_email || !form.phone || !form.license_number || !form.license_image_url || !form.rn_confirmation || !form.refund_policy_confirmation || submitMutation.isPending || licenseUploading}
                   onClick={handleSubmitApplication}
                 >
                   {submitMutation.isPending ? (
                     <><div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin mr-2" />Submitting...</>
                   ) : (
-                    <><Sparkles className="w-4 h-4 mr-2" />Submit Application</>
+                    <><Sparkles className="w-4 h-4 mr-2" />Pay ${Number(promoPreview?.total ?? selectedCourse?.price ?? 0).toLocaleString()}</>
                   )}
                 </Button>
               </div>
