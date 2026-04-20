@@ -7,6 +7,7 @@ const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 const appBaseUrl = process.env.APP_BASE_URL || "http://localhost:5173";
 const resendApiKey = process.env.RESEND_API_KEY;
 const resendFromEmail = process.env.RESEND_FROM_EMAIL || "NOVI Society <no-reply@novisocietyhub.com>";
+const noviEmailLogoUrl = process.env.NOVI_EMAIL_LOGO_URL || `${appBaseUrl}/novi-email-logo.png`;
 
 const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -29,11 +30,6 @@ function computeDiscount({ discountType, discountValue, subtotal }) {
   }
   if (discountType === "fixed") return Math.min(subtotal, Number(discountValue));
   return 0;
-}
-
-function formatCurrencyAmount(value) {
-  const amount = Number(value || 0);
-  return Number.isFinite(amount) ? amount.toFixed(2) : "0.00";
 }
 
 export async function createCourseCheckout(payload) {
@@ -329,69 +325,307 @@ export async function getPreOrder({ id, sessionId }) {
 
   const client = await pool.connect();
   try {
-    const { rows } = await client.query(
+    let { rows } = await client.query(
       `select id, order_type, type, status, course_title, course_date, customer_email, amount_paid, paid_at, created_at
        from public.pre_orders
        where ${whereClause}
        limit 1`,
       values
     );
-    return rows[0] ?? null;
+    let preOrder = rows[0] ?? null;
+
+    // Fallback path: if webhook did not arrive yet but Stripe marks session as paid,
+    // process the completed session on demand so confirmation page and email remain reliable.
+    if (preOrder?.status !== "paid" && sessionId && stripe) {
+      try {
+        const stripeSession = await stripe.checkout.sessions.retrieve(sessionId);
+        const isPaid = stripeSession?.payment_status === "paid" && stripeSession?.status === "complete";
+        if (isPaid) {
+          await processCompletedCheckoutSession(stripeSession);
+          const refreshed = await client.query(
+            `select id, order_type, type, status, course_title, course_date, customer_email, amount_paid, paid_at, created_at
+             from public.pre_orders
+             where ${whereClause}
+             limit 1`,
+            values
+          );
+          preOrder = refreshed.rows[0] ?? preOrder;
+        }
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error("[checkout] pre-order fallback processing failed:", error);
+      }
+    }
+
+    return preOrder;
   } finally {
     client.release();
   }
 }
 
-async function sendConfirmationEmail({ to, customerName, courseTitle, amountPaid, courseDate }) {
+async function sendConfirmationEmail({ to, customerName, courseTitle, courseData, courseDate }) {
   if (!resendApiKey || !to) return false;
-  const html = `
-    <div style="font-family: Arial, sans-serif; color: #1e2535; line-height: 1.55;">
-      <h2 style="margin-bottom: 8px;">Enrollment Confirmed</h2>
-      <p>Hi ${customerName || "there"},</p>
-      <p>Your payment was received and your NOVI course enrollment is confirmed.</p>
-      <div style="padding: 12px; border: 1px solid #d8e2b2; background: #f7faea; border-radius: 8px;">
-        <p style="margin: 0;"><strong>Course:</strong> ${courseTitle || "-"}</p>
-        <p style="margin: 0;"><strong>Date:</strong> ${courseDate || "-"}</p>
-        <p style="margin: 0;"><strong>Amount paid:</strong> $${formatCurrencyAmount(amountPaid)}</p>
-      </div>
-      <p style="margin-top: 14px;">Thanks,<br/>NOVI Society Team</p>
-    </div>
-  `;
+  const safeFirstName = customerName || "there";
+  const safeCourseName = courseTitle || "your course";
+  const formatCourseDate = (value) => {
+    if (!value) return "";
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return "";
+    return d.toLocaleDateString("en-US", {
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric"
+    });
+  };
+  const formatSessionTime = (startTime, endTime) => {
+    const toDisplay = (raw) => {
+      if (typeof raw !== "string" || !/^\d{2}:\d{2}/.test(raw)) return "";
+      const [hourRaw, minuteRaw] = raw.slice(0, 5).split(":");
+      const hour = Number(hourRaw);
+      const minute = Number(minuteRaw);
+      if (!Number.isFinite(hour) || !Number.isFinite(minute)) return "";
+      const suffix = hour >= 12 ? "PM" : "AM";
+      return `${hour % 12 || 12}:${String(minute).padStart(2, "0")} ${suffix}`;
+    };
+    const start = toDisplay(startTime);
+    const end = toDisplay(endTime);
+    if (start && end) return `${start} - ${end}`;
+    return start || end || "";
+  };
+  const toDateKey = (value) => {
+    if (!value) return null;
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return null;
+    return d.toISOString().slice(0, 10);
+  };
 
-  const res = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${resendApiKey}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      from: resendFromEmail,
-      to: [to],
-      subject: "Your NOVI course enrollment is confirmed",
-      html
-    })
-  });
-  return res.ok;
+  let courseDateStr = formatCourseDate(courseDate);
+  let courseTimeStr = "";
+  let courseLocation = "";
+
+  if (courseDate && courseData?.course_session_dates && Array.isArray(courseData.course_session_dates)) {
+    const dateKey = toDateKey(courseDate);
+    const selectedSession = dateKey
+      ? courseData.course_session_dates.find((session) => toDateKey(session?.date) === dateKey)
+      : null;
+    if (selectedSession) {
+      courseDateStr = formatCourseDate(selectedSession.date || courseDate);
+      courseTimeStr = formatSessionTime(selectedSession.start_time, selectedSession.end_time);
+      courseLocation = selectedSession.location || courseData.course_location || "";
+    }
+  }
+  if (!courseLocation && courseData?.course_location) {
+    courseLocation = courseData.course_location;
+  }
+
+  const courseDetailsRows = [
+    `<tr><td style="padding:6px 0;color:#6b7280;font-size:14px;width:100px"><strong>Course</strong></td><td style="padding:6px 0;font-size:14px;color:#111827">${safeCourseName}</td></tr>`,
+    courseDateStr ? `<tr><td style="padding:6px 0;color:#6b7280;font-size:14px"><strong>Date</strong></td><td style="padding:6px 0;font-size:14px;color:#111827">${courseDateStr}</td></tr>` : "",
+    courseTimeStr ? `<tr><td style="padding:6px 0;color:#6b7280;font-size:14px"><strong>Time</strong></td><td style="padding:6px 0;font-size:14px;color:#111827">${courseTimeStr}</td></tr>` : "",
+    courseLocation ? `<tr><td style="padding:6px 0;color:#6b7280;font-size:14px"><strong>Location</strong></td><td style="padding:6px 0;font-size:14px;color:#111827">${courseLocation}</td></tr>` : ""
+  ].filter(Boolean).join("");
+
+  const logoMarkup = noviEmailLogoUrl
+    ? `<img src="${noviEmailLogoUrl}" alt="NOVI Society" style="width:160px;height:auto" />`
+    : `<div style="font-size:28px;font-weight:700;letter-spacing:0.04em;color:#ffffff">NOVI SOCIETY</div>`;
+
+  const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+<body style="margin:0;padding:0;background:#f5f3ef;font-family:'DM Sans',Helvetica,Arial,sans-serif">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f3ef;padding:40px 0">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
+        <tr><td style="background:linear-gradient(135deg,#2D6B7F 0%,#7B8EC8 55%,#C8E63C 100%);padding:36px 40px;text-align:center;border-radius:16px 16px 0 0">
+          ${logoMarkup}
+        </td></tr>
+        <tr><td style="background:#fff;padding:48px 40px;border-radius:0 0 16px 16px">
+          <p style="margin:0 0 24px;font-size:16px;color:#374151;line-height:1.6">Hi ${safeFirstName},</p>
+          <p style="margin:0 0 24px;font-size:16px;color:#374151;line-height:1.6">Welcome to NOVI Society - we're excited to have you with us.</p>
+          <p style="margin:0 0 24px;font-size:16px;color:#374151;line-height:1.6">Your enrollment for <strong>${safeCourseName}</strong> has been successfully confirmed.</p>
+
+          <div style="background:#f9f8f6;border-radius:12px;padding:24px;margin-bottom:32px;border:1px solid rgba(0,0,0,0.07)">
+            <p style="margin:0 0 12px;font-size:13px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#2D6B7F">Course Details</p>
+            <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+              ${courseDetailsRows}
+            </table>
+          </div>
+
+          <p style="margin:0 0 12px;font-size:15px;color:#374151;line-height:1.6">This immersive training is designed to take you from foundational knowledge to confident, hands-on application. You'll receive in-depth education on anatomy, product selection, injection techniques, and patient safety - along with live model experience to ensure you leave fully prepared.</p>
+          <p style="margin:0 0 24px;font-size:15px;color:#374151;line-height:1.6">As part of NOVI, this course is more than just training. It's your entry point into a fully supported system that includes:</p>
+
+          <ul style="margin:0 0 32px;padding-left:20px;color:#374151;font-size:15px;line-height:1.9">
+            <li>Ongoing mentorship and guidance</li>
+            <li>Medical director oversight</li>
+            <li>Compliance and scope-of-practice support</li>
+            <li>Tools to help you launch and grow your aesthetic practice</li>
+          </ul>
+
+          <p style="margin:0 0 12px;font-size:15px;font-weight:600;color:#111827">What to Expect Next</p>
+          <ul style="margin:0 0 32px;padding-left:20px;color:#374151;font-size:15px;line-height:1.9">
+            <li>Additional course details and preparation instructions will be sent prior to your training date</li>
+            <li>Any required forms or documentation will be provided for completion</li>
+            <li>Our team will be available for any questions leading up to your course</li>
+          </ul>
+
+          <p style="margin:0 0 32px;font-size:15px;color:#374151;line-height:1.6">If you have any questions in the meantime, feel free to reach out - we're here to support you every step of the way.</p>
+
+          <div style="border-top:1px solid #e5e7eb;padding-top:28px;margin-top:8px">
+            <p style="margin:0 0 4px;font-size:15px;color:#374151">We look forward to seeing you soon.</p>
+            <p style="margin:0 0 4px;font-family:Georgia,serif;font-size:17px;color:#1e2535;font-style:italic">Welcome to NOVI.</p>
+            <p style="margin:0 0 20px;font-size:14px;color:#6b7280;font-style:italic">A New Way to Be Seen.</p>
+            <p style="margin:0;font-size:15px;color:#374151">Best,<br><strong>The NOVI Society Team</strong></p>
+          </div>
+        </td></tr>
+        <tr><td style="padding:24px 40px;text-align:center">
+          <p style="margin:0;font-size:12px;color:#9ca3af">© ${new Date().getFullYear()} NOVI Society LLC · 8109 Meadow Valley Dr, McKinney, TX 75071</p>
+          <p style="margin:4px 0 0;font-size:12px;color:#9ca3af"><a href="mailto:support@novisociety.com" style="color:#9ca3af">support@novisociety.com</a></p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${resendApiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        from: resendFromEmail,
+        to: [to],
+        subject: "Your NOVI course enrollment is confirmed",
+        html
+      })
+    });
+    if (!res.ok) {
+      const bodyText = await res.text();
+      // eslint-disable-next-line no-console
+      console.error("[checkout] resend send failed:", res.status, bodyText);
+    }
+    return res.ok;
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error("[checkout] resend request failed:", error);
+    return false;
+  }
+}
+
+async function sendNewUserInviteEmail({ to, firstName, inviteLink }) {
+  if (!resendApiKey || !to || !inviteLink) return false;
+  const greetingName = firstName || "there";
+  const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+<body style="margin:0;padding:0;background:#f5f3ef;font-family:'DM Sans',Helvetica,Arial,sans-serif">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f3ef;padding:40px 0">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
+        <tr><td style="background:linear-gradient(135deg,#2D6B7F 0%,#7B8EC8 55%,#C8E63C 100%);padding:36px 40px;text-align:center;border-radius:16px 16px 0 0">
+          <img src="${noviEmailLogoUrl}" alt="NOVI Society" style="width:160px;height:auto" />
+        </td></tr>
+        <tr><td style="background:#fff;padding:40px;border-radius:0 0 16px 16px">
+          <p style="margin:0 0 16px;font-size:16px;color:#374151;line-height:1.6">Hi ${greetingName},</p>
+          <p style="margin:0 0 16px;font-size:15px;color:#374151;line-height:1.6">Your NOVI Society account is ready. Use the button below to set your password and access your account.</p>
+          <p style="margin:0 0 28px">
+            <a href="${inviteLink}" style="display:inline-block;background:#2D6B7F;color:#fff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:600;font-size:14px">
+              Set up your account
+            </a>
+          </p>
+          <p style="margin:0;font-size:13px;color:#6b7280;line-height:1.6">If the button does not work, copy and paste this link into your browser:<br>${inviteLink}</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${resendApiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        from: resendFromEmail,
+        to: [to],
+        subject: "Set up your NOVI Society account",
+        html
+      })
+    });
+    if (!res.ok) {
+      const bodyText = await res.text();
+      // eslint-disable-next-line no-console
+      console.error("[checkout] invite resend failed:", res.status, bodyText);
+    }
+    return res.ok;
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error("[checkout] invite resend request failed:", error);
+    return false;
+  }
 }
 
 async function inviteUserIfNeeded(email, firstName, lastName) {
   if (!supabaseAdmin || !email) return { wasNewUser: false, linkedUserId: null };
   try {
-    const inviteRes = await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
-      data: {
-        first_name: firstName || null,
-        last_name: lastName || null
+    const linkRes = await supabaseAdmin.auth.admin.generateLink({
+      type: "invite",
+      email,
+      options: {
+        data: {
+          first_name: firstName || null,
+          last_name: lastName || null
+        },
+        redirectTo: `${appBaseUrl}/`
       }
     });
-    if (inviteRes.error) {
-      const message = inviteRes.error.message || "";
+
+    if (linkRes.error) {
+      const message = String(linkRes.error.message || "");
       if (message.toLowerCase().includes("already")) {
         return { wasNewUser: false, linkedUserId: null };
       }
+      // eslint-disable-next-line no-console
+      console.error("[checkout] generate invite link failed:", linkRes.error);
       return { wasNewUser: false, linkedUserId: null };
     }
-    return { wasNewUser: true, linkedUserId: inviteRes.data?.user?.id || null };
-  } catch {
+
+    const inviteLink = linkRes.data?.properties?.action_link || linkRes.data?.action_link;
+    const linkedUserId = linkRes.data?.user?.id || null;
+
+    let inviteSent = false;
+    if (inviteLink) {
+      inviteSent = await sendNewUserInviteEmail({ to: email, firstName, inviteLink });
+    }
+
+    if (!inviteSent) {
+      const inviteRes = await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
+        data: {
+          first_name: firstName || null,
+          last_name: lastName || null
+        },
+        redirectTo: `${appBaseUrl}/`
+      });
+      if (inviteRes.error) {
+        const message = String(inviteRes.error.message || "");
+        if (!message.toLowerCase().includes("already")) {
+          // eslint-disable-next-line no-console
+          console.error("[checkout] supabase invite fallback failed:", inviteRes.error);
+        }
+      }
+    }
+
+    return { wasNewUser: true, linkedUserId };
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error("[checkout] invite flow failed:", error);
     return { wasNewUser: false, linkedUserId: null };
   }
 }
@@ -466,6 +700,15 @@ export async function processCompletedCheckoutSession(session) {
     );
     const enrollmentId = enrollmentRes.rows[0].id;
 
+    const { rows: courseRows } = await client.query(
+      `select location, session_dates
+       from public.scheduled_courses
+       where id = $1
+       limit 1`,
+      [preOrder.course_id]
+    );
+    const selectedCourse = courseRows[0] || null;
+
     const { wasNewUser, linkedUserId } = await inviteUserIfNeeded(
       preOrder.customer_email,
       preOrder.first_name,
@@ -476,7 +719,10 @@ export async function processCompletedCheckoutSession(session) {
       to: preOrder.customer_email,
       customerName: preOrder.customer_name,
       courseTitle: preOrder.course_title,
-      amountPaid: preOrder.amount_paid,
+      courseData: {
+        course_session_dates: selectedCourse?.session_dates || [],
+        course_location: selectedCourse?.location || ""
+      },
       courseDate: preOrder.course_date
     });
 
