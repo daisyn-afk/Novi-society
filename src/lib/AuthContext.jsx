@@ -36,6 +36,18 @@ export const AuthProvider = ({ children }) => {
     try {
       // Now check if the user is authenticated
       setIsLoadingAuth(true);
+      const hasSession = typeof base44.auth?.hasSession === "function"
+        ? base44.auth.hasSession()
+        : true;
+      if (!hasSession) {
+        setIsLoadingAuth(false);
+        setIsAuthenticated(false);
+        setAuthError({
+          type: "auth_required",
+          message: "Authentication required"
+        });
+        return;
+      }
       const currentUser = await base44.auth.me();
       setUser(currentUser);
       setIsAuthenticated(true);

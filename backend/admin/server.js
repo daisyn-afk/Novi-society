@@ -15,6 +15,7 @@ const { locationsRouter } = await import("./locations/routes.js");
 const { checkoutRouter } = await import("./checkout/routes.js");
 const { webhooksRouter } = await import("./webhooks/routes.js");
 const { promoCodesRouter } = await import("./promo-codes/routes.js");
+const { authRouter } = await import("./auth/routes.js");
 
 const app = express();
 app.use(cors());
@@ -31,6 +32,7 @@ app.use("/admin/uploads", uploadsRouter);
 app.use("/admin/locations", locationsRouter);
 app.use("/admin/checkout", checkoutRouter);
 app.use("/admin/promo-codes", promoCodesRouter);
+app.use("/admin/auth", authRouter);
 
 app.use((error, _req, res, _next) => {
   // eslint-disable-next-line no-console

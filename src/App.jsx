@@ -3,7 +3,7 @@ import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClientInstance, queryClientAdmincourses } from '@/lib/query-client'
 import NavigationTracker from '@/lib/NavigationTracker'
 import { pagesConfig } from './pages.config'
-import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Route, Routes, Navigate, useLocation } from 'react-router-dom';
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
@@ -24,6 +24,8 @@ import AdminCourseStyling from './pages/AdminCourseStyling';
 import AdminWizardConfig from './pages/AdminWizardConfig';
 import AdminDashboard from './pages/AdminDashboard';
 import AdminCoursesAdminRoute from './pages/AdminCoursesAdminRoute';
+import Login from './pages/Login';
+import Signup from './pages/Signup';
 
 const { Pages, Layout, mainPage } = pagesConfig;
 const mainPageKey = mainPage ?? Object.keys(Pages)[0];
@@ -35,6 +37,16 @@ const LayoutWrapper = ({ children, currentPageName }) => Layout ?
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
+  const location = useLocation();
+  const publicPaths = new Set([
+    "/",
+    "/NoviLanding",
+    "/PreOrderCheckout",
+    "/PreOrderConfirmation",
+    "/login",
+    "/signup"
+  ]);
+  const isPublicRoute = publicPaths.has(location.pathname);
 
   // Show loading spinner while checking app public settings or auth
   if (isLoadingPublicSettings || isLoadingAuth) {
@@ -50,9 +62,10 @@ const AuthenticatedApp = () => {
     if (authError.type === 'user_not_registered') {
       return <UserNotRegisteredError />;
     } else if (authError.type === 'auth_required') {
-      // Redirect to login automatically
-      navigateToLogin();
-      return null;
+      if (!isPublicRoute) {
+        navigateToLogin();
+        return null;
+      }
     }
   }
 
@@ -88,6 +101,8 @@ const AuthenticatedApp = () => {
       } />
       <Route path="/PreOrderCheckout" element={<PreOrderCheckout />} />
       <Route path="/PreOrderConfirmation" element={<PreOrderConfirmation />} />
+      <Route path="/login" element={<Login />} />
+      <Route path="/signup" element={<Signup />} />
       <Route path="/AdminPreOrders" element={
         <LayoutWrapper currentPageName="AdminPreOrders">
           <AdminPreOrders />
