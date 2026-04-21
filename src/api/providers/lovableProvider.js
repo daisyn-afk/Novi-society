@@ -31,6 +31,31 @@ async function postJson(path, payload) {
   return response.json();
 }
 
+async function requestJson(path, options = {}, { includeAuth = false } = {}) {
+  const baseUrl = apiRuntimeConfig.apiBaseUrl;
+  if (!baseUrl) {
+    throw new Error("[lovable-provider] VITE_APP_API_BASE_URL is required.");
+  }
+  const headers = {
+    "Content-Type": "application/json",
+    ...(options.headers || {})
+  };
+  if (includeAuth) {
+    const token = getStoredAccessToken();
+    if (token) headers.Authorization = `Bearer ${token}`;
+  }
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...options,
+    headers
+  });
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`[lovable-provider] ${response.status} ${text}`);
+  }
+  if (response.status === 204) return null;
+  return response.json();
+}
+
 function resolveAdminApiBaseUrl() {
   const raw = (import.meta.env.VITE_APP_API_BASE_URL || "").trim();
   if (!import.meta.env.DEV) return raw;
@@ -53,6 +78,10 @@ function getStoredAccessToken() {
   return window.localStorage.getItem(ACCESS_TOKEN_KEY) || "";
 }
 
+function getStoredRefreshToken() {
+  return window.localStorage.getItem(REFRESH_TOKEN_KEY) || "";
+}
+
 function hasStoredSession() {
   return Boolean(getStoredAccessToken());
 }
@@ -71,7 +100,32 @@ function clearAuthSession() {
   window.localStorage.removeItem(REFRESH_TOKEN_KEY);
 }
 
-async function authRequest(path, options = {}) {
+async function tryRefreshAuthSession() {
+  const refreshToken = getStoredRefreshToken();
+  if (!refreshToken) return false;
+
+  const response = await fetch(`${ADMIN_API_BASE_URL}/admin/auth/refresh`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ refresh_token: refreshToken })
+  });
+
+  if (!response.ok) {
+    clearAuthSession();
+    return false;
+  }
+
+  const result = await response.json().catch(() => null);
+  if (!result?.session?.access_token) {
+    clearAuthSession();
+    return false;
+  }
+
+  storeAuthSession(result.session);
+  return true;
+}
+
+async function authRequest(path, options = {}, retryOnAuthError = true) {
   const token = getStoredAccessToken();
   const headers = {
     "Content-Type": "application/json",
@@ -92,6 +146,14 @@ async function authRequest(path, options = {}) {
     } catch {
       parsed = {};
     }
+
+    if (response.status === 401 && retryOnAuthError) {
+      const refreshed = await tryRefreshAuthSession();
+      if (refreshed) {
+        return authRequest(path, options, false);
+      }
+    }
+
     const error = new Error(parsed.error || raw || `Request failed: ${response.status}`);
     error.status = response.status;
     throw error;
@@ -101,19 +163,52 @@ async function authRequest(path, options = {}) {
 }
 
 export function createLovableProviderClient() {
-  const entityProxy = new Proxy(
-    {},
-    {
-      get: (_, entityName) => ({
-        list: createNotImplementedMethod(`entities.${String(entityName)}.list`),
-        get: createNotImplementedMethod(`entities.${String(entityName)}.get`),
-        create: createNotImplementedMethod(`entities.${String(entityName)}.create`),
-        update: createNotImplementedMethod(`entities.${String(entityName)}.update`),
-        delete: createNotImplementedMethod(`entities.${String(entityName)}.delete`),
-        filter: createNotImplementedMethod(`entities.${String(entityName)}.filter`)
-      })
+  const entityProxy = new Proxy({}, {
+    get: (_, entityName) => {
+      const name = String(entityName);
+      if (name === "ServiceType") {
+        return {
+          list: () => authRequest("/admin/service-types", { method: "GET" }),
+          get: (id) => authRequest(`/admin/service-types/${id}`, { method: "GET" }),
+          create: (payload) => authRequest("/admin/service-types", {
+            method: "POST",
+            body: JSON.stringify(payload || {})
+          }),
+          update: (id, payload) => authRequest(`/admin/service-types/${id}`, {
+            method: "PUT",
+            body: JSON.stringify(payload || {})
+          }),
+          delete: (id) => authRequest(`/admin/service-types/${id}`, { method: "DELETE" }),
+          filter: (filters = {}) => {
+            const params = new URLSearchParams();
+            if (Object.hasOwn(filters, "is_active")) {
+              params.set("is_active", String(Boolean(filters.is_active)));
+            }
+            const qs = params.toString();
+            return requestJson(`/admin/service-types${qs ? `?${qs}` : ""}`, { method: "GET" });
+          }
+        };
+      }
+      if (name === "PreOrder") {
+        return {
+          list: (_sort = "", limit = 200) => authRequest(`/admin/pre-orders?limit=${encodeURIComponent(String(limit || 200))}`, { method: "GET" }),
+          get: (id) => requestJson(`/admin/checkout/pre-order?id=${encodeURIComponent(id)}`, { method: "GET" }),
+          create: createNotImplementedMethod("entities.PreOrder.create"),
+          update: createNotImplementedMethod("entities.PreOrder.update"),
+          delete: createNotImplementedMethod("entities.PreOrder.delete"),
+          filter: createNotImplementedMethod("entities.PreOrder.filter")
+        };
+      }
+      return {
+        list: createNotImplementedMethod(`entities.${name}.list`),
+        get: createNotImplementedMethod(`entities.${name}.get`),
+        create: createNotImplementedMethod(`entities.${name}.create`),
+        update: createNotImplementedMethod(`entities.${name}.update`),
+        delete: createNotImplementedMethod(`entities.${name}.delete`),
+        filter: createNotImplementedMethod(`entities.${name}.filter`)
+      };
     }
-  );
+  });
 
   return {
     auth: {
@@ -153,8 +248,28 @@ export function createLovableProviderClient() {
       logUserInApp: async () => ({ ok: true })
     },
     functions: {
-      invoke: async (functionName, payload) =>
-        postJson(`/functions/${functionName}`, payload)
+      invoke: async (functionName, payload) => {
+        if (functionName === "createPreOrderCheckout") {
+          if (payload?.pre_order_id) {
+            throw new Error("[lovable-provider] createPreOrderCheckout with pre_order_id is not implemented yet.");
+          }
+          return {
+            data: await requestJson("/admin/checkout/service", {
+              method: "POST",
+              body: JSON.stringify(payload || {})
+            })
+          };
+        }
+        if (functionName === "approvePreOrder") {
+          return {
+            data: await authRequest("/admin/pre-orders/action", {
+              method: "POST",
+              body: JSON.stringify(payload || {})
+            })
+          };
+        }
+        return postJson(`/functions/${functionName}`, payload);
+      }
     }
   };
 }

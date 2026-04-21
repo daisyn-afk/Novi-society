@@ -1,11 +1,25 @@
 import { Router } from "express";
-import { createCourseCheckout, getPreOrder, validateCoursePromoCode } from "./service.js";
+import {
+  createCourseCheckout,
+  createServicePreOrder,
+  getPreOrder,
+  validateCoursePromoCode
+} from "./service.js";
 
 export const checkoutRouter = Router();
 
 checkoutRouter.post("/course", async (req, res, next) => {
   try {
     const result = await createCourseCheckout(req.body || {});
+    res.status(201).json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+checkoutRouter.post("/service", async (req, res, next) => {
+  try {
+    const result = await createServicePreOrder(req.body || {});
     res.status(201).json(result);
   } catch (error) {
     next(error);

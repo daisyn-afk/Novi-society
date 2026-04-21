@@ -16,6 +16,8 @@ const { checkoutRouter } = await import("./checkout/routes.js");
 const { webhooksRouter } = await import("./webhooks/routes.js");
 const { promoCodesRouter } = await import("./promo-codes/routes.js");
 const { authRouter } = await import("./auth/routes.js");
+const { serviceTypesCatalogRouter } = await import("./service-types-catalog/routes.js");
+const { preOrdersRouter } = await import("./pre-orders/routes.js");
 
 const app = express();
 app.use(cors());
@@ -33,10 +35,14 @@ app.use("/admin/locations", locationsRouter);
 app.use("/admin/checkout", checkoutRouter);
 app.use("/admin/promo-codes", promoCodesRouter);
 app.use("/admin/auth", authRouter);
+app.use("/admin/service-types", serviceTypesCatalogRouter);
+app.use("/admin/pre-orders", preOrdersRouter);
 
 app.use((error, _req, res, _next) => {
-  // eslint-disable-next-line no-console
-  console.error("[admin-api] request failed:", error);
+  if ((error.statusCode || 500) >= 500) {
+    // eslint-disable-next-line no-console
+    console.error("[admin-api] request failed:", error);
+  }
   if (error instanceof multer.MulterError && error.code === "LIMIT_FILE_SIZE") {
     return res.status(400).json({
       error: "File exceeds max allowed size."
