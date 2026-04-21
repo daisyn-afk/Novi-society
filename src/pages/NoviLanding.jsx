@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { adminCoursesApi } from "@/api/adminCoursesApi";
@@ -109,6 +110,21 @@ export default function NoviLanding() {
   const [form, setForm] = useState(BLANK_FORM);
   const [licenseUploadError, setLicenseUploadError] = useState("");
   const [promoPreview, setPromoPreview] = useState(null);
+  const [serviceForm, setServiceForm] = useState({
+    first_name: "",
+    last_name: "",
+    customer_email: "",
+    phone: "",
+    license_type: "RN",
+    license_number: "",
+    license_image_url: "",
+    certification_provider_name: "",
+    certification_document_url: ""
+  });
+  const [serviceSubmitted, setServiceSubmitted] = useState(false);
+  const [serviceLicenseUploading, setServiceLicenseUploading] = useState(false);
+  const [serviceCertUploading, setServiceCertUploading] = useState(false);
+  const [serviceUploadError, setServiceUploadError] = useState("");
 
   const { data: courses = [], isLoading: isLoadingCourses } = useQuery({
     queryKey: ["landing-courses"],
@@ -199,11 +215,68 @@ export default function NoviLanding() {
     });
   };
 
-  const handleServicePreOrder = (service) => {
-    const params = new URLSearchParams();
-    params.set("type", "service");
-    params.set("id", service.id);
-    window.location.href = `/PreOrderCheckout?${params.toString()}`;
+  const serviceSpotMutation = useMutation({
+    mutationFn: (payload) => base44.functions.invoke("createPreOrderCheckout", payload),
+    onSuccess: () => setServiceSubmitted(true)
+  });
+
+  const handleServicePreOrder = () => {
+    if (!selectedService) return;
+    if (
+      !serviceForm.first_name ||
+      !serviceForm.last_name ||
+      !serviceForm.customer_email ||
+      !serviceForm.phone ||
+      !serviceForm.license_number ||
+      !serviceForm.license_image_url ||
+      !serviceForm.certification_provider_name ||
+      !serviceForm.certification_document_url
+    ) return;
+    const fullName = `${serviceForm.first_name} ${serviceForm.last_name}`.trim();
+    serviceSpotMutation.mutate({
+      customer_name: fullName,
+      customer_email: serviceForm.customer_email,
+      phone: serviceForm.phone || null,
+      order_type: "service",
+      notes: `Certification provider: ${serviceForm.certification_provider_name}`,
+      service_type_id: selectedService.id,
+      license_type: serviceForm.license_type,
+      license_number: serviceForm.license_number,
+      license_image_url: serviceForm.license_image_url || null,
+      certification_document_url: serviceForm.certification_document_url || null
+    });
+  };
+
+  const handleServiceLicenseUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      setServiceLicenseUploading(true);
+      setServiceUploadError("");
+      const uploaded = await courseCheckoutApi.uploadLicensePhoto(file);
+      setServiceForm(f => ({ ...f, license_image_url: uploaded.url }));
+    } catch (error) {
+      setServiceUploadError(error?.message || "License upload failed. Please try again.");
+    } finally {
+      setServiceLicenseUploading(false);
+      e.target.value = "";
+    }
+  };
+
+  const handleServiceCertificationUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      setServiceCertUploading(true);
+      setServiceUploadError("");
+      const uploaded = await courseCheckoutApi.uploadLicensePhoto(file);
+      setServiceForm(f => ({ ...f, certification_document_url: uploaded.url }));
+    } catch (error) {
+      setServiceUploadError(error?.message || "Certification upload failed. Please try again.");
+    } finally {
+      setServiceCertUploading(false);
+      e.target.value = "";
+    }
   };
 
   return (
@@ -724,7 +797,23 @@ export default function NoviLanding() {
               <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5">
                 {serviceTypes.map(service => (
                   <div key={service.id}
-                    onClick={() => setSelectedService(service)}
+                    onClick={() => {
+                      setSelectedService(service);
+                      setServiceSubmitted(false);
+                      setServiceUploadError("");
+                      serviceSpotMutation.reset();
+                      setServiceForm({
+                        first_name: "",
+                        last_name: "",
+                        customer_email: "",
+                        phone: "",
+                        license_type: "RN",
+                        license_number: "",
+                        license_image_url: "",
+                        certification_provider_name: "",
+                        certification_document_url: ""
+                      });
+                    }}
                     className="group cursor-pointer rounded-2xl p-6 transition-all duration-200 hover:-translate-y-1 hover:shadow-md"
                     style={{ background: "#f9f8f6", border: "1px solid rgba(0,0,0,0.07)" }}>
                     <span className="text-xs font-semibold px-2.5 py-1 rounded-full capitalize" style={{ background: "rgba(45,107,127,0.1)", color: "#2D6B7F" }}>
@@ -1156,62 +1245,205 @@ export default function NoviLanding() {
       </Dialog>
 
       {/* ── SERVICE DIALOG ── */}
-      <Dialog open={!!selectedService} onOpenChange={() => setSelectedService(null)}>
-        <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
+      <Dialog open={!!selectedService} onOpenChange={(next) => {
+        if (!next) {
+          setSelectedService(null);
+          setServiceSubmitted(false);
+          serviceSpotMutation.reset();
+        }
+      }}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle style={{ fontFamily: "'DM Serif Display', serif", fontStyle: "italic", color: "#1e2535", fontSize: "1.5rem" }}>
               {selectedService?.name}
             </DialogTitle>
-            <DialogDescription className="text-base">{selectedService?.description}</DialogDescription>
           </DialogHeader>
-          {selectedService && (
+          {selectedService && !serviceSubmitted && (
             <div className="space-y-5 pt-2">
-              {selectedService.monthly_fee && (
-                <div className="p-5 rounded-xl" style={{ background: "rgba(45,107,127,0.06)", border: "1px solid rgba(45,107,127,0.15)" }}>
-                  <p className="text-xs font-bold uppercase tracking-wide mb-1" style={{ color: "rgba(30,37,53,0.5)" }}>Monthly Coverage Fee</p>
-                  <p className="text-4xl font-bold" style={{ color: "#2D6B7F" }}>${selectedService.monthly_fee}<span className="text-lg font-normal">/mo</span></p>
-                </div>
-              )}
-              {selectedService.protocol_notes && (
-                <div>
-                  <h4 className="font-bold mb-2" style={{ color: "#1e2535" }}>Clinical Guidelines</h4>
-                  <p className="text-sm leading-relaxed whitespace-pre-line" style={{ color: "rgba(30,37,53,0.75)" }}>{selectedService.protocol_notes}</p>
-                </div>
-              )}
-              {selectedService.allowed_areas?.length > 0 && (
-                <div>
-                  <h4 className="font-bold mb-2" style={{ color: "#1e2535" }}>Approved Treatment Areas</h4>
-                  <div className="flex flex-wrap gap-2">
-                    {selectedService.allowed_areas.map(area => (
-                      <span key={area} className="px-3 py-1 rounded-lg text-sm font-medium" style={{ background: "rgba(123,142,200,0.1)", color: "#2D6B7F" }}>{area}</span>
-                    ))}
+              <div className="pt-2 border-t" style={{ borderColor: "rgba(0,0,0,0.07)" }}>
+                <div className="space-y-3">
+                  <p className="text-xs font-bold uppercase tracking-wider" style={{ color: "#2D6B7F" }}>Personal Information *</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <Label className="text-sm font-semibold mb-1.5 block" style={{ color: "#1e2535" }}>First Name *</Label>
+                      <Input
+                        value={serviceForm.first_name}
+                        onChange={e => setServiceForm(f => ({ ...f, first_name: e.target.value }))}
+                        placeholder="John"
+                        className="h-11 rounded-xl"
+                        style={{ border: "1.5px solid rgba(0,0,0,0.1)" }}
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-sm font-semibold mb-1.5 block" style={{ color: "#1e2535" }}>Last Name *</Label>
+                      <Input
+                        value={serviceForm.last_name}
+                        onChange={e => setServiceForm(f => ({ ...f, last_name: e.target.value }))}
+                        placeholder="Doe"
+                        className="h-11 rounded-xl"
+                        style={{ border: "1.5px solid rgba(0,0,0,0.1)" }}
+                      />
+                    </div>
                   </div>
-                </div>
-              )}
-              {selectedService.scope_rules?.length > 0 && (
-                <div>
-                  <h4 className="font-bold mb-2" style={{ color: "#1e2535" }}>Scope of Practice</h4>
-                  <div className="space-y-2">
-                    {selectedService.scope_rules.map((rule, idx) => (
-                      <div key={idx} className="flex items-start gap-2 text-sm p-3 rounded-lg" style={{ background: "rgba(200,230,60,0.05)" }}>
-                        <Check className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: "#5a7a20" }} />
-                        <span style={{ color: "rgba(30,37,53,0.8)" }}>
-                          <strong style={{ color: "#2D6B7F" }}>{rule.rule_name}:</strong> {rule.rule_value} {rule.unit} {rule.description && `— ${rule.description}`}
-                        </span>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <Label className="text-sm font-semibold mb-1.5 block" style={{ color: "#1e2535" }}>Email *</Label>
+                      <Input
+                        type="email"
+                        value={serviceForm.customer_email}
+                        onChange={e => setServiceForm(f => ({ ...f, customer_email: e.target.value }))}
+                        placeholder="jane@example.com"
+                        className="h-11 rounded-xl"
+                        style={{ border: "1.5px solid rgba(0,0,0,0.1)" }}
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-sm font-semibold mb-1.5 block" style={{ color: "#1e2535" }}>Phone *</Label>
+                      <Input
+                        value={serviceForm.phone}
+                        onChange={e => setServiceForm(f => ({ ...f, phone: e.target.value }))}
+                        placeholder="(555) 123-4567"
+                        className="h-11 rounded-xl"
+                        style={{ border: "1.5px solid rgba(0,0,0,0.1)" }}
+                      />
+                    </div>
+                  </div>
+                  <hr style={{ borderColor: "rgba(0,0,0,0.08)" }} />
+                  <p className="text-xs font-bold uppercase tracking-wider" style={{ color: "#2D6B7F" }}>Medical License *</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <Label className="text-sm font-semibold mb-1.5 block" style={{ color: "#1e2535" }}>License Type *</Label>
+                      <Select value={serviceForm.license_type} onValueChange={v => setServiceForm(f => ({ ...f, license_type: v }))}>
+                        <SelectTrigger className="h-11 rounded-xl" style={{ border: "1.5px solid rgba(0,0,0,0.1)" }}><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="RN">RN - Registered Nurse</SelectItem>
+                          <SelectItem value="NP">NP - Nurse Practitioner</SelectItem>
+                          <SelectItem value="PA">PA - Physician Assistant</SelectItem>
+                          <SelectItem value="MD">MD - Medical Doctor</SelectItem>
+                          <SelectItem value="DO">DO - Doctor of Osteopathy</SelectItem>
+                          <SelectItem value="esthetician">Licensed Esthetician</SelectItem>
+                          <SelectItem value="other">Other Healthcare Professional</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label className="text-sm font-semibold mb-1.5 block" style={{ color: "#1e2535" }}>License Number *</Label>
+                      <Input
+                        value={serviceForm.license_number}
+                        onChange={e => setServiceForm(f => ({ ...f, license_number: e.target.value }))}
+                        placeholder="RN-123456"
+                        className="h-11 rounded-xl"
+                        style={{ border: "1.5px solid rgba(0,0,0,0.1)" }}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-semibold mb-1.5 block" style={{ color: "#1e2535" }}>License Photo *</Label>
+                    {serviceForm.license_image_url ? (
+                      <div className="flex items-center gap-3 p-3 rounded-xl" style={{ background: "rgba(200,230,60,0.08)", border: "1px solid rgba(200,230,60,0.3)" }}>
+                        <ImageIcon className="w-5 h-5 flex-shrink-0" style={{ color: "#5a7a20" }} />
+                        <span className="text-sm font-medium flex-1" style={{ color: "#3d5a0a" }}>License uploaded ✓</span>
+                        <button onClick={() => setServiceForm(f => ({ ...f, license_image_url: "" }))} className="text-xs underline" style={{ color: "rgba(30,37,53,0.4)" }}>Remove</button>
                       </div>
-                    ))}
+                    ) : (
+                      <label className="flex flex-col items-center gap-2 p-5 rounded-xl cursor-pointer transition-all" style={{ background: "rgba(0,0,0,0.02)", border: "1.5px dashed rgba(0,0,0,0.15)" }}>
+                        {serviceLicenseUploading ? (
+                          <div className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin" style={{ color: "#2D6B7F" }} />
+                        ) : (
+                          <Upload className="w-5 h-5" style={{ color: "#2D6B7F" }} />
+                        )}
+                        <span className="text-sm font-medium" style={{ color: "#2D6B7F" }}>
+                          {serviceLicenseUploading ? "Uploading..." : "Click to upload license"}
+                        </span>
+                        <input type="file" accept="image/*,.pdf" className="hidden" onChange={handleServiceLicenseUpload} disabled={serviceLicenseUploading} />
+                      </label>
+                    )}
                   </div>
+                  <hr style={{ borderColor: "rgba(0,0,0,0.08)" }} />
+                  <p className="text-xs font-bold uppercase tracking-wider" style={{ color: "#2D6B7F" }}>External Certification *</p>
+                  <div>
+                    <Label className="text-sm font-semibold mb-1.5 block" style={{ color: "#1e2535" }}>School / Provider Name *</Label>
+                    <Input
+                      value={serviceForm.certification_provider_name}
+                      onChange={e => setServiceForm(f => ({ ...f, certification_provider_name: e.target.value }))}
+                      placeholder="e.g. Johns Training Academy"
+                      className="h-11 rounded-xl"
+                      style={{ border: "1.5px solid rgba(0,0,0,0.1)" }}
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-sm font-semibold mb-1.5 block" style={{ color: "#1e2535" }}>Certification Document *</Label>
+                    {serviceForm.certification_document_url ? (
+                      <div className="flex items-center gap-3 p-3 rounded-xl" style={{ background: "rgba(200,230,60,0.08)", border: "1px solid rgba(200,230,60,0.3)" }}>
+                        <ImageIcon className="w-5 h-5 flex-shrink-0" style={{ color: "#5a7a20" }} />
+                        <span className="text-sm font-medium flex-1" style={{ color: "#3d5a0a" }}>Certification uploaded ✓</span>
+                        <button onClick={() => setServiceForm(f => ({ ...f, certification_document_url: "" }))} className="text-xs underline" style={{ color: "rgba(30,37,53,0.4)" }}>Remove</button>
+                      </div>
+                    ) : (
+                      <label className="flex flex-col items-center gap-2 p-5 rounded-xl cursor-pointer transition-all" style={{ background: "rgba(0,0,0,0.02)", border: "1.5px dashed rgba(0,0,0,0.15)" }}>
+                        {serviceCertUploading ? (
+                          <div className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin" style={{ color: "#2D6B7F" }} />
+                        ) : (
+                          <Upload className="w-5 h-5" style={{ color: "#2D6B7F" }} />
+                        )}
+                        <span className="text-sm font-medium" style={{ color: "#2D6B7F" }}>
+                          {serviceCertUploading ? "Uploading..." : "Click to upload certification"}
+                        </span>
+                        <input type="file" accept="image/*,.pdf" className="hidden" onChange={handleServiceCertificationUpload} disabled={serviceCertUploading} />
+                      </label>
+                    )}
+                  </div>
+                  {serviceUploadError && (
+                    <p className="text-xs" style={{ color: "#DA6A63" }}>{serviceUploadError}</p>
+                  )}
+                </div>
+              </div>
+
+              {serviceSpotMutation.error && (
+                <div className="px-4 py-3 rounded-xl" style={{ background: "rgba(218,106,99,0.1)", border: "1px solid rgba(218,106,99,0.25)" }}>
+                  <p className="text-sm font-semibold" style={{ color: "#DA6A63" }}>{serviceSpotMutation.error.message}</p>
                 </div>
               )}
+
               <Button
                 className="w-full py-6 text-base font-bold rounded-xl"
-                style={{ background: "linear-gradient(135deg, #2D6B7F, #7B8EC8)", color: "#fff" }}
-                onClick={() => handleServicePreOrder(selectedService)}
+                style={{ background: "rgb(200, 230, 60)", color: "#1a2540" }}
+                onClick={handleServicePreOrder}
+                disabled={
+                  !serviceForm.first_name ||
+                  !serviceForm.last_name ||
+                  !serviceForm.customer_email ||
+                  !serviceForm.phone ||
+                  !serviceForm.license_number ||
+                  !serviceForm.license_image_url ||
+                  !serviceForm.certification_provider_name ||
+                  !serviceForm.certification_document_url ||
+                  serviceSpotMutation.isPending ||
+                  serviceLicenseUploading ||
+                  serviceCertUploading
+                }
               >
                 <Sparkles className="w-5 h-5 mr-2" />
-                Reserve This Service
+                {serviceSpotMutation.isPending ? "Saving your spot..." : "Save Your Spot"}
               </Button>
               <p className="text-center text-xs" style={{ color: "rgba(30,37,53,0.4)" }}>No payment required now · We'll contact you before launch</p>
+            </div>
+          )}
+
+          {selectedService && serviceSubmitted && (
+            <div className="py-8 text-center space-y-4">
+              <div className="w-16 h-16 rounded-full mx-auto flex items-center justify-center" style={{ background: "rgba(200,230,60,0.15)" }}>
+                <CheckCircle2 className="w-8 h-8" style={{ color: "#5a7a20" }} />
+              </div>
+              <h3 style={{ fontFamily: "'DM Serif Display', serif", fontSize: "1.75rem", color: "#1e2535", fontStyle: "italic" }}>
+                Spot Saved!
+              </h3>
+              <p className="text-base leading-relaxed max-w-sm mx-auto" style={{ color: "rgba(30,37,53,0.65)" }}>
+                Your request for <strong>{selectedService.name}</strong> has been submitted. We'll contact you before launch.
+              </p>
+              <Button onClick={() => setSelectedService(null)} className="mt-6 px-8 py-3 rounded-full font-bold" style={{ background: "#C8E63C", color: "#1a2540" }}>
+                Done
+              </Button>
             </div>
           )}
         </DialogContent>

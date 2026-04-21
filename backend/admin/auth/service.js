@@ -237,6 +237,38 @@ export async function getMeFromAccessToken(accessToken) {
   };
 }
 
+export async function refreshSession(refreshToken) {
+  ensureAuthClients();
+  const safeRefreshToken = String(refreshToken || "").trim();
+  if (!safeRefreshToken) {
+    const err = new Error("refresh_token is required.");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const { data, error } = await authClient.auth.refreshSession({
+    refresh_token: safeRefreshToken
+  });
+  if (error || !data?.session?.access_token || !data?.user?.id) {
+    const err = new Error(error?.message || "Invalid or expired refresh token.");
+    err.statusCode = 401;
+    throw err;
+  }
+
+  const profile = await getUserRowByAuthUserId(data.user.id);
+  return {
+    session: data.session,
+    user: {
+      id: data.user.id,
+      email: data.user.email,
+      role: profile?.role || data.user.user_metadata?.role || "provider",
+      first_name: profile?.first_name || data.user.user_metadata?.first_name || null,
+      last_name: profile?.last_name || data.user.user_metadata?.last_name || null,
+      full_name: profile?.full_name || data.user.user_metadata?.full_name || null
+    }
+  };
+}
+
 export async function updateMe({ accessToken, updates }) {
   ensureAuthClients();
   const me = await getMeFromAccessToken(accessToken);

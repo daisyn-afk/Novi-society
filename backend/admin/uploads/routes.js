@@ -54,6 +54,37 @@ const uploadLicense = multer({
   }
 });
 
+const MD_DOC_MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
+const MD_DOC_ALLOWED_MIME_TYPES = new Set([
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "image/jpeg",
+  "image/png",
+  "image/webp"
+]);
+const MD_DOC_MIME_TO_EXTENSION = {
+  "application/pdf": "pdf",
+  "application/msword": "doc",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp"
+};
+
+const uploadMdDoc = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MD_DOC_MAX_FILE_SIZE_BYTES },
+  fileFilter: (_req, file, cb) => {
+    if (!MD_DOC_ALLOWED_MIME_TYPES.has(file.mimetype)) {
+      const err = new Error("Only PDF, DOC, DOCX, JPG, PNG, and WEBP files are allowed.");
+      err.statusCode = 400;
+      return cb(err);
+    }
+    return cb(null, true);
+  }
+});
+
 export const uploadsRouter = Router();
 
 uploadsRouter.post("/course-cover", upload.single("file"), async (req, res, next) => {
@@ -92,6 +123,33 @@ uploadsRouter.post("/license-photo", uploadLicense.single("file"), async (req, r
     }
 
     const extension = LICENSE_MIME_TO_EXTENSION[req.file.mimetype];
+    if (!extension) {
+      const err = new Error("Unsupported file format.");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const uploaded = await uploadLicenseDocument({
+      buffer: req.file.buffer,
+      mimeType: req.file.mimetype,
+      extension
+    });
+
+    res.status(201).json(uploaded);
+  } catch (error) {
+    next(error);
+  }
+});
+
+uploadsRouter.post("/md-document", uploadMdDoc.single("file"), async (req, res, next) => {
+  try {
+    if (!req.file?.buffer) {
+      const err = new Error("Document file is required.");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const extension = MD_DOC_MIME_TO_EXTENSION[req.file.mimetype];
     if (!extension) {
       const err = new Error("Unsupported file format.");
       err.statusCode = 400;

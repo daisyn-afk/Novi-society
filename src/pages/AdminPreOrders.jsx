@@ -27,6 +27,54 @@ function StatusBadge({ status }) {
   );
 }
 
+function getFileTypeFromUrl(url) {
+  if (!url) return "unknown";
+  const cleanUrl = url.split("?")[0].split("#")[0].toLowerCase();
+  const lowerUrl = url.toLowerCase();
+  if (cleanUrl.endsWith(".pdf")) return "pdf";
+  if (lowerUrl.includes("pdf")) return "pdf";
+  if (/\.(png|jpe?g|gif|webp|bmp|svg)$/.test(cleanUrl)) return "image";
+  return "unknown";
+}
+
+function DocumentPreview({ label, url }) {
+  if (!url) return null;
+
+  const fileType = getFileTypeFromUrl(url);
+  const isImage = fileType === "image";
+
+  return (
+    <div
+      className={isImage ? "p-3 rounded-xl" : ""}
+      style={isImage ? { background: "rgba(30,37,53,0.04)", border: "1px solid rgba(30,37,53,0.1)" } : undefined}
+    >
+      <p className="text-xs font-bold uppercase tracking-wider mb-2" style={{ color: "rgba(30,37,53,0.45)" }}>{label}</p>
+
+      {isImage ? (
+        <a href={url} target="_blank" rel="noreferrer">
+          <img
+            src={url}
+            alt={label}
+            className="w-full max-h-60 object-cover rounded-lg border"
+            style={{ borderColor: "rgba(30,37,53,0.15)" }}
+          />
+        </a>
+      ) : (
+        <Button
+          asChild
+          variant="outline"
+          className="text-sm font-semibold w-fit"
+          style={{ borderColor: "rgba(123,142,200,0.55)", color: "#5f73b3", background: "rgba(123,142,200,0.2)" }}
+        >
+          <a href={url} target="_blank" rel="noreferrer">
+            Open PDF
+          </a>
+        </Button>
+      )}
+    </div>
+  );
+}
+
 function PreOrderRow({ order, onApprove, onReject, isProcessing }) {
   const [expanded, setExpanded] = useState(false);
   const [rejectionReason, setRejectionReason] = useState("");
@@ -88,6 +136,16 @@ function PreOrderRow({ order, onApprove, onReject, isProcessing }) {
               )}
             </div>
           </div>
+
+          {(order.license_image_url || order.certification_document_url) && (
+            <div className="mb-4">
+              <p className="text-xs font-bold uppercase tracking-wider mb-2" style={{ color: "rgba(30,37,53,0.4)" }}>Submitted Documents</p>
+              <div className="grid sm:grid-cols-2 gap-3">
+                <DocumentPreview label="License Photo" url={order.license_image_url} />
+                <DocumentPreview label="Certification Document" url={order.certification_document_url} />
+              </div>
+            </div>
+          )}
 
           {order.notes && (
             <div className="mb-4 p-3 rounded-xl" style={{ background: "rgba(30,37,53,0.05)" }}>

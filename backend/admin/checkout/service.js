@@ -6,7 +6,7 @@ const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
 const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 const appBaseUrl = process.env.APP_BASE_URL || "http://localhost:5173";
 const resendApiKey = process.env.RESEND_API_KEY;
-const resendFromEmail = process.env.RESEND_FROM_EMAIL || "NOVI Society <no-reply@novisocietyhub.com>";
+const resendFromEmail = process.env.RESEND_FROM_EMAIL || "NOVI Society <support@novisociety.com>";
 const noviEmailLogoUrl = process.env.NOVI_EMAIL_LOGO_URL || `${appBaseUrl}/novi-email-logo.png`;
 
 const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -228,6 +228,227 @@ export async function createCourseCheckout(payload) {
     throw error;
   } finally {
     client.release();
+  }
+}
+
+export async function createServicePreOrder(payload) {
+  const {
+    customer_name,
+    customer_email,
+    phone,
+    notes,
+    service_type_id,
+    license_type,
+    license_number,
+    license_image_url,
+    certification_document_url
+  } = payload || {};
+
+  if (!customer_name || !customer_email) {
+    const err = new Error("customer_name and customer_email are required.");
+    err.statusCode = 400;
+    throw err;
+  }
+  if (!service_type_id) {
+    const err = new Error("service_type_id is required.");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const client = await pool.connect();
+  try {
+    const serviceRes = await client.query(
+      `select id, name
+       from public.service_type
+       where id = $1
+       limit 1`,
+      [service_type_id]
+    );
+    const service = serviceRes.rows[0];
+    if (!service) {
+      const err = new Error("Service type not found.");
+      err.statusCode = 404;
+      throw err;
+    }
+
+    const { rows } = await client.query(
+      `insert into public.pre_orders (
+        order_type,
+        type,
+        status,
+        service_type_id,
+        service_name,
+        customer_name,
+        customer_email,
+        phone,
+        license_type,
+        license_number,
+        license_image_url,
+        certification_document_url,
+        notes
+      ) values (
+        'service',
+        'service',
+        'pending_approval',
+        $1,
+        $2,
+        $3,
+        $4,
+        $5,
+        $6,
+        $7,
+        $8,
+        $9,
+        $10
+      )
+      returning id`,
+      [
+        service.id,
+        service.name,
+        customer_name,
+        customer_email,
+        phone || null,
+        license_type || null,
+        license_number || null,
+        license_image_url || null,
+        certification_document_url || null,
+        notes || null
+      ]
+    );
+    const preOrderId = rows[0].id;
+
+    const emailSent = await sendMdServiceConfirmationEmail({
+      to: customer_email,
+      customerName: customer_name,
+      serviceName: service.name
+    });
+    if (emailSent) {
+      await client.query(
+        `update public.pre_orders
+         set confirmation_email_sent = true,
+             confirmation_email_sent_at = now()
+         where id = $1`,
+        [preOrderId]
+      );
+    }
+
+    return {
+      pre_order_id: preOrderId
+    };
+  } finally {
+    client.release();
+  }
+}
+
+async function sendMdServiceConfirmationEmail({ to, customerName, serviceName }) {
+  if (!to) {
+    // eslint-disable-next-line no-console
+    console.warn("[checkout] md service confirmation skipped: missing recipient email");
+    return false;
+  }
+  if (!resendApiKey) {
+    // eslint-disable-next-line no-console
+    console.warn("[checkout] md service confirmation skipped: RESEND_API_KEY is not configured");
+    return false;
+  }
+  const safeFirstName = String(customerName || "there").trim().split(/\s+/)[0] || "there";
+  const safeServiceName = serviceName || "NOVI MD Services";
+  const logoMarkup = noviEmailLogoUrl
+    ? `<img src="${noviEmailLogoUrl}" alt="NOVI Society" style="width:160px;height:auto" />`
+    : `<div style="font-size:28px;font-weight:700;letter-spacing:0.04em;color:#ffffff">NOVI SOCIETY</div>`;
+
+  const emailHtml = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f9fafb;font-family:'Helvetica Neue',Arial,sans-serif">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f9fafb;padding:40px 20px">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 6px rgba(0,0,0,0.06);max-width:600px;width:100%">
+        <tr><td style="background:linear-gradient(135deg,#2D6B7F 0%,#7B8EC8 55%,#C8E63C 100%);padding:32px 40px;text-align:center">
+          ${logoMarkup}
+        </td></tr>
+        <tr><td style="padding:40px">
+          <p style="margin:0 0 16px;font-size:16px;color:#111827">Hi ${safeFirstName},</p>
+          <p style="margin:0 0 24px;font-size:15px;color:#374151;line-height:1.6">We're so excited to welcome you to NOVI MD Services.</p>
+          <p style="margin:0 0 24px;font-size:15px;color:#374151;line-height:1.6">You've officially secured your place in our pre-launch group for <strong>${safeServiceName}</strong> — an early circle of providers stepping into something entirely new for this industry.</p>
+          <p style="margin:0 0 24px;font-size:15px;color:#374151;line-height:1.6">What we're building with NOVI isn't just another platform. It's a complete shift in how providers enter, operate, and grow within aesthetics — where everything you need is finally connected, elevated, and built to support you long-term.</p>
+
+          <p style="margin:0 0 12px;font-size:15px;font-weight:600;color:#111827">What Happens Next</p>
+          <p style="margin:0 0 12px;font-size:15px;color:#374151;line-height:1.6">Over the coming weeks, we'll be working closely with you to prepare for activation:</p>
+          <ul style="margin:0 0 24px;padding-left:20px;color:#374151;font-size:15px;line-height:1.8">
+            <li>Your onboarding spot is confirmed</li>
+            <li>You'll receive early access updates as we approach our June 1st launch</li>
+            <li>Our team will personally reach out to begin your setup</li>
+          </ul>
+
+          <p style="margin:0 0 24px;font-size:15px;color:#374151;line-height:1.6">At this stage, no payment is required. We'll coordinate billing once the platform is fully live so your experience starts seamlessly and at the right time.</p>
+
+          <p style="margin:0 0 12px;font-size:15px;font-weight:600;color:#111827">How We'll Support You</p>
+          <p style="margin:0 0 12px;font-size:15px;color:#374151;line-height:1.6">This isn't a hands-off experience - we're building this with you.</p>
+          <ul style="margin:0 0 24px;padding-left:20px;color:#374151;font-size:15px;line-height:1.8">
+            <li>You'll receive direct communication from our team via email</li>
+            <li>Our sales and onboarding team will personally connect with you</li>
+            <li>We'll guide you through every step so you're fully ready to activate</li>
+          </ul>
+
+          <p style="margin:0 0 12px;font-size:15px;font-weight:600;color:#111827">What Makes NOVI Different</p>
+          <p style="margin:0 0 12px;font-size:15px;color:#374151;line-height:1.6">NOVI was designed to solve what's been missing in this industry - completely.</p>
+          <p style="margin:0 0 12px;font-size:15px;color:#374151;line-height:1.6">Instead of piecing together systems, you'll step into one platform that brings everything together:</p>
+          <ul style="margin:0 0 24px;padding-left:20px;color:#374151;font-size:15px;line-height:1.8">
+            <li>Medical Director oversight built directly into your workflow</li>
+            <li>Seamless compliance and real-time chart review</li>
+            <li>A fully connected patient journey - from discovery to treatment and beyond</li>
+            <li>Intelligent growth tools designed to help you build and scale your practice</li>
+          </ul>
+
+          <p style="margin:0 0 28px;font-size:15px;color:#374151;line-height:1.6">There truly isn't another platform operating at this level - and you're getting in at the very beginning.</p>
+          <p style="margin:0 0 24px;font-size:15px;color:#374151;line-height:1.6">If you have any questions in the meantime, just reply directly to this email - we're here for you.</p>
+          <p style="margin:0 0 4px;font-size:15px;color:#374151">We're genuinely excited to have you with us and can't wait to bring you live on NOVI.</p>
+
+          <div style="margin-top:32px;padding-top:28px;border-top:1px solid #e5e7eb">
+            <p style="margin:0 0 4px;font-size:15px;font-style:italic;color:#6b7280">Welcome to NOVI.</p>
+            <p style="margin:0 0 20px;font-size:13px;letter-spacing:1px;color:#9ca3af;text-transform:uppercase">A New Way to Be Seen.</p>
+            <p style="margin:0;font-size:14px;color:#374151">Best,<br/><strong>The NOVI Society Team</strong></p>
+          </div>
+        </td></tr>
+        <tr><td style="padding:24px 40px;text-align:center;background:#f3f4f6">
+          <p style="margin:0;font-size:12px;color:#9ca3af">© ${new Date().getFullYear()} NOVI Society LLC · 8109 Meadow Valley Dr, McKinney, TX 75071</p>
+          <p style="margin:4px 0 0;font-size:12px;color:#9ca3af"><a href="mailto:support@novisociety.com" style="color:#9ca3af">support@novisociety.com</a></p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+
+  try {
+    const result = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${resendApiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        from: resendFromEmail,
+        to: [to],
+        subject: "You're In — Welcome to NOVI MD Services",
+        html: emailHtml
+      })
+    });
+    if (!result.ok) {
+      const bodyText = await result.text().catch(() => "");
+      // eslint-disable-next-line no-console
+      console.error("[checkout] md service confirmation send failed:", result.status, bodyText);
+    } else {
+      // eslint-disable-next-line no-console
+      console.log(`[checkout] md service confirmation sent to ${to}`);
+    }
+    return result.ok;
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error("[checkout] md service confirmation request failed:", error);
+    return false;
   }
 }
 
