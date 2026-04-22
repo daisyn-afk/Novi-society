@@ -1,18 +1,25 @@
 /** Shared fetch for Express admin API (template courses, scheduled courses). */
 
 /**
- * In dev, if VITE_APP_API_BASE_URL points at localhost, use same-origin `/admin/...` so Vite's
- * proxy forwards to 127.0.0.1:8787. Avoids the browser opening :8787 directly (IPv6 / firewall issues).
- * Remote staging URLs in dev stay as-is.
+ * If VITE_APP_API_BASE_URL points at localhost:
+ * - In dev, use same-origin `/admin/...` so Vite proxy forwards to 127.0.0.1:8787.
+ * - In non-local environments, also use same-origin so production does not try to call
+ *   the viewer's own localhost by mistake.
  */
 function resolveAdminApiBaseUrl() {
   const raw = (import.meta.env.VITE_APP_API_BASE_URL || "").trim();
-  if (!import.meta.env.DEV) return raw;
   if (!raw) return "";
   try {
     const u = new URL(raw);
     const h = u.hostname.toLowerCase();
-    if (h === "localhost" || h === "127.0.0.1") return "";
+    if (h === "localhost" || h === "127.0.0.1") {
+      if (import.meta.env.DEV) return "";
+      if (typeof window !== "undefined") {
+        const currentHost = window.location.hostname.toLowerCase();
+        const isCurrentHostLocal = currentHost === "localhost" || currentHost === "127.0.0.1";
+        if (!isCurrentHostLocal) return "";
+      }
+    }
   } catch {
     return raw;
   }
