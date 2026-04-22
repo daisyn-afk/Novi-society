@@ -18,6 +18,8 @@ const { promoCodesRouter } = await import("./promo-codes/routes.js");
 const { authRouter } = await import("./auth/routes.js");
 const { serviceTypesCatalogRouter } = await import("./service-types-catalog/routes.js");
 const { preOrdersRouter } = await import("./pre-orders/routes.js");
+const { trainerPrepRouter } = await import("./trainer-prep/routes.js");
+const { enrollmentsRouter } = await import("./enrollments/routes.js");
 
 const app = express();
 app.use(cors());
@@ -37,6 +39,8 @@ app.use("/admin/promo-codes", promoCodesRouter);
 app.use("/admin/auth", authRouter);
 app.use("/admin/service-types", serviceTypesCatalogRouter);
 app.use("/admin/pre-orders", preOrdersRouter);
+app.use("/admin/trainer-prep", trainerPrepRouter);
+app.use("/admin/enrollments", enrollmentsRouter);
 
 app.use((error, _req, res, _next) => {
   if ((error.statusCode || 500) >= 500) {
