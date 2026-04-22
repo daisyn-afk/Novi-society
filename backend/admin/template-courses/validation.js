@@ -63,6 +63,8 @@ export function validateTemplateInput(body, { partial = false } = {}) {
     is_featured: body.is_featured ?? false,
     platform_coverage: ensureArray(body.platform_coverage),
     linked_service_type_ids: ensureArray(body.linked_service_type_ids),
+    trainer_prep_supply_list_id: body.trainer_prep_supply_list_id || null,
+    trainer_prep_supply_item_ids: ensureArray(body.trainer_prep_supply_item_ids),
     certification_name: body.certification_name ?? null,
     certifications_awarded: ensureArray(body.certifications_awarded)
   };

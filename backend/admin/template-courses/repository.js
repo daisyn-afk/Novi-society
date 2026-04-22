@@ -29,6 +29,8 @@ function rowToApi(row, certifications = []) {
     is_featured: row.is_featured,
     platform_coverage: row.platform_coverage ?? [],
     linked_service_type_ids: row.linked_service_type_ids ?? [],
+    trainer_prep_supply_list_id: row.trainer_prep_supply_list_id ?? null,
+    trainer_prep_supply_item_ids: row.trainer_prep_supply_item_ids ?? [],
     certification_name: row.certification_name,
     certifications_awarded: certifications,
     created_date: row.created_at,
@@ -180,14 +182,14 @@ export async function createTemplateCourse(payload, createdByEmail, serviceTypeN
         instructor_name, instructor_bio, cover_image_url,
         syllabus, requirements, what_to_bring, getting_ready_info,
         pre_course_materials, session_dates, tags, is_active, is_featured,
-        platform_coverage, linked_service_type_ids, certification_name
+        platform_coverage, linked_service_type_ids, trainer_prep_supply_list_id, trainer_prep_supply_item_ids, certification_name
       ) values (
         $1,$2,$3,$4::course_category_enum,$5::course_level_enum,
         $6,$7,$8,$9,$10,
         $11,$12,$13,
         $14,$15,$16,$17,
         $18::jsonb,$19::jsonb,$20,$21,$22,
-        $23,$24,$25
+        $23,$24,$25,$26,$27
       )
       returning *`,
       [
@@ -215,6 +217,8 @@ export async function createTemplateCourse(payload, createdByEmail, serviceTypeN
         payload.is_featured,
         payload.platform_coverage || [],
         payload.linked_service_type_ids || [],
+        payload.trainer_prep_supply_list_id,
+        payload.trainer_prep_supply_item_ids || [],
         payload.certification_name
       ]
     );
@@ -251,7 +255,7 @@ export async function updateTemplateCourse(id, payload, serviceTypeNameLookup) {
         syllabus = $14, requirements = $15, what_to_bring = $16, getting_ready_info = $17,
         pre_course_materials = $18::jsonb, session_dates = $19::jsonb, tags = $20,
         is_active = $21, is_featured = $22,
-        platform_coverage = $23, linked_service_type_ids = $24, certification_name = $25
+        platform_coverage = $23, linked_service_type_ids = $24, trainer_prep_supply_list_id = $25, trainer_prep_supply_item_ids = $26, certification_name = $27
       where id = $1
       returning *`,
       [
@@ -279,6 +283,8 @@ export async function updateTemplateCourse(id, payload, serviceTypeNameLookup) {
         payload.is_featured,
         payload.platform_coverage || [],
         payload.linked_service_type_ids || [],
+        payload.trainer_prep_supply_list_id,
+        payload.trainer_prep_supply_item_ids || [],
         payload.certification_name
       ]
     );

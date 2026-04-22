@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   Plus, Pencil, Trash2, Users, DollarSign, BookOpen, Award,
-  Calendar, Search, CheckCircle, Eye, EyeOff, RefreshCw, CalendarDays, LayoutTemplate, Clock, Package, MapPin, Key, ChevronDown, ChevronRight
+  Calendar, CheckCircle, Eye, EyeOff, RefreshCw, CalendarDays, LayoutTemplate, Clock, Package, MapPin, Key, ChevronDown, ChevronRight
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import CourseTemplateForm, { EMPTY_TEMPLATE } from "@/components/admin/CourseTemplateForm";
@@ -50,16 +50,6 @@ function groupSessionDatesBySession(sessionDates = []) {
     days: [...group.days].sort((a, b) => (a.date || "") > (b.date || "") ? 1 : -1),
   }));
 }
-
-const enrollmentStatusColor = {
-  pending_payment: "bg-yellow-100 text-yellow-700",
-  paid: "bg-blue-100 text-blue-700",
-  confirmed: "bg-blue-100 text-blue-700",
-  attended: "bg-indigo-100 text-indigo-700",
-  completed: "bg-green-100 text-green-700",
-  cancelled: "bg-red-100 text-red-700",
-  no_show: "bg-slate-100 text-slate-600",
-};
 
 function SessionRow({ s, showCodes, setShowCodes, regenCode, setConfirmAttendanceDialog, isPast }) {
   return (
@@ -115,8 +105,6 @@ export default function Admincourses() {
   const [scheduleForm, setScheduleForm] = useState(EMPTY_SCHEDULED);
   const [editingSchedule, setEditingSchedule] = useState(null);
 
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
   const [collapsedSessionsByCourse, setCollapsedSessionsByCourse] = useState({});
 
   const [sessionOpen, setSessionOpen] = useState(false);
@@ -316,10 +304,6 @@ export default function Admincourses() {
       qc.invalidateQueries({ queryKey: ["courses", "admin-api-scheduled"] });
     },
   });
-  const updateEnrollmentStatus = useMutation({
-    mutationFn: ({ id, status }) => base44.entities.Enrollment.update(id, { status }),
-    onSuccess: () => qc.invalidateQueries(["enrollments"]),
-  });
   const createSession = useMutation({
     mutationFn: (data) => base44.entities.ClassSession.create(data),
     onSuccess: () => { qc.invalidateQueries(["class-sessions"]); setSessionOpen(false); },
@@ -340,12 +324,6 @@ export default function Admincourses() {
     confirmAttendanceMutation.mutate(session.id);
   };
 
-  const filteredEnrollments = enrollments.filter(e => {
-    const matchSearch = !search || e.provider_name?.toLowerCase().includes(search.toLowerCase()) || e.provider_email?.toLowerCase().includes(search.toLowerCase());
-    const matchStatus = statusFilter === "all" || e.status === statusFilter;
-    return matchSearch && matchStatus;
-  });
-
   const isUpcoming = (s) => { try { return s.session_date && parseISO(s.session_date) >= new Date(); } catch { return false; } };
   const isPastSession = (s) => { try { return !s.session_date || parseISO(s.session_date) < new Date(); } catch { return true; } };
   const toggleSessionInCard = (courseId, sessionId) => {
@@ -361,7 +339,6 @@ export default function Admincourses() {
     { id: "scheduled", label: "Scheduled", count: scheduledCourses.length, icon: Calendar },
     { id: "calendar", label: "Calendar", count: null, icon: CalendarDays },
     { id: "trainer_prep", label: "Trainer Prep", count: null, icon: Package },
-    { id: "enrollments", label: "Enrollments", count: enrollments.length, icon: Users },
   ];
 
   return (
@@ -626,60 +603,6 @@ export default function Admincourses() {
       {/* ── TRAINER PREP TAB ── */}
       {tab === "trainer_prep" && (
         <TrainerPrepView scheduledCourses={scheduledCourses} enrollments={enrollments} />
-      )}
-
-      {/* ── ENROLLMENTS TAB ── */}
-      {tab === "enrollments" && (
-        <div className="space-y-4">
-          <div className="flex flex-col sm:flex-row gap-3">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: "#b0b8cc" }} />
-              <Input className="pl-9" placeholder="Search by provider..." value={search} onChange={e => setSearch(e.target.value)} />
-            </div>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-full sm:w-44"><SelectValue placeholder="Status" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Statuses</SelectItem>
-                {["pending_payment","paid","confirmed","attended","completed","cancelled","no_show"].map(s => (
-                  <SelectItem key={s} value={s} className="capitalize">{s.replace("_"," ")}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          {loadingEnrollments ? (
-            <div className="space-y-3">{[1,2,3].map(i => <div key={i} className="h-20 rounded-2xl animate-pulse" style={{ background: "rgba(0,0,0,0.05)" }} />)}</div>
-          ) : (
-            <div className="space-y-2">
-              {filteredEnrollments.map(e => {
-                const course = courseMap[e.course_id];
-                return (
-                  <div key={e.id} className="rounded-3xl px-5 py-4" style={{ background: "#fff", border: "1px solid rgba(0,0,0,0.06)", boxShadow: "0 1px 4px rgba(0,0,0,0.03)" }}>
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <div>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-semibold text-sm" style={{ color: "#1a2540" }}>{e.provider_name || e.provider_email}</span>
-                          <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${enrollmentStatusColor[e.status]}`}>{e.status?.replace("_"," ")}</span>
-                        </div>
-                        <p className="text-xs mt-0.5" style={{ color: "#8891a8" }}>{course?.title || "Unknown Course"}</p>
-                        <div className="flex gap-3 text-xs mt-1" style={{ color: "#b0b8cc" }}>
-                          {e.amount_paid && <span>${e.amount_paid.toLocaleString()}</span>}
-                          {e.created_date && <span>{format(new Date(e.created_date), "MMM d, yyyy")}</span>}
-                        </div>
-                      </div>
-                      <div className="flex gap-2 flex-wrap">
-                        {e.status === "paid" && <button className="text-xs font-semibold px-3 py-1.5 rounded-xl border" style={{ borderColor: "rgba(74,95,160,0.3)", color: "#4a5fa0" }} onClick={() => updateEnrollmentStatus.mutate({ id: e.id, status: "confirmed" })}>Confirm</button>}
-                        {e.status === "confirmed" && <button className="text-xs font-semibold px-3 py-1.5 rounded-xl border" style={{ borderColor: "rgba(74,95,160,0.3)", color: "#4a5fa0" }} onClick={() => updateEnrollmentStatus.mutate({ id: e.id, status: "attended" })}>Mark Attended</button>}
-                        {e.status === "attended" && <button className="text-xs font-semibold px-3 py-1.5 rounded-xl text-white" style={{ background: "linear-gradient(135deg, #DA6A63, #FA6F30)" }} onClick={() => updateEnrollmentStatus.mutate({ id: e.id, status: "completed" })}><CheckCircle className="w-3.5 h-3.5 inline mr-1" />Complete</button>}
-                        {!["cancelled","completed","no_show"].includes(e.status) && <button className="text-xs font-semibold px-3 py-1.5 rounded-xl border" style={{ borderColor: "rgba(218,106,99,0.3)", color: "#DA6A63" }} onClick={() => updateEnrollmentStatus.mutate({ id: e.id, status: "cancelled" })}>Cancel</button>}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-              {filteredEnrollments.length === 0 && <p className="text-center py-10" style={{ color: "#b0b8cc" }}>No enrollments found</p>}
-            </div>
-          )}
-        </div>
       )}
 
       {/* ── Forms & Dialogs ── */}

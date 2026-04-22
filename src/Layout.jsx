@@ -17,7 +17,8 @@ const navByRole = {
   admin: [
     { label: "Dashboard", icon: LayoutDashboard, page: "AdminDashboard" },
     { label: "Pre-Order Applications", icon: ClipboardList, page: "AdminPreOrders" },
-    { label: "Courses & Enrollments", icon: BookOpen, page: "admincourses" },
+    { label: "Courses", icon: BookOpen, page: "admincourses" },
+    { label: "Enrollments", icon: ClipboardList, page: "AdminEnrollments" },
     { label: "Providers", icon: Users, page: "AdminProviders" },
     { label: "Licenses & Certifications", icon: FileText, page: "AdminLicenses" },
     { label: "Service Types", icon: Settings, page: "AdminServiceTypes" },
