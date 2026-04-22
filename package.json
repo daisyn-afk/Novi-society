@@ -8,7 +8,7 @@
     "dev:vite": "vite",
     "dev:admin": "npm run dev --prefix backend/admin",
     "dev:all": "npm run dev",
-    "build": "vite build",
+    "build": "npm install --prefix backend/admin && vite build",
     "lint": "eslint . --quiet",
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc -p ./jsconfig.json",

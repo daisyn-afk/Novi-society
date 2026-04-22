@@ -1,6 +1,14 @@
 {
   "rewrites": [
     {
+      "source": "/admin/(.*)",
+      "destination": "/api/admin/$1"
+    },
+    {
+      "source": "/webhooks/(.*)",
+      "destination": "/api/webhooks/$1"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }
