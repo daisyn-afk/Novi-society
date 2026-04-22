@@ -1,8 +1,8 @@
 {
   "rewrites": [
-    {
-      "source": "/(.*)",
-      "destination": "/index.html"
-    }
+    { "source": "/webhooks/stripe", "destination": "/api/webhooks/stripe" },
+    { "source": "/webhooks/(.*)", "destination": "/api/index" },
+    { "source": "/admin/(.*)", "destination": "/api/index" },
+    { "source": "/(.*)", "destination": "/index.html" }
   ]
 }

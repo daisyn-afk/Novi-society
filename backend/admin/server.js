@@ -18,6 +18,7 @@ const { promoCodesRouter } = await import("./promo-codes/routes.js");
 const { authRouter } = await import("./auth/routes.js");
 const { serviceTypesCatalogRouter } = await import("./service-types-catalog/routes.js");
 const { preOrdersRouter } = await import("./pre-orders/routes.js");
+const { usersRouter } = await import("./users/routes.js");
 
 const app = express();
 app.use(cors());
@@ -37,6 +38,7 @@ app.use("/admin/promo-codes", promoCodesRouter);
 app.use("/admin/auth", authRouter);
 app.use("/admin/service-types", serviceTypesCatalogRouter);
 app.use("/admin/pre-orders", preOrdersRouter);
+app.use("/admin/users", usersRouter);
 
 app.use((error, _req, res, _next) => {
   if ((error.statusCode || 500) >= 500) {
@@ -55,10 +57,15 @@ app.use((error, _req, res, _next) => {
   });
 });
 
-const port = Number(process.env.PORT) || 8787;
-const host = process.env.HOST || "0.0.0.0";
-app.listen(port, host, () => {
-  // eslint-disable-next-line no-console
-  console.log(`Admin API listening on http://127.0.0.1:${port} (host ${host})`);
-});
+export default app;
+export { app };
+
+if (!process.env.VERCEL) {
+  const port = Number(process.env.PORT) || 8787;
+  const host = process.env.HOST || "0.0.0.0";
+  app.listen(port, host, () => {
+    // eslint-disable-next-line no-console
+    console.log(`Admin API listening on http://127.0.0.1:${port} (host ${host})`);
+  });
+}
 
