@@ -12,10 +12,19 @@ import {
 import { useProviderAccess } from "@/components/useProviderAccess";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import NotificationBell from "@/components/NotificationBell";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 const navByRole = {
   admin: [
     { label: "Dashboard", icon: LayoutDashboard, page: "AdminDashboard" },
+    { label: "Users", icon: Users, page: "AdminUsers" },
     { label: "Pre-Order Applications", icon: ClipboardList, page: "AdminPreOrders" },
     { label: "Courses", icon: BookOpen, page: "admincourses" },
     { label: "Enrollments", icon: ClipboardList, page: "AdminEnrollments" },
@@ -125,6 +134,16 @@ export default function Layout({ children, currentPageName }) {
   });
 
   const isProviderUnlocked = true;
+
+  const handleLogout = async () => {
+    try {
+      queryClient.clear();
+    } catch (e) {
+      // no-op
+    }
+    const redirectTarget = `${window.location.origin}/login`;
+    base44.auth.logout(redirectTarget);
+  };
 
   if (BARE_PAGES.includes(currentPageName)) {
     return <div>{children}</div>;
@@ -354,8 +373,14 @@ export default function Layout({ children, currentPageName }) {
               <p className="text-xs font-semibold truncate" style={{ color: "rgba(30,37,53,0.9)" }}>{user?.full_name || "User"}</p>
               <p className="truncate" style={{ fontSize: 10, color: "rgba(123,142,200,0.65)" }}>{user?.email}</p>
             </div>
-            <button onClick={() => base44.auth.logout()} className="hover:opacity-70 transition-opacity" title="Logout">
-              <LogOut className="w-3.5 h-3.5" style={{ color: "rgba(123,142,200,0.55)" }} />
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-1 px-2 py-1 rounded-md hover:bg-black/5 transition-colors"
+              title="Log out"
+              style={{ color: "rgba(123,142,200,0.85)" }}
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span style={{ fontSize: 11, fontWeight: 600 }}>Log out</span>
             </button>
           </div>
         </div>
@@ -375,12 +400,38 @@ export default function Layout({ children, currentPageName }) {
           </div>
           <div className="flex items-center gap-3 ml-auto">
             <NotificationBell />
-            <Avatar className="w-7 h-7 cursor-pointer">
-              <AvatarImage src={user?.avatar_url} />
-                <AvatarFallback style={{ background: "linear-gradient(135deg, #7B8EC8, #4a6db8)", color: "white", fontSize: 10, fontWeight: 700 }}>
-                {user?.full_name?.[0] || "U"}
-              </AvatarFallback>
-            </Avatar>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  className="rounded-full focus:outline-none focus:ring-2 focus:ring-offset-1"
+                  style={{ outlineColor: "rgba(200,230,60,0.6)" }}
+                  aria-label="Open user menu"
+                >
+                  <Avatar className="w-7 h-7 cursor-pointer">
+                    <AvatarImage src={user?.avatar_url} />
+                    <AvatarFallback style={{ background: "linear-gradient(135deg, #7B8EC8, #4a6db8)", color: "white", fontSize: 10, fontWeight: 700 }}>
+                      {user?.full_name?.[0] || "U"}
+                    </AvatarFallback>
+                  </Avatar>
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel>
+                  <div className="flex flex-col">
+                    <span className="text-sm font-semibold truncate">{user?.full_name || "User"}</span>
+                    <span className="text-xs font-normal text-muted-foreground truncate">{user?.email}</span>
+                  </div>
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={handleLogout}
+                  className="text-red-600 focus:text-red-600 focus:bg-red-50 cursor-pointer"
+                >
+                  <LogOut className="w-4 h-4 mr-2" />
+                  Log out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </header>
 

@@ -59,13 +59,23 @@ if (!connectionString) {
 
 const isSupabase = connectionString.includes("supabase.co");
 
-const pool = new Pool({
+// Reuse a single pg Pool across warm serverless invocations. Each Vercel
+// function instance is its own Node isolate, so we keep the pool small
+// (max: 1) to play nicely with Supabase's PgBouncer on port 6543.
+const poolOptions = {
   connectionString,
   family: 4,
+  max: process.env.VERCEL ? 1 : 10,
+  idleTimeoutMillis: 10_000,
   ssl: process.env.NODE_ENV === "production" || isSupabase
     ? { rejectUnauthorized: false }
     : false
-});
+};
+
+const globalScope = globalThis;
+const pool =
+  globalScope.__noviPgPool ??
+  (globalScope.__noviPgPool = new Pool(poolOptions));
 
 export async function query(text, params = []) {
   return pool.query(text, params);
