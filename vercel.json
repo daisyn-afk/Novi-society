@@ -1,7 +1,5 @@
 {
   "rewrites": [
-    { "source": "/admin/:path*", "destination": "/api/admin/:path*" },
-    { "source": "/webhooks/:path*", "destination": "/api/webhooks/:path*" },
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]
 }

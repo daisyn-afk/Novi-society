@@ -12,13 +12,21 @@ export default defineConfig({
   plugins: [
     react(),
   ],
-  // When VITE_APP_API_BASE_URL is unset, APIs call `/admin/...` on the dev origin — proxy to Node (8787).
-  // Use `/admin/` (trailing slash) so the SPA route `/admincourses` is NOT mistaken for `/admin` + suffix.
+  // APIs are exposed under `/api/admin/...` and `/api/webhooks/...` to avoid
+  // colliding with React Router SPA routes like `/admin`. Client helpers
+  // prepend `/api` automatically. Vite dev strips `/api` before proxying to
+  // the Express server (which mounts routers at `/admin/*` and `/webhooks/*`).
   server: {
     proxy: {
-      '/admin/': {
+      '/api/admin/': {
         target: process.env.VITE_DEV_ADMIN_API_TARGET || 'http://127.0.0.1:8787',
         changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/api/, ''),
+      },
+      '/api/webhooks/': {
+        target: process.env.VITE_DEV_ADMIN_API_TARGET || 'http://127.0.0.1:8787',
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/api/, ''),
       },
     },
   },

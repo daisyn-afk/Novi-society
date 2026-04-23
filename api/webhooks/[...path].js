@@ -2,10 +2,10 @@ import { createAdminApp } from "../../backend/admin/app.js";
 
 const app = createAdminApp();
 
-// Vercel rewrites /webhooks/* -> /api/webhooks/* before invoking this
-// function, so req.url arrives prefixed with "/api". Express routers are
-// mounted at "/webhooks/*", so we strip the "/api" prefix to keep routing
-// consistent with local dev.
+// Clients call /api/webhooks/* so the path never collides with SPA routes.
+// Express routers are mounted at /webhooks/*, so we strip the /api prefix
+// before handing off. Locally, Vite's proxy performs the same strip before
+// forwarding to the Express server on port 8787.
 export default function handler(req, res) {
   if (req.url && req.url.startsWith("/api/")) {
     req.url = req.url.slice(4);
