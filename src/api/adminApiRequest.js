@@ -28,8 +28,20 @@ function resolveAdminApiBaseUrl() {
 
 const API_BASE_URL = resolveAdminApiBaseUrl();
 
+// Prepend "/api" to paths under /admin/ or /webhooks/ so API calls do not
+// collide with React Router SPA routes (e.g. /admin dashboard page).
+// Serverless functions live at /api/admin/[...path].js and /api/webhooks/[...path].js.
+function toApiPath(path) {
+  if (!path || typeof path !== "string") return path;
+  if (path.startsWith("/api/")) return path;
+  if (path.startsWith("/admin/") || path.startsWith("/webhooks/")) {
+    return `/api${path}`;
+  }
+  return path;
+}
+
 export async function adminApiRequest(path, options = {}) {
-  const url = `${API_BASE_URL}${path}`;
+  const url = `${API_BASE_URL}${toApiPath(path)}`;
   const headers = { ...(options.headers || {}) };
   const hasContentType =
     Object.prototype.hasOwnProperty.call(headers, "Content-Type") ||

@@ -23,6 +23,7 @@ const { serviceTypesCatalogRouter } = await import("./service-types-catalog/rout
 const { preOrdersRouter } = await import("./pre-orders/routes.js");
 const { trainerPrepRouter } = await import("./trainer-prep/routes.js");
 const { enrollmentsRouter } = await import("./enrollments/routes.js");
+const { usersRouter } = await import("./users/routes.js");
 
 export function createAdminApp() {
   const app = express();
@@ -45,6 +46,7 @@ export function createAdminApp() {
   app.use("/admin/pre-orders", preOrdersRouter);
   app.use("/admin/trainer-prep", trainerPrepRouter);
   app.use("/admin/enrollments", enrollmentsRouter);
+  app.use("/admin/users", usersRouter);
 
   app.use((error, _req, res, _next) => {
     if ((error.statusCode || 500) >= 500) {

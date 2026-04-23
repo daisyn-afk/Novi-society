@@ -1,19 +1,6 @@
 {
-  "routes": [
-    {
-      "src": "/admin/(.*)",
-      "dest": "/api/admin/$1"
-    },
-    {
-      "src": "/webhooks/(.*)",
-      "dest": "/api/webhooks/$1"
-    },
-    {
-      "handle": "filesystem"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "/index.html"
-    }
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api" },
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]
 }

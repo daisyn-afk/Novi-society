@@ -1,5 +1,17 @@
 import { apiRuntimeConfig } from "@/api/runtimeConfig";
 
+// Prepend "/api" to paths under /admin/ or /webhooks/ so API calls do not
+// collide with React Router SPA routes (e.g. /admin dashboard page).
+// Serverless functions live at /api/admin/[...path].js and /api/webhooks/[...path].js.
+function toApiPath(path) {
+  if (!path || typeof path !== "string") return path;
+  if (path.startsWith("/api/")) return path;
+  if (path.startsWith("/admin/") || path.startsWith("/webhooks/")) {
+    return `/api${path}`;
+  }
+  return path;
+}
+
 function createNotImplementedMethod(path) {
   return async () => {
     throw new Error(
@@ -17,7 +29,7 @@ async function postJson(path, payload) {
     );
   }
 
-  const response = await fetch(`${baseUrl}${path}`, {
+  const response = await fetch(`${baseUrl}${toApiPath(path)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload ?? {})
@@ -44,7 +56,7 @@ async function requestJson(path, options = {}, { includeAuth = false } = {}) {
     const token = getStoredAccessToken();
     if (token) headers.Authorization = `Bearer ${token}`;
   }
-  const response = await fetch(`${baseUrl}${path}`, {
+  const response = await fetch(`${baseUrl}${toApiPath(path)}`, {
     ...options,
     headers
   });
@@ -104,7 +116,7 @@ async function tryRefreshAuthSession() {
   const refreshToken = getStoredRefreshToken();
   if (!refreshToken) return false;
 
-  const response = await fetch(`${ADMIN_API_BASE_URL}/admin/auth/refresh`, {
+  const response = await fetch(`${ADMIN_API_BASE_URL}${toApiPath("/admin/auth/refresh")}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ refresh_token: refreshToken })
@@ -133,7 +145,7 @@ async function authRequest(path, options = {}, retryOnAuthError = true) {
   };
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  const response = await fetch(`${ADMIN_API_BASE_URL}${path}`, {
+  const response = await fetch(`${ADMIN_API_BASE_URL}${toApiPath(path)}`, {
     ...options,
     headers
   });
