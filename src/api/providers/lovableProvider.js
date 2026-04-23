@@ -1,5 +1,3 @@
-import { apiRuntimeConfig } from "@/api/runtimeConfig";
-
 // Prepend "/api" to paths under /admin/ or /webhooks/ so API calls do not
 // collide with React Router SPA routes (e.g. /admin dashboard page).
 // Serverless functions live at /api/admin/[...path].js and /api/webhooks/[...path].js.
@@ -21,15 +19,27 @@ function createNotImplementedMethod(path) {
   };
 }
 
-async function postJson(path, payload) {
-  const baseUrl = apiRuntimeConfig.apiBaseUrl;
-  if (!baseUrl) {
-    throw new Error(
-      "[lovable-provider] VITE_APP_API_BASE_URL is required when VITE_APP_API_PROVIDER=lovable."
-    );
+function resolveAdminApiBaseUrl() {
+  const raw = (import.meta.env.VITE_APP_API_BASE_URL || "").trim();
+  // In dev, always route through the Vite proxy (relative URLs) so the `/api`
+  // prefix gets stripped before reaching the Express server. A localhost base
+  // URL in .env would bypass the proxy and 404 on the `/api/*` mount path.
+  if (!import.meta.env.DEV) return raw;
+  if (!raw) return "";
+  try {
+    const u = new URL(raw);
+    const h = u.hostname.toLowerCase();
+    if (h === "localhost" || h === "127.0.0.1") return "";
+  } catch {
+    return raw;
   }
+  return raw;
+}
 
-  const response = await fetch(`${baseUrl}${toApiPath(path)}`, {
+const ADMIN_API_BASE_URL = resolveAdminApiBaseUrl();
+
+async function postJson(path, payload) {
+  const response = await fetch(`${ADMIN_API_BASE_URL}${toApiPath(path)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload ?? {})
@@ -44,10 +54,6 @@ async function postJson(path, payload) {
 }
 
 async function requestJson(path, options = {}, { includeAuth = false } = {}) {
-  const baseUrl = apiRuntimeConfig.apiBaseUrl;
-  if (!baseUrl) {
-    throw new Error("[lovable-provider] VITE_APP_API_BASE_URL is required.");
-  }
   const headers = {
     "Content-Type": "application/json",
     ...(options.headers || {})
@@ -56,7 +62,7 @@ async function requestJson(path, options = {}, { includeAuth = false } = {}) {
     const token = getStoredAccessToken();
     if (token) headers.Authorization = `Bearer ${token}`;
   }
-  const response = await fetch(`${baseUrl}${toApiPath(path)}`, {
+  const response = await fetch(`${ADMIN_API_BASE_URL}${toApiPath(path)}`, {
     ...options,
     headers
   });
@@ -67,22 +73,6 @@ async function requestJson(path, options = {}, { includeAuth = false } = {}) {
   if (response.status === 204) return null;
   return response.json();
 }
-
-function resolveAdminApiBaseUrl() {
-  const raw = (import.meta.env.VITE_APP_API_BASE_URL || "").trim();
-  if (!import.meta.env.DEV) return raw;
-  if (!raw) return "";
-  try {
-    const u = new URL(raw);
-    const h = u.hostname.toLowerCase();
-    if (h === "localhost" || h === "127.0.0.1") return "";
-  } catch {
-    return raw;
-  }
-  return raw;
-}
-
-const ADMIN_API_BASE_URL = resolveAdminApiBaseUrl();
 const ACCESS_TOKEN_KEY = "novi_auth_access_token";
 const REFRESH_TOKEN_KEY = "novi_auth_refresh_token";
 
