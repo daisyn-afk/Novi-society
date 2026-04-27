@@ -10,7 +10,12 @@ export default function PreOrderConfirmation() {
   const orderId = params.get("id");
   const sessionId = params.get("session_id");
 
-  const { data: order } = useQuery({
+  const {
+    data: order,
+    isLoading,
+    isError,
+    error
+  } = useQuery({
     queryKey: ["preorder", orderId, sessionId],
     queryFn: () => {
       const query = new URLSearchParams();
@@ -19,12 +24,50 @@ export default function PreOrderConfirmation() {
       return adminApiRequest(`/admin/checkout/pre-order?${query.toString()}`);
     },
     enabled: !!orderId || !!sessionId,
+    retry: 1
   });
 
-  if (!order) {
+  if (!orderId && !sessionId) {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-4" style={{ background: "#f5f3ef" }}>
+        <div className="text-center max-w-lg">
+          <h2 className="text-2xl font-semibold mb-2" style={{ color: "#1e2535" }}>Missing confirmation details</h2>
+          <p style={{ color: "rgba(30,37,53,0.7)" }}>
+            We could not find an order reference in the URL. Please return to checkout and try again.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center px-4" style={{ background: "#f5f3ef" }}>
         <div className="animate-pulse" style={{ color: "rgba(30,37,53,0.6)" }}>Loading...</div>
+      </div>
+    );
+  }
+
+  if (isError || !order) {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-4" style={{ background: "#f5f3ef" }}>
+        <div className="text-center max-w-xl">
+          <h2 className="text-2xl font-semibold mb-2" style={{ color: "#1e2535" }}>Unable to load confirmation</h2>
+          <p style={{ color: "rgba(30,37,53,0.72)" }}>
+            We received your redirect, but could not fetch order details right now.
+          </p>
+          <p className="mt-3 text-sm" style={{ color: "rgba(30,37,53,0.6)" }}>
+            {error?.message || "Please refresh this page in a moment."}
+          </p>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="mt-6 px-4 py-2 rounded-xl"
+            style={{ background: "#1e2535", color: "#fff" }}
+          >
+            Retry
+          </button>
+        </div>
       </div>
     );
   }

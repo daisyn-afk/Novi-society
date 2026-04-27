@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
+import { useToast } from "@/components/ui/use-toast";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -102,6 +103,7 @@ const isCourseSoldOut = (course) =>
   Number(course.available_seats) <= 0;
 
 export default function NoviLanding() {
+  const { toast } = useToast();
   const [selectedCourse, setSelectedCourse] = useState(null);
   const [selectedService, setSelectedService] = useState(null);
   // Course modal steps: "dates" | "info" | "submitted"
@@ -150,6 +152,15 @@ export default function NoviLanding() {
       }
       throw new Error("Stripe checkout URL was not returned.");
     },
+    onError: (error) => {
+      if (Number(error?.status) === 409) {
+        toast({
+          title: "Course already purchased",
+          description: error?.message || "You already purchased this course for the selected date.",
+          variant: "destructive"
+        });
+      }
+    }
   });
 
   const openCourseModal = (course) => {

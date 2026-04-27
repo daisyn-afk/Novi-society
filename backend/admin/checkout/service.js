@@ -18,6 +18,7 @@ const supabaseAdmin = supabaseUrl && supabaseServiceRoleKey
       auth: { persistSession: false, autoRefreshToken: false }
     })
   : null;
+const preorderFallbackTimeoutMs = Number(process.env.PREORDER_FALLBACK_TIMEOUT_MS || 8000);
 
 function normalizeRole(role) {
   const value = String(role || "provider").trim().toLowerCase();
@@ -60,6 +61,8 @@ export async function createCourseCheckout(payload) {
     terms_confirmed,
     refund_policy_confirmed
   } = payload || {};
+  const normalizedCustomerEmail = String(customer_email || "").trim().toLowerCase();
+  const normalizedCourseDate = course_date || null;
 
   if (!course_id || !customer_email || !customer_name || !license_number || !license_image_url) {
     const err = new Error("Missing required checkout fields.");
@@ -93,6 +96,26 @@ export async function createCourseCheckout(payload) {
     }
     if (course.available_seats !== null && Number(course.available_seats) <= 0) {
       const err = new Error("This course is sold out.");
+      err.statusCode = 409;
+      throw err;
+    }
+
+    const duplicatePurchaseRes = await client.query(
+      `select 1
+       from public.pre_orders po
+       where po.order_type = 'course'
+         and po.status = 'paid'
+         and po.course_id = $1
+         and lower(po.customer_email) = $2
+         and (
+           ($3::date is null and po.course_date is null)
+           or po.course_date::date = $3::date
+         )
+       limit 1`,
+      [course.id, normalizedCustomerEmail, normalizedCourseDate]
+    );
+    if (duplicatePurchaseRes.rows.length > 0) {
+      const err = new Error("Course already purchased for this date.");
       err.statusCode = 409;
       throw err;
     }
@@ -161,9 +184,9 @@ export async function createCourseCheckout(payload) {
       [
         course.id,
         course.title,
-        course_date || null,
+        normalizedCourseDate,
         customer_name,
-        customer_email,
+        normalizedCustomerEmail,
         first_name || null,
         last_name || null,
         phone || null,
@@ -183,7 +206,7 @@ export async function createCourseCheckout(payload) {
 
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
-      customer_email,
+      customer_email: normalizedCustomerEmail,
       success_url: `${appBaseUrl}/PreOrderConfirmation?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${appBaseUrl}/`,
       line_items: [
@@ -202,7 +225,7 @@ export async function createCourseCheckout(payload) {
       metadata: {
         pre_order_id: preOrderId,
         course_id: String(course.id),
-        provider_email: String(customer_email),
+        provider_email: String(normalizedCustomerEmail),
         provider_name: String(customer_name),
         app_source: "novi-landing"
       }
@@ -569,9 +592,10 @@ export async function getPreOrder({ id, sessionId }) {
     // process the completed session on demand so confirmation page and email remain reliable.
     if (preOrder?.status !== "paid" && sessionId && stripe) {
       try {
-        const stripeSession = await stripe.checkout.sessions.retrieve(sessionId);
-        const isPaid = stripeSession?.payment_status === "paid" && stripeSession?.status === "complete";
-        if (isPaid) {
+        const fallbackTask = async () => {
+          const stripeSession = await stripe.checkout.sessions.retrieve(sessionId);
+          const isPaid = stripeSession?.payment_status === "paid" && stripeSession?.status === "complete";
+          if (!isPaid) return;
           await processCompletedCheckoutSession(stripeSession);
           const refreshed = await client.query(
             `select id, order_type, type, status, course_title, course_date, customer_email, amount_paid, paid_at, created_at
@@ -581,10 +605,20 @@ export async function getPreOrder({ id, sessionId }) {
             values
           );
           preOrder = refreshed.rows[0] ?? preOrder;
-        }
+        };
+
+        const timeoutTask = new Promise((_, reject) => {
+          setTimeout(() => {
+            const err = new Error(`Pre-order fallback exceeded ${preorderFallbackTimeoutMs}ms`);
+            err.code = "PREORDER_FALLBACK_TIMEOUT";
+            reject(err);
+          }, preorderFallbackTimeoutMs);
+        });
+
+        await Promise.race([fallbackTask(), timeoutTask]);
       } catch (error) {
         // eslint-disable-next-line no-console
-        console.error("[checkout] pre-order fallback processing failed:", error);
+        console.error("[checkout] pre-order fallback processing failed:", error?.code || error?.message || error);
       }
     }
 
@@ -810,8 +844,34 @@ async function upsertProviderUserRow(client, {
   lastName
 }) {
   if (!client || !authUserId || !email) return null;
+  const normalizedEmail = String(email).trim().toLowerCase();
   const normalizedRole = normalizeRole("provider");
-  const { rows } = await client.query(
+  const mergedName = fullName(firstName, lastName);
+
+  // First, try to attach this auth user id to an existing profile row by email.
+  // This avoids unique(email) violations when the row already exists without the new auth_user_id.
+  const existingByEmail = await client.query(
+    `update public.users
+     set auth_user_id = $1,
+         first_name = coalesce(public.users.first_name, $3),
+         last_name = coalesce(public.users.last_name, $4),
+         full_name = coalesce(public.users.full_name, $5),
+         role = coalesce(public.users.role, $6),
+         updated_at = now()
+     where lower(email) = lower($2)
+     returning id, auth_user_id, email, role`,
+    [
+      authUserId,
+      normalizedEmail,
+      firstName || null,
+      lastName || null,
+      mergedName,
+      normalizedRole
+    ]
+  );
+  if (existingByEmail.rows[0]) return existingByEmail.rows[0];
+
+  const inserted = await client.query(
     `insert into public.users (
        auth_user_id, email, first_name, last_name, full_name, role
      ) values ($1, $2, $3, $4, $5, $6)
@@ -826,14 +886,14 @@ async function upsertProviderUserRow(client, {
      returning id, auth_user_id, email, role`,
     [
       authUserId,
-      String(email).trim().toLowerCase(),
+      normalizedEmail,
       firstName || null,
       lastName || null,
-      fullName(firstName, lastName),
+      mergedName,
       normalizedRole
     ]
   );
-  return rows[0] ?? null;
+  return inserted.rows[0] ?? null;
 }
 
 async function inviteUserIfNeeded(email, firstName, lastName) {
