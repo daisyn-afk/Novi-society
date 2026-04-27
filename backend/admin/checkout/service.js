@@ -18,6 +18,7 @@ const supabaseAdmin = supabaseUrl && supabaseServiceRoleKey
       auth: { persistSession: false, autoRefreshToken: false }
     })
   : null;
+const preorderFallbackTimeoutMs = Number(process.env.PREORDER_FALLBACK_TIMEOUT_MS || 8000);
 
 function normalizeRole(role) {
   const value = String(role || "provider").trim().toLowerCase();
@@ -569,9 +570,10 @@ export async function getPreOrder({ id, sessionId }) {
     // process the completed session on demand so confirmation page and email remain reliable.
     if (preOrder?.status !== "paid" && sessionId && stripe) {
       try {
-        const stripeSession = await stripe.checkout.sessions.retrieve(sessionId);
-        const isPaid = stripeSession?.payment_status === "paid" && stripeSession?.status === "complete";
-        if (isPaid) {
+        const fallbackTask = async () => {
+          const stripeSession = await stripe.checkout.sessions.retrieve(sessionId);
+          const isPaid = stripeSession?.payment_status === "paid" && stripeSession?.status === "complete";
+          if (!isPaid) return;
           await processCompletedCheckoutSession(stripeSession);
           const refreshed = await client.query(
             `select id, order_type, type, status, course_title, course_date, customer_email, amount_paid, paid_at, created_at
@@ -581,10 +583,20 @@ export async function getPreOrder({ id, sessionId }) {
             values
           );
           preOrder = refreshed.rows[0] ?? preOrder;
-        }
+        };
+
+        const timeoutTask = new Promise((_, reject) => {
+          setTimeout(() => {
+            const err = new Error(`Pre-order fallback exceeded ${preorderFallbackTimeoutMs}ms`);
+            err.code = "PREORDER_FALLBACK_TIMEOUT";
+            reject(err);
+          }, preorderFallbackTimeoutMs);
+        });
+
+        await Promise.race([fallbackTask(), timeoutTask]);
       } catch (error) {
         // eslint-disable-next-line no-console
-        console.error("[checkout] pre-order fallback processing failed:", error);
+        console.error("[checkout] pre-order fallback processing failed:", error?.code || error?.message || error);
       }
     }
 
@@ -810,8 +822,34 @@ async function upsertProviderUserRow(client, {
   lastName
 }) {
   if (!client || !authUserId || !email) return null;
+  const normalizedEmail = String(email).trim().toLowerCase();
   const normalizedRole = normalizeRole("provider");
-  const { rows } = await client.query(
+  const mergedName = fullName(firstName, lastName);
+
+  // First, try to attach this auth user id to an existing profile row by email.
+  // This avoids unique(email) violations when the row already exists without the new auth_user_id.
+  const existingByEmail = await client.query(
+    `update public.users
+     set auth_user_id = $1,
+         first_name = coalesce(public.users.first_name, $3),
+         last_name = coalesce(public.users.last_name, $4),
+         full_name = coalesce(public.users.full_name, $5),
+         role = coalesce(public.users.role, $6),
+         updated_at = now()
+     where lower(email) = lower($2)
+     returning id, auth_user_id, email, role`,
+    [
+      authUserId,
+      normalizedEmail,
+      firstName || null,
+      lastName || null,
+      mergedName,
+      normalizedRole
+    ]
+  );
+  if (existingByEmail.rows[0]) return existingByEmail.rows[0];
+
+  const inserted = await client.query(
     `insert into public.users (
        auth_user_id, email, first_name, last_name, full_name, role
      ) values ($1, $2, $3, $4, $5, $6)
@@ -826,14 +864,14 @@ async function upsertProviderUserRow(client, {
      returning id, auth_user_id, email, role`,
     [
       authUserId,
-      String(email).trim().toLowerCase(),
+      normalizedEmail,
       firstName || null,
       lastName || null,
-      fullName(firstName, lastName),
+      mergedName,
       normalizedRole
     ]
   );
-  return rows[0] ?? null;
+  return inserted.rows[0] ?? null;
 }
 
 async function inviteUserIfNeeded(email, firstName, lastName) {
