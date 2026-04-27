@@ -91,7 +91,7 @@ export default function ProviderEnrollments() {
     },
   });
 
-  const { data: serviceTypes = [] } = useQuery({
+  const { data: serviceTypes = [], isLoading: loadingServiceTypes } = useQuery({
     queryKey: ["service-types"],
     queryFn: () => base44.entities.ServiceType.filter({ is_active: true }),
   });
@@ -173,7 +173,7 @@ export default function ProviderEnrollments() {
               <Input className="pl-9 bg-white/95 rounded-xl" placeholder="Search services..." value={search} onChange={e => setSearch(e.target.value)} />
             </div>
 
-            {loadingCourses ? (
+            {(loadingCourses || loadingServiceTypes) ? (
               <div className="space-y-4">{[1,2].map(i => <div key={i} className="h-96 animate-pulse rounded-3xl" style={{ background: "rgba(255,255,255,0.08)" }} />)}</div>
             ) : (() => {
               const filteredServices = serviceTypes.filter(s => {

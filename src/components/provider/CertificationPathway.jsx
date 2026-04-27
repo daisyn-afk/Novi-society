@@ -85,17 +85,16 @@ export default function CertificationPathway({ serviceType, courses = [], userCe
         <div className="border-t" style={{ borderColor: "rgba(30,37,53,0.08)" }} />
       </div>
 
-      {/* Courses Section - Only show enrolled courses */}
+      {/* Courses Section */}
       <div className="px-8 py-6 space-y-5">
         {(() => {
-          const enrolledCourses = courses.filter(c => enrolledCourseIds.has(c.id));
-          return enrolledCourses.length === 0 ? (
+          return courses.length === 0 ? (
           <div className="text-center py-8" style={{ color: "rgba(30,37,53,0.5)" }}>
-            <p className="text-sm font-semibold">No enrolled courses yet</p>
+            <p className="text-sm font-semibold">No courses configured for this service yet</p>
           </div>
         ) : (
           <div className="space-y-3">
-            {enrolledCourses.map((course) => {
+            {courses.map((course) => {
               const isEnrolled = enrolledCourseIds.has(course.id);
               const isExpanded = expandedCourseId === course.id;
               return (
@@ -113,6 +112,16 @@ export default function CertificationPathway({ serviceType, courses = [], userCe
                       <p className="text-xs mt-1" style={{ color: "rgba(30,37,53,0.5)" }}>
                         Instructor: {course.instructor_name || "TBD"}
                       </p>
+                      <div className="mt-2">
+                        <span
+                          className="text-[11px] font-bold px-2 py-1 rounded-full"
+                          style={isEnrolled
+                            ? { background: "rgba(123,142,200,0.12)", color: "#4a5fa0", border: "1px solid rgba(123,142,200,0.28)" }
+                            : { background: "rgba(250,111,48,0.12)", color: "#b84f20", border: "1px solid rgba(250,111,48,0.28)" }}
+                        >
+                          {isEnrolled ? "Enrolled" : "Available"}
+                        </span>
+                      </div>
                     </div>
                     <div className="flex-shrink-0 mt-1">
                       {isExpanded ? (
@@ -175,9 +184,9 @@ export default function CertificationPathway({ serviceType, courses = [], userCe
                         <button
                           onClick={() => onEnroll(course)}
                           className="w-full py-3 rounded-lg font-bold text-white transition-all hover:opacity-90"
-                          style={{ background: "#FA6F30" }}
+                          style={{ background: isEnrolled ? "#7B8EC8" : "#FA6F30" }}
                         >
-                          Purchase & Schedule
+                          {isEnrolled ? "View Enrollment" : "Purchase & Schedule"}
                         </button>
                       )}
                     </div>

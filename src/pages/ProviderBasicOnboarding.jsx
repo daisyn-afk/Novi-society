@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { Input } from "@/components/ui/input";
@@ -12,6 +12,7 @@ import { getDashboardPathForRole } from "@/lib/routeAccessPolicy";
 import { adminUploadsApi } from "@/api/adminUploadsApi";
 
 const LICENSE_TYPES = ["RN", "NP", "PA", "MD", "DO", "esthetician", "other"];
+const US_ZIP_REGEX = /^\d{5}(-\d{4})?$/;
 
 const labelStyle = { color: "rgba(30,37,53,0.6)" };
 const inputClass = "bg-white/80 border-slate-200";
@@ -33,6 +34,16 @@ export default function ProviderBasicOnboarding() {
   });
   const [uploading, setUploading] = useState(false);
   const [documentUrl, setDocumentUrl] = useState("");
+  const [fieldErrors, setFieldErrors] = useState({
+    dob: "",
+    address_line1: "",
+    city: "",
+    state: "",
+    zip: "",
+    license_type: "",
+    license_number: "",
+    document_url: "",
+  });
   const [uploadError, setUploadError] = useState("");
 
   const { data: me, isLoading: isLoadingMe, isError: meLoadFailed } = useQuery({
@@ -41,11 +52,53 @@ export default function ProviderBasicOnboarding() {
     retry: false
   });
 
+  useEffect(() => {
+    if (me && me.role !== "provider") {
+      navigate(createPageUrl("Onboarding"));
+    }
+  }, [me, navigate]);
+
+  const validateForm = () => {
+    const errors = {
+      dob: "",
+      address_line1: "",
+      city: "",
+      state: "",
+      zip: "",
+      license_type: "",
+      license_number: "",
+      document_url: "",
+    };
+    const trimmedState = form.state.trim();
+    const trimmedZip = form.zip.trim();
+    const trimmedLicenseNumber = form.license_number.trim();
+    if (!form.dob) errors.dob = "Date of birth is required.";
+    if (!form.address_line1.trim()) errors.address_line1 = "Street address is required.";
+    if (!form.city.trim()) errors.city = "City is required.";
+    if (!trimmedState) errors.state = "State is required.";
+    if (!trimmedZip) errors.zip = "ZIP is required.";
+    else if (!US_ZIP_REGEX.test(trimmedZip)) errors.zip = "Enter a valid ZIP code.";
+    if (!form.license_type) errors.license_type = "License type is required.";
+    if (!trimmedLicenseNumber) errors.license_number = "License number is required.";
+    if (!documentUrl) errors.document_url = "License document is required.";
+    if (form.dob) {
+      const dobDate = new Date(form.dob);
+      const today = new Date();
+      let age = today.getFullYear() - dobDate.getFullYear();
+      const monthDiff = today.getMonth() - dobDate.getMonth();
+      const dayDiff = today.getDate() - dobDate.getDate();
+      if (monthDiff < 0 || (monthDiff === 0 && dayDiff < 0)) age -= 1;
+      if (age < 18) errors.dob = "You must be 18 or older to register as a provider.";
+    }
+    return errors;
+  };
+
   const uploadFile = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    setUploading(true);
     setUploadError("");
+    setFieldErrors(prev => ({ ...prev, document_url: "" }));
+    setUploading(true);
     try {
       const uploaded = await adminUploadsApi.uploadLicenseDocument(file);
       const nextUrl = uploaded?.url || uploaded?.file_url || "";
@@ -119,6 +172,12 @@ export default function ProviderBasicOnboarding() {
     documentUrl &&
     !uploading &&
     !submitOnboarding.isPending;
+  const handleSubmit = () => {
+    const errors = validateForm();
+    setFieldErrors(errors);
+    if (Object.values(errors).some(Boolean)) return;
+    submitOnboarding.mutate();
+  };
 
   return (
     <div
@@ -172,9 +231,14 @@ export default function ProviderBasicOnboarding() {
                 <Input
                   type="date"
                   value={form.dob}
-                  onChange={e => setForm(f => ({ ...f, dob: e.target.value }))}
+                  onChange={e => {
+                    const value = e.target.value;
+                    setForm(f => ({ ...f, dob: value }));
+                    setFieldErrors(prev => ({ ...prev, dob: "" }));
+                  }}
                   className={inputClass}
                 />
+                {fieldErrors.dob && <p className="text-xs mt-1 text-red-600">{fieldErrors.dob}</p>}
               </div>
             </div>
 
@@ -186,10 +250,15 @@ export default function ProviderBasicOnboarding() {
                   <Label className="text-xs mb-1.5 block font-semibold uppercase tracking-wide" style={labelStyle}>Street Address *</Label>
                   <Input
                     value={form.address_line1}
-                    onChange={e => setForm(f => ({ ...f, address_line1: e.target.value }))}
+                    onChange={e => {
+                      const value = e.target.value;
+                      setForm(f => ({ ...f, address_line1: value }));
+                      setFieldErrors(prev => ({ ...prev, address_line1: "" }));
+                    }}
                     placeholder="123 Main St"
                     className={inputClass}
                   />
+                  {fieldErrors.address_line1 && <p className="text-xs mt-1 text-red-600">{fieldErrors.address_line1}</p>}
                 </div>
                 <div>
                   <Label className="text-xs mb-1.5 block font-semibold uppercase tracking-wide" style={labelStyle}>Apt, Suite, etc.</Label>
@@ -205,20 +274,30 @@ export default function ProviderBasicOnboarding() {
                     <Label className="text-xs mb-1.5 block font-semibold uppercase tracking-wide" style={labelStyle}>City *</Label>
                     <Input
                       value={form.city}
-                      onChange={e => setForm(f => ({ ...f, city: e.target.value }))}
+                      onChange={e => {
+                        const value = e.target.value;
+                        setForm(f => ({ ...f, city: value }));
+                        setFieldErrors(prev => ({ ...prev, city: "" }));
+                      }}
                       placeholder="Dallas"
                       className={inputClass}
                     />
+                    {fieldErrors.city && <p className="text-xs mt-1 text-red-600">{fieldErrors.city}</p>}
                   </div>
                   <div>
                     <Label className="text-xs mb-1.5 block font-semibold uppercase tracking-wide" style={labelStyle}>State *</Label>
                     <Input
                       value={form.state}
-                      onChange={e => setForm(f => ({ ...f, state: e.target.value }))}
+                      onChange={e => {
+                        const value = e.target.value.toUpperCase();
+                        setForm(f => ({ ...f, state: value }));
+                        setFieldErrors(prev => ({ ...prev, state: "" }));
+                      }}
                       placeholder="TX"
                       maxLength={2}
                       className={inputClass}
                     />
+                    {fieldErrors.state && <p className="text-xs mt-1 text-red-600">{fieldErrors.state}</p>}
                   </div>
                 </div>
                 <div className="grid grid-cols-3 gap-3">
@@ -226,10 +305,15 @@ export default function ProviderBasicOnboarding() {
                     <Label className="text-xs mb-1.5 block font-semibold uppercase tracking-wide" style={labelStyle}>ZIP *</Label>
                     <Input
                       value={form.zip}
-                      onChange={e => setForm(f => ({ ...f, zip: e.target.value }))}
+                      onChange={e => {
+                        const value = e.target.value;
+                        setForm(f => ({ ...f, zip: value }));
+                        setFieldErrors(prev => ({ ...prev, zip: "" }));
+                      }}
                       placeholder="75201"
                       className={inputClass}
                     />
+                    {fieldErrors.zip && <p className="text-xs mt-1 text-red-600">{fieldErrors.zip}</p>}
                   </div>
                 </div>
               </div>
@@ -242,7 +326,10 @@ export default function ProviderBasicOnboarding() {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <Label className="text-xs mb-1.5 block font-semibold uppercase tracking-wide" style={labelStyle}>License Type *</Label>
-                    <Select value={form.license_type} onValueChange={v => setForm(f => ({ ...f, license_type: v }))}>
+                    <Select value={form.license_type} onValueChange={v => {
+                      setForm(f => ({ ...f, license_type: v }));
+                      setFieldErrors(prev => ({ ...prev, license_type: "" }));
+                    }}>
                       <SelectTrigger className={inputClass}>
                         <SelectValue />
                       </SelectTrigger>
@@ -250,15 +337,21 @@ export default function ProviderBasicOnboarding() {
                         {LICENSE_TYPES.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
                       </SelectContent>
                     </Select>
+                    {fieldErrors.license_type && <p className="text-xs mt-1 text-red-600">{fieldErrors.license_type}</p>}
                   </div>
                   <div>
                     <Label className="text-xs mb-1.5 block font-semibold uppercase tracking-wide" style={labelStyle}>License Number *</Label>
                     <Input
                       value={form.license_number}
-                      onChange={e => setForm(f => ({ ...f, license_number: e.target.value }))}
+                      onChange={e => {
+                        const value = e.target.value;
+                        setForm(f => ({ ...f, license_number: value }));
+                        setFieldErrors(prev => ({ ...prev, license_number: "" }));
+                      }}
                       placeholder="e.g. RN-123456"
                       className={inputClass}
                     />
+                    {fieldErrors.license_number && <p className="text-xs mt-1 text-red-600">{fieldErrors.license_number}</p>}
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
@@ -313,6 +406,8 @@ export default function ProviderBasicOnboarding() {
                     </div>
                     <input type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png" onChange={uploadFile} />
                   </label>
+                  {fieldErrors.document_url && <p className="text-xs mt-1 text-red-600">{fieldErrors.document_url}</p>}
+                  {uploadError && <p className="text-xs mt-1 text-red-600">{uploadError}</p>}
                 </div>
               </div>
             </div>
@@ -331,12 +426,12 @@ export default function ProviderBasicOnboarding() {
         )}
 
         <button
-          disabled={!canSubmit}
-          onClick={() => submitOnboarding.mutate()}
+          disabled={uploading || submitOnboarding.isPending}
+          onClick={handleSubmit}
           className="w-full py-4 rounded-2xl font-bold text-sm flex items-center justify-center gap-2 transition-all hover:opacity-90"
           style={{
-            background: canSubmit ? "linear-gradient(135deg, #FA6F30, #DA6A63)" : "rgba(30,37,53,0.1)",
-            color: canSubmit ? "white" : "rgba(30,37,53,0.3)",
+            background: !(uploading || submitOnboarding.isPending) ? "linear-gradient(135deg, #FA6F30, #DA6A63)" : "rgba(30,37,53,0.1)",
+            color: !(uploading || submitOnboarding.isPending) ? "white" : "rgba(30,37,53,0.3)",
           }}
         >
           {submitOnboarding.isPending ? "Submitting…" : "Continue to Dashboard"} <ArrowRight className="w-4 h-4" />

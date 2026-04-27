@@ -400,8 +400,8 @@ export default function ProviderCredentialsCoverage() {
         <div key={c.id} className="flex items-center gap-3 px-5 py-4 rounded-2xl" style={{ background: "rgba(200,230,60,0.15)", border: "1px solid rgba(200,230,60,0.4)" }}>
           <CheckCircle className="w-5 h-5 flex-shrink-0" style={{ color: "#C8E63C" }} />
           <div className="flex-1">
-            <p className="font-semibold text-white text-sm">Your <strong>{c.service_type_name || c.certification_name}</strong> certification was approved!</p>
-            <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.6)" }}>You can now apply for MD Board coverage to start offering this service.</p>
+            <p className="font-semibold text-sm" style={{ color: "#3D5600" }}>Your <strong>{c.service_type_name || c.certification_name}</strong> certification was approved!</p>
+            <p className="text-xs mt-0.5" style={{ color: "rgba(61,86,0,0.8)" }}>You can now apply for MD Board coverage to start offering this service.</p>
           </div>
           <Button size="sm" onClick={() => { setActivateDialog(true); resetActivation(); }} style={{ background: "#FA6F30", color: "#fff" }} className="flex-shrink-0 gap-1 h-8 text-xs">
             <Zap className="w-3.5 h-3.5" /> Apply

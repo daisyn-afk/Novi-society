@@ -21,8 +21,55 @@ function StatusBadge({ status }) {
   );
 }
 
-function EnrollmentRow({ enrollment, courseTitle, preOrder }) {
+function getFileTypeFromUrl(url) {
+  if (!url) return "unknown";
+  const cleanUrl = url.split("?")[0].split("#")[0].toLowerCase();
+  const lowerUrl = url.toLowerCase();
+  if (cleanUrl.endsWith(".pdf") || lowerUrl.includes("pdf")) return "pdf";
+  if (/\.(png|jpe?g|gif|webp|bmp|svg|heic|heif)$/.test(cleanUrl)) return "image";
+  return "unknown";
+}
+
+function LicenseDocumentPreview({ url }) {
+  if (!url) return null;
+  const fileType = getFileTypeFromUrl(url);
+  const isImage = fileType === "image";
+
+  return (
+    <div
+      className={isImage ? "mt-4 max-w-[220px]" : "mt-4"}
+    >
+      <p className="text-xs font-bold uppercase tracking-wider mb-2" style={{ color: "rgba(30,37,53,0.45)" }}>
+        License Document
+      </p>
+
+      {isImage ? (
+        <a href={url} target="_blank" rel="noreferrer">
+          <img
+            src={url}
+            alt="License document"
+            className="w-full h-32 object-contain rounded-lg border"
+            style={{ borderColor: "rgba(30,37,53,0.15)" }}
+          />
+        </a>
+      ) : (
+        <a
+          href={url}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center justify-center rounded-md px-3 py-2 text-sm font-semibold"
+          style={{ borderColor: "rgba(123,142,200,0.55)", color: "#5f73b3", background: "rgba(123,142,200,0.2)" }}
+        >
+          Open PDF
+        </a>
+      )}
+    </div>
+  );
+}
+
+function EnrollmentRow({ enrollment, courseTitle, preOrder, license }) {
   const [expanded, setExpanded] = useState(false);
+  const licenseDocumentUrl = preOrder?.license_image_url || license?.document_url || "";
   return (
     <div className="rounded-2xl overflow-hidden mb-3" style={{ background: "rgba(255,255,255,0.7)", border: "1px solid rgba(30,37,53,0.1)" }}>
       <div className="flex items-center gap-4 px-5 py-4 cursor-pointer hover:bg-white/5 transition-colors" onClick={() => setExpanded((e) => !e)}>
@@ -62,8 +109,8 @@ function EnrollmentRow({ enrollment, courseTitle, preOrder }) {
             </div>
             <div>
               <p className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: "rgba(30,37,53,0.4)" }}>License</p>
-              <p className="text-sm font-semibold" style={{ color: "#1e2535" }}>{preOrder?.license_type || "—"}</p>
-              <p className="text-xs" style={{ color: "rgba(30,37,53,0.55)" }}>{preOrder?.license_number || "—"}</p>
+              <p className="text-sm font-semibold" style={{ color: "#1e2535" }}>{preOrder?.license_type || license?.license_type || "—"}</p>
+              <p className="text-xs" style={{ color: "rgba(30,37,53,0.55)" }}>{preOrder?.license_number || license?.license_number || "—"}</p>
             </div>
             <div>
               <p className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: "rgba(30,37,53,0.4)" }}>Phone</p>
@@ -84,6 +131,8 @@ function EnrollmentRow({ enrollment, courseTitle, preOrder }) {
               <p className="text-sm" style={{ color: "rgba(30,37,53,0.7)" }}>{preOrder.notes}</p>
             </div>
           )}
+
+          <LicenseDocumentPreview url={licenseDocumentUrl} />
         </div>
       )}
     </div>
@@ -107,9 +156,28 @@ export default function AdminEnrollments() {
     queryKey: ["pre-orders-enrollments"],
     queryFn: () => base44.entities.PreOrder.list("-created_date", 300),
   });
+  const { data: licenses = [] } = useQuery({
+    queryKey: ["licenses-enrollments"],
+    queryFn: () => base44.entities.License.list("-created_date"),
+  });
 
   const courseMap = useMemo(() => Object.fromEntries(courses.map(c => [c.id, c])), [courses]);
   const preOrderMap = useMemo(() => Object.fromEntries(preOrders.map((p) => [p.id, p])), [preOrders]);
+  const latestLicenseByProviderId = useMemo(() => {
+    const map = {};
+    licenses.forEach((l) => {
+      if (l?.provider_id && !map[l.provider_id]) map[l.provider_id] = l;
+    });
+    return map;
+  }, [licenses]);
+  const latestLicenseByProviderEmail = useMemo(() => {
+    const map = {};
+    licenses.forEach((l) => {
+      const key = String(l?.provider_email || "").toLowerCase();
+      if (key && !map[key]) map[key] = l;
+    });
+    return map;
+  }, [licenses]);
   const paidEnrollments = useMemo(() => {
     const direct = enrollments.filter((e) => e.status === "paid" || e.status === "confirmed");
     const existingPreOrderIds = new Set(direct.map((e) => e.pre_order_id).filter(Boolean));
@@ -207,12 +275,21 @@ export default function AdminEnrollments() {
           ) : (
             <div>
               {filtered.map((e) => (
+                (() => {
+                  const license =
+                    latestLicenseByProviderId[e.provider_id] ||
+                    latestLicenseByProviderEmail[String(e.provider_email || "").toLowerCase()] ||
+                    null;
+                  return (
                 <EnrollmentRow
                   key={e.id}
                   enrollment={e}
                   courseTitle={courseMap[e.course_id]?.title || "Unknown Course"}
                   preOrder={preOrderMap[e.pre_order_id]}
+                  license={license}
                 />
+                  );
+                })()
               ))}
             </div>
           )}

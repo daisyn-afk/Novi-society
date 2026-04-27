@@ -217,6 +217,36 @@ export function createLovableProviderClient() {
           filter: createNotImplementedMethod("entities.PreOrder.filter")
         };
       }
+      if (name === "License") {
+        return {
+          list: (_sort = "", limit = 200) =>
+            authRequest(`/admin/licenses?limit=${encodeURIComponent(String(limit || 200))}`, { method: "GET" }),
+          get: (id) => authRequest(`/admin/licenses/${encodeURIComponent(id)}`, { method: "GET" }),
+          create: (payload) => authRequest("/admin/licenses", {
+            method: "POST",
+            body: JSON.stringify(payload || {})
+          }),
+          update: (id, payload) => authRequest(`/admin/licenses/${encodeURIComponent(id)}`, {
+            method: "PATCH",
+            body: JSON.stringify(payload || {})
+          }),
+          delete: createNotImplementedMethod("entities.License.delete"),
+          filter: (filters = {}) => {
+            const params = new URLSearchParams();
+            if (Object.hasOwn(filters, "provider_id") && filters.provider_id) {
+              params.set("provider_id", String(filters.provider_id));
+            }
+            if (Object.hasOwn(filters, "provider_email") && filters.provider_email) {
+              params.set("provider_email", String(filters.provider_email));
+            }
+            if (Object.hasOwn(filters, "status") && filters.status) {
+              params.set("status", String(filters.status));
+            }
+            const qs = params.toString();
+            return authRequest(`/admin/licenses${qs ? `?${qs}` : ""}`, { method: "GET" });
+          }
+        };
+      }
       return {
         list: createNotImplementedMethod(`entities.${name}.list`),
         get: createNotImplementedMethod(`entities.${name}.get`),

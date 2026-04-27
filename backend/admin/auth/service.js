@@ -97,6 +97,73 @@ async function getUserRowByAuthUserId(authUserId) {
   }
 }
 
+async function getProviderProfileByUserId(userId) {
+  if (!userId) return null;
+  const client = await pool.connect();
+  try {
+    const { rows } = await client.query(
+      `select user_id, dob, address_line1, address_line2, city, state, zip, onboarding_completed, metadata, created_at, updated_at
+       from public.provider_profiles
+       where user_id = $1
+       limit 1`,
+      [userId]
+    );
+    return rows[0] ?? null;
+  } finally {
+    client.release();
+  }
+}
+
+async function upsertProviderProfile({ userId, updates }) {
+  if (!userId) return null;
+  const hasDob = Object.prototype.hasOwnProperty.call(updates || {}, "dob");
+  const hasAddressLine1 = Object.prototype.hasOwnProperty.call(updates || {}, "address_line1");
+  const hasAddressLine2 = Object.prototype.hasOwnProperty.call(updates || {}, "address_line2");
+  const hasCity = Object.prototype.hasOwnProperty.call(updates || {}, "city");
+  const hasState = Object.prototype.hasOwnProperty.call(updates || {}, "state");
+  const hasZip = Object.prototype.hasOwnProperty.call(updates || {}, "zip");
+  const hasOnboardingCompleted = Object.prototype.hasOwnProperty.call(updates || {}, "onboarding_completed");
+  const hasProviderProfileUpdates =
+    hasDob || hasAddressLine1 || hasAddressLine2 || hasCity || hasState || hasZip || hasOnboardingCompleted;
+
+  if (!hasProviderProfileUpdates) return null;
+
+  const client = await pool.connect();
+  try {
+    const { rows } = await client.query(
+      `insert into public.provider_profiles (
+         user_id, dob, address_line1, address_line2, city, state, zip, onboarding_completed
+       ) values ($1, $2, $3, $4, $5, $6, $7, $8)
+       on conflict (user_id)
+       do update set
+         dob = coalesce(excluded.dob, public.provider_profiles.dob),
+         address_line1 = coalesce(excluded.address_line1, public.provider_profiles.address_line1),
+         address_line2 = case when $9 then excluded.address_line2 else public.provider_profiles.address_line2 end,
+         city = coalesce(excluded.city, public.provider_profiles.city),
+         state = coalesce(excluded.state, public.provider_profiles.state),
+         zip = coalesce(excluded.zip, public.provider_profiles.zip),
+         onboarding_completed = case when $10 then excluded.onboarding_completed else public.provider_profiles.onboarding_completed end,
+         updated_at = now()
+       returning user_id, dob, address_line1, address_line2, city, state, zip, onboarding_completed, metadata, created_at, updated_at`,
+      [
+        userId,
+        hasDob ? (updates.dob || null) : null,
+        hasAddressLine1 ? (updates.address_line1 || null) : null,
+        hasAddressLine2 ? (updates.address_line2 || null) : null,
+        hasCity ? (updates.city || null) : null,
+        hasState ? (updates.state || null) : null,
+        hasZip ? (updates.zip || null) : null,
+        hasOnboardingCompleted ? Boolean(updates.onboarding_completed) : false,
+        hasAddressLine2,
+        hasOnboardingCompleted
+      ]
+    );
+    return rows[0] ?? null;
+  } finally {
+    client.release();
+  }
+}
+
 export async function signup(payload) {
   ensureAuthClients();
   const email = String(payload?.email || "").trim().toLowerCase();
@@ -227,13 +294,23 @@ export async function getMeFromAccessToken(accessToken) {
   }
 
   const profile = await getUserRowByAuthUserId(data.user.id);
+  const providerProfile = profile?.role === "provider"
+    ? await getProviderProfileByUserId(profile?.id)
+    : null;
   return {
     id: data.user.id,
     email: data.user.email,
     role: profile?.role || data.user.user_metadata?.role || "provider",
     first_name: profile?.first_name || data.user.user_metadata?.first_name || null,
     last_name: profile?.last_name || data.user.user_metadata?.last_name || null,
-    full_name: profile?.full_name || data.user.user_metadata?.full_name || null
+    full_name: profile?.full_name || data.user.user_metadata?.full_name || null,
+    dob: providerProfile?.dob || null,
+    address_line1: providerProfile?.address_line1 || null,
+    address_line2: providerProfile?.address_line2 || null,
+    city: providerProfile?.city || null,
+    state: providerProfile?.state || null,
+    zip: providerProfile?.zip || null,
+    onboarding_completed: providerProfile?.onboarding_completed || false
   };
 }
 
@@ -338,6 +415,7 @@ export async function setPasswordWithAccessToken({ accessToken, refreshToken, pa
 export async function updateMe({ accessToken, updates }) {
   ensureAuthClients();
   const me = await getMeFromAccessToken(accessToken);
+  const userRow = await getUserRowByAuthUserId(me.id);
   const role = updates?.role ? normalizeRole(updates.role) : null;
   const firstName = Object.prototype.hasOwnProperty.call(updates || {}, "first_name")
     ? String(updates.first_name || "").trim() || null
@@ -371,6 +449,10 @@ export async function updateMe({ accessToken, updates }) {
     }
   } finally {
     client.release();
+  }
+
+  if (nextRole === "provider" && userRow?.id) {
+    await upsertProviderProfile({ userId: userRow.id, updates });
   }
 
   return getMeFromAccessToken(accessToken);
