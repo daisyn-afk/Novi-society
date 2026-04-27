@@ -8,7 +8,6 @@ import {
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
-import ProviderSalesLock from "@/components/ProviderSalesLock";
 import { useProviderAccess } from "@/components/useProviderAccess";
 import { isToday, isTomorrow, format, isWithinInterval, startOfMonth, endOfMonth } from "date-fns";
 
@@ -571,9 +570,5 @@ export default function ProviderDashboard() {
     </div>
   );
 
-  return (
-    <ProviderSalesLock feature="dashboard" applicationStatus={accessStatus} requiredTier="courses_only">
-      {dashboardContent}
-    </ProviderSalesLock>
-  );
+  return dashboardContent;
 }

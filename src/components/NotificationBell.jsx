@@ -22,6 +22,15 @@ const NOTIF_COLORS = {
   md_relationship_pending: "text-yellow-500 bg-yellow-50",
 };
 
+const NOTIF_ROW_STYLES = {
+  appointment_request: "bg-blue-50/70 border-blue-100",
+  license_verified: "bg-green-50/80 border-green-200",
+  license_rejected: "bg-red-50/80 border-red-200",
+  cert_awarded: "bg-amber-50/70 border-amber-100",
+  md_relationship_approved: "bg-purple-50/70 border-purple-100",
+  md_relationship_pending: "bg-yellow-50/70 border-yellow-100",
+};
+
 export default function NotificationBell() {
   const [open, setOpen] = useState(false);
   const qc = useQueryClient();
@@ -67,9 +76,9 @@ export default function NotificationBell() {
       {open && (
         <>
           <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-11 w-80 bg-white rounded-2xl shadow-2xl border border-slate-200 z-40 overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
-              <p className="font-semibold text-slate-900 text-sm">Notifications</p>
+          <div className="absolute right-0 top-11 w-80 bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl border border-slate-300 z-40 overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
+              <p className="font-semibold text-slate-950 text-sm">Notifications</p>
               <div className="flex items-center gap-2">
                 {unread.length > 0 && (
                   <button onClick={markAllRead} className="text-xs text-blue-600 hover:underline">
@@ -92,20 +101,23 @@ export default function NotificationBell() {
                 notifications.map(n => {
                   const Icon = NOTIF_ICONS[n.type] || Bell;
                   const colorClass = NOTIF_COLORS[n.type] || "text-slate-500 bg-slate-50";
+                  const rowStyleClass = NOTIF_ROW_STYLES[n.type] || "bg-slate-50/60 border-slate-100";
                   return (
                     <div
                       key={n.id}
-                      className={`flex items-start gap-3 px-4 py-3 border-b border-slate-50 cursor-pointer hover:bg-slate-50 transition-colors ${!n.read_at ? "bg-orange-50/30" : ""}`}
+                      className={`flex items-start gap-3 px-4 py-3 border-b cursor-pointer transition-colors ${
+                        !n.read_at ? rowStyleClass : "border-slate-100 hover:bg-slate-50/80"
+                      }`}
                       onClick={() => !n.read_at && markRead.mutate(n.id)}
                     >
                       <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${colorClass}`}>
                         <Icon className="w-4 h-4" />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className={`text-sm ${n.read_at ? "text-slate-600" : "text-slate-900 font-medium"}`}>
+                        <p className={`text-sm leading-snug ${n.read_at ? "text-slate-700" : "text-slate-950 font-semibold"}`}>
                           {n.message}
                         </p>
-                        <p className="text-xs text-slate-400 mt-0.5">
+                        <p className="text-xs text-slate-600 mt-1">
                           {n.created_date ? format(new Date(n.created_date), "MMM d, h:mm a") : ""}
                         </p>
                       </div>

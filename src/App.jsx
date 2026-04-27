@@ -99,6 +99,7 @@ const AuthenticatedApp = () => {
           <ProviderBasicOnboarding />
         </LayoutWrapper>
       } />
+      <Route path="/providerbasiconboarding" element={<Navigate to="/ProviderBasicOnboarding" replace />} />
       <Route path="/PreOrderCheckout" element={<PreOrderCheckout />} />
       <Route path="/PreOrderConfirmation" element={<PreOrderConfirmation />} />
       <Route path="/login" element={<Login />} />

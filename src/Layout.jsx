@@ -441,7 +441,7 @@ export default function Layout({ children, currentPageName }) {
           {role === "provider" && providerAccessStatus === "pending" && (
             <div className="flex items-center gap-3 px-4 py-3 rounded-2xl mb-5" style={{ background: "rgba(250,111,48,0.15)", border: "1px solid rgba(250,111,48,0.4)" }}>
               <Clock className="w-4 h-4 flex-shrink-0" style={{ color: "#FA6F30" }} />
-              <p className="text-sm font-semibold text-white flex-1">
+              <p className="text-sm font-semibold flex-1" style={{ color: "#7A2E11" }}>
                 Your license is under review — courses & full portal unlock once approved.
               </p>
               <span className="text-xs font-bold px-3 py-1 rounded-full flex-shrink-0" style={{ background: "rgba(250,111,48,0.25)", color: "#FA6F30", border: "1px solid rgba(250,111,48,0.4)" }}>
@@ -452,7 +452,7 @@ export default function Layout({ children, currentPageName }) {
           {role === "provider" && providerAccessStatus === "courses_only" && (
             <div className="flex items-center gap-3 px-4 py-3 rounded-2xl mb-5" style={{ background: "rgba(123,142,200,0.15)", border: "1px solid rgba(123,142,200,0.4)" }}>
               <AlertTriangle className="w-4 h-4 flex-shrink-0" style={{ color: "#7B8EC8" }} />
-              <p className="text-sm font-semibold text-white flex-1">
+              <p className="text-sm font-semibold flex-1" style={{ color: "#24395D" }}>
                 License verified! Enroll in a NOVI course or upload an external cert to unlock MD coverage.
               </p>
             </div>
@@ -460,7 +460,7 @@ export default function Layout({ children, currentPageName }) {
           {role === "provider" && providerAccessStatus === "md_eligible" && (
             <div className="flex items-center gap-3 px-4 py-3 rounded-2xl mb-5" style={{ background: "rgba(200,230,60,0.12)", border: "1px solid rgba(200,230,60,0.4)" }}>
               <AlertTriangle className="w-4 h-4 flex-shrink-0" style={{ color: "#C8E63C" }} />
-              <p className="text-sm font-semibold text-white flex-1">
+              <p className="text-sm font-semibold flex-1" style={{ color: "#3D5600" }}>
                 Certification approved! Sign up for an MD Board subscription to unlock full practice features.
               </p>
             </div>

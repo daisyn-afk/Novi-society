@@ -589,14 +589,14 @@ export default function ScheduleCourseForm({ open, onOpenChange, form, setForm, 
                           )}
                         </div>
                       </div>
-                      <button
+                      <Button
                         type="button"
                         onClick={() => addDateToSession(session.id)}
-                        className="w-full py-2 text-sm font-semibold rounded-xl border-2 border-dashed transition-colors hover:bg-white"
-                        style={{ borderColor: "rgba(74,95,160,0.3)", color: "#4a5fa0" }}
+                        className="w-full text-sm font-semibold rounded-xl"
+                        style={{ background: "rgba(74,95,160,0.12)", color: "#2f437d", border: "1px solid rgba(74,95,160,0.3)" }}
                       >
-                        <Plus className="w-3.5 h-3.5 inline mr-1" /> Add Date
-                      </button>
+                        <Plus className="w-4 h-4 mr-1.5" /> Add Date to Session
+                      </Button>
                     </>
                   )}
                 </div>

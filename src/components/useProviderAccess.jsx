@@ -28,8 +28,9 @@ export function useProviderAccess() {
   const { data: licenses = [], isLoading: loadingLicenses } = useQuery({
     queryKey: ["my-licenses"],
     queryFn: async () => {
-      const u = await base44.auth.me();
-      return base44.entities.License.filter({ provider_id: u.id });
+      // Let backend auth scoping decide "my licenses" so legacy rows linked by
+      // email are still visible to the same logged-in provider account.
+      return base44.entities.License.filter({});
     },
     enabled: isProvider,
   });
@@ -55,8 +56,9 @@ export function useProviderAccess() {
   // Non-providers get full access
   if (!me || me.role !== "provider") return { status: "full", isLoading: false };
 
-  const isLoading = loadingLicenses || loadingCerts || loadingMdSubs;
-  if (isLoading) return { status: "loading", isLoading: true };
+  // Licenses decide whether provider can access courses.
+  // Do not block on cert/subscription lookups for base access.
+  if (loadingLicenses) return { status: "loading", isLoading: true };
 
   // Step 1: Must have a verified license
   const hasVerifiedLicense = licenses.some(l => l.status === "verified");
@@ -65,14 +67,21 @@ export function useProviderAccess() {
   if (!hasAnyLicense) return { status: "none", isLoading: false };
   if (!hasVerifiedLicense) return { status: "pending", isLoading: false };
 
-  // Step 2: Check for active MD subscription → full access
-  const hasActiveMdSub = mdSubs.some(s => s.status === "active");
-  if (hasActiveMdSub) return { status: "full", isLoading: false };
+  // Step 2: Check for active MD subscription → full access.
+  // If still loading, keep provider at least courses_only instead of blocking.
+  if (!loadingMdSubs) {
+    const hasActiveMdSub = mdSubs.some(s => s.status === "active");
+    if (hasActiveMdSub) return { status: "full", isLoading: false };
+  } else {
+    return { status: "courses_only", isLoading: false };
+  }
 
   // Step 3: Check for certification that qualifies for MD application
   // Either: NOVI cert (issued_by not set or from NOVI), or an admin-approved external cert
-  const hasQualifyingCert = certs.some(c => c.status === "active");
-  if (hasQualifyingCert) return { status: "md_eligible", isLoading: false };
+  if (!loadingCerts) {
+    const hasQualifyingCert = certs.some(c => c.status === "active");
+    if (hasQualifyingCert) return { status: "md_eligible", isLoading: false };
+  }
 
   // Step 4: License verified but no qualifying cert yet → can buy/attend courses, upload external certs
   return { status: "courses_only", isLoading: false };

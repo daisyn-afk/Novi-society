@@ -10,7 +10,12 @@ export default function PreOrderConfirmation() {
   const orderId = params.get("id");
   const sessionId = params.get("session_id");
 
-  const { data: order } = useQuery({
+  const {
+    data: order,
+    isLoading,
+    isError,
+    error
+  } = useQuery({
     queryKey: ["preorder", orderId, sessionId],
     queryFn: () => {
       const query = new URLSearchParams();
@@ -19,12 +24,52 @@ export default function PreOrderConfirmation() {
       return adminApiRequest(`/admin/checkout/pre-order?${query.toString()}`);
     },
     enabled: !!orderId || !!sessionId,
+    // After Stripe redirects back, webhook can take a moment to settle.
+    // Poll briefly while no order has loaded yet.
+    refetchInterval: (query) => (query.state.data ? false : 2000),
+    retry: 1
   });
+
+  if (!orderId && !sessionId) {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-4" style={{ background: "#f5f3ef" }}>
+        <div style={{ color: "rgba(30,37,53,0.6)" }}>Missing order reference.</div>
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-4" style={{ background: "#f5f3ef" }}>
+        <div className="animate-pulse" style={{ color: "rgba(30,37,53,0.6)" }}>Loading...</div>
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-4" style={{ background: "#f5f3ef" }}>
+        <div className="max-w-lg w-full rounded-2xl p-6 text-center" style={{ background: "#fff", border: "1px solid rgba(30,37,53,0.08)" }}>
+          <h2 className="text-xl font-semibold mb-2" style={{ color: "#1e2535" }}>Unable to load confirmation</h2>
+          <p className="text-sm mb-4" style={{ color: "rgba(30,37,53,0.65)" }}>
+            {error?.message || "Something went wrong while fetching your payment status."}
+          </p>
+          <button
+            onClick={() => navigate(createPageUrl("NoviLanding"))}
+            className="px-5 py-2 rounded-xl"
+            style={{ background: "#1e2535", color: "#fff" }}
+          >
+            Return Home
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (!order) {
     return (
       <div className="min-h-screen flex items-center justify-center px-4" style={{ background: "#f5f3ef" }}>
-        <div className="animate-pulse" style={{ color: "rgba(30,37,53,0.6)" }}>Loading...</div>
+        <div style={{ color: "rgba(30,37,53,0.6)" }}>Order not found.</div>
       </div>
     );
   }

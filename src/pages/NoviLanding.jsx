@@ -1024,7 +1024,7 @@ export default function NoviLanding() {
                   <User className="w-3.5 h-3.5" /> Personal Information
                 </p>
                 <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <Label className="text-sm font-semibold mb-1.5 block" style={{ color: "#1e2535" }}>First Name *</Label>
                       <Input value={form.first_name} onChange={e => setForm(f => ({ ...f, first_name: e.target.value }))} placeholder="John" className="h-11 rounded-xl" style={{ border: "1.5px solid rgba(0,0,0,0.1)" }} />
@@ -1034,7 +1034,7 @@ export default function NoviLanding() {
                       <Input value={form.last_name} onChange={e => setForm(f => ({ ...f, last_name: e.target.value }))} placeholder="Doe" className="h-11 rounded-xl" style={{ border: "1.5px solid rgba(0,0,0,0.1)" }} />
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <Label className="text-sm font-semibold mb-1.5 block" style={{ color: "#1e2535" }}>Email *</Label>
                       <Input type="email" value={form.customer_email} onChange={e => setForm(f => ({ ...f, customer_email: e.target.value }))} placeholder="jane@example.com" className="h-11 rounded-xl" style={{ border: "1.5px solid rgba(0,0,0,0.1)" }} />
@@ -1056,7 +1056,7 @@ export default function NoviLanding() {
                   <p className="text-xs" style={{ color: "#5a7a20" }}>NOVI courses are available to licensed healthcare professionals only. Your license will be verified before enrollment is confirmed.</p>
                 </div>
                 <div className="space-y-3">
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <Label className="text-sm font-semibold mb-1.5 block" style={{ color: "#1e2535" }}>License Type *</Label>
                       <Select value={form.license_type} onValueChange={v => setForm(f => ({ ...f, license_type: v }))}>
@@ -1118,7 +1118,7 @@ export default function NoviLanding() {
                       onCheckedChange={(checked) => setForm((f) => ({ ...f, rn_confirmation: Boolean(checked) }))}
                       className="mt-0.5"
                     />
-                    <Label htmlFor="rn-confirmation" className="text-sm font-normal cursor-pointer whitespace-nowrap" style={{ color: "rgb(61, 90, 10)" }}>
+                    <Label htmlFor="rn-confirmation" className="text-sm font-normal cursor-pointer leading-relaxed" style={{ color: "rgb(61, 90, 10)" }}>
                       I confirm that I am licensed at the RN level or above and agree to the terms of service.
                     </Label>
                   </div>
@@ -1138,7 +1138,7 @@ export default function NoviLanding() {
               {/* Promo code */}
               <div>
                 <Label className="text-sm font-semibold mb-1.5 block" style={{ color: "rgb(45, 107, 127)" }}>Promo Code (Optional)</Label>
-                <div className="flex gap-2">
+                <div className="flex flex-col sm:flex-row gap-2">
                   <Input
                     value={form.promo_code}
                     onChange={e => {
@@ -1152,7 +1152,7 @@ export default function NoviLanding() {
                   />
                   <Button
                     type="button"
-                    className="h-11 rounded-xl px-5 font-bold"
+                    className="h-11 rounded-xl px-5 font-bold sm:w-auto w-full"
                     style={{
                       background: "rgb(45, 107, 127)",
                       color: "#fff",
@@ -1263,7 +1263,7 @@ export default function NoviLanding() {
               <div className="pt-2 border-t" style={{ borderColor: "rgba(0,0,0,0.07)" }}>
                 <div className="space-y-3">
                   <p className="text-xs font-bold uppercase tracking-wider" style={{ color: "#2D6B7F" }}>Personal Information *</p>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <Label className="text-sm font-semibold mb-1.5 block" style={{ color: "#1e2535" }}>First Name *</Label>
                       <Input
@@ -1285,7 +1285,7 @@ export default function NoviLanding() {
                       />
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <Label className="text-sm font-semibold mb-1.5 block" style={{ color: "#1e2535" }}>Email *</Label>
                       <Input
@@ -1310,7 +1310,7 @@ export default function NoviLanding() {
                   </div>
                   <hr style={{ borderColor: "rgba(0,0,0,0.08)" }} />
                   <p className="text-xs font-bold uppercase tracking-wider" style={{ color: "#2D6B7F" }}>Medical License *</p>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <Label className="text-sm font-semibold mb-1.5 block" style={{ color: "#1e2535" }}>License Type *</Label>
                       <Select value={serviceForm.license_type} onValueChange={v => setServiceForm(f => ({ ...f, license_type: v }))}>
