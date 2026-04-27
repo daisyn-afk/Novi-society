@@ -61,6 +61,8 @@ export async function createCourseCheckout(payload) {
     terms_confirmed,
     refund_policy_confirmed
   } = payload || {};
+  const normalizedCustomerEmail = String(customer_email || "").trim().toLowerCase();
+  const normalizedCourseDate = course_date || null;
 
   if (!course_id || !customer_email || !customer_name || !license_number || !license_image_url) {
     const err = new Error("Missing required checkout fields.");
@@ -94,6 +96,26 @@ export async function createCourseCheckout(payload) {
     }
     if (course.available_seats !== null && Number(course.available_seats) <= 0) {
       const err = new Error("This course is sold out.");
+      err.statusCode = 409;
+      throw err;
+    }
+
+    const duplicatePurchaseRes = await client.query(
+      `select 1
+       from public.pre_orders po
+       where po.order_type = 'course'
+         and po.status = 'paid'
+         and po.course_id = $1
+         and lower(po.customer_email) = $2
+         and (
+           ($3::date is null and po.course_date is null)
+           or po.course_date::date = $3::date
+         )
+       limit 1`,
+      [course.id, normalizedCustomerEmail, normalizedCourseDate]
+    );
+    if (duplicatePurchaseRes.rows.length > 0) {
+      const err = new Error("Course already purchased for this date.");
       err.statusCode = 409;
       throw err;
     }
@@ -162,9 +184,9 @@ export async function createCourseCheckout(payload) {
       [
         course.id,
         course.title,
-        course_date || null,
+        normalizedCourseDate,
         customer_name,
-        customer_email,
+        normalizedCustomerEmail,
         first_name || null,
         last_name || null,
         phone || null,
@@ -184,7 +206,7 @@ export async function createCourseCheckout(payload) {
 
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
-      customer_email,
+      customer_email: normalizedCustomerEmail,
       success_url: `${appBaseUrl}/PreOrderConfirmation?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${appBaseUrl}/`,
       line_items: [
@@ -203,7 +225,7 @@ export async function createCourseCheckout(payload) {
       metadata: {
         pre_order_id: preOrderId,
         course_id: String(course.id),
-        provider_email: String(customer_email),
+        provider_email: String(normalizedCustomerEmail),
         provider_name: String(customer_name),
         app_source: "novi-landing"
       }
