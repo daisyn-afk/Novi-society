@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { createPageUrl } from "@/utils";
 import { Stethoscope, Users, ArrowRight, CheckCircle2 } from "lucide-react";
+import { getDashboardPathForRole } from "@/lib/routeAccessPolicy";
 
 const BRAND = {
   dark: "#1e2535",
@@ -24,26 +25,29 @@ export default function Onboarding() {
 
   useEffect(() => {
     if (me?.role) {
-      // If user already has a role, redirect them appropriately
-      if (me.role === "provider") {
-        window.location.href = createPageUrl("ProviderDashboard");
-      } else if (me.role === "patient") {
-        window.location.href = createPageUrl("PatientJourney");
-      }
+      window.location.href = getDashboardPathForRole(me.role);
     }
   }, [me]);
 
   const handleContinue = async () => {
     if (!selected) return;
     setSaving(true);
-    await base44.auth.updateMe({ role: selected });
+    try {
+      await base44.auth.updateMe({ role: selected });
+    } catch (error) {
+      const nextPage = selected === "provider" ? "ProviderBasicOnboarding" : "PatientOnboarding";
+      window.location.href = `/login?next=${encodeURIComponent(createPageUrl(nextPage))}`;
+      return;
+    }
     if (selected === "provider") {
       window.location.href = createPageUrl("ProviderBasicOnboarding");
-    } else if (selected === "patient") {
-      window.location.href = createPageUrl("PatientJourney");
-    } else {
-      window.location.href = "/";
+      return;
     }
+    if (selected === "patient") {
+      window.location.href = createPageUrl("PatientJourney");
+      return;
+    }
+    window.location.href = "/";
   };
 
   const options = [

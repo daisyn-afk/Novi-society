@@ -1,13 +1,32 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { base44 } from "@/api/base44Client";
+import { getDashboardPathForRole } from "@/lib/routeAccessPolicy";
+import { useAuth } from "@/lib/AuthContext";
 
 export default function Login() {
   const navigate = useNavigate();
+  const { setAuthenticatedSession } = useAuth();
   const [form, setForm] = useState({ email: "", password: "" });
   const [fieldErrors, setFieldErrors] = useState({});
   const [formError, setFormError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    const redirectAuthenticatedUser = async () => {
+      try {
+        const hasSession = typeof base44.auth?.hasSession === "function"
+          ? base44.auth.hasSession()
+          : true;
+        if (!hasSession) return;
+        const currentUser = await base44.auth.me();
+        navigate(getDashboardPathForRole(currentUser?.role), { replace: true });
+      } catch {
+        // No active user session; stay on login page.
+      }
+    };
+    redirectAuthenticatedUser();
+  }, [navigate]);
 
   const onSubmit = async (event) => {
     event.preventDefault();
@@ -27,7 +46,9 @@ export default function Login() {
         email: form.email,
         password: form.password
       });
-      navigate("/NoviLanding");
+      const currentUser = await base44.auth.me();
+      setAuthenticatedSession(currentUser);
+      navigate(getDashboardPathForRole(currentUser?.role), { replace: true });
     } catch (e) {
       setFormError(e?.message || "Unable to login. Please check your credentials.");
     } finally {

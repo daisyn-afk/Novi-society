@@ -269,6 +269,72 @@ export async function refreshSession(refreshToken) {
   };
 }
 
+export async function setPasswordWithAccessToken({ accessToken, refreshToken, password, confirmPassword }) {
+  ensureAuthClients();
+  const safeToken = String(accessToken || "").trim();
+  const safePassword = String(password || "");
+  const safeConfirm = String(confirmPassword || "");
+  const safeRefreshToken = String(refreshToken || "").trim();
+
+  if (!safeToken) {
+    const err = new Error("access_token is required.");
+    err.statusCode = 400;
+    throw err;
+  }
+  if (!safePassword || !safeConfirm) {
+    const err = new Error("password and confirm_password are required.");
+    err.statusCode = 400;
+    throw err;
+  }
+  if (!safeRefreshToken) {
+    const err = new Error("refresh_token is required.");
+    err.statusCode = 400;
+    throw err;
+  }
+  if (safePassword !== safeConfirm) {
+    const err = new Error("Password and confirm_password must match.");
+    err.statusCode = 400;
+    throw err;
+  }
+  if (safePassword.length < 8) {
+    const err = new Error("Password must be at least 8 characters long.");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const { data: sessionData, error: sessionError } = await authClient.auth.setSession({
+    access_token: safeToken,
+    refresh_token: safeRefreshToken
+  });
+  if (sessionError || !sessionData?.user?.id) {
+    const err = new Error(sessionError?.message || "Invalid or expired recovery session.");
+    err.statusCode = 401;
+    throw err;
+  }
+
+  const authUserId = sessionData.user.id;
+  const { data: updatedData, error: updateError } = await authClient.auth.updateUser({
+    password: safePassword
+  });
+  if (updateError) {
+    const err = new Error(updateError.message || "Unable to set password.");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const profile = await getUserRowByAuthUserId(authUserId);
+  return {
+    user: {
+      id: authUserId,
+      email: updatedData?.user?.email || sessionData.user.email,
+      role: profile?.role || updatedData?.user?.user_metadata?.role || sessionData.user.user_metadata?.role || "provider",
+      first_name: profile?.first_name || updatedData?.user?.user_metadata?.first_name || sessionData.user.user_metadata?.first_name || null,
+      last_name: profile?.last_name || updatedData?.user?.user_metadata?.last_name || sessionData.user.user_metadata?.last_name || null,
+      full_name: profile?.full_name || updatedData?.user?.user_metadata?.full_name || sessionData.user.user_metadata?.full_name || null
+    }
+  };
+}
+
 export async function updateMe({ accessToken, updates }) {
   ensureAuthClients();
   const me = await getMeFromAccessToken(accessToken);
