@@ -1,13 +1,13 @@
 // @ts-nocheck — checkJs + untyped base44 client causes false-positive TS errors in this file
 import { useState, useEffect } from "react";
-import { Link, useNavigate, useLocation } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   LayoutDashboard, BookOpen, Award, FileText, Users,
   Calendar, Star, ShieldCheck, ClipboardList, Settings,
-  Menu, X, LogOut, ChevronRight, User, Lock, Stethoscope, Sparkles, Clock, AlertTriangle, ShoppingBag, Mail, Eye, Rocket, TicketPercent
+  Menu, X, LogOut, User, Lock, Stethoscope, Sparkles, Clock, AlertTriangle, ShoppingBag, Mail, Rocket, TicketPercent
 } from "lucide-react";
 import { useProviderAccess } from "@/components/useProviderAccess";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -20,6 +20,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { normalizeRole } from "@/lib/routeAccessPolicy";
 
 const navByRole = {
   admin: [
@@ -68,28 +69,12 @@ const navByRole = {
   ],
 };
 
-const ROLE_ALIASES = {
-  md: "medical_director",
-};
-
-const DASHBOARD_BY_ROLE = {
-  admin: "AdminDashboard",
-  provider: "ProviderDashboard",
-  patient: "PatientJourney",
-  medical_director: "MDDashboard",
-};
-
-const normalizeRole = (role) => ROLE_ALIASES[role] || role;
-
 const BARE_PAGES = ["Onboarding", "ProviderBasicOnboarding", "ProviderGettingStarted", "LandingPage", "ProviderApplication", "NoviLanding"];
-const PUBLIC_PAGES = ["NoviLanding", "LandingPage"];
 const PROVIDER_FREE_PAGES = ["ProviderDashboard", "CourseCatalog", "ProviderProfile", "ProviderGettingStarted"];
 
 export default function Layout({ children, currentPageName }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [roleOverride, setRoleOverride] = useState(null);
   const navigate = useNavigate();
-  const location = useLocation();
   const queryClient = useQueryClient();
   const { status: providerAccessStatus } = useProviderAccess();
 
@@ -106,13 +91,8 @@ export default function Layout({ children, currentPageName }) {
     }
   }, [isSuccess, user, currentPageName]);
 
-  const role = normalizeRole(roleOverride || user?.role || "provider");
-  /** URL-based admin shell: /admin and /admincourses must show admin nav even if user.role is still provider */
-  const forceAdminNav =
-    location.pathname === "/admin" ||
-    location.pathname === "/admincourses" ||
-    location.pathname.startsWith("/admin/");
-  const navRole = forceAdminNav ? "admin" : role;
+  const role = normalizeRole(user?.role || "provider");
+  const navRole = role;
   const navItems = navByRole[navRole] || navByRole.provider;
 
   const { data: providerEnrollments = [] } = useQuery({
@@ -157,7 +137,7 @@ export default function Layout({ children, currentPageName }) {
     medical_director: "Medical Director",
     patient: "Patient",
     staff: "Staff",
-  }[forceAdminNav ? "admin" : role] || (forceAdminNav ? "Admin" : role);
+  }[role] || role;
 
   return (
     <div className="min-h-screen flex" style={{ fontFamily: "'DM Sans', sans-serif", background: "linear-gradient(150deg, #ede9fb 0%, #f5f2ff 40%, #eaf5c8 75%, #C8E63C 100%)", backgroundAttachment: "fixed" }}>
@@ -321,44 +301,6 @@ export default function Layout({ children, currentPageName }) {
             );
           })}
         </nav>
-
-        {/* Role Switcher */}
-        <div className="relative z-10 px-3 pb-3 pt-3" style={{ borderTop: "1px solid rgba(123,142,200,0.1)" }}>
-          <p className="text-xs px-1 mb-2 uppercase tracking-widest font-semibold" style={{ color: "rgba(123,142,200,0.65)", fontSize: "9px" }}>
-            Switch Role
-          </p>
-          <div className="grid grid-cols-2 gap-1">
-            {[
-              { value: "admin", label: "Admin" },
-              { value: "provider", label: "Provider" },
-              { value: "patient", label: "Patient" },
-              { value: "medical_director", label: "MD" },
-            ].map(({ value, label }) => (
-              <button
-                key={value}
-                onClick={async () => {
-                  const normalizedRole = normalizeRole(value);
-                  setRoleOverride(normalizedRole);
-                  const dashboardPage = DASHBOARD_BY_ROLE[normalizedRole] || "ProviderDashboard";
-                  const dashboardUrl = createPageUrl(dashboardPage);
-
-                  navigate(dashboardUrl, { replace: true });
-
-                  try {
-                    await base44.auth.updateMe({ role: value });
-                  } catch (error) {
-                    console.error("Failed to persist role change:", error);
-                  } finally {
-                    await queryClient.invalidateQueries({ queryKey: ["me"] });
-                  }
-                }}
-                className={`role-btn ${role === value ? "role-btn-active" : "role-btn-inactive"}`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
 
         {/* User footer */}
         <div className="relative z-10 p-4" style={{ borderTop: "1px solid rgba(123,142,200,0.1)" }}>

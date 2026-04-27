@@ -300,17 +300,19 @@ export default function NoviLanding() {
             <span className="text-sm font-semibold text-white tracking-wide">Pre-Launch · Reservations Open</span>
           </div>
 
-          <h1 style={{
-            fontFamily: "'DM Serif Display', serif",
-            fontSize: "clamp(4rem, 14vw, 8rem)",
-            color: "#fff",
-            fontStyle: "italic",
-            fontWeight: 400,
-            lineHeight: 0.9,
-            marginBottom: "24px",
-          }}>
-            NOVI test develop
-          </h1>
+          <div style={{ marginBottom: "24px" }}>
+            <img
+              src="/novi-email-logo.png"
+              alt="NOVI Society"
+              style={{
+                width: "100%",
+                maxWidth: "350px",
+                height: "auto",
+                margin: "0 auto",
+                display: "block",
+              }}
+            />
+          </div>
 
           <p style={{
             fontFamily: "'DM Serif Display', serif",
@@ -361,6 +363,15 @@ export default function NoviLanding() {
               onClick={() => document.getElementById("pillars").scrollIntoView({ behavior: "smooth" })}
             >
               Learn More
+            </Button>
+            <Button
+              size="lg"
+              variant="outline"
+              className="px-10 py-6 rounded-full text-base font-medium"
+              style={{ background: "rgba(255,255,255,0.1)", border: "1.5px solid rgba(255,255,255,0.3)", color: "#fff" }}
+              onClick={() => { window.location.href = "/admin"; }}
+            >
+              Sign In
             </Button>
           </div>
         </div>

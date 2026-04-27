@@ -47,8 +47,8 @@ export async function adminApiRequest(path, options = {}) {
   let response;
   try {
     response = await fetch(url, {
-      headers,
       ...options,
+      headers,
     });
   } catch (e) {
     const hint = `Run npm run dev (Vite + admin API). Ensure .env has DATABASE_URL so backend/admin does not exit. Request: ${url}`;

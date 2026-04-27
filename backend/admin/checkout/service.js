@@ -19,6 +19,16 @@ const supabaseAdmin = supabaseUrl && supabaseServiceRoleKey
     })
   : null;
 
+function normalizeRole(role) {
+  const value = String(role || "provider").trim().toLowerCase();
+  if (["provider", "patient", "medical_director", "admin"].includes(value)) return value;
+  return "provider";
+}
+
+function fullName(firstName, lastName) {
+  return [firstName, lastName].filter(Boolean).join(" ").trim() || null;
+}
+
 function normalizePromoCode(code) {
   return String(code || "").trim().toUpperCase();
 }
@@ -793,12 +803,53 @@ async function sendNewUserInviteEmail({ to, firstName, inviteLink }) {
   }
 }
 
+async function upsertProviderUserRow(client, {
+  authUserId,
+  email,
+  firstName,
+  lastName
+}) {
+  if (!client || !authUserId || !email) return null;
+  const normalizedRole = normalizeRole("provider");
+  const { rows } = await client.query(
+    `insert into public.users (
+       auth_user_id, email, first_name, last_name, full_name, role
+     ) values ($1, $2, $3, $4, $5, $6)
+     on conflict (auth_user_id)
+     do update set
+       email = excluded.email,
+       first_name = coalesce(public.users.first_name, excluded.first_name),
+       last_name = coalesce(public.users.last_name, excluded.last_name),
+       full_name = coalesce(public.users.full_name, excluded.full_name),
+       role = coalesce(public.users.role, excluded.role),
+       updated_at = now()
+     returning id, auth_user_id, email, role`,
+    [
+      authUserId,
+      String(email).trim().toLowerCase(),
+      firstName || null,
+      lastName || null,
+      fullName(firstName, lastName),
+      normalizedRole
+    ]
+  );
+  return rows[0] ?? null;
+}
+
 async function inviteUserIfNeeded(email, firstName, lastName) {
-  if (!supabaseAdmin || !email) return { wasNewUser: false, linkedUserId: null };
+  if (!supabaseAdmin || !email) {
+    return {
+      wasNewUser: false,
+      existingUser: false,
+      inviteSent: false,
+      authUserId: null
+    };
+  }
   try {
+    const normalizedEmail = String(email).trim().toLowerCase();
     const linkRes = await supabaseAdmin.auth.admin.generateLink({
       type: "invite",
-      email,
+      email: normalizedEmail,
       options: {
         data: {
           first_name: firstName || null,
@@ -811,23 +862,33 @@ async function inviteUserIfNeeded(email, firstName, lastName) {
     if (linkRes.error) {
       const message = String(linkRes.error.message || "");
       if (message.toLowerCase().includes("already")) {
-        return { wasNewUser: false, linkedUserId: null };
+        return {
+          wasNewUser: false,
+          existingUser: true,
+          inviteSent: false,
+          authUserId: null
+        };
       }
       // eslint-disable-next-line no-console
       console.error("[checkout] generate invite link failed:", linkRes.error);
-      return { wasNewUser: false, linkedUserId: null };
+      return {
+        wasNewUser: false,
+        existingUser: false,
+        inviteSent: false,
+        authUserId: null
+      };
     }
 
     const inviteLink = linkRes.data?.properties?.action_link || linkRes.data?.action_link;
-    const linkedUserId = linkRes.data?.user?.id || null;
+    const authUserId = linkRes.data?.user?.id || null;
 
     let inviteSent = false;
     if (inviteLink) {
-      inviteSent = await sendNewUserInviteEmail({ to: email, firstName, inviteLink });
+      inviteSent = await sendNewUserInviteEmail({ to: normalizedEmail, firstName, inviteLink });
     }
 
     if (!inviteSent) {
-      const inviteRes = await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
+      const inviteRes = await supabaseAdmin.auth.admin.inviteUserByEmail(normalizedEmail, {
         data: {
           first_name: firstName || null,
           last_name: lastName || null
@@ -840,14 +901,26 @@ async function inviteUserIfNeeded(email, firstName, lastName) {
           // eslint-disable-next-line no-console
           console.error("[checkout] supabase invite fallback failed:", inviteRes.error);
         }
+      } else {
+        inviteSent = true;
       }
     }
 
-    return { wasNewUser: true, linkedUserId };
+    return {
+      wasNewUser: true,
+      existingUser: false,
+      inviteSent,
+      authUserId
+    };
   } catch (error) {
     // eslint-disable-next-line no-console
     console.error("[checkout] invite flow failed:", error);
-    return { wasNewUser: false, linkedUserId: null };
+    return {
+      wasNewUser: false,
+      existingUser: false,
+      inviteSent: false,
+      authUserId: null
+    };
   }
 }
 
@@ -930,11 +1003,25 @@ export async function processCompletedCheckoutSession(session) {
     );
     const selectedCourse = courseRows[0] || null;
 
-    const { wasNewUser, linkedUserId } = await inviteUserIfNeeded(
+    let wasNewUser = false;
+    let linkedUserId = null;
+
+    const inviteResult = await inviteUserIfNeeded(
       preOrder.customer_email,
       preOrder.first_name,
       preOrder.last_name
     );
+    wasNewUser = Boolean(inviteResult?.wasNewUser);
+    linkedUserId = inviteResult?.authUserId || null;
+
+    if (wasNewUser && linkedUserId) {
+      await upsertProviderUserRow(client, {
+        authUserId: linkedUserId,
+        email: preOrder.customer_email,
+        firstName: preOrder.first_name,
+        lastName: preOrder.last_name
+      });
+    }
 
     const emailSent = await sendConfirmationEmail({
       to: preOrder.customer_email,

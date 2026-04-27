@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { base44 } from "@/api/base44Client";
+import { createPageUrl } from "@/utils";
 
 const ROLE_OPTIONS = [
   { value: "provider", label: "Provider" },
@@ -21,6 +22,12 @@ export default function Signup() {
   const [fieldErrors, setFieldErrors] = useState({});
   const [formError, setFormError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  const getPostSignupPath = (role) => {
+    if (role === "provider") return createPageUrl("ProviderBasicOnboarding");
+    if (role === "patient") return createPageUrl("PatientOnboarding");
+    return createPageUrl("NoviLanding");
+  };
 
   const onSubmit = async (event) => {
     event.preventDefault();
@@ -54,7 +61,11 @@ export default function Signup() {
     setSubmitting(true);
     try {
       await base44.auth.signup(form);
-      navigate("/NoviLanding");
+      const createdUser = await base44.auth.me();
+      if (!createdUser?.id) {
+        throw new Error("Account was not created. Please try again.");
+      }
+      navigate(getPostSignupPath(form.role), { replace: true });
     } catch (e) {
       setFormError(e?.message || "Unable to create account.");
     } finally {

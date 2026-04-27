@@ -8,5 +8,13 @@ export const adminUploadsApi = {
       method: "POST",
       body: formData
     });
+  },
+  uploadLicenseDocument: (file) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    return adminApiRequest("/admin/uploads/license-photo", {
+      method: "POST",
+      body: formData
+    });
   }
 };

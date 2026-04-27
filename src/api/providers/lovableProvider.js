@@ -75,6 +75,7 @@ async function requestJson(path, options = {}, { includeAuth = false } = {}) {
 }
 const ACCESS_TOKEN_KEY = "novi_auth_access_token";
 const REFRESH_TOKEN_KEY = "novi_auth_refresh_token";
+const RECOVERY_HASH_KEY = "novi_recovery_hash";
 
 function getStoredAccessToken() {
   return window.localStorage.getItem(ACCESS_TOKEN_KEY) || "";
@@ -100,6 +101,21 @@ function storeAuthSession(session) {
 function clearAuthSession() {
   window.localStorage.removeItem(ACCESS_TOKEN_KEY);
   window.localStorage.removeItem(REFRESH_TOKEN_KEY);
+}
+
+function parseRecoveryHash(rawHash) {
+  const source = typeof rawHash === "string" ? rawHash : "";
+  const hash = source.startsWith("#") ? source.slice(1) : source;
+  const params = new URLSearchParams(hash);
+  const type = String(params.get("type") || "").toLowerCase();
+  const accessToken = params.get("access_token") || "";
+  const refreshToken = params.get("refresh_token") || "";
+  const isPasswordSetupFlow = type === "recovery" || type === "invite";
+  if (!isPasswordSetupFlow || !accessToken) return null;
+  return {
+    access_token: accessToken,
+    refresh_token: refreshToken
+  };
 }
 
 async function tryRefreshAuthSession() {
@@ -228,6 +244,46 @@ export function createLovableProviderClient() {
         method: "PATCH",
         body: JSON.stringify(payload || {})
       }),
+      setPassword: async ({ access_token, refresh_token, password, confirm_password }) => authRequest("/admin/auth/set-password", {
+        method: "POST",
+        body: JSON.stringify({
+          access_token,
+          refresh_token,
+          password,
+          confirm_password
+        })
+      }),
+      storeSession: ({ access_token, refresh_token }) => {
+        storeAuthSession({
+          access_token,
+          refresh_token
+        });
+      },
+      consumeRecoveryHash: (rawHash) => {
+        const parsed = parseRecoveryHash(rawHash ?? window.location.hash);
+        if (!parsed) return null;
+        try {
+          window.sessionStorage.setItem(RECOVERY_HASH_KEY, rawHash ?? window.location.hash);
+        } catch {
+          // ignore storage failures
+        }
+        storeAuthSession(parsed);
+        return parsed;
+      },
+      getStoredRecoveryHash: () => {
+        try {
+          return window.sessionStorage.getItem(RECOVERY_HASH_KEY) || "";
+        } catch {
+          return "";
+        }
+      },
+      clearStoredRecoveryHash: () => {
+        try {
+          window.sessionStorage.removeItem(RECOVERY_HASH_KEY);
+        } catch {
+          // ignore storage failures
+        }
+      },
       login: async ({ email, password }) => {
         const result = await authRequest("/admin/auth/login", {
           method: "POST",

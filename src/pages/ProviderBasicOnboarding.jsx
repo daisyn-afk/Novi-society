@@ -7,6 +7,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useNavigate } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { Upload, CheckCircle, ArrowRight } from "lucide-react";
+import { providerOnboardingApi } from "@/api/providerOnboardingApi";
+import { getDashboardPathForRole } from "@/lib/routeAccessPolicy";
+import { adminUploadsApi } from "@/api/adminUploadsApi";
 
 const LICENSE_TYPES = ["RN", "NP", "PA", "MD", "DO", "esthetician", "other"];
 
@@ -30,21 +33,36 @@ export default function ProviderBasicOnboarding() {
   });
   const [uploading, setUploading] = useState(false);
   const [documentUrl, setDocumentUrl] = useState("");
+  const [uploadError, setUploadError] = useState("");
 
-  const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => base44.auth.me() });
+  const { data: me, isLoading: isLoadingMe, isError: meLoadFailed } = useQuery({
+    queryKey: ["me"],
+    queryFn: () => base44.auth.me(),
+    retry: false
+  });
 
   const uploadFile = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
     setUploading(true);
-    const { file_url } = await base44.integrations.Core.UploadFile({ file });
-    setDocumentUrl(file_url);
-    setUploading(false);
+    setUploadError("");
+    try {
+      const uploaded = await adminUploadsApi.uploadLicenseDocument(file);
+      const nextUrl = uploaded?.url || uploaded?.file_url || "";
+      if (!nextUrl) {
+        throw new Error("Upload succeeded but no file URL was returned.");
+      }
+      setDocumentUrl(nextUrl);
+    } catch (error) {
+      setUploadError(error?.message || "License upload failed. Please try again.");
+    } finally {
+      setUploading(false);
+      e.target.value = "";
+    }
   };
 
   const submitOnboarding = useMutation({
     mutationFn: async () => {
-      const u = await base44.auth.me();
       const dobDate = new Date(form.dob);
       const today = new Date();
       const age = today.getFullYear() - dobDate.getFullYear();
@@ -52,27 +70,19 @@ export default function ProviderBasicOnboarding() {
       if (age < 18 || (age === 18 && monthDiff < 0)) {
         throw new Error("You must be 18 or older to register as a provider.");
       }
-      await base44.auth.updateMe({
+      return providerOnboardingApi.submitBasic({
         dob: form.dob,
         address_line1: form.address_line1,
         address_line2: form.address_line2 || null,
         city: form.city,
         state: form.state,
         zip: form.zip,
-      });
-      await base44.entities.License.create({
-        provider_id: u.id,
-        provider_email: u.email,
         license_type: form.license_type,
         license_number: form.license_number,
         issuing_state: form.issuing_state || null,
         expiration_date: form.expiration_date || null,
-        document_url: documentUrl || null,
-        status: "verified",
-        verified_at: new Date().toISOString(),
-        verified_by: "auto_verified_onboarding",
+        document_url: documentUrl || null
       });
-      return u;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["my-licenses"] });
@@ -80,6 +90,24 @@ export default function ProviderBasicOnboarding() {
       navigate(createPageUrl("ProviderDashboard"));
     },
   });
+
+  if (isLoadingMe) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin"></div>
+      </div>
+    );
+  }
+
+  if (meLoadFailed) {
+    window.location.href = `/login?next=${encodeURIComponent("/ProviderBasicOnboarding")}`;
+    return null;
+  }
+
+  if (me?.role && me.role !== "provider") {
+    window.location.href = getDashboardPathForRole(me.role);
+    return null;
+  }
 
   const canSubmit =
     form.dob &&
@@ -294,6 +322,11 @@ export default function ProviderBasicOnboarding() {
         {submitOnboarding.error && (
           <div className="mb-4 px-4 py-3 rounded-xl" style={{ background: "rgba(250,111,48,0.15)", border: "1px solid rgba(250,111,48,0.35)" }}>
             <p className="text-sm font-semibold" style={{ color: "#FA6F30" }}>{submitOnboarding.error.message}</p>
+          </div>
+        )}
+        {uploadError && (
+          <div className="mb-4 px-4 py-3 rounded-xl" style={{ background: "rgba(250,111,48,0.15)", border: "1px solid rgba(250,111,48,0.35)" }}>
+            <p className="text-sm font-semibold" style={{ color: "#FA6F30" }}>{uploadError}</p>
           </div>
         )}
 
