@@ -99,7 +99,30 @@ export default function Layout({ children, currentPageName }) {
     queryKey: ["my-enrollments"],
     queryFn: async () => {
       const me = await base44.auth.me();
-      return base44.entities.Enrollment.filter({ provider_id: me.id });
+      const [byProviderIdResult, byEmailResult, preOrdersResult] = await Promise.allSettled([
+        me?.id ? base44.entities.Enrollment.filter({ provider_id: me.id }) : Promise.resolve([]),
+        me?.email ? base44.entities.Enrollment.filter({ provider_email: me.email }) : Promise.resolve([]),
+        base44.entities.PreOrder.list("-created_date", 500),
+      ]);
+      const byProviderId = byProviderIdResult.status === "fulfilled" ? (byProviderIdResult.value || []) : [];
+      const byEmail = byEmailResult.status === "fulfilled" ? (byEmailResult.value || []) : [];
+      const preOrders = preOrdersResult.status === "fulfilled" ? (preOrdersResult.value || []) : [];
+      const email = String(me?.email || "").toLowerCase();
+      const derivedFromPreOrders = preOrders
+        .filter((p) => p?.order_type === "course")
+        .filter((p) => ["paid", "confirmed", "completed"].includes(String(p?.status || "").toLowerCase()))
+        .filter((p) => String(p?.customer_email || "").toLowerCase() === email)
+        .map((p) => ({
+          id: `preorder-${p.id}`,
+          pre_order_id: p.id,
+          course_id: p.course_id,
+          provider_id: me?.id || null,
+          provider_email: p.customer_email,
+          provider_name: p.customer_name,
+          status: p.status === "completed" ? "confirmed" : p.status,
+          created_date: p.created_date,
+        }));
+      return Array.from(new Map([...(byProviderId || []), ...(byEmail || []), ...derivedFromPreOrders].map((row) => [row.pre_order_id || row.id, row])).values());
     },
     enabled: role === "provider",
   });

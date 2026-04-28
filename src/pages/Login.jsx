@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { base44 } from "@/api/base44Client";
 import { getDashboardPathForRole } from "@/lib/routeAccessPolicy";
 import { useAuth } from "@/lib/AuthContext";
@@ -117,10 +117,6 @@ export default function Login() {
             {submitting ? "Logging in..." : "Login"}
           </button>
 
-          <p style={{ margin: "16px 0 0", fontSize: 14, color: "#64748b", textAlign: "center" }}>
-            Don&apos;t have an account?{" "}
-            <Link to="/signup" style={{ color: "#2D6B7F", fontWeight: 700, textDecoration: "none" }}>Sign up</Link>
-          </p>
         </form>
       </div>
     </div>

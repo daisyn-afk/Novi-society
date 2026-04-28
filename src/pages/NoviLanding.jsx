@@ -12,6 +12,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { adminCoursesApi } from "@/api/adminCoursesApi";
 import { courseCheckoutApi } from "@/api/courseCheckoutApi";
+import { getDashboardPathForRole } from "@/lib/routeAccessPolicy";
 import {
   Sparkles, Award, Shield, Users, Heart, ArrowRight, Check,
   BookOpen, Clock, MapPin, ChevronRight, Calendar, Zap, CheckCircle2, User, Upload, ImageIcon
@@ -85,9 +86,6 @@ const BLANK_FORM = {
   customer_email: "",
   phone: "",
   promo_code: "",
-  license_type: "RN",
-  license_number: "",
-  license_image_url: "",
   rn_confirmation: false,
   refund_policy_confirmation: false,
 };
@@ -104,13 +102,19 @@ const isCourseSoldOut = (course) =>
 
 export default function NoviLanding() {
   const { toast } = useToast();
+  const { data: me } = useQuery({
+    queryKey: ["me"],
+    queryFn: () => base44.auth.me(),
+    retry: false,
+  });
+  const isAuthenticated = Boolean(me);
+  const dashboardPath = isAuthenticated ? getDashboardPathForRole(me?.role) : null;
   const [selectedCourse, setSelectedCourse] = useState(null);
   const [selectedService, setSelectedService] = useState(null);
   // Course modal steps: "dates" | "info" | "submitted"
   const [courseStep, setCourseStep] = useState("dates");
   const [selectedCourseDate, setSelectedCourseDate] = useState(null);
   const [form, setForm] = useState(BLANK_FORM);
-  const [licenseUploadError, setLicenseUploadError] = useState("");
   const [promoPreview, setPromoPreview] = useState(null);
   const [serviceForm, setServiceForm] = useState({
     first_name: "",
@@ -180,8 +184,6 @@ export default function NoviLanding() {
     setPromoPreview(null);
   };
 
-  const [licenseUploading, setLicenseUploading] = useState(false);
-
   const promoMutation = useMutation({
     mutationFn: () =>
       courseCheckoutApi.validatePromoCode({
@@ -191,23 +193,8 @@ export default function NoviLanding() {
     onSuccess: (result) => setPromoPreview(result)
   });
 
-  const handleLicenseUpload = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      setLicenseUploading(true);
-      setLicenseUploadError("");
-      const uploaded = await courseCheckoutApi.uploadLicensePhoto(file);
-      setForm(f => ({ ...f, license_image_url: uploaded.url }));
-    } catch (error) {
-      setLicenseUploadError(error?.message || "License upload failed. Please try again.");
-    } finally {
-      setLicenseUploading(false);
-    }
-  };
-
   const handleSubmitApplication = () => {
-    if (!form.first_name || !form.last_name || !form.customer_email || !form.phone || !form.license_number || !form.license_image_url || !form.rn_confirmation || !form.refund_policy_confirmation) return;
+    if (!form.first_name || !form.last_name || !form.customer_email || !form.phone || !form.rn_confirmation || !form.refund_policy_confirmation) return;
     const fullName = `${form.first_name} ${form.last_name}`.trim();
     submitMutation.mutate({
       course_id: selectedCourse.id,
@@ -217,9 +204,6 @@ export default function NoviLanding() {
       last_name: form.last_name,
       customer_email: form.customer_email,
       phone: form.phone || null,
-      license_type: form.license_type,
-      license_number: form.license_number,
-      license_image_url: form.license_image_url || null,
       promo_code: form.promo_code || null,
       terms_confirmed: form.rn_confirmation,
       refund_policy_confirmed: form.refund_policy_confirmation,
@@ -301,7 +285,25 @@ export default function NoviLanding() {
         alignItems: "center",
         justifyContent: "center",
         padding: "80px 24px",
+        position: "relative",
       }}>
+        {isAuthenticated && dashboardPath && (
+          <Button
+            variant="outline"
+            className="rounded-full text-sm font-semibold px-5 py-2.5"
+            style={{
+              position: "absolute",
+              top: 20,
+              right: 20,
+              background: "rgba(255,255,255,0.14)",
+              border: "1.5px solid rgba(255,255,255,0.35)",
+              color: "#fff",
+            }}
+            onClick={() => { window.location.href = dashboardPath; }}
+          >
+            Go to Dashboard
+          </Button>
+        )}
         <div className="max-w-4xl mx-auto text-center">
           <div className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full mb-10" style={{
             background: "rgba(255,255,255,0.12)",
@@ -380,9 +382,15 @@ export default function NoviLanding() {
               variant="outline"
               className="px-10 py-6 rounded-full text-base font-medium"
               style={{ background: "rgba(255,255,255,0.1)", border: "1.5px solid rgba(255,255,255,0.3)", color: "#fff" }}
-              onClick={() => { window.location.href = "/admin"; }}
+              onClick={() => {
+                if (isAuthenticated) {
+                  base44.auth.logout(`${window.location.origin}/NoviLanding`);
+                  return;
+                }
+                window.location.href = "/admin";
+              }}
             >
-              Sign In
+              {isAuthenticated ? "Sign Out" : "Sign In"}
             </Button>
           </div>
         </div>
@@ -1069,69 +1077,6 @@ export default function NoviLanding() {
                 </div>
               </div>
 
-              {/* License */}
-              <div className="pt-4 border-t" style={{ borderColor: "rgba(0,0,0,0.07)" }}>
-                <p className="text-xs font-bold uppercase tracking-wider mb-3 flex items-center gap-2" style={{ color: "#2D6B7F" }}>
-                  <Shield className="w-3.5 h-3.5" /> Professional License *
-                </p>
-                <div className="p-3 rounded-xl mb-3" style={{ background: "rgba(200,230,60,0.07)", border: "1px solid rgba(200,230,60,0.2)" }}>
-                  <p className="text-xs" style={{ color: "#5a7a20" }}>NOVI courses are available to licensed healthcare professionals only. Your license will be verified before enrollment is confirmed.</p>
-                </div>
-                <div className="space-y-3">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <Label className="text-sm font-semibold mb-1.5 block" style={{ color: "#1e2535" }}>License Type *</Label>
-                      <Select value={form.license_type} onValueChange={v => setForm(f => ({ ...f, license_type: v }))}>
-                        <SelectTrigger className="h-11 rounded-xl" style={{ border: "1.5px solid rgba(0,0,0,0.1)" }}>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="RN">RN – Registered Nurse</SelectItem>
-                          <SelectItem value="NP">NP – Nurse Practitioner</SelectItem>
-                          <SelectItem value="PA">PA – Physician Assistant</SelectItem>
-                          <SelectItem value="MD">MD – Medical Doctor</SelectItem>
-                          <SelectItem value="DO">DO – Doctor of Osteopathy</SelectItem>
-                          <SelectItem value="esthetician">Licensed Esthetician</SelectItem>
-                          <SelectItem value="other">Other Healthcare Professional</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div>
-                      <Label className="text-sm font-semibold mb-1.5 block" style={{ color: "#1e2535" }}>License Number *</Label>
-                      <Input value={form.license_number} onChange={e => setForm(f => ({ ...f, license_number: e.target.value }))} placeholder="e.g. RN-123456" className="h-11 rounded-xl" style={{ border: "1.5px solid rgba(0,0,0,0.1)" }} />
-                    </div>
-                  </div>
-                </div>
-
-                {/* License photo upload */}
-                <div className="mt-2">
-                  <Label className="text-sm font-semibold mb-1.5 block" style={{ color: "#1e2535" }}>License Photo *</Label>
-                  {form.license_image_url ? (
-                    <div className="flex items-center gap-3 p-3 rounded-xl" style={{ background: "rgba(200,230,60,0.08)", border: "1px solid rgba(200,230,60,0.3)" }}>
-                      <ImageIcon className="w-5 h-5 flex-shrink-0" style={{ color: "#5a7a20" }} />
-                      <span className="text-sm font-medium flex-1" style={{ color: "#3d5a0a" }}>License uploaded ✓</span>
-                      <button onClick={() => setForm(f => ({ ...f, license_image_url: "" }))} className="text-xs underline" style={{ color: "rgba(30,37,53,0.4)" }}>Remove</button>
-                    </div>
-                  ) : (
-                    <label className="flex flex-col items-center gap-2 p-5 rounded-xl cursor-pointer transition-all" style={{ background: "rgba(0,0,0,0.02)", border: "1.5px dashed rgba(0,0,0,0.15)" }}>
-                      {licenseUploading ? (
-                        <div className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin" style={{ color: "#2D6B7F" }} />
-                      ) : (
-                        <Upload className="w-5 h-5" style={{ color: "#2D6B7F" }} />
-                      )}
-                      <span className="text-sm font-medium" style={{ color: "#2D6B7F" }}>
-                        {licenseUploading ? "Uploading..." : "Click to upload license photo"}
-                      </span>
-                      <span className="text-xs" style={{ color: "rgba(30,37,53,0.4)" }}>JPG, PNG, WEBP, HEIC, HEIF or PDF (max 12MB)</span>
-                      <input type="file" accept="image/*,.pdf" className="hidden" onChange={handleLicenseUpload} disabled={licenseUploading} />
-                    </label>
-                  )}
-                  {licenseUploadError && (
-                    <p className="text-xs mt-2" style={{ color: "#DA6A63" }}>{licenseUploadError}</p>
-                  )}
-                </div>
-              </div>
-
               <div className="p-4 rounded-xl space-y-3 mt-4" style={{ background: "rgba(200, 230, 60, 0.08)", border: "1px solid rgba(200,230,60,0.2)" }}>
                   <div className="flex items-start gap-3">
                     <Checkbox
@@ -1202,15 +1147,13 @@ export default function NoviLanding() {
                 </div>
               )}
 
-              {(!form.first_name || !form.last_name || !form.customer_email || !form.phone || !form.license_number || !form.license_image_url || !form.rn_confirmation || !form.refund_policy_confirmation) && (
+              {(!form.first_name || !form.last_name || !form.customer_email || !form.phone || !form.rn_confirmation || !form.refund_policy_confirmation) && (
                 <div className="px-4 py-3 rounded-xl flex flex-col gap-1" style={{ background: "rgba(250,111,48,0.08)", border: "1px solid rgba(250,111,48,0.2)" }}>
                   <p className="text-xs font-bold" style={{ color: "#FA6F30" }}>Please complete the following:</p>
                   {!form.first_name && <p className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>• First Name</p>}
                   {!form.last_name && <p className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>• Last Name</p>}
                   {!form.customer_email && <p className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>• Email</p>}
                   {!form.phone && <p className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>• Phone</p>}
-                  {!form.license_number && <p className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>• License Number</p>}
-                  {!form.license_image_url && <p className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>• License Photo</p>}
                   {!form.rn_confirmation && <p className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>• Confirm your license level and terms</p>}
                   {!form.refund_policy_confirmation && <p className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>• Acknowledge the Refund Policy</p>}
                 </div>
@@ -1222,7 +1165,7 @@ export default function NoviLanding() {
                 <Button
                   className="flex-1 py-5 text-base font-bold rounded-xl"
                   style={{ background: "#C8E63C", color: "#1a2540" }}
-                  disabled={isCourseSoldOut(selectedCourse) || !form.first_name || !form.last_name || !form.customer_email || !form.phone || !form.license_number || !form.license_image_url || !form.rn_confirmation || !form.refund_policy_confirmation || submitMutation.isPending || licenseUploading}
+                  disabled={isCourseSoldOut(selectedCourse) || !form.first_name || !form.last_name || !form.customer_email || !form.phone || !form.rn_confirmation || !form.refund_policy_confirmation || submitMutation.isPending}
                   onClick={handleSubmitApplication}
                 >
                   {submitMutation.isPending ? (

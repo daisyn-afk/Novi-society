@@ -17,12 +17,13 @@ export default function CourseBrowseCard({ course, isEnrolled, onSelect }) {
   const heroImage = course.cover_image_url || meta.image;
   const nextDate = course.session_dates?.find(d => d.date)?.date;
   const seatsLeft = course.available_seats ?? course.max_seats;
-  const isFull = course.max_seats && seatsLeft === 0;
+  const hasSeatLimit = course.available_seats !== null && course.available_seats !== undefined;
+  const isFull = hasSeatLimit && Number(course.available_seats) <= 0;
 
   return (
     <div
-      onClick={() => !isEnrolled && onSelect(course)}
-      className="group cursor-pointer overflow-hidden rounded-2xl transition-all hover:shadow-xl"
+      onClick={() => !isEnrolled && !isFull && onSelect(course)}
+      className={`group overflow-hidden rounded-2xl transition-all hover:shadow-xl ${isEnrolled || isFull ? "cursor-not-allowed" : "cursor-pointer"}`}
       style={{
         background: "white",
         border: "none",
@@ -121,6 +122,14 @@ export default function CourseBrowseCard({ course, isEnrolled, onSelect }) {
         {isEnrolled ? (
           <button className="w-full py-2.5 rounded-lg text-xs font-bold text-white" style={{ background: "#4a6b10" }}>
             ✓ Enrolled
+          </button>
+        ) : isFull ? (
+          <button
+            disabled
+            className="w-full py-2.5 rounded-lg font-bold text-sm text-white opacity-70 cursor-not-allowed"
+            style={{ background: "#b4534d" }}
+          >
+            Class Full
           </button>
         ) : (
           <button

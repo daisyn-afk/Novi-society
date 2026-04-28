@@ -307,6 +307,28 @@ export async function updateTemplateCourse(id, payload, serviceTypeNameLookup) {
 }
 
 export async function deleteTemplateCourse(id) {
-  const { rowCount } = await query(`delete from public.template_courses where id = $1`, [id]);
-  return rowCount > 0;
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+
+    // Remove scheduled courses linked to this template first so template delete
+    // cannot violate scheduled_courses_template_id_fkey.
+    await client.query(
+      `delete from public.scheduled_courses where template_id = $1`,
+      [id]
+    );
+
+    const { rowCount } = await client.query(
+      `delete from public.template_courses where id = $1`,
+      [id]
+    );
+
+    await client.query("commit");
+    return rowCount > 0;
+  } catch (error) {
+    await client.query("rollback").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
 }

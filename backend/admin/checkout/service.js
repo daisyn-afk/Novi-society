@@ -62,10 +62,11 @@ export async function createCourseCheckout(payload) {
     refund_policy_confirmed
   } = payload || {};
   const normalizedCustomerEmail = String(customer_email || "").trim().toLowerCase();
+  const normalizedCustomerName = String(customer_name || fullName(first_name, last_name) || "").trim();
   const normalizedCourseDate = course_date || null;
 
-  if (!course_id || !customer_email || !customer_name || !license_number || !license_image_url) {
-    const err = new Error("Missing required checkout fields.");
+  if (!course_id || !normalizedCustomerEmail || !normalizedCustomerName) {
+    const err = new Error("Missing required checkout fields: course_id, customer_email, customer_name.");
     err.statusCode = 400;
     throw err;
   }
@@ -185,7 +186,7 @@ export async function createCourseCheckout(payload) {
         course.id,
         course.title,
         normalizedCourseDate,
-        customer_name,
+        normalizedCustomerName,
         normalizedCustomerEmail,
         first_name || null,
         last_name || null,
