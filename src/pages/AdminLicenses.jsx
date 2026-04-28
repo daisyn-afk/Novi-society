@@ -71,7 +71,11 @@ export default function AdminLicenses() {
   };
 
   const filteredLicenses = licenses.filter(l => {
-    const matchSearch = !licSearch || l.provider_email?.toLowerCase().includes(licSearch.toLowerCase());
+    const query = licSearch.toLowerCase();
+    const matchSearch =
+      !query ||
+      l.provider_email?.toLowerCase().includes(query) ||
+      l.provider_full_name?.toLowerCase().includes(query);
     const matchStatus = statusFilter === "all" || l.status === statusFilter;
     return matchSearch && matchStatus;
   });
@@ -213,6 +217,9 @@ export default function AdminLicenses() {
                           <span className="font-semibold text-slate-900">{l.license_type} – {l.license_number}</span>
                           <Badge className={licenseStatusColor[l.status]}>{l.status?.replace("_"," ")}</Badge>
                         </div>
+                        <p className="text-sm text-slate-700 mt-0.5 font-medium">
+                          {l.provider_full_name || "Unknown provider"}
+                        </p>
                         <p className="text-sm text-slate-500 mt-0.5">{l.provider_email} · {l.issuing_state}</p>
                         <div className="flex gap-3 text-xs text-slate-400 mt-1">
                           {l.expiration_date && <span>Expires: {format(new Date(l.expiration_date), "MMM d, yyyy")}</span>}
