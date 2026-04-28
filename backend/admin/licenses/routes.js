@@ -29,6 +29,18 @@ function mapLicenseRow(row) {
   };
 }
 
+async function fetchLicenseById(client, id) {
+  const { rows } = await client.query(
+    `select l.*, coalesce(u.full_name, trim(concat_ws(' ', u.first_name, u.last_name)), '') as provider_full_name
+     from public.licenses l
+     left join public.users u on u.auth_user_id = l.provider_id
+     where l.id = $1
+     limit 1`,
+    [id]
+  );
+  return rows[0] || null;
+}
+
 licensesRouter.get("/", async (req, res, next) => {
   try {
     const { me } = await requireAuth(req);
@@ -40,15 +52,15 @@ licensesRouter.get("/", async (req, res, next) => {
     const params = [];
     if (status) {
       params.push(status);
-      where.push(`status = $${params.length}`);
+      where.push(`l.status = $${params.length}`);
     }
     if (providerId) {
       params.push(providerId);
-      where.push(`provider_id = $${params.length}`);
+      where.push(`l.provider_id = $${params.length}`);
     }
     if (providerEmail) {
       params.push(providerEmail.toLowerCase());
-      where.push(`lower(provider_email) = $${params.length}`);
+      where.push(`lower(l.provider_email) = $${params.length}`);
     }
     if (me.role !== "admin") {
       params.push(me.id);
@@ -57,13 +69,14 @@ licensesRouter.get("/", async (req, res, next) => {
       const providerEmailParam = `$${params.length}`;
       // Non-admin providers can only see their own licenses.
       // Support legacy rows keyed by email even if provider_id is missing/mismatched.
-      where.push(`(provider_id = ${providerIdParam} or lower(provider_email) = ${providerEmailParam})`);
+      where.push(`(l.provider_id = ${providerIdParam} or lower(l.provider_email) = ${providerEmailParam})`);
     }
 
-    const sql = `select *
-      from public.licenses
+    const sql = `select l.*, coalesce(u.full_name, trim(concat_ws(' ', u.first_name, u.last_name)), '') as provider_full_name
+      from public.licenses l
+      left join public.users u on u.auth_user_id = l.provider_id
       ${where.length ? `where ${where.join(" and ")}` : ""}
-      order by created_at desc`;
+      order by l.created_at desc`;
     const client = await pool.connect();
     try {
       const { rows } = await client.query(sql, params);
@@ -120,7 +133,8 @@ licensesRouter.post("/", async (req, res, next) => {
           body.notes || null
         ]
       );
-      return res.status(201).json(mapLicenseRow(rows[0]));
+      const inserted = await fetchLicenseById(client, rows[0]?.id);
+      return res.status(201).json(mapLicenseRow(inserted || rows[0]));
     } finally {
       client.release();
     }
@@ -135,8 +149,7 @@ licensesRouter.get("/:id", async (req, res, next) => {
     const id = String(req.params.id || "").trim();
     const client = await pool.connect();
     try {
-      const { rows } = await client.query("select * from public.licenses where id = $1 limit 1", [id]);
-      const row = rows[0];
+      const row = await fetchLicenseById(client, id);
       if (!row) {
         const err = new Error("License not found.");
         err.statusCode = 404;
@@ -168,8 +181,7 @@ licensesRouter.patch("/:id", async (req, res, next) => {
 
     const client = await pool.connect();
     try {
-      const { rows: existingRows } = await client.query("select * from public.licenses where id = $1 limit 1", [id]);
-      const existing = existingRows[0];
+      const existing = await fetchLicenseById(client, id);
       if (!existing) {
         const err = new Error("License not found.");
         err.statusCode = 404;
@@ -227,7 +239,8 @@ licensesRouter.patch("/:id", async (req, res, next) => {
           next.notes
         ]
       );
-      return res.json(mapLicenseRow(rows[0]));
+      const updated = await fetchLicenseById(client, rows[0]?.id || id);
+      return res.json(mapLicenseRow(updated || rows[0]));
     } finally {
       client.release();
     }

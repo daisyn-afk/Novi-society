@@ -118,6 +118,8 @@ export async function submitProviderBasicOnboarding({ accessToken, payload }) {
 
   const client = await pool.connect();
   try {
+    await client.query("begin");
+
     const { rows } = await client.query(
       `insert into public.provider_basic_onboarding (
          auth_user_id,
@@ -170,7 +172,85 @@ export async function submitProviderBasicOnboarding({ accessToken, payload }) {
         documentUrl
       ]
     );
+
+    // Ensure provider exists in public.users so license FK (provider_id -> users.auth_user_id) succeeds.
+    await client.query(
+      `insert into public.users (auth_user_id, email, role)
+       values ($1, $2, 'provider')
+       on conflict (auth_user_id)
+       do update set
+         email = excluded.email,
+         updated_at = now()`,
+      [me.id, me.email || null]
+    );
+
+    const { rows: existingLicenseRows } = await client.query(
+      `select id
+       from public.licenses
+       where provider_id = $1
+         and license_type = $2
+         and license_number = $3
+       order by created_at desc
+       limit 1`,
+      [me.id, licenseType, licenseNumber]
+    );
+
+    const existingLicenseId = existingLicenseRows[0]?.id || null;
+    if (existingLicenseId) {
+      await client.query(
+        `update public.licenses
+         set provider_email = $2,
+             issuing_state = $3,
+             expiration_date = $4,
+             document_url = $5,
+             status = 'pending_review',
+             rejection_reason = null,
+             verified_at = null,
+             verified_by = null,
+             notes = null,
+             updated_at = now()
+         where id = $1`,
+        [
+          existingLicenseId,
+          me.email || null,
+          issuingState,
+          expirationDate,
+          documentUrl
+        ]
+      );
+    } else {
+      await client.query(
+        `insert into public.licenses (
+           provider_id,
+           provider_email,
+           license_type,
+           license_number,
+           issuing_state,
+           expiration_date,
+           document_url,
+           status
+         ) values ($1,$2,$3,$4,$5,$6,$7,'pending_review')`,
+        [
+          me.id,
+          me.email || null,
+          licenseType,
+          licenseNumber,
+          issuingState,
+          expirationDate,
+          documentUrl
+        ]
+      );
+    }
+
+    await client.query("commit");
     return rows[0];
+  } catch (error) {
+    try {
+      await client.query("rollback");
+    } catch {
+      // Ignore rollback failures.
+    }
+    throw error;
   } finally {
     client.release();
   }
