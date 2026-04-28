@@ -162,7 +162,7 @@ function LockMessage({ currentStatus, feature }) {
 function LockCTA({ currentStatus }) {
   if (currentStatus === "none") {
     return (
-      <Link to={createPageUrl("ProviderApplication")}>
+      <Link to={createPageUrl("ProviderBasicOnboarding")}>
         <button className="w-full py-3.5 rounded-2xl font-bold text-sm text-white flex items-center justify-center gap-2 transition-all hover:opacity-90" style={{ background: "linear-gradient(135deg, #FA6F30, #DA6A63)" }}>
           Apply Now — It Takes 2 Minutes <ArrowRight className="w-4 h-4" />
         </button>

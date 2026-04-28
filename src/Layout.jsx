@@ -69,7 +69,7 @@ const navByRole = {
   ],
 };
 
-const BARE_PAGES = ["Onboarding", "ProviderBasicOnboarding", "ProviderGettingStarted", "LandingPage", "ProviderApplication", "NoviLanding"];
+const BARE_PAGES = ["Onboarding", "ProviderGettingStarted", "LandingPage", "ProviderApplication", "NoviLanding"];
 const PROVIDER_FREE_PAGES = ["ProviderDashboard", "CourseCatalog", "ProviderProfile", "ProviderGettingStarted"];
 
 export default function Layout({ children, currentPageName }) {

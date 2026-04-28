@@ -119,7 +119,14 @@ export default function ProviderApplication() {
   const canSubmit = form.license_number.trim().length > 0 && !uploading && !submitApplication.isPending;
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-start pt-8 pb-16 px-4" style={{ fontFamily: "'DM Sans', sans-serif" }}>
+    <div
+      className="min-h-screen flex flex-col items-center justify-start pt-8 pb-16 px-4"
+      style={{
+        fontFamily: "'DM Sans', sans-serif",
+        background: "linear-gradient(150deg, #1e2535 0%, #2b3550 45%, #3c4970 72%, #7B8EC8 100%)",
+        backgroundAttachment: "fixed",
+      }}
+    >
       <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&display=swap');`}</style>
 
       {/* Logo */}

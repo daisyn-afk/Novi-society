@@ -434,7 +434,7 @@ export default function ProviderBasicOnboarding() {
             color: !(uploading || submitOnboarding.isPending) ? "white" : "rgba(30,37,53,0.3)",
           }}
         >
-          {submitOnboarding.isPending ? "Submitting…" : "Continue to Dashboard"} <ArrowRight className="w-4 h-4" />
+          {submitOnboarding.isPending ? "Submitting…" : "Submit"} <ArrowRight className="w-4 h-4" />
         </button>
       </div>
     </div>
