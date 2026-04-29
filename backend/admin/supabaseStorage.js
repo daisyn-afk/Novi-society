@@ -6,6 +6,7 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const SUPABASE_STORAGE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || "course-covers";
 
 let supabaseClient;
+const STORAGE_UPLOAD_MAX_ATTEMPTS = 3;
 
 function getSupabaseClient() {
   if (supabaseClient) return supabaseClient;
@@ -29,13 +30,13 @@ export async function uploadCourseCoverImage({ buffer, mimeType, extension }) {
   const cleanExt = (extension || "bin").replace(/^\./, "");
   const objectPath = `admin-courses/${Date.now()}-${randomUUID()}.${cleanExt}`;
 
-  const { error: uploadError } = await client.storage
-    .from(SUPABASE_STORAGE_BUCKET)
-    .upload(objectPath, buffer, {
-      contentType: mimeType,
-      cacheControl: "3600",
-      upsert: false
-    });
+  const { error: uploadError } = await uploadWithRetry({
+    client,
+    bucket: SUPABASE_STORAGE_BUCKET,
+    objectPath,
+    buffer,
+    mimeType
+  });
 
   if (uploadError) {
     const err = new Error(`Supabase upload failed: ${uploadError.message}`);
@@ -62,13 +63,13 @@ export async function uploadLicenseDocument({ buffer, mimeType, extension }) {
   const cleanExt = (extension || "bin").replace(/^\./, "");
   const objectPath = `license-photos/${Date.now()}-${randomUUID()}.${cleanExt}`;
 
-  const { error: uploadError } = await client.storage
-    .from(SUPABASE_STORAGE_BUCKET)
-    .upload(objectPath, buffer, {
-      contentType: mimeType,
-      cacheControl: "3600",
-      upsert: false
-    });
+  const { error: uploadError } = await uploadWithRetry({
+    client,
+    bucket: SUPABASE_STORAGE_BUCKET,
+    objectPath,
+    buffer,
+    mimeType
+  });
 
   if (uploadError) {
     const err = new Error(`Supabase upload failed: ${uploadError.message}`);
@@ -88,4 +89,29 @@ export async function uploadLicenseDocument({ buffer, mimeType, extension }) {
     path: objectPath,
     url: data.publicUrl
   };
+}
+
+async function uploadWithRetry({ client, bucket, objectPath, buffer, mimeType }) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= STORAGE_UPLOAD_MAX_ATTEMPTS; attempt += 1) {
+    const result = await client.storage
+      .from(bucket)
+      .upload(objectPath, buffer, {
+        contentType: mimeType,
+        cacheControl: "3600",
+        upsert: false
+      });
+
+    if (!result.error) return result;
+    lastError = result.error;
+
+    const isNetworkFetchFailure = String(result.error.message || "").toLowerCase().includes("fetch failed");
+    if (!isNetworkFetchFailure || attempt === STORAGE_UPLOAD_MAX_ATTEMPTS) {
+      return result;
+    }
+
+    // Brief linear backoff for transient storage network failures.
+    await new Promise((resolve) => setTimeout(resolve, attempt * 300));
+  }
+  return { error: lastError };
 }

@@ -9,11 +9,16 @@ export default function CourseEnrollmentCard({
   certs,
   activeSubServiceIds,
   onViewMaterials,
+  onCancel,
+  onOpenClassWizard,
+  showClassWizardCta = false,
 }) {
   const [showDetails, setShowDetails] = useState(false);
   if (!course) return null;
 
-  const scheduledDate = enrollment?.session_date || null;
+  const scheduledDate =
+    enrollment.session_date ||
+    course.session_dates?.find((d) => d.date)?.date;
   const earnedCerts = certs.filter(c => c.course_id === course.id && c.status === "active");
   const linkedServiceIds = (course.linked_service_type_ids?.length > 0)
     ? course.linked_service_type_ids
@@ -240,17 +245,30 @@ export default function CourseEnrollmentCard({
         )}
 
         {/* Actions */}
-        <div className="pt-2 border-t" style={{ borderColor: "rgba(30,37,53,0.08)" }}>
+        <div className="flex gap-2 pt-2 border-t" style={{ borderColor: "rgba(30,37,53,0.08)" }}>
+          {showClassWizardCta && (
+            <button
+              onClick={onOpenClassWizard}
+              className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-xs font-bold transition-all"
+              style={{
+                background: "rgba(250,111,48,0.12)",
+                color: "#c8501f",
+                border: "1px solid rgba(250,111,48,0.25)",
+              }}
+            >
+              <Zap className="w-3.5 h-3.5" /> Class Day Wizard
+            </button>
+          )}
           <button
             onClick={onViewMaterials}
-            className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-xs font-bold transition-all"
+            className={`${showClassWizardCta ? "flex-[1.1]" : "flex-1"} flex items-center justify-center gap-2 py-2.5 rounded-lg text-xs font-bold transition-all`}
             style={{
               background: "rgba(123,142,200,0.1)",
               color: "#4a5fa8",
               border: "1px solid rgba(123,142,200,0.2)",
             }}
           >
-            <FileText className="w-3.5 h-3.5" /> Materials
+            <FileText className="w-3.5 h-3.5" /> View Materials
           </button>
         </div>
       </div>

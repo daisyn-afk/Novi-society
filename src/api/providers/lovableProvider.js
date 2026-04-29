@@ -247,6 +247,62 @@ export function createLovableProviderClient() {
           }
         };
       }
+      if (name === "ClassSession") {
+        return {
+          list: () => authRequest("/admin/class-sessions", { method: "GET" }),
+          create: (payload) => authRequest("/admin/class-sessions", {
+            method: "POST",
+            body: JSON.stringify(payload || {})
+          }),
+          update: (id, payload) => authRequest(`/admin/class-sessions/${encodeURIComponent(id)}`, {
+            method: "PATCH",
+            body: JSON.stringify(payload || {})
+          }),
+          get: createNotImplementedMethod("entities.ClassSession.get"),
+          delete: createNotImplementedMethod("entities.ClassSession.delete"),
+          filter: createNotImplementedMethod("entities.ClassSession.filter")
+        };
+      }
+      if (name === "Course") {
+        return {
+          list: () => authRequest("/admin/courses", { method: "GET" }),
+          filter: () => authRequest("/admin/courses", { method: "GET" }),
+          get: (id) => authRequest(`/admin/courses/${encodeURIComponent(id)}`, { method: "GET" }),
+          create: (payload) => authRequest("/admin/courses", {
+            method: "POST",
+            body: JSON.stringify(payload || {})
+          }),
+          update: (id, payload) => authRequest(`/admin/courses/${encodeURIComponent(id)}`, {
+            method: "PUT",
+            body: JSON.stringify(payload || {})
+          }),
+          delete: (id) => authRequest(`/admin/courses/${encodeURIComponent(id)}`, { method: "DELETE" })
+        };
+      }
+      if (name === "Enrollment") {
+        return {
+          list: () => authRequest("/admin/enrollments", { method: "GET" }),
+          filter: async (filters = {}) => {
+            const all = await authRequest("/admin/enrollments", { method: "GET" });
+            const providerId = filters?.provider_id ? String(filters.provider_id) : "";
+            const providerEmail = filters?.provider_email ? String(filters.provider_email).toLowerCase() : "";
+            const status = filters?.status ? String(filters.status) : "";
+            return (all || []).filter((row) => {
+              if (providerId && String(row?.provider_id || "") !== providerId) return false;
+              if (providerEmail && String(row?.provider_email || "").toLowerCase() !== providerEmail) return false;
+              if (status && String(row?.status || "") !== status) return false;
+              return true;
+            });
+          },
+          update: (id, payload) => authRequest(`/admin/enrollments/${encodeURIComponent(id)}`, {
+            method: "PATCH",
+            body: JSON.stringify(payload || {})
+          }),
+          get: createNotImplementedMethod("entities.Enrollment.get"),
+          create: createNotImplementedMethod("entities.Enrollment.create"),
+          delete: createNotImplementedMethod("entities.Enrollment.delete")
+        };
+      }
       return {
         list: createNotImplementedMethod(`entities.${name}.list`),
         get: createNotImplementedMethod(`entities.${name}.get`),

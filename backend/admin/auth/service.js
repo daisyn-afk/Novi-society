@@ -42,6 +42,53 @@ function fullName(firstName, lastName) {
   return [firstName, lastName].filter(Boolean).join(" ").trim() || null;
 }
 
+function readNameFromMetadata(metadata = {}) {
+  const firstName = String(
+    metadata.first_name ||
+    metadata.given_name ||
+    metadata.firstName ||
+    ""
+  ).trim() || null;
+  const lastName = String(
+    metadata.last_name ||
+    metadata.family_name ||
+    metadata.lastName ||
+    ""
+  ).trim() || null;
+  const fullNameValue = String(
+    metadata.full_name ||
+    metadata.name ||
+    fullName(firstName, lastName) ||
+    ""
+  ).trim() || null;
+  return { firstName, lastName, fullName: fullNameValue };
+}
+
+function readNameFromAuthUser(user = {}) {
+  const candidates = [];
+  if (user?.user_metadata && typeof user.user_metadata === "object") {
+    candidates.push(user.user_metadata);
+  }
+  if (user?.app_metadata && typeof user.app_metadata === "object") {
+    candidates.push(user.app_metadata);
+  }
+  if (Array.isArray(user?.identities)) {
+    for (const identity of user.identities) {
+      if (identity?.identity_data && typeof identity.identity_data === "object") {
+        candidates.push(identity.identity_data);
+      }
+    }
+  }
+
+  for (const candidate of candidates) {
+    const parsed = readNameFromMetadata(candidate);
+    if (parsed.fullName || parsed.firstName || parsed.lastName) {
+      return parsed;
+    }
+  }
+  return { firstName: null, lastName: null, fullName: null };
+}
+
 async function upsertUserRow({
   authUserId,
   email,
@@ -294,6 +341,7 @@ export async function getMeFromAccessToken(accessToken) {
   }
 
   const profile = await getUserRowByAuthUserId(data.user.id);
+  const metaName = readNameFromAuthUser(data.user || {});
   const providerProfile = profile?.role === "provider"
     ? await getProviderProfileByUserId(profile?.id)
     : null;
@@ -301,9 +349,9 @@ export async function getMeFromAccessToken(accessToken) {
     id: data.user.id,
     email: data.user.email,
     role: profile?.role || data.user.user_metadata?.role || "provider",
-    first_name: profile?.first_name || data.user.user_metadata?.first_name || null,
-    last_name: profile?.last_name || data.user.user_metadata?.last_name || null,
-    full_name: profile?.full_name || data.user.user_metadata?.full_name || null,
+    first_name: profile?.first_name || metaName.firstName || null,
+    last_name: profile?.last_name || metaName.lastName || null,
+    full_name: profile?.full_name || metaName.fullName || null,
     dob: providerProfile?.dob || null,
     address_line1: providerProfile?.address_line1 || null,
     address_line2: providerProfile?.address_line2 || null,

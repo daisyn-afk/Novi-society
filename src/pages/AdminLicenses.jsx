@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
+import { adminApiRequest } from "@/api/adminApiRequest";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -37,6 +38,24 @@ export default function AdminLicenses() {
     queryKey: ["licenses"],
     queryFn: () => base44.entities.License.list("-created_date"),
   });
+  const { data: usersForNameLookup = [] } = useQuery({
+    queryKey: ["users-license-name-lookup"],
+    queryFn: async () => {
+      const result = await adminApiRequest("/admin/users?page=1&page_size=500");
+      return Array.isArray(result?.data) ? result.data : [];
+    },
+  });
+
+  const userNameByEmail = new Map(
+    usersForNameLookup
+      .filter((u) => u?.email)
+      .map((u) => [String(u.email).trim().toLowerCase(), u.full_name || [u.first_name, u.last_name].filter(Boolean).join(" ").trim() || null])
+  );
+  const userNameByAuthUserId = new Map(
+    usersForNameLookup
+      .filter((u) => u?.auth_user_id)
+      .map((u) => [String(u.auth_user_id), u.full_name || [u.first_name, u.last_name].filter(Boolean).join(" ").trim() || null])
+  );
 
   const licUpdate = useMutation({
     mutationFn: ({ id, data }) => base44.entities.License.update(id, data),
@@ -58,13 +77,14 @@ export default function AdminLicenses() {
 
   const reject = () => {
     const license = licenses.find(l => l.id === rejectDialog);
-    licUpdate.mutate({ id: rejectDialog, data: { status: "rejected", rejection_reason: rejectReason } });
+    const trimmedReason = String(rejectReason || "").trim();
+    licUpdate.mutate({ id: rejectDialog, data: { status: "rejected", rejection_reason: trimmedReason } });
     if (license?.provider_id) {
       base44.entities.Notification.create({
         user_id: license.provider_id,
         user_email: license.provider_email,
         type: "license_rejected",
-        message: `Your ${license.license_type} license was not approved: ${rejectReason}`,
+        message: `Your ${license.license_type} license was not approved: ${trimmedReason}`,
         link_page: "ProviderCredentialsCoverage",
       });
     }
@@ -217,10 +237,16 @@ export default function AdminLicenses() {
                           <span className="font-semibold text-slate-900">{l.license_type} – {l.license_number}</span>
                           <Badge className={licenseStatusColor[l.status]}>{l.status?.replace("_"," ")}</Badge>
                         </div>
-                        <p className="text-sm text-slate-700 mt-0.5 font-medium">
-                          {l.provider_full_name || "Unknown provider"}
+                        <p className="text-sm font-medium text-slate-700 mt-0.5">
+                          {l.provider_name ||
+                            userNameByAuthUserId.get(String(l.provider_id || "")) ||
+                            userNameByEmail.get(String(l.provider_email || "").trim().toLowerCase()) ||
+                            "Unknown Provider"}
                         </p>
-                        <p className="text-sm text-slate-500 mt-0.5">{l.provider_email} · {l.issuing_state}</p>
+                        <p className="text-sm text-slate-500 mt-0.5">
+                          {l.provider_email || "No email on file"}
+                          {l.issuing_state ? ` · ${l.issuing_state}` : ""}
+                        </p>
                         <div className="flex gap-3 text-xs text-slate-400 mt-1">
                           {l.expiration_date && <span>Expires: {format(new Date(l.expiration_date), "MMM d, yyyy")}</span>}
                           {l.rejection_reason && <span className="text-red-500">Reason: {l.rejection_reason}</span>}
@@ -237,7 +263,7 @@ export default function AdminLicenses() {
                             <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white" onClick={() => verify(l)}>
                               <CheckCircle className="w-3.5 h-3.5 mr-1" /> Verify
                             </Button>
-                            <Button size="sm" variant="outline" className="text-red-500" onClick={() => setRejectDialog(l.id)}>
+                            <Button size="sm" variant="outline" className="text-red-500" onClick={() => { setRejectDialog(l.id); setRejectReason(""); }}>
                               <XCircle className="w-3.5 h-3.5 mr-1" /> Reject
                             </Button>
                           </>
@@ -363,7 +389,7 @@ export default function AdminLicenses() {
             <Textarea value={rejectReason} onChange={e => setRejectReason(e.target.value)} placeholder="Explain why..." rows={3} />
             <div className="flex gap-2 justify-end">
               <Button variant="outline" onClick={() => setRejectDialog(null)}>Cancel</Button>
-              <Button className="bg-red-600 hover:bg-red-700 text-white" onClick={reject} disabled={!rejectReason || licUpdate.isPending}>
+              <Button className="bg-red-600 hover:bg-red-700 text-white" onClick={reject} disabled={!String(rejectReason || "").trim() || licUpdate.isPending}>
                 Reject License
               </Button>
             </div>

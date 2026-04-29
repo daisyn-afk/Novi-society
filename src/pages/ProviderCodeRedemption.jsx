@@ -12,6 +12,7 @@ import { format } from "date-fns";
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import ProviderLockGate from "@/components/ProviderLockGate";
+import { isNowWithinSessionRedeemWindow } from "@/lib/classCodeWindow";
 
 export default function ProviderCodeRedemption() {
   const queryClient = useQueryClient();
@@ -61,6 +62,23 @@ export default function ProviderCodeRedemption() {
 
   const courseMap = Object.fromEntries(courses.map(c => [c.id, c]));
   const redeemed = sessions.filter(s => s.code_used);
+  const getLocalValidationError = (enteredCode) => {
+    const normalizedCode = String(enteredCode || "").trim().toUpperCase();
+    if (normalizedCode.length !== 6) return "Please enter the full 6-character class code.";
+
+    const matchingSession = sessions.find((session) => String(session.session_code || "").toUpperCase() === normalizedCode);
+    if (!matchingSession) return "That code is not assigned to your class session.";
+    if (matchingSession.code_used) return "This class code has already been redeemed.";
+
+    const relatedEnrollment = myEnrollments.find((enrollment) => enrollment.id === matchingSession.enrollment_id);
+    const sessionDate = matchingSession.session_date || relatedEnrollment?.session_date;
+    const course = courseMap[matchingSession.course_id || relatedEnrollment?.course_id];
+    if (!sessionDate || !course) return null;
+    if (!isNowWithinSessionRedeemWindow(course, sessionDate)) {
+      return "This code is only valid from class start time until 24 hours after class end.";
+    }
+    return null;
+  };
 
   return (
     <ProviderLockGate feature="attendance">
@@ -98,7 +116,14 @@ export default function ProviderCodeRedemption() {
                   className="font-mono text-lg tracking-widest text-center uppercase"
                 />
                 <Button
-                  onClick={() => redeemMutation.mutate(code)}
+                  onClick={() => {
+                    const localValidationError = getLocalValidationError(code);
+                    if (localValidationError) {
+                      setError(localValidationError);
+                      return;
+                    }
+                    redeemMutation.mutate(code);
+                  }}
                   disabled={code.length !== 6 || redeemMutation.isPending}
                   style={{ background: "#FA6F30", color: "#fff" }}
                 >

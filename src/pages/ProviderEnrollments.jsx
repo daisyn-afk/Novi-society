@@ -1,32 +1,22 @@
 import { useState } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Label } from "@/components/ui/label";
-import {
-  BookOpen, Clock, Award, CheckCircle,
-  Search, Calendar, MapPin, Users,
-} from "lucide-react";
+import { Search, BookOpen, Award } from "lucide-react";
 import React from "react";
 import { createPageUrl } from "@/utils";
 import { useNavigate } from "react-router-dom";
-import { format, isToday, isPast } from "date-fns";
+import { isToday, isPast } from "date-fns";
 import ProviderLockGate from "@/components/ProviderLockGate";
 import PreCourseMaterials from "@/components/PreCourseMaterials";
 import ProviderSalesLock from "@/components/ProviderSalesLock";
 import { useProviderAccess } from "@/components/useProviderAccess";
 import ClassDayOnboardingWizard from "@/components/provider/ClassDayOnboardingWizard";
 import CourseEnrollmentCard from "@/components/provider/CourseEnrollmentCard";
-import CourseBrowseCard from "@/components/provider/CourseBrowseCard";
-import CourseCardDeck from "@/components/provider/CourseCardDeck";
 import CertificationPathway from "@/components/provider/CertificationPathway";
+import { isNowWithinSessionRedeemWindow } from "@/lib/classCodeWindow";
+import CourseCardDeck from "@/components/provider/CourseCardDeck";
 import { adminCoursesApi } from "@/api/adminCoursesApi";
-import { courseCheckoutApi } from "@/api/courseCheckoutApi";
-import { useToast } from "@/components/ui/use-toast";
 
 const categoryMeta = {
   injectables:  { label: "Injectables",          color: "#FA6F30" },
@@ -43,22 +33,19 @@ const categoryMeta = {
 
 export default function ProviderEnrollments() {
   const { status: accessStatus } = useProviderAccess();
+  const qc = useQueryClient();
   const navigate = useNavigate();
-  const { toast } = useToast();
   const [activeTab, setActiveTab] = useState("browse");
   const [search, setSearch] = useState("");
-  const [category, setCategory] = useState("all");
-  const [level, setLevel] = useState("all");
   const [preMaterialsCourse, setPreMaterialsCourse] = useState(null);
-  const [selectedCourse, setSelectedCourse] = useState(null);
-  const [selectedCourseDate, setSelectedCourseDate] = useState("");
-  const [termsConfirmed, setTermsConfirmed] = useState(false);
-  const [refundPolicyConfirmed, setRefundPolicyConfirmed] = useState(false);
   const [onboardingEnrollment, setOnboardingEnrollment] = useState(null);
-
-  const { data: me } = useQuery({
-    queryKey: ["me"],
-    queryFn: () => base44.auth.me(),
+  const cancelEnrollment = useMutation({
+    mutationFn: ({ id }) => base44.entities.Enrollment.update(id, {
+      status: "cancelled",
+      cancelled_at: new Date().toISOString(),
+      cancellation_reason: "Cancelled by provider",
+    }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["my-enrollments"] }),
   });
 
   const { data: myEnrollments = [], isLoading } = useQuery({
@@ -81,33 +68,36 @@ export default function ProviderEnrollments() {
         .filter((p) => p?.order_type === "course")
         .filter((p) => ["paid", "confirmed", "completed"].includes(String(p?.status || "").toLowerCase()))
         .filter((p) => String(p?.customer_email || "").toLowerCase() === email);
-
-      const enrollmentRows = [...byProviderId, ...byEmail];
       const byPreOrderId = new Map(
-        enrollmentRows
+        [...byProviderId, ...byEmail]
           .filter((row) => row?.pre_order_id)
           .map((row) => [String(row.pre_order_id), row])
       );
 
       const canonical = paidPreOrders.map((p) => {
-        const linked = byPreOrderId.get(String(p.id));
-        return {
-          id: linked?.id || `preorder-${p.id}`,
-          pre_order_id: p.id,
-          course_id: p.course_id,
-          provider_id: me?.id || null,
-          provider_name: p.customer_name,
-          provider_email: p.customer_email,
-          customer_name: p.customer_name,
-          status: linked?.status || (p.status === "completed" ? "confirmed" : p.status),
-          session_date: p.course_date,
-          amount_paid: linked?.amount_paid ?? p.amount_paid,
-          paid_at: linked?.paid_at || p.paid_at || null,
-          created_date: p.created_date,
-        };
-      });
+          const linked = byPreOrderId.get(String(p.id));
+          return {
+            id: linked?.id || `preorder-${p.id}`,
+            pre_order_id: p.id,
+            course_id: p.course_id,
+            provider_id: me?.id || null,
+            provider_name: p.customer_name,
+            provider_email: p.customer_email,
+            customer_name: p.customer_name,
+            status: linked?.status || (p.status === "completed" ? "confirmed" : p.status),
+            session_date: p.course_date,
+            amount_paid: linked?.amount_paid ?? p.amount_paid,
+            paid_at: linked?.paid_at || p.paid_at || null,
+            created_date: p.created_date,
+          };
+        });
 
-      return canonical.sort(
+      if (canonical.length > 0) {
+        return canonical.sort(
+          (a, b) => new Date(b.created_date || b.created_at || 0).getTime() - new Date(a.created_date || a.created_at || 0).getTime()
+        );
+      }
+      return [...byProviderId, ...byEmail].sort(
         (a, b) => new Date(b.created_date || b.created_at || 0).getTime() - new Date(a.created_date || a.created_at || 0).getTime()
       );
     },
@@ -120,14 +110,13 @@ export default function ProviderEnrollments() {
     queryKey: ["my-sessions"],
     queryFn: async () => {
       const me = await base44.auth.me();
-      const [byProviderIdResult, byEmailResult] = await Promise.allSettled([
-        me?.id ? base44.entities.ClassSession.filter({ provider_id: me.id }, "-created_date") : Promise.resolve([]),
-        me?.email ? base44.entities.ClassSession.filter({ provider_email: me.email }, "-created_date") : Promise.resolve([]),
-      ]);
-      const byProviderId = byProviderIdResult.status === "fulfilled" ? (byProviderIdResult.value || []) : [];
-      const byEmail = byEmailResult.status === "fulfilled" ? (byEmailResult.value || []) : [];
-      const merged = [...byProviderId, ...byEmail];
-      const deduped = Array.from(new Map(merged.map((row) => [row.id, row])).values());
+      const all = await base44.entities.ClassSession.list("-created_date");
+      const email = String(me?.email || "").toLowerCase();
+      const filtered = (all || []).filter((session) =>
+        session?.provider_id === me?.id ||
+        String(session?.provider_email || "").toLowerCase() === email
+      );
+      const deduped = Array.from(new Map(filtered.map((row) => [row.id, row])).values());
       return deduped.sort(
         (a, b) => new Date(b.created_date || b.created_at || 0).getTime() - new Date(a.created_date || a.created_at || 0).getTime()
       );
@@ -136,7 +125,7 @@ export default function ProviderEnrollments() {
 
   const { data: courses = [], isLoading: loadingCourses } = useQuery({
     queryKey: ["courses"],
-    queryFn: () => adminCoursesApi.list(),
+    queryFn: async () => (await adminCoursesApi.list()).filter((course) => course?.is_active !== false),
   });
 
   const { data: certs = [] } = useQuery({
@@ -160,33 +149,20 @@ export default function ProviderEnrollments() {
     queryFn: () => base44.entities.ServiceType.filter({ is_active: true }),
   });
 
-  const createCheckout = useMutation({
-    mutationFn: (payload) => courseCheckoutApi.createCheckout(payload),
-    onSuccess: (response) => {
-      if (response?.checkout_url) {
-        window.location.href = response.checkout_url;
-        return;
-      }
-      throw new Error("Stripe checkout URL was not returned.");
-    },
-    onError: (error) => {
-      if (Number(error?.status) === 409) {
-        toast({
-          title: "Course already purchased",
-          description: error?.message || "You already purchased this course for the selected date.",
-          variant: "destructive"
-        });
-        return;
-      }
-      toast({
-        title: "Checkout failed",
-        description: error?.message || "Unable to start checkout. Please try again.",
-        variant: "destructive"
-      });
-    }
-  });
-
   const courseMap = Object.fromEntries(courses.map(c => [c.id, c]));
+  const getCourseServiceTypeIds = (course) => {
+    if (!course) return [];
+    const direct = course.service_type_id ? [course.service_type_id] : [];
+    const linked = Array.isArray(course.linked_service_type_ids) ? course.linked_service_type_ids : [];
+    const fromCerts = Array.isArray(course.certifications_awarded)
+      ? course.certifications_awarded.map((entry) => entry?.service_type_id).filter(Boolean)
+      : [];
+    return Array.from(new Set([...direct, ...linked, ...fromCerts].map((id) => String(id))));
+  };
+  const courseMatchesService = (course, serviceTypeId) => {
+    if (!course || !serviceTypeId) return false;
+    return getCourseServiceTypeIds(course).includes(String(serviceTypeId));
+  };
   const sessionByEnrollment = Object.fromEntries(sessions.map(s => [s.enrollment_id, s]));
   const activeSubServiceIds = new Set(myMDSubs.filter(s => s.status === "active").map(s => s.service_type_id));
   const activeEnrollments = myEnrollments.filter(e => e.status !== "cancelled");
@@ -198,13 +174,12 @@ export default function ProviderEnrollments() {
     const nextDate = sessionDates.find(d => d.date && !isPast(new Date(d.date + "T23:59:59")));
     const classDate = e.session_date || nextDate?.date;
     const classIsToday = classDate && isToday(new Date(classDate));
+    const isWithinRedeemWindow = classDate && isNowWithinSessionRedeemWindow(course, classDate);
     const session = sessionByEnrollment[e.id];
     const isAttended = session?.code_used || ["attended", "completed"].includes(e.status);
-    const linkedServiceIds = (course?.linked_service_type_ids?.length > 0)
-      ? course.linked_service_type_ids
-      : (course?.certifications_awarded || []).map(c => c.service_type_id).filter(Boolean);
+    const linkedServiceIds = getCourseServiceTypeIds(course);
     const needsMDSub = linkedServiceIds.some(id => !activeSubServiceIds.has(id));
-    return classIsToday && !isAttended && needsMDSub && ["confirmed", "paid"].includes(e.status);
+    return (classIsToday || isWithinRedeemWindow) && !isAttended && needsMDSub && ["confirmed", "paid"].includes(e.status);
   });
 
   React.useEffect(() => {
@@ -213,11 +188,13 @@ export default function ProviderEnrollments() {
     }
   }, [todayEnrollment, activeTab]);
 
-  const filteredCourses = courses.filter(c => {
-    const matchSearch = !search || c.title?.toLowerCase().includes(search.toLowerCase()) || c.description?.toLowerCase().includes(search.toLowerCase());
-    const matchCat = category === "all" || c.category === category;
-    const matchLvl = level === "all" || c.level === level;
-    return matchSearch && matchCat && matchLvl;
+  const filteredCourses = courses.filter((course) => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return (
+      course?.title?.toLowerCase().includes(q) ||
+      course?.description?.toLowerCase().includes(q)
+    );
   });
   const normalizeBrowseCategory = (rawCategory) => {
     const value = String(rawCategory || "").toLowerCase();
@@ -298,7 +275,8 @@ export default function ProviderEnrollments() {
                         title={categoryMeta[categoryKey]?.label || categoryKey}
                         courses={categoryCourses}
                         isEnrolled={(courseId) => enrolledCourseIds.has(courseId)}
-                        onSelect={(course) => setSelectedCourse(course)}
+                        onEnroll={(course) => navigate(createPageUrl(`CourseCheckout?course_id=${course.id}`))}
+                        onSelect={(course) => navigate(createPageUrl(`CourseCheckout?course_id=${course.id}`))}
                         showControls
                       />
                     );
@@ -317,20 +295,41 @@ export default function ProviderEnrollments() {
                 <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.4)" }}>Your Certification Pathways</p>
                 {Array.from(new Set(
                   activeEnrollments.flatMap(e =>
-                    (courseMap[e.course_id]?.linked_service_type_ids || []).filter(Boolean)
+                    getCourseServiceTypeIds(courseMap[e.course_id])
                   )
                 )).map(serviceTypeId => {
-                  const svc = serviceTypes.find(s => s.id === serviceTypeId);
-                  if (!svc) return null;
+                  const svcFromCatalog = serviceTypes.find((s) => s.id === serviceTypeId);
+                  const fallbackCourse = courses.find((course) =>
+                    courseMatchesService(course, serviceTypeId)
+                  );
+                  const svc = svcFromCatalog || {
+                    id: serviceTypeId,
+                    name: fallbackCourse?.certification_name || fallbackCourse?.title || "Service Track",
+                    category: fallbackCourse?.category || "other",
+                  };
                   return (
                     <CertificationPathway
                       key={serviceTypeId}
                       serviceType={svc}
-                      courses={courses.filter(c => (c.linked_service_type_ids?.includes(svc.id)) || (c.certifications_awarded?.some(ca => ca.service_type_id === svc.id)))}
+                      courses={courses.filter((course) => courseMatchesService(course, svc.id))}
                       userCerts={certs}
                       userMDSubs={myMDSubs}
                       enrolledCourseIds={enrolledCourseIds}
+                      serviceEnrollments={activeEnrollments.filter((enrollment) => {
+                        const enrollmentCourse = courseMap[enrollment.course_id];
+                        if (!enrollmentCourse) return false;
+                        const linkedServiceIds = getCourseServiceTypeIds(enrollmentCourse);
+                        return linkedServiceIds.includes(serviceTypeId);
+                      })}
+                      sessionByEnrollment={sessionByEnrollment}
+                      initiallyExpandedCourseId={activeEnrollments.find((e) => {
+                        const course = courseMap[e.course_id];
+                        if (!course) return false;
+                        const linkedServiceIds = getCourseServiceTypeIds(course);
+                        return linkedServiceIds.includes(serviceTypeId);
+                      })?.course_id || null}
                       onEnroll={() => setActiveTab("browse")}
+                      onViewEnrollment={() => {}}
                       onApplyMD={() => navigate(createPageUrl("ProviderCredentialsCoverage") + `?prompt_service=${serviceTypeId}`)}
                     />
                   );
@@ -345,6 +344,9 @@ export default function ProviderEnrollments() {
                 <BookOpen className="w-12 h-12 mx-auto mb-3 opacity-30 text-white" />
                 <p className="font-semibold text-white/70 mb-1">No active enrollments yet</p>
                 <p className="text-sm text-white/40 mb-5">Find a course and enroll to get started.</p>
+                <p className="text-xs mb-5" style={{ color: "rgba(255,255,255,0.45)" }}>
+                  Debug: enrollments={myEnrollments.length}, active={activeEnrollments.length}, courses={courses.length}
+                </p>
                 <button onClick={() => setActiveTab("browse")} className="px-6 py-2.5 rounded-xl text-sm font-bold text-white" style={{ background: "#FA6F30" }}>
                   Browse Courses →
                 </button>
@@ -352,15 +354,37 @@ export default function ProviderEnrollments() {
             ) : (
               <div className="grid sm:grid-cols-2 gap-5 max-w-4xl">
                 {activeEnrollments.map(e => (
+                  (() => {
+                    const course = courseMap[e.course_id] || {
+                      id: e.course_id || `enrollment-${e.id}`,
+                      title: e.course_title || "Course",
+                      description: "",
+                      session_dates: e.session_date ? [{ date: e.session_date }] : [],
+                      linked_service_type_ids: [],
+                      certifications_awarded: [],
+                    };
+                    const classDate = e.session_date || course?.session_dates?.find((d) => d?.date)?.date;
+                    const showWizard = Boolean(
+                      classDate &&
+                      isNowWithinSessionRedeemWindow(course, classDate) &&
+                      !sessionByEnrollment[e.id]?.code_used &&
+                      ["confirmed", "paid"].includes(e.status)
+                    );
+                    return (
                   <CourseEnrollmentCard
                     key={e.id}
                     enrollment={e}
-                    course={courseMap[e.course_id]}
+                    course={course}
                     session={sessionByEnrollment[e.id]}
                     certs={certs}
                     activeSubServiceIds={activeSubServiceIds}
                     onViewMaterials={() => setPreMaterialsCourse(courseMap[e.course_id])}
+                    onCancel={() => { if (window.confirm("Cancel this enrollment?")) cancelEnrollment.mutate({ id: e.id }); }}
+                    showClassWizardCta={showWizard}
+                    onOpenClassWizard={() => setOnboardingEnrollment(e)}
                   />
+                    );
+                  })()
                 ))}
               </div>
             )}
@@ -371,97 +395,12 @@ export default function ProviderEnrollments() {
           <PreCourseMaterials
             course={preMaterialsCourse}
             onClose={() => setPreMaterialsCourse(null)}
-            onProceed={() => { setSelectedCourse(preMaterialsCourse); setPreMaterialsCourse(null); }}
+            onProceed={() => {
+              navigate(createPageUrl(`CourseCheckout?course_id=${preMaterialsCourse.id}`));
+              setPreMaterialsCourse(null);
+            }}
           />
         )}
-
-        <Dialog
-          open={!!selectedCourse}
-          onOpenChange={(next) => {
-            if (!next) {
-              setSelectedCourse(null);
-              setSelectedCourseDate("");
-              setTermsConfirmed(false);
-              setRefundPolicyConfirmed(false);
-            }
-          }}
-        >
-          <DialogContent className="max-w-2xl">
-            {selectedCourse && (
-              <>
-                <DialogHeader>
-                  <DialogTitle style={{ fontFamily: "'DM Serif Display', serif", fontStyle: "italic", color: "#1e2535", fontSize: "1.5rem" }}>
-                    {selectedCourse.title}
-                  </DialogTitle>
-                </DialogHeader>
-                <div className="space-y-4">
-                  <p className="text-sm" style={{ color: "rgba(30,37,53,0.6)" }}>
-                    Select your class date and continue to secure Stripe checkout.
-                  </p>
-                  <div className="space-y-2">
-                    {(selectedCourse.session_dates || [])
-                      .filter((s) => s.date >= new Date().toISOString().slice(0, 10))
-                      .sort((a, b) => a.date > b.date ? 1 : -1)
-                      .map((s, idx) => (
-                        <button
-                          key={idx}
-                          onClick={() => setSelectedCourseDate(s.date)}
-                          className="w-full text-left px-4 py-3 rounded-lg border-2 transition-all"
-                          style={selectedCourseDate === s.date
-                            ? { borderColor: "#FA6F30", background: "rgba(250,111,48,0.1)" }
-                            : { borderColor: "rgba(30,37,53,0.1)", background: "transparent" }}
-                        >
-                          <div className="font-medium" style={{ color: "#1e2535" }}>
-                            {format(new Date(s.date + "T12:00:00"), "EEEE, MMMM d, yyyy")}
-                          </div>
-                          <div className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.5)" }}>
-                            {s.start_time && s.end_time ? `${s.start_time} - ${s.end_time}` : s.start_time || ""}
-                            {s.location ? ` · ${s.location}` : ""}
-                          </div>
-                        </button>
-                      ))}
-                  </div>
-                  <div className="p-4 rounded-xl space-y-3" style={{ background: "rgba(200,230,60,0.08)", border: "1px solid rgba(200,230,60,0.2)" }}>
-                    <div className="flex items-start gap-3">
-                      <Checkbox id="provider-terms-confirmation" checked={termsConfirmed} onCheckedChange={(checked) => setTermsConfirmed(Boolean(checked))} className="mt-0.5" />
-                      <Label htmlFor="provider-terms-confirmation" className="text-sm font-normal cursor-pointer leading-relaxed" style={{ color: "rgb(61, 90, 10)" }}>
-                        I confirm I agree to the NOVI terms of service.
-                      </Label>
-                    </div>
-                    <div className="flex items-start gap-3">
-                      <Checkbox id="provider-refund-confirmation" checked={refundPolicyConfirmed} onCheckedChange={(checked) => setRefundPolicyConfirmed(Boolean(checked))} className="mt-0.5" />
-                      <Label htmlFor="provider-refund-confirmation" className="text-sm font-normal cursor-pointer leading-relaxed" style={{ color: "rgb(61, 90, 10)" }}>
-                        I have read and agree to the NOVI Society refund policy.
-                      </Label>
-                    </div>
-                  </div>
-                  <Button
-                    className="w-full py-3.5 text-base font-bold rounded-xl"
-                    style={{ background: "#FA6F30", color: "#fff" }}
-                    disabled={!selectedCourseDate || !termsConfirmed || !refundPolicyConfirmed || createCheckout.isPending || !me?.email}
-                    onClick={() => {
-                      const [firstName = "", ...rest] = String(me?.full_name || "").trim().split(/\s+/);
-                      const lastName = rest.join(" ");
-                      createCheckout.mutate({
-                        course_id: selectedCourse.id,
-                        course_date: selectedCourseDate || null,
-                        customer_name: String(me?.full_name || "").trim(),
-                        first_name: firstName,
-                        last_name: lastName,
-                        customer_email: me?.email || "",
-                        phone: me?.phone || null,
-                        terms_confirmed: termsConfirmed,
-                        refund_policy_confirmed: refundPolicyConfirmed,
-                      });
-                    }}
-                  >
-                    {createCheckout.isPending ? "Redirecting to payment..." : `Pay $${Number(selectedCourse.price || 0).toLocaleString()} & Enroll`}
-                  </Button>
-                </div>
-              </>
-            )}
-          </DialogContent>
-        </Dialog>
 
         {onboardingEnrollment && (
           <ClassDayOnboardingWizard
