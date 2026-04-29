@@ -247,6 +247,22 @@ export function createLovableProviderClient() {
           }
         };
       }
+      if (name === "ClassSession") {
+        return {
+          list: () => authRequest("/admin/class-sessions", { method: "GET" }),
+          create: (payload) => authRequest("/admin/class-sessions", {
+            method: "POST",
+            body: JSON.stringify(payload || {})
+          }),
+          update: (id, payload) => authRequest(`/admin/class-sessions/${encodeURIComponent(id)}`, {
+            method: "PATCH",
+            body: JSON.stringify(payload || {})
+          }),
+          get: createNotImplementedMethod("entities.ClassSession.get"),
+          delete: createNotImplementedMethod("entities.ClassSession.delete"),
+          filter: createNotImplementedMethod("entities.ClassSession.filter")
+        };
+      }
       return {
         list: createNotImplementedMethod(`entities.${name}.list`),
         get: createNotImplementedMethod(`entities.${name}.get`),

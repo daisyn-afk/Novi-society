@@ -17,9 +17,8 @@ import ProviderSalesLock from "@/components/ProviderSalesLock";
 import { useProviderAccess } from "@/components/useProviderAccess";
 import ClassDayOnboardingWizard from "@/components/provider/ClassDayOnboardingWizard";
 import CourseEnrollmentCard from "@/components/provider/CourseEnrollmentCard";
-import CourseBrowseCard from "@/components/provider/CourseBrowseCard";
-import CourseCardDeck from "@/components/provider/CourseCardDeck";
 import CertificationPathway from "@/components/provider/CertificationPathway";
+import { isNowWithinSessionRedeemWindow } from "@/lib/classCodeWindow";
 
 const categoryMeta = {
   botox:         { label: "Botox & Neurotoxins", color: "#DA6A63" },
@@ -42,7 +41,6 @@ export default function ProviderEnrollments() {
   const [category, setCategory] = useState("all");
   const [level, setLevel] = useState("all");
   const [preMaterialsCourse, setPreMaterialsCourse] = useState(null);
-  const [selectedCourse, setSelectedCourse] = useState(null);
   const [onboardingEnrollment, setOnboardingEnrollment] = useState(null);
 
   const cancelEnrollment = useMutation({
@@ -58,7 +56,17 @@ export default function ProviderEnrollments() {
     queryKey: ["my-enrollments"],
     queryFn: async () => {
       const me = await base44.auth.me();
-      return base44.entities.Enrollment.filter({ provider_id: me.id }, "-created_date");
+      const [byProviderId, byProviderEmail] = await Promise.all([
+        base44.entities.Enrollment.filter({ provider_id: me.id }, "-created_date"),
+        me.email ? base44.entities.Enrollment.filter({ provider_email: me.email }, "-created_date") : Promise.resolve([]),
+      ]);
+
+      // Some legacy enrollments were keyed by email only; merge both sources.
+      const deduped = new Map();
+      [...byProviderId, ...byProviderEmail].forEach((enrollment) => {
+        deduped.set(enrollment.id, enrollment);
+      });
+      return Array.from(deduped.values());
     },
   });
 
@@ -72,7 +80,13 @@ export default function ProviderEnrollments() {
 
   const { data: courses = [], isLoading: loadingCourses } = useQuery({
     queryKey: ["courses"],
-    queryFn: () => base44.entities.Course.filter({ is_active: true }),
+    queryFn: async () => {
+      const allCourses = await base44.entities.Course.list("-created_date");
+      // Keep active courses, but include records where is_active is missing
+      // (legacy rows or admin-created templates without this flag).
+      const visible = allCourses.filter((course) => course?.is_active !== false);
+      return visible;
+    },
   });
 
   const { data: certs = [] } = useQuery({
@@ -97,6 +111,19 @@ export default function ProviderEnrollments() {
   });
 
   const courseMap = Object.fromEntries(courses.map(c => [c.id, c]));
+  const getCourseServiceTypeIds = (course) => {
+    if (!course) return [];
+    const direct = course.service_type_id ? [course.service_type_id] : [];
+    const linked = Array.isArray(course.linked_service_type_ids) ? course.linked_service_type_ids : [];
+    const fromCerts = Array.isArray(course.certifications_awarded)
+      ? course.certifications_awarded.map((entry) => entry?.service_type_id).filter(Boolean)
+      : [];
+    return Array.from(new Set([...direct, ...linked, ...fromCerts].map((id) => String(id))));
+  };
+  const courseMatchesService = (course, serviceTypeId) => {
+    if (!course || !serviceTypeId) return false;
+    return getCourseServiceTypeIds(course).includes(String(serviceTypeId));
+  };
   const sessionByEnrollment = Object.fromEntries(sessions.map(s => [s.enrollment_id, s]));
   const activeSubServiceIds = new Set(myMDSubs.filter(s => s.status === "active").map(s => s.service_type_id));
   const activeEnrollments = myEnrollments.filter(e => e.status !== "cancelled");
@@ -108,13 +135,12 @@ export default function ProviderEnrollments() {
     const nextDate = sessionDates.find(d => d.date && !isPast(new Date(d.date + "T23:59:59")));
     const classDate = e.session_date || nextDate?.date;
     const classIsToday = classDate && isToday(new Date(classDate));
+    const isWithinRedeemWindow = classDate && isNowWithinSessionRedeemWindow(course, classDate);
     const session = sessionByEnrollment[e.id];
     const isAttended = session?.code_used || ["attended", "completed"].includes(e.status);
-    const linkedServiceIds = (course?.linked_service_type_ids?.length > 0)
-      ? course.linked_service_type_ids
-      : (course?.certifications_awarded || []).map(c => c.service_type_id).filter(Boolean);
+    const linkedServiceIds = getCourseServiceTypeIds(course);
     const needsMDSub = linkedServiceIds.some(id => !activeSubServiceIds.has(id));
-    return classIsToday && !isAttended && needsMDSub && ["confirmed", "paid"].includes(e.status);
+    return (classIsToday || isWithinRedeemWindow) && !isAttended && needsMDSub && ["confirmed", "paid"].includes(e.status);
   });
 
   React.useEffect(() => {
@@ -122,13 +148,6 @@ export default function ProviderEnrollments() {
       setOnboardingEnrollment(todayEnrollment);
     }
   }, [todayEnrollment, activeTab]);
-
-  const filteredCourses = courses.filter(c => {
-    const matchSearch = !search || c.title?.toLowerCase().includes(search.toLowerCase()) || c.description?.toLowerCase().includes(search.toLowerCase());
-    const matchCat = category === "all" || c.category === category;
-    const matchLvl = level === "all" || c.level === level;
-    return matchSearch && matchCat && matchLvl;
-  });
 
   return (
     <ProviderSalesLock feature="enrollments" applicationStatus={accessStatus} requiredTier="courses_only">
@@ -176,7 +195,23 @@ export default function ProviderEnrollments() {
             {(loadingCourses || loadingServiceTypes) ? (
               <div className="space-y-4">{[1,2].map(i => <div key={i} className="h-96 animate-pulse rounded-3xl" style={{ background: "rgba(255,255,255,0.08)" }} />)}</div>
             ) : (() => {
-              const filteredServices = serviceTypes.filter(s => {
+              const fallbackServices = Array.from(new Set(
+                courses.flatMap((course) => {
+                  return getCourseServiceTypeIds(course);
+                })
+              )).map((serviceTypeId) => {
+                const sourceCourse = courses.find((course) =>
+                  courseMatchesService(course, serviceTypeId)
+                );
+                return {
+                  id: serviceTypeId,
+                  name: sourceCourse?.certification_name || sourceCourse?.title || "Service Track",
+                  category: sourceCourse?.category || "other"
+                };
+              });
+
+              const servicesForBrowse = serviceTypes.length > 0 ? serviceTypes : fallbackServices;
+              const filteredServices = servicesForBrowse.filter(s => {
                 const matchSearch = !search || s.name?.toLowerCase().includes(search.toLowerCase()) || s.category?.toLowerCase().includes(search.toLowerCase());
                 return matchSearch;
               });
@@ -184,11 +219,15 @@ export default function ProviderEnrollments() {
                 <div className="text-center py-16" style={{ color: "rgba(30,37,53,0.4)" }}>
                   <Award className="w-10 h-10 mx-auto mb-3 opacity-40" />
                   <p className="font-semibold">No services found</p>
+                  <p className="text-xs mt-2" style={{ color: "rgba(30,37,53,0.45)" }}>
+                    Debug: courses={courses.length}, serviceTypes={serviceTypes.length}, enrollments={activeEnrollments.length}
+                  </p>
                 </div>
               ) : (
                 <div className="space-y-6">
                   {filteredServices.map(svc => {
-                    const serviceCourses = courses.filter(c => (c.linked_service_type_ids?.includes(svc.id)) || (c.certifications_awarded?.some(ca => ca.service_type_id === svc.id)));
+                    const serviceCourses = courses.filter((course) => courseMatchesService(course, svc.id));
+                    const enrolledCourseForService = serviceCourses.find((course) => enrolledCourseIds.has(course.id)) || null;
                     const meta = categoryMeta[svc.category] || categoryMeta.other;
                     return (
                       <CertificationPathway
@@ -198,7 +237,16 @@ export default function ProviderEnrollments() {
                         userCerts={certs}
                         userMDSubs={myMDSubs}
                         enrolledCourseIds={enrolledCourseIds}
-                        onEnroll={(course) => setSelectedCourse(course)}
+                        serviceEnrollments={activeEnrollments.filter((enrollment) => {
+                          const enrollmentCourse = courseMap[enrollment.course_id];
+                          if (!enrollmentCourse) return false;
+                          const linkedServiceIds = getCourseServiceTypeIds(enrollmentCourse);
+                          return linkedServiceIds.includes(svc.id);
+                        })}
+                        sessionByEnrollment={sessionByEnrollment}
+                        initiallyExpandedCourseId={enrolledCourseForService?.id || null}
+                        onEnroll={(course) => navigate(createPageUrl(`CourseCheckout?course_id=${course.id}`))}
+                        onViewEnrollment={() => setActiveTab("my")}
                         onApplyMD={() => navigate(createPageUrl("ProviderCredentialsCoverage") + `?prompt_service=${svc.id}`)}
                       />
                     );
@@ -217,20 +265,41 @@ export default function ProviderEnrollments() {
                 <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.4)" }}>Your Certification Pathways</p>
                 {Array.from(new Set(
                   activeEnrollments.flatMap(e =>
-                    (courseMap[e.course_id]?.linked_service_type_ids || []).filter(Boolean)
+                    getCourseServiceTypeIds(courseMap[e.course_id])
                   )
                 )).map(serviceTypeId => {
-                  const svc = serviceTypes.find(s => s.id === serviceTypeId);
-                  if (!svc) return null;
+                  const svcFromCatalog = serviceTypes.find((s) => s.id === serviceTypeId);
+                  const fallbackCourse = courses.find((course) =>
+                    courseMatchesService(course, serviceTypeId)
+                  );
+                  const svc = svcFromCatalog || {
+                    id: serviceTypeId,
+                    name: fallbackCourse?.certification_name || fallbackCourse?.title || "Service Track",
+                    category: fallbackCourse?.category || "other",
+                  };
                   return (
                     <CertificationPathway
                       key={serviceTypeId}
                       serviceType={svc}
-                      courses={courses.filter(c => (c.linked_service_type_ids?.includes(svc.id)) || (c.certifications_awarded?.some(ca => ca.service_type_id === svc.id)))}
+                      courses={courses.filter((course) => courseMatchesService(course, svc.id))}
                       userCerts={certs}
                       userMDSubs={myMDSubs}
                       enrolledCourseIds={enrolledCourseIds}
+                      serviceEnrollments={activeEnrollments.filter((enrollment) => {
+                        const enrollmentCourse = courseMap[enrollment.course_id];
+                        if (!enrollmentCourse) return false;
+                        const linkedServiceIds = getCourseServiceTypeIds(enrollmentCourse);
+                        return linkedServiceIds.includes(serviceTypeId);
+                      })}
+                      sessionByEnrollment={sessionByEnrollment}
+                      initiallyExpandedCourseId={activeEnrollments.find((e) => {
+                        const course = courseMap[e.course_id];
+                        if (!course) return false;
+                        const linkedServiceIds = getCourseServiceTypeIds(course);
+                        return linkedServiceIds.includes(serviceTypeId);
+                      })?.course_id || null}
                       onEnroll={() => setActiveTab("browse")}
+                      onViewEnrollment={() => {}}
                       onApplyMD={() => navigate(createPageUrl("ProviderCredentialsCoverage") + `?prompt_service=${serviceTypeId}`)}
                     />
                   );
@@ -245,6 +314,9 @@ export default function ProviderEnrollments() {
                 <BookOpen className="w-12 h-12 mx-auto mb-3 opacity-30 text-white" />
                 <p className="font-semibold text-white/70 mb-1">No active enrollments yet</p>
                 <p className="text-sm text-white/40 mb-5">Find a course and enroll to get started.</p>
+                <p className="text-xs mb-5" style={{ color: "rgba(255,255,255,0.45)" }}>
+                  Debug: enrollments={myEnrollments.length}, active={activeEnrollments.length}, courses={courses.length}
+                </p>
                 <button onClick={() => setActiveTab("browse")} className="px-6 py-2.5 rounded-xl text-sm font-bold text-white" style={{ background: "#FA6F30" }}>
                   Browse Courses →
                 </button>
@@ -252,16 +324,30 @@ export default function ProviderEnrollments() {
             ) : (
               <div className="grid sm:grid-cols-2 gap-5 max-w-4xl">
                 {activeEnrollments.map(e => (
+                  (() => {
+                    const course = courseMap[e.course_id];
+                    const classDate = e.session_date || course?.session_dates?.find((d) => d?.date)?.date;
+                    const showWizard = Boolean(
+                      classDate &&
+                      isNowWithinSessionRedeemWindow(course, classDate) &&
+                      !sessionByEnrollment[e.id]?.code_used &&
+                      ["confirmed", "paid"].includes(e.status)
+                    );
+                    return (
                   <CourseEnrollmentCard
                     key={e.id}
                     enrollment={e}
-                    course={courseMap[e.course_id]}
+                    course={course}
                     session={sessionByEnrollment[e.id]}
                     certs={certs}
                     activeSubServiceIds={activeSubServiceIds}
                     onViewMaterials={() => setPreMaterialsCourse(courseMap[e.course_id])}
                     onCancel={() => { if (window.confirm("Cancel this enrollment?")) cancelEnrollment.mutate({ id: e.id }); }}
+                    showClassWizardCta={showWizard}
+                    onOpenClassWizard={() => setOnboardingEnrollment(e)}
                   />
+                    );
+                  })()
                 ))}
               </div>
             )}
@@ -272,14 +358,12 @@ export default function ProviderEnrollments() {
           <PreCourseMaterials
             course={preMaterialsCourse}
             onClose={() => setPreMaterialsCourse(null)}
-            onProceed={() => { setSelectedCourse(preMaterialsCourse); setPreMaterialsCourse(null); }}
+            onProceed={() => {
+              navigate(createPageUrl(`CourseCheckout?course_id=${preMaterialsCourse.id}`));
+              setPreMaterialsCourse(null);
+            }}
           />
         )}
-
-        {selectedCourse && (() => {
-          window.location.href = createPageUrl(`CourseCheckout?course_id=${selectedCourse.id}`);
-          return null;
-        })()}
 
         {onboardingEnrollment && (
           <ClassDayOnboardingWizard

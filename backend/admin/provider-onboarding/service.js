@@ -55,6 +55,54 @@ async function ensureProviderOnboardingTable() {
   }
 }
 
+async function ensureProviderUserRow(client, me) {
+  if (!client || !me?.id) return;
+  const email = String(me.email || "").trim().toLowerCase() || null;
+  const rawFirstName = String(me.first_name || "").trim();
+  const rawLastName = String(me.last_name || "").trim();
+  const rawFullName = String(me.full_name || "").trim();
+  const parsedFromFull = rawFullName ? rawFullName.split(/\s+/).filter(Boolean) : [];
+  const firstName = rawFirstName || parsedFromFull[0] || null;
+  const lastName = rawLastName || (parsedFromFull.length > 1 ? parsedFromFull.slice(1).join(" ") : null);
+  const fullName = rawFullName || [firstName, lastName].filter(Boolean).join(" ").trim() || null;
+
+  // If a user row already exists by email (common with imported/manual rows),
+  // attach the auth_user_id first to avoid unique(email) conflicts.
+  if (email) {
+    await client.query(
+      `update public.users
+       set auth_user_id = $1,
+           first_name = coalesce($3, public.users.first_name),
+           last_name = coalesce($4, public.users.last_name),
+           full_name = coalesce($5, public.users.full_name),
+           role = coalesce(public.users.role, 'provider'),
+           updated_at = now()
+       where lower(email) = lower($2)`,
+      [me.id, email, firstName, lastName, fullName]
+    );
+  }
+
+  await client.query(
+    `insert into public.users (
+       auth_user_id,
+       email,
+       first_name,
+       last_name,
+       full_name,
+       role
+     ) values ($1, $2, $3, $4, $5, 'provider')
+     on conflict (auth_user_id)
+     do update set
+       email = coalesce(excluded.email, public.users.email),
+       first_name = coalesce(excluded.first_name, public.users.first_name),
+       last_name = coalesce(excluded.last_name, public.users.last_name),
+       full_name = coalesce(excluded.full_name, public.users.full_name),
+       role = coalesce(public.users.role, 'provider'),
+       updated_at = now()`,
+    [me.id, email, firstName, lastName, fullName]
+  );
+}
+
 function assertRequired(payload, key, label = key) {
   const value = String(payload?.[key] || "").trim();
   if (!value) {
@@ -118,6 +166,8 @@ export async function submitProviderBasicOnboarding({ accessToken, payload }) {
 
   const client = await pool.connect();
   try {
+    await client.query("begin");
+    await ensureProviderUserRow(client, me);
     const { rows } = await client.query(
       `insert into public.provider_basic_onboarding (
          auth_user_id,
@@ -170,7 +220,71 @@ export async function submitProviderBasicOnboarding({ accessToken, payload }) {
         documentUrl
       ]
     );
+
+    // Keep admin license review in sync with onboarding submissions.
+    // Re-submitting onboarding should update the same license entry (by provider + license identity)
+    // instead of creating duplicates for the same credential.
+    const existingLicenseRes = await client.query(
+      `select id
+       from public.licenses
+       where provider_id = $1
+         and upper(coalesce(license_type, '')) = upper($2)
+         and upper(coalesce(license_number, '')) = upper($3)
+       order by updated_at desc
+       limit 1`,
+      [me.id, licenseType, licenseNumber]
+    );
+
+    if (existingLicenseRes.rows[0]?.id) {
+      await client.query(
+        `update public.licenses
+         set provider_email = $2,
+             issuing_state = $3,
+             expiration_date = $4,
+             document_url = $5,
+             status = 'pending_review',
+             rejection_reason = null,
+             verified_at = null,
+             verified_by = null,
+             updated_at = now()
+         where id = $1`,
+        [
+          existingLicenseRes.rows[0].id,
+          me.email || null,
+          issuingState,
+          expirationDate,
+          documentUrl
+        ]
+      );
+    } else {
+      await client.query(
+        `insert into public.licenses (
+           provider_id,
+           provider_email,
+           license_type,
+           license_number,
+           issuing_state,
+           expiration_date,
+           document_url,
+           status
+         ) values ($1, $2, $3, $4, $5, $6, $7, 'pending_review')`,
+        [
+          me.id,
+          me.email || null,
+          licenseType,
+          licenseNumber,
+          issuingState,
+          expirationDate,
+          documentUrl
+        ]
+      );
+    }
+
+    await client.query("commit");
     return rows[0];
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
   } finally {
     client.release();
   }

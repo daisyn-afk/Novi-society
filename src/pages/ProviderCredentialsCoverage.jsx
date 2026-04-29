@@ -22,6 +22,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { format } from "date-fns";
+import { isNowWithinSessionRedeemWindow } from "@/lib/classCodeWindow";
 
 const LICENSE_TYPES = ["RN", "NP", "PA", "MD", "DO", "esthetician", "other"];
 const CERT_TYPES = ["RN", "NP", "PA", "MD", "DO", "esthetician", "other"];
@@ -165,6 +166,11 @@ export default function ProviderCredentialsCoverage() {
     queryFn: async () => { const u = await base44.auth.me(); return base44.entities.Enrollment.filter({ provider_id: u.id }); },
     enabled: !!me,
   });
+  const { data: mySessions = [] } = useQuery({
+    queryKey: ["my-sessions-coverage"],
+    queryFn: async () => { const u = await base44.auth.me(); return base44.entities.ClassSession.filter({ provider_id: u.id }, "-created_date"); },
+    enabled: !!me,
+  });
   const { data: courses = [] } = useQuery({
     queryKey: ["courses-coverage"],
     queryFn: () => base44.entities.Course.list(),
@@ -300,6 +306,16 @@ export default function ProviderCredentialsCoverage() {
   });
   const verifyCodeMutation = useMutation({
     mutationFn: async () => {
+      const normalizedCode = String(classCode || "").trim().toUpperCase();
+      const matchingSession = mySessions.find((session) => String(session.session_code || "").toUpperCase() === normalizedCode);
+      if (!matchingSession) throw new Error("This code does not match any session assigned to you.");
+      if (matchingSession.code_used) throw new Error("This class code was already redeemed.");
+      const enrollmentForSession = myEnrollments.find((enrollment) => enrollment.id === matchingSession.enrollment_id);
+      const sessionDate = matchingSession.session_date || enrollmentForSession?.session_date;
+      const courseForSession = courseMap[matchingSession.course_id || enrollmentForSession?.course_id];
+      if (sessionDate && courseForSession && !isNowWithinSessionRedeemWindow(courseForSession, sessionDate)) {
+        throw new Error("Class code is only valid from class start time to 24 hours after class end.");
+      }
       const res = await base44.functions.invoke('redeemClassCode', { session_code: classCode });
       if (!res.data.success) throw new Error(res.data.error || 'Invalid class code');
       return res.data;

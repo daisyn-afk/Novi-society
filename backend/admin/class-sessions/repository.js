@@ -1,9 +1,47 @@
 import { query } from "../db.js";
 
+let ensureTablePromise = null;
+
+async function ensureClassSessionTable() {
+  if (!ensureTablePromise) {
+    ensureTablePromise = query(
+      `create extension if not exists pgcrypto;
+       create table if not exists public.class_session (
+         id uuid primary key default gen_random_uuid(),
+         created_date timestamptz not null default now(),
+         enrollment_id text,
+         course_id uuid,
+         course_title text,
+         provider_id uuid,
+         provider_name text,
+         provider_email text,
+         session_date date,
+         session_code text not null,
+         code_used boolean not null default false,
+         code_used_at timestamptz,
+         attendance_confirmed boolean not null default false
+       );
+       create index if not exists idx_class_session_course_date on public.class_session(course_id, session_date);
+       create unique index if not exists idx_class_session_enrollment_id on public.class_session(enrollment_id)
+       where enrollment_id is not null;`
+    ).catch((error) => {
+      ensureTablePromise = null;
+      throw error;
+    });
+  }
+  return ensureTablePromise;
+}
+
 function formatDate(d) {
   if (!d) return null;
   if (d instanceof Date) return d.toISOString().slice(0, 10);
   return String(d).slice(0, 10);
+}
+
+function nullIfBlank(value) {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  return text.length ? text : null;
 }
 
 function rowToApi(row) {
@@ -26,6 +64,7 @@ function rowToApi(row) {
 }
 
 export async function listClassSessions() {
+  await ensureClassSessionTable();
   const { rows } = await query(
     `select *
      from public.class_session
@@ -35,6 +74,7 @@ export async function listClassSessions() {
 }
 
 export async function createClassSession(body) {
+  await ensureClassSessionTable();
   const {
     enrollment_id,
     course_id,
@@ -53,20 +93,21 @@ export async function createClassSession(body) {
     ) values ($1, $2, $3, $4, $5, $6, $7::date, $8)
     returning *`,
     [
-      enrollment_id,
-      course_id,
-      course_title ?? null,
-      provider_id ?? null,
-      provider_name ?? null,
-      provider_email ?? null,
-      session_date || null,
-      session_code,
+      nullIfBlank(enrollment_id),
+      nullIfBlank(course_id),
+      nullIfBlank(course_title),
+      nullIfBlank(provider_id),
+      nullIfBlank(provider_name),
+      nullIfBlank(provider_email),
+      nullIfBlank(session_date),
+      nullIfBlank(session_code),
     ]
   );
   return rowToApi(rows[0]);
 }
 
 export async function updateClassSession(id, patch) {
+  await ensureClassSessionTable();
   const allowed = ["session_code", "attendance_confirmed", "code_used", "code_used_at"];
   const keys = Object.keys(patch || {}).filter((k) => allowed.includes(k));
   if (keys.length === 0) {
