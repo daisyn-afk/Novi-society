@@ -4,7 +4,7 @@
 function toApiPath(path) {
   if (!path || typeof path !== "string") return path;
   if (path.startsWith("/api/")) return path;
-  if (path.startsWith("/admin/") || path.startsWith("/webhooks/")) {
+  if (path.startsWith("/admin/") || path.startsWith("/webhooks/") || path.startsWith("/functions/")) {
     return `/api${path}`;
   }
   return path;
@@ -172,7 +172,11 @@ async function authRequest(path, options = {}, retryOnAuthError = true) {
       }
     }
 
-    const error = new Error(parsed.error || raw || `Request failed: ${response.status}`);
+    const debugWindow = parsed?.debug_window;
+    const debugText = debugWindow
+      ? `\nNow: ${debugWindow.now || "n/a"}\nStart: ${debugWindow.start_at || "n/a"}\nEnd: ${debugWindow.end_at || "n/a"}\nExpires: ${debugWindow.expires_at || "n/a"}\nSelected Course: ${debugWindow.selected_course_id || "n/a"}\nSelected Session Date: ${debugWindow.selected_session_date || "n/a"}\nMatched Course: ${debugWindow.matched_course_id || "n/a"}\nMatched Session Date: ${debugWindow.matched_session_date || "n/a"}`
+      : "";
+    const error = new Error(`${parsed.error || raw || `Request failed: ${response.status}`}${debugText}`);
     error.status = response.status;
     throw error;
   }
@@ -247,6 +251,33 @@ export function createLovableProviderClient() {
           }
         };
       }
+      if (name === "Certification") {
+        return {
+          list: () => authRequest("/admin/certifications", { method: "GET" }),
+          filter: async (filters = {}) => {
+            const all = await authRequest("/admin/certifications", { method: "GET" });
+            const providerId = filters?.provider_id ? String(filters.provider_id) : "";
+            const providerEmail = filters?.provider_email ? String(filters.provider_email).toLowerCase() : "";
+            const status = filters?.status ? String(filters.status).toLowerCase() : "";
+            return (all || []).filter((row) => {
+              if (providerId && String(row?.provider_id || "") !== providerId) return false;
+              if (providerEmail && String(row?.provider_email || "").toLowerCase() !== providerEmail) return false;
+              if (status && String(row?.status || "").toLowerCase() !== status) return false;
+              return true;
+            });
+          },
+          get: (id) => authRequest(`/admin/certifications/${encodeURIComponent(id)}`, { method: "GET" }),
+          create: (payload) => authRequest("/admin/certifications", {
+            method: "POST",
+            body: JSON.stringify(payload || {})
+          }),
+          update: (id, payload) => authRequest(`/admin/certifications/${encodeURIComponent(id)}`, {
+            method: "PATCH",
+            body: JSON.stringify(payload || {})
+          }),
+          delete: createNotImplementedMethod("entities.Certification.delete")
+        };
+      }
       if (name === "ClassSession") {
         return {
           list: () => authRequest("/admin/class-sessions", { method: "GET" }),
@@ -260,7 +291,27 @@ export function createLovableProviderClient() {
           }),
           get: createNotImplementedMethod("entities.ClassSession.get"),
           delete: createNotImplementedMethod("entities.ClassSession.delete"),
-          filter: createNotImplementedMethod("entities.ClassSession.filter")
+          filter: async (filters = {}) => {
+            const all = await authRequest("/admin/class-sessions", { method: "GET" });
+            const providerId = filters?.provider_id ? String(filters.provider_id) : "";
+            const providerEmail = filters?.provider_email ? String(filters.provider_email).toLowerCase() : "";
+            const courseId = filters?.course_id ? String(filters.course_id) : "";
+            const enrollmentId = filters?.enrollment_id ? String(filters.enrollment_id) : "";
+            const sessionCode = filters?.session_code ? String(filters.session_code).toUpperCase() : "";
+            const sessionDate = filters?.session_date ? String(filters.session_date) : "";
+            const hasCodeUsed = Object.prototype.hasOwnProperty.call(filters || {}, "code_used");
+            const codeUsed = hasCodeUsed ? Boolean(filters.code_used) : null;
+            return (all || []).filter((row) => {
+              if (providerId && String(row?.provider_id || "") !== providerId) return false;
+              if (providerEmail && String(row?.provider_email || "").toLowerCase() !== providerEmail) return false;
+              if (courseId && String(row?.course_id || "") !== courseId) return false;
+              if (enrollmentId && String(row?.enrollment_id || "") !== enrollmentId) return false;
+              if (sessionCode && String(row?.session_code || "").toUpperCase() !== sessionCode) return false;
+              if (sessionDate && String(row?.session_date || "") !== sessionDate) return false;
+              if (hasCodeUsed && Boolean(row?.code_used) !== codeUsed) return false;
+              return true;
+            });
+          }
         };
       }
       if (name === "Course") {
@@ -412,7 +463,46 @@ export function createLovableProviderClient() {
             })
           };
         }
-        return postJson(`/functions/${functionName}`, payload);
+        return {
+          data: await authRequest(`/functions/${functionName}`, {
+            method: "POST",
+            body: JSON.stringify(payload || {})
+          })
+        };
+      }
+    },
+    integrations: {
+      Core: {
+        UploadFile: async ({ file }) => {
+          if (!file) throw new Error("[lovable-provider] Upload file is required.");
+          const token = getStoredAccessToken();
+          const formData = new FormData();
+          formData.append("file", file);
+          const response = await fetch(`${ADMIN_API_BASE_URL}${toApiPath("/admin/uploads/license-photo")}`, {
+            method: "POST",
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+            body: formData
+          });
+          if (!response.ok) {
+            const raw = await response.text().catch(() => "");
+            let parsed = {};
+            try {
+              parsed = raw ? JSON.parse(raw) : {};
+            } catch {
+              parsed = {};
+            }
+            throw new Error(parsed.error || raw || `[lovable-provider] upload failed (${response.status})`);
+          }
+          const payload = await response.json();
+          const fileUrl = payload?.file_url || payload?.url || payload?.public_url || "";
+          if (!fileUrl) {
+            throw new Error("[lovable-provider] upload succeeded but no file URL was returned.");
+          }
+          return {
+            ...payload,
+            file_url: fileUrl
+          };
+        }
       }
     }
   };

@@ -27,6 +27,7 @@ function resolveAdminApiBaseUrl() {
 }
 
 const API_BASE_URL = resolveAdminApiBaseUrl();
+const ACCESS_TOKEN_KEY = "novi_auth_access_token";
 
 // Prepend "/api" to paths under /admin/ or /webhooks/ so API calls do not
 // collide with React Router SPA routes (e.g. /admin dashboard page).
@@ -49,6 +50,13 @@ export async function adminApiRequest(path, options = {}) {
 
   if (!(options.body instanceof FormData) && !hasContentType) {
     headers["Content-Type"] = "application/json";
+  }
+  const hasAuthorization =
+    Object.prototype.hasOwnProperty.call(headers, "Authorization") ||
+    Object.prototype.hasOwnProperty.call(headers, "authorization");
+  if (!hasAuthorization && typeof window !== "undefined") {
+    const token = window.localStorage.getItem(ACCESS_TOKEN_KEY) || "";
+    if (token) headers.Authorization = `Bearer ${token}`;
   }
 
   let response;

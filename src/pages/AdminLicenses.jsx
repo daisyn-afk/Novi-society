@@ -22,6 +22,76 @@ const licenseStatusColor = {
 };
 
 const certStatusColor = { active: "bg-green-100 text-green-700", expired: "bg-slate-100 text-slate-500", revoked: "bg-red-100 text-red-700", pending: "bg-yellow-100 text-yellow-700" };
+const normalizePossibleUrl = (raw) => {
+  const value = String(raw || "").trim();
+  if (!value) return null;
+  if (value.toUpperCase() === "N/A" || value === "/N/A") return null;
+  const cleaned = value.replace(/[),.;]+$/g, "");
+  if (cleaned.toUpperCase() === "N/A" || cleaned === "/N/A") return null;
+  if (/^https?:\/\//i.test(cleaned)) return cleaned;
+  if (cleaned.startsWith("//")) return `https:${cleaned}`;
+  if (cleaned.startsWith("/")) return cleaned;
+  if (/^[\w.-]+\//.test(cleaned) || cleaned.startsWith("storage/")) return `/${cleaned.replace(/^\/+/, "")}`;
+  return null;
+};
+const extractTextFromJsonish = (raw) => {
+  if (!raw || typeof raw !== "string") return [];
+  const text = raw.trim();
+  if (!text) return [];
+  try {
+    const parsed = JSON.parse(text);
+    if (typeof parsed === "string") return [parsed];
+    if (Array.isArray(parsed)) return parsed.filter((v) => typeof v === "string");
+    if (parsed && typeof parsed === "object") return Object.values(parsed).filter((v) => typeof v === "string");
+  } catch {
+    return [];
+  }
+  return [];
+};
+const extractSubmitterFromNotes = (notes) => {
+  const text = String(notes || "");
+  const tagged = text.match(/\[submitter\]\s*name=([^;]+);\s*email=([^;]+);\s*id=([^\n]+)/i);
+  if (!tagged) return null;
+  return {
+    name: String(tagged[1] || "").trim(),
+    email: String(tagged[2] || "").trim(),
+    id: String(tagged[3] || "").trim(),
+  };
+};
+const extractDocumentUrl = (cert) => {
+  const directUrl =
+    normalizePossibleUrl(cert?.certificate_url) ||
+    normalizePossibleUrl(cert?.certification_url) ||
+    normalizePossibleUrl(cert?.certification_file_url) ||
+    normalizePossibleUrl(cert?.document_url) ||
+    normalizePossibleUrl(cert?.file_url) ||
+    normalizePossibleUrl(cert?.attachment_url);
+  if (directUrl) return directUrl;
+  const notes = String(cert?.notes || "");
+  const taggedUrl = notes.match(/(?:Certificate|License)\s+document:\s*(https?:\/\/\S+)/i)?.[1];
+  if (taggedUrl) return normalizePossibleUrl(taggedUrl);
+  const firstUrl = notes.match(/https?:\/\/\S+/i)?.[0];
+  const notesUrl = normalizePossibleUrl(firstUrl);
+  if (notesUrl) return notesUrl;
+
+  // Last-resort scan: any URL-like value in the record payload, including JSON-ish text fields.
+  for (const value of Object.values(cert || {})) {
+    const candidates = [];
+    if (typeof value === "string") {
+      candidates.push(value, ...extractTextFromJsonish(value));
+    } else if (Array.isArray(value)) {
+      candidates.push(...value.filter((v) => typeof v === "string"));
+    } else if (value && typeof value === "object") {
+      candidates.push(...Object.values(value).filter((v) => typeof v === "string"));
+    }
+    for (const candidate of candidates) {
+      const maybeUrl = normalizePossibleUrl(candidate) || normalizePossibleUrl(String(candidate).match(/https?:\/\/\S+/i)?.[0]);
+      if (maybeUrl) return maybeUrl;
+    }
+  }
+  return null;
+};
+const isLikelyEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || "").trim());
 
 export default function AdminLicenses() {
   const [licSearch, setLicSearch] = useState("");
@@ -32,6 +102,9 @@ export default function AdminLicenses() {
   const [issueDialog, setIssueDialog] = useState(null);
   const [issueForm, setIssueForm] = useState({});
   const qc = useQueryClient();
+  const certDebugEnabled =
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("certdebug") === "1";
 
   // --- Licenses ---
   const { data: licenses = [], isLoading: licLoading } = useQuery({
@@ -41,21 +114,110 @@ export default function AdminLicenses() {
   const { data: usersForNameLookup = [] } = useQuery({
     queryKey: ["users-license-name-lookup"],
     queryFn: async () => {
-      const result = await adminApiRequest("/admin/users?page=1&page_size=500");
-      return Array.isArray(result?.data) ? result.data : [];
+      const allUsers = [];
+      const pageSize = 500;
+      for (let page = 1; page <= 20; page += 1) {
+        const result = await adminApiRequest(`/admin/users?page=${page}&page_size=${pageSize}`);
+        const batch = Array.isArray(result?.data) ? result.data : [];
+        allUsers.push(...batch);
+        if (batch.length < pageSize) break;
+      }
+      return allUsers;
     },
   });
+  const { data: base44UsersForFallback = [] } = useQuery({
+    queryKey: ["users-license-name-lookup-base44"],
+    queryFn: () => base44.entities.User.list(),
+  });
+
+  const mergedUsersForLookup = [...usersForNameLookup, ...base44UsersForFallback];
 
   const userNameByEmail = new Map(
-    usersForNameLookup
+    mergedUsersForLookup
       .filter((u) => u?.email)
       .map((u) => [String(u.email).trim().toLowerCase(), u.full_name || [u.first_name, u.last_name].filter(Boolean).join(" ").trim() || null])
   );
   const userNameByAuthUserId = new Map(
-    usersForNameLookup
+    mergedUsersForLookup
       .filter((u) => u?.auth_user_id)
       .map((u) => [String(u.auth_user_id), u.full_name || [u.first_name, u.last_name].filter(Boolean).join(" ").trim() || null])
   );
+  const userNameByUserId = new Map(
+    mergedUsersForLookup
+      .filter((u) => u?.id)
+      .map((u) => [String(u.id), u.full_name || [u.first_name, u.last_name].filter(Boolean).join(" ").trim() || null])
+  );
+  const userEmailByAuthUserId = new Map(
+    mergedUsersForLookup
+      .filter((u) => u?.auth_user_id)
+      .map((u) => [String(u.auth_user_id), String(u.email || "").trim().toLowerCase() || null])
+  );
+  const userEmailByUserId = new Map(
+    mergedUsersForLookup
+      .filter((u) => u?.id)
+      .map((u) => [String(u.id), String(u.email || "").trim().toLowerCase() || null])
+  );
+
+  const resolveProviderName = (cert) => {
+    const providerId = String(cert?.provider_id || cert?.user_id || cert?.created_by || cert?.owner_id || "").trim();
+    const providerEmail = String(
+      cert?.provider_email || cert?.user_email || cert?.submitted_by_email || cert?.created_by_email || cert?.email || ""
+    ).trim().toLowerCase();
+    const createdByRaw = String(cert?.created_by || "").trim();
+    const createdByEmail = isLikelyEmail(createdByRaw) ? createdByRaw.toLowerCase() : "";
+    const submitterFromNotes = extractSubmitterFromNotes(cert?.notes);
+    const metadataStrings = extractTextFromJsonish(cert?.metadata);
+    const metadataName = metadataStrings.find((v) => /[a-z]/i.test(v) && !String(v).includes("@") && !String(v).startsWith("http"));
+    const fallbackEmail =
+      providerEmail ||
+      createdByEmail ||
+      String(cert?.provider_email || "").trim().toLowerCase() ||
+      String(cert?.created_by_email || "").trim().toLowerCase();
+    const fallbackFromEmail = fallbackEmail ? fallbackEmail.split("@")[0].replace(/[._-]+/g, " ").trim() : "";
+    return (
+      cert?.provider_name_resolved ||
+      cert?.provider_name ||
+      submitterFromNotes?.name ||
+      cert?.submitted_by_name ||
+      cert?.created_by_name ||
+      cert?.user_name ||
+      cert?.name ||
+      cert?.full_name ||
+      userNameByAuthUserId.get(providerId) ||
+      userNameByUserId.get(providerId) ||
+      userNameByEmail.get(providerEmail) ||
+      userNameByEmail.get(createdByEmail) ||
+      userNameByEmail.get(String(cert?.created_by_email || "").trim().toLowerCase()) ||
+      submitterFromNotes?.email ||
+      metadataName ||
+      fallbackFromEmail ||
+      (providerId ? `User ${providerId.slice(0, 8)}` : "") ||
+      "Unknown Provider"
+    );
+  };
+
+  const resolveProviderEmail = (cert) => {
+    const providerId = String(cert?.provider_id || cert?.user_id || cert?.created_by || cert?.owner_id || "").trim();
+    const metadataStrings = extractTextFromJsonish(cert?.metadata);
+    const metadataEmail = metadataStrings.find((v) => String(v).includes("@"));
+    const submitterFromNotes = extractSubmitterFromNotes(cert?.notes);
+    const createdByRaw = String(cert?.created_by || "").trim();
+    const createdByEmail = isLikelyEmail(createdByRaw) ? createdByRaw.toLowerCase() : null;
+    return (
+      cert?.provider_email_resolved ||
+      cert?.provider_email ||
+      submitterFromNotes?.email ||
+      cert?.user_email ||
+      cert?.submitted_by_email ||
+      cert?.created_by_email ||
+      cert?.email ||
+      createdByEmail ||
+      userEmailByAuthUserId.get(providerId) ||
+      userEmailByUserId.get(providerId) ||
+      metadataEmail ||
+      null
+    );
+  };
 
   const licUpdate = useMutation({
     mutationFn: ({ id, data }) => base44.entities.License.update(id, data),
@@ -103,7 +265,12 @@ export default function AdminLicenses() {
   // --- Certifications ---
   const { data: certs = [], isLoading: certLoading } = useQuery({
     queryKey: ["certifications"],
-    queryFn: () => base44.entities.Certification.list("-created_date"),
+    queryFn: async () => {
+      const result = await adminApiRequest("/admin/certifications");
+      if (Array.isArray(result)) return result;
+      if (Array.isArray(result?.data)) return result.data;
+      return [];
+    },
   });
 
   const { data: enrollments = [] } = useQuery({
@@ -116,15 +283,31 @@ export default function AdminLicenses() {
     queryFn: () => base44.entities.Course.list(),
   });
 
+  const normalizedCerts = certs.map((c) => ({
+    ...c,
+    status: c?.status || "pending",
+    certification_name: c?.certification_name || c?.cert_name || "Certification",
+    provider_display_name: resolveProviderName(c),
+    provider_display_email: resolveProviderEmail(c),
+    certificate_display_number: c?.certificate_number || c?.cert_number || "N/A",
+    // Pending submissions show submission timestamp; approved certs keep issued_at.
+    issued_display_at: c?.issued_at || c?.submitted_at || c?.created_date || c?.created_at || null,
+  }));
+
   const courseMap = Object.fromEntries(courses.map(c => [c.id, c]));
-  const certifiedEnrollmentIds = new Set(certs.map(c => c.enrollment_id));
+  const certifiedEnrollmentIds = new Set(normalizedCerts.map(c => c.enrollment_id));
   const pendingCertification = enrollments.filter(e => !certifiedEnrollmentIds.has(e.id));
-  const pendingExternalCerts = certs.filter(c => c.status === "pending" && c.issued_by && c.issued_by !== "NOVI Platform");
+  const pendingExternalCerts = normalizedCerts.filter((c) => {
+    const status = String(c?.status || "").toLowerCase();
+    const isExternal = Boolean(extractDocumentUrl(c) || c?.service_type_id || c?.issued_by);
+    return status === "pending" && isExternal;
+  });
 
   const issue = useMutation({
     mutationFn: async () => {
-      const me = await base44.auth.me();
-      return base44.entities.Certification.create({
+      return adminApiRequest("/admin/certifications", {
+        method: "POST",
+        body: JSON.stringify({
         provider_id: issueDialog.provider_id,
         provider_email: issueDialog.provider_email,
         provider_name: issueDialog.provider_name,
@@ -132,30 +315,35 @@ export default function AdminLicenses() {
         enrollment_id: issueDialog.id,
         certification_name: issueForm.certification_name || courseMap[issueDialog.course_id]?.certification_name,
         category: courseMap[issueDialog.course_id]?.category,
-        issued_by: me.full_name,
-        issued_by_email: me.email,
+        issued_by: "NOVI Platform",
         issued_at: new Date().toISOString(),
         expires_at: issueForm.expires_at,
         certificate_number: `NOVI-${Date.now()}`,
         status: "active",
+        }),
       });
     },
     onSuccess: () => { qc.invalidateQueries(["certifications"]); setIssueDialog(null); setIssueForm({}); },
   });
 
   const revoke = useMutation({
-    mutationFn: (id) => base44.entities.Certification.update(id, { status: "revoked" }),
+    mutationFn: (id) =>
+      adminApiRequest(`/admin/certifications/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "revoked" }),
+      }),
     onSuccess: () => qc.invalidateQueries(["certifications"]),
   });
 
   const approveExternalCert = useMutation({
     mutationFn: async (cert) => {
-      const me = await base44.auth.me();
-      await base44.entities.Certification.update(cert.id, {
+      await adminApiRequest(`/admin/certifications/${cert.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
         status: "active",
         issued_at: new Date().toISOString(),
-        issued_by_email: me.email,
         certificate_number: cert.certificate_number || `NOVI-EXT-${Date.now()}`,
+        }),
       });
       await base44.entities.Notification.create({
         user_id: cert.provider_id,
@@ -169,11 +357,27 @@ export default function AdminLicenses() {
   });
 
   const rejectExternalCert = useMutation({
-    mutationFn: (id) => base44.entities.Certification.update(id, { status: "revoked" }),
+    mutationFn: (id) =>
+      adminApiRequest(`/admin/certifications/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "revoked" }),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["certifications"] }),
+  });
+  const repairBrokenCert = useMutation({
+    mutationFn: ({ id, data }) =>
+      adminApiRequest(`/admin/certifications/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["certifications"] }),
   });
 
-  const filteredCerts = certs.filter(c => !certSearch || c.provider_name?.toLowerCase().includes(certSearch.toLowerCase()) || c.provider_email?.toLowerCase().includes(certSearch.toLowerCase()));
+  const filteredCerts = normalizedCerts.filter((c) => {
+    const q = String(certSearch || "").toLowerCase();
+    if (!q) return true;
+    return String(c.provider_display_name || "").toLowerCase().includes(q) || String(c.provider_display_email || "").toLowerCase().includes(q);
+  });
 
   return (
     <div className="space-y-6">
@@ -305,22 +509,87 @@ export default function AdminLicenses() {
           {pendingExternalCerts.length > 0 && (
             <Card className="border-blue-200 bg-blue-50">
               <CardContent className="pt-4 pb-4">
-                <p className="font-semibold text-blue-800 mb-3">External Certifications Pending Review ({pendingExternalCerts.length})</p>
                 <div className="space-y-2">
-                  {pendingExternalCerts.map(c => (
+                  {pendingExternalCerts.map(c => {
+                    const certificateDocUrl = extractDocumentUrl(c);
+                    if (certDebugEnabled) {
+                      console.info("[cert-debug][admin-pending-row]", {
+                        id: c.id,
+                        provider_display_name: c.provider_display_name,
+                        provider_display_email: c.provider_display_email,
+                        provider_name: c.provider_name,
+                        provider_name_resolved: c.provider_name_resolved,
+                        provider_email: c.provider_email,
+                        provider_email_resolved: c.provider_email_resolved,
+                        provider_id: c.provider_id,
+                        created_by: c.created_by,
+                        created_by_email: c.created_by_email,
+                        certificate_url: c.certificate_url,
+                        notes: c.notes,
+                        extracted_document_url: certificateDocUrl,
+                      });
+                    }
+                    return (
                     <div key={c.id} className="bg-white rounded-lg px-4 py-3 space-y-2">
                       <div className="flex items-start justify-between gap-3">
                         <div>
-                          <p className="text-sm font-semibold text-slate-800">{c.provider_name || c.provider_email}</p>
-                          <p className="text-xs text-slate-500 mt-0.5"><strong>{c.certification_name}</strong> — from {c.issued_by}</p>
+                          <p className="text-sm font-semibold text-slate-800">{c.provider_display_name}</p>
+                          <p className="text-xs text-slate-500 mt-0.5">{c.provider_display_email || "No email on file"}</p>
+                          <p className="text-xs text-slate-600 mt-1"><strong>{c.certification_name}</strong> — from {c.issued_by || "Unknown school"}</p>
+                          {c.issued_display_at && <p className="text-xs text-slate-500 mt-0.5">Submitted {format(new Date(c.issued_display_at), "MMM d, yyyy")}</p>}
                           {c.service_type_name && <p className="text-xs text-blue-700 mt-0.5">Applying for: <strong>{c.service_type_name}</strong></p>}
-                          {c.notes && <p className="text-xs text-slate-400 mt-0.5">{c.notes}</p>}
+                          {certDebugEnabled && (
+                            <div className="mt-2 rounded border border-slate-200 bg-slate-50 p-2">
+                              <p className="text-[11px] font-semibold text-slate-700">Debug</p>
+                              <p className="text-[11px] text-slate-600">row_id: {c.id || "n/a"}</p>
+                              <p className="text-[11px] text-slate-600">provider_id: {c.provider_id || "n/a"}</p>
+                              <p className="text-[11px] text-slate-600">provider_name_raw: {String(c.provider_name || "n/a")}</p>
+                              <p className="text-[11px] text-slate-600">provider_name_resolved: {String(c.provider_name_resolved || "n/a")}</p>
+                              <p className="text-[11px] text-slate-600">provider_email_raw: {String(c.provider_email || "n/a")}</p>
+                              <p className="text-[11px] text-slate-600">provider_email_resolved: {String(c.provider_email_resolved || "n/a")}</p>
+                              <p className="text-[11px] text-slate-600">created_by: {String(c.created_by || "n/a")}</p>
+                              <p className="text-[11px] text-slate-600">certificate_url_raw: {String(c.certificate_url || "n/a")}</p>
+                              <p className="text-[11px] text-slate-600">extracted_document_url: {String(certificateDocUrl || "n/a")}</p>
+                              <div className="mt-2">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-6 text-[11px]"
+                                  disabled={repairBrokenCert.isPending}
+                                  onClick={() => {
+                                    const providerName = window.prompt("Provider name", c.provider_display_name && c.provider_display_name !== "Unknown Provider" ? c.provider_display_name : "");
+                                    if (providerName === null) return;
+                                    const providerEmail = window.prompt("Provider email", c.provider_display_email && c.provider_display_email !== "No email on file" ? c.provider_display_email : "");
+                                    if (providerEmail === null) return;
+                                    const certificateUrl = window.prompt("Certificate URL", certificateDocUrl || "");
+                                    if (certificateUrl === null) return;
+                                    repairBrokenCert.mutate({
+                                      id: c.id,
+                                      data: {
+                                        provider_name: String(providerName || "").trim() || null,
+                                        provider_email: String(providerEmail || "").trim() || null,
+                                        certificate_url: String(certificateUrl || "").trim() || null,
+                                        certification_url: String(certificateUrl || "").trim() || null,
+                                        document_url: String(certificateUrl || "").trim() || null,
+                                      },
+                                    });
+                                  }}
+                                >
+                                  Repair Row
+                                </Button>
+                              </div>
+                            </div>
+                          )}
                         </div>
                         <div className="flex items-center gap-2 flex-shrink-0">
-                          {c.certificate_url && (
-                            <a href={c.certificate_url} target="_blank" rel="noreferrer">
-                              <Button size="sm" variant="outline" className="gap-1 h-7 text-xs"><ExternalLink className="w-3 h-3" /> View</Button>
+                          {certificateDocUrl ? (
+                            <a href={certificateDocUrl} target="_blank" rel="noreferrer">
+                              <Button size="sm" variant="outline" className="gap-1 h-7 text-xs"><ExternalLink className="w-3 h-3" /> View Certificate</Button>
                             </a>
+                          ) : (
+                            <Button size="sm" variant="outline" className="gap-1 h-7 text-xs" disabled>
+                              <ExternalLink className="w-3 h-3" /> View Certificate
+                            </Button>
                           )}
                           <Button size="sm" className="gap-1 h-7 text-xs bg-green-600 hover:bg-green-700 text-white"
                             onClick={() => approveExternalCert.mutate(c)} disabled={approveExternalCert.isPending}>
@@ -333,7 +602,7 @@ export default function AdminLicenses() {
                         </div>
                       </div>
                     </div>
-                  ))}
+                  )})}
                 </div>
               </CardContent>
             </Card>
@@ -348,7 +617,9 @@ export default function AdminLicenses() {
             <div className="space-y-3">{[1,2,3].map(i => <Card key={i} className="h-20 animate-pulse bg-slate-100" />)}</div>
           ) : (
             <div className="space-y-3">
-              {filteredCerts.map(c => (
+              {filteredCerts.map(c => {
+                const certificateDocUrl = extractDocumentUrl(c);
+                return (
                 <Card key={c.id}>
                   <CardContent className="pt-4 pb-4">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -359,21 +630,83 @@ export default function AdminLicenses() {
                             <span className="font-semibold text-slate-900">{c.certification_name}</span>
                             <Badge className={certStatusColor[c.status]}>{c.status}</Badge>
                           </div>
-                          <p className="text-sm text-slate-500">{c.provider_name || c.provider_email}</p>
+                          <p className="text-sm text-slate-500">{c.provider_display_name}</p>
+                          <p className="text-xs text-slate-400 mt-0.5">{c.provider_display_email || "No email on file"}</p>
+                          {c.service_type_name && (
+                            <p className="text-xs text-blue-700 mt-0.5">
+                              Applying for: <strong>{c.service_type_name}</strong>
+                            </p>
+                          )}
                           <div className="flex gap-3 text-xs text-slate-400 mt-1">
-                            <span>#{c.certificate_number}</span>
-                            {c.issued_at && <span>Issued {format(new Date(c.issued_at), "MMM d, yyyy")}</span>}
+                            <span>#{c.certificate_display_number}</span>
+                            {c.issued_display_at && <span>Issued {format(new Date(c.issued_display_at), "MMM d, yyyy")}</span>}
                             {c.expires_at && <span>Expires {format(new Date(c.expires_at), "MMM d, yyyy")}</span>}
                           </div>
                         </div>
                       </div>
-                      {c.status === "active" && (
-                        <Button size="sm" variant="outline" className="text-red-500" onClick={() => revoke.mutate(c.id)}>Revoke</Button>
+                      {String(c.status || "").toLowerCase() === "pending" ? (
+                        <div className="flex items-center gap-2">
+                          {certificateDocUrl ? (
+                            <a href={certificateDocUrl} target="_blank" rel="noreferrer">
+                              <Button size="sm" variant="outline" className="gap-1">
+                                <ExternalLink className="w-4 h-4" /> View Certificate
+                              </Button>
+                            </a>
+                          ) : (
+                            <Button size="sm" variant="outline" className="gap-1" disabled>
+                              <ExternalLink className="w-4 h-4" /> View Certificate
+                            </Button>
+                          )}
+                          <Button
+                            size="sm"
+                            className="bg-green-600 hover:bg-green-700 text-white"
+                            onClick={() => approveExternalCert.mutate(c)}
+                            disabled={approveExternalCert.isPending}
+                          >
+                            <CheckCircle className="w-4 h-4 mr-1" /> Approve
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="text-red-500 border-red-200"
+                            onClick={() => rejectExternalCert.mutate(c.id)}
+                            disabled={rejectExternalCert.isPending}
+                          >
+                            Reject
+                          </Button>
+                        </div>
+                      ) : String(c.status || "").toLowerCase() === "active" ? (
+                        <div className="flex items-center gap-2">
+                          {certificateDocUrl ? (
+                            <a href={certificateDocUrl} target="_blank" rel="noreferrer">
+                              <Button size="sm" variant="outline" className="gap-1">
+                                <ExternalLink className="w-4 h-4" /> View Certificate
+                              </Button>
+                            </a>
+                          ) : (
+                            <Button size="sm" variant="outline" className="gap-1" disabled>
+                              <ExternalLink className="w-4 h-4" /> View Certificate
+                            </Button>
+                          )}
+                          <Button size="sm" variant="outline" className="text-red-500" onClick={() => revoke.mutate(c.id)}>Revoke</Button>
+                        </div>
+                      ) : (
+                        certificateDocUrl ? (
+                          <a href={certificateDocUrl} target="_blank" rel="noreferrer">
+                            <Button size="sm" variant="outline" className="gap-1">
+                              <ExternalLink className="w-4 h-4" /> View Certificate
+                            </Button>
+                          </a>
+                        ) : (
+                          <Button size="sm" variant="outline" className="gap-1" disabled>
+                            <ExternalLink className="w-4 h-4" /> View Certificate
+                          </Button>
+                        )
                       )}
                     </div>
                   </CardContent>
                 </Card>
-              ))}
+              )})}
               {filteredCerts.length === 0 && <p className="text-center text-slate-400 py-10">No certifications found</p>}
             </div>
           )}

@@ -3,6 +3,7 @@ import { query } from "../db.js";
 import { backfillPaidEnrollments } from "./repository.js";
 
 export const enrollmentsRouter = Router();
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 enrollmentsRouter.get("/", async (_req, res, next) => {
   try {
@@ -34,6 +35,9 @@ enrollmentsRouter.patch("/:id", async (req, res, next) => {
   try {
     const id = String(req.params.id || "").trim();
     if (!id) return res.status(400).json({ error: "Enrollment id is required." });
+    if (!UUID_RE.test(id)) {
+      return res.status(400).json({ error: "Enrollment id must be a valid UUID." });
+    }
 
     const updates = req.body || {};
     const allowed = ["status"];

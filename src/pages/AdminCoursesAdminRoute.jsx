@@ -75,11 +75,9 @@ function SessionRow({ s, showCodes, setShowCodes, regenCode, setConfirmAttendanc
               {showCodes[s.id] ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
           </div>
-          {!s.code_used && (
-            <button onClick={() => regenCode(s)} className="p-2 rounded-xl hover:bg-slate-100 transition-colors">
-              <RefreshCw className="w-4 h-4" style={{ color: "#8891a8" }} />
-            </button>
-          )}
+          <button onClick={() => regenCode(s)} className="p-2 rounded-xl hover:bg-slate-100 transition-colors" title="Regenerate code">
+            <RefreshCw className="w-4 h-4" style={{ color: "#8891a8" }} />
+          </button>
           {s.code_used && !s.attendance_confirmed && (
             <button className="text-xs font-semibold px-3 py-1.5 rounded-xl text-white" style={{ background: "#4a5fa0" }} onClick={() => setConfirmAttendanceDialog(s)}>
               Confirm Attendance
@@ -110,6 +108,7 @@ export default function Admincourses() {
   const [sessionOpen, setSessionOpen] = useState(false);
   const [showCodes, setShowCodes] = useState({});
   const [confirmAttendanceDialog, setConfirmAttendanceDialog] = useState(null);
+  const [regenErrorDialog, setRegenErrorDialog] = useState({ open: false, title: "", description: "" });
   const [sessionForm, setSessionForm] = useState({ enrollment_id: "", course_id: "", course_title: "", provider_id: "", provider_name: "", provider_email: "", session_date: "", session_code: generateCode() });
 
   const { data: templates = [], isLoading: loadingTemplates } = useQuery({
@@ -307,6 +306,13 @@ export default function Admincourses() {
   const createSession = useMutation({
     mutationFn: (data) => base44.entities.ClassSession.create(data),
     onSuccess: () => { qc.invalidateQueries(["class-sessions"]); setSessionOpen(false); },
+    onError: (err) => {
+      toast({
+        title: "Could not generate class code",
+        description: err?.message || "Please try again.",
+        variant: "destructive"
+      });
+    }
   });
   const confirmAttendanceMutation = useMutation({
     mutationFn: (sessionId) => base44.entities.ClassSession.update(sessionId, { attendance_confirmed: true }),
@@ -318,7 +324,38 @@ export default function Admincourses() {
     const course = allCourses.find(c => c.id === enrollment?.course_id);
     setSessionForm(f => ({ ...f, enrollment_id: enrollmentId, course_id: enrollment?.course_id || "", course_title: course?.title || "", provider_id: enrollment?.provider_id || "", provider_name: enrollment?.provider_name || "", provider_email: enrollment?.provider_email || "" }));
   };
-  const regenCode = async (session) => { await base44.entities.ClassSession.update(session.id, { session_code: generateCode() }); qc.invalidateQueries(["class-sessions"]); };
+  const regenCode = async (session) => {
+    if (session?.code_used) {
+      setRegenErrorDialog({
+        open: true,
+        title: "Cannot regenerate class code",
+        description: "You cannot regenerate code once it is redeemed by a provider.",
+      });
+      return;
+    }
+    try {
+      // Re-check latest server state to prevent stale-screen regeneration.
+      const latestRows = await base44.entities.ClassSession.filter({ id: session.id });
+      const latest = Array.isArray(latestRows) ? latestRows[0] : null;
+      if (latest?.code_used) {
+        setRegenErrorDialog({
+          open: true,
+          title: "Cannot regenerate class code",
+          description: "You cannot regenerate code once it is redeemed by a provider.",
+        });
+        qc.invalidateQueries(["class-sessions"]);
+        return;
+      }
+      await base44.entities.ClassSession.update(session.id, { session_code: generateCode() });
+      qc.invalidateQueries(["class-sessions"]);
+    } catch (err) {
+      setRegenErrorDialog({
+        open: true,
+        title: "Could not regenerate class code",
+        description: err?.message || "Please try again.",
+      });
+    }
+  };
   const handleConfirmAttendance = async (session) => {
     if (session.enrollment_id) await base44.entities.Enrollment.update(session.enrollment_id, { status: "completed" });
     confirmAttendanceMutation.mutate(session.id);
@@ -677,6 +714,18 @@ export default function Admincourses() {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={regenErrorDialog.open} onOpenChange={(open) => setRegenErrorDialog((p) => ({ ...p, open }))}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{regenErrorDialog.title || "Could not regenerate class code"}</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-slate-700">{regenErrorDialog.description}</p>
+          <div className="flex justify-end">
+            <Button onClick={() => setRegenErrorDialog({ open: false, title: "", description: "" })}>Close</Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>
