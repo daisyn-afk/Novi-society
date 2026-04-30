@@ -86,21 +86,40 @@ export async function createClassSession(body) {
     session_code,
   } = body;
 
+  const normalizedEnrollmentId = nullIfBlank(enrollment_id);
+  const normalizedSessionCode = String(nullIfBlank(session_code) || "").trim().toUpperCase();
+  if (!normalizedSessionCode) {
+    const err = new Error("session_code is required.");
+    err.statusCode = 400;
+    throw err;
+  }
+
   const { rows } = await query(
     `insert into public.class_session (
       enrollment_id, course_id, course_title, provider_id, provider_name, provider_email,
       session_date, session_code
     ) values ($1, $2, $3, $4, $5, $6, $7::date, $8)
+    on conflict (enrollment_id) where enrollment_id is not null do update set
+      course_id = excluded.course_id,
+      course_title = excluded.course_title,
+      provider_id = excluded.provider_id,
+      provider_name = excluded.provider_name,
+      provider_email = excluded.provider_email,
+      session_date = excluded.session_date,
+      session_code = excluded.session_code,
+      code_used = false,
+      code_used_at = null,
+      attendance_confirmed = false
     returning *`,
     [
-      nullIfBlank(enrollment_id),
+      normalizedEnrollmentId,
       nullIfBlank(course_id),
       nullIfBlank(course_title),
       nullIfBlank(provider_id),
       nullIfBlank(provider_name),
       nullIfBlank(provider_email),
       nullIfBlank(session_date),
-      nullIfBlank(session_code),
+      normalizedSessionCode,
     ]
   );
   return rowToApi(rows[0]);
@@ -108,17 +127,31 @@ export async function createClassSession(body) {
 
 export async function updateClassSession(id, patch) {
   await ensureClassSessionTable();
+  const { rows: existingRows } = await query(`select * from public.class_session where id = $1 limit 1`, [id]);
+  const existing = existingRows[0] || null;
+  if (!existing) return null;
+
   const allowed = ["session_code", "attendance_confirmed", "code_used", "code_used_at"];
   const keys = Object.keys(patch || {}).filter((k) => allowed.includes(k));
   if (keys.length === 0) {
-    const { rows } = await query(`select * from public.class_session where id = $1`, [id]);
-    return rowToApi(rows[0]);
+    return rowToApi(existing);
+  }
+
+  // Once redeemed, class code must not be regenerated.
+  if (keys.includes("session_code") && existing.code_used) {
+    const err = new Error("Cannot regenerate class code after it has been redeemed.");
+    err.statusCode = 400;
+    throw err;
   }
 
   const sets = [];
   const vals = [];
   for (const k of keys) {
-    vals.push(patch[k]);
+    if (k === "session_code") {
+      vals.push(String(patch[k] || "").trim().toUpperCase());
+    } else {
+      vals.push(patch[k]);
+    }
     sets.push(`${k} = $${vals.length}`);
   }
   vals.push(id);

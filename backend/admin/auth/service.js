@@ -333,10 +333,25 @@ export async function getMeFromAccessToken(accessToken) {
     throw err;
   }
 
-  const { data, error } = await authClient.auth.getUser(accessToken);
+  let data;
+  let error;
+  try {
+    const result = await authClient.auth.getUser(accessToken);
+    data = result?.data;
+    error = result?.error;
+  } catch (fetchErr) {
+    const err = new Error("Auth service unavailable. Please try again.");
+    err.statusCode = 503;
+    err.isOperational = true;
+    throw err;
+  }
   if (error || !data?.user?.id) {
-    const err = new Error(error?.message || "Invalid or expired token.");
-    err.statusCode = 401;
+    const message = String(error?.message || "Invalid or expired token.");
+    const lowered = message.toLowerCase();
+    const isTimeout = lowered.includes("timeout") || lowered.includes("fetch failed");
+    const err = new Error(isTimeout ? "Auth service unavailable. Please try again." : message);
+    err.statusCode = isTimeout ? 503 : 401;
+    err.isOperational = Boolean(isTimeout);
     throw err;
   }
 

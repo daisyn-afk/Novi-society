@@ -11,6 +11,15 @@ import { Award, Search, Plus, ExternalLink, CheckCircle } from "lucide-react";
 import { format } from "date-fns";
 
 const statusColor = { active: "bg-green-100 text-green-700", expired: "bg-slate-100 text-slate-500", revoked: "bg-red-100 text-red-700", pending: "bg-yellow-100 text-yellow-700" };
+const extractDocumentUrl = (cert) => {
+  const directUrl = String(cert?.certificate_url || "").trim();
+  if (directUrl && directUrl !== "/N/A" && directUrl.toUpperCase() !== "N/A" && directUrl.toUpperCase() !== "/N/A") return directUrl;
+  const notes = String(cert?.notes || "");
+  const taggedUrl = notes.match(/(?:Certificate|License)\s+document:\s*(https?:\/\/\S+)/i)?.[1];
+  if (taggedUrl) return taggedUrl.trim();
+  const firstUrl = notes.match(/https?:\/\/\S+/i)?.[0];
+  return firstUrl ? firstUrl.trim() : null;
+};
 
 export default function AdminCertifications() {
   const [search, setSearch] = useState("");
@@ -38,10 +47,90 @@ export default function AdminCertifications() {
     queryFn: () => base44.entities.ServiceType.filter({ is_active: true }),
   });
 
-  // Pending external certs submitted from another school
-  const pendingExternalCerts = certs.filter(c => c.status === "pending" && c.issued_by && c.issued_by !== "NOVI Platform");
+  const { data: users = [] } = useQuery({
+    queryKey: ["users-for-certifications"],
+    queryFn: () => base44.entities.User.list(),
+  });
 
-  const certifiedEnrollmentIds = new Set(certs.map(c => c.enrollment_id));
+  const usersById = new Map(
+    users.flatMap((u) => {
+      const id = String(u?.id || "").trim();
+      const authId = String(u?.auth_user_id || "").trim();
+      return [
+        ...(id ? [[id, u]] : []),
+        ...(authId ? [[authId, u]] : []),
+      ];
+    })
+  );
+  const usersByEmail = new Map(
+    users
+      .map((u) => [String(u?.email || "").trim().toLowerCase(), u])
+      .filter(([email]) => !!email)
+  );
+
+  const normalizedCerts = certs.map((c) => ({
+    ...c,
+    status: c?.status || "pending",
+    certification_name: c?.certification_name || c?.cert_name || "Certification",
+    _resolvedUser:
+      usersById.get(String(c?.provider_id || "")) ||
+      usersByEmail.get(String(c?.provider_email || "").trim().toLowerCase()) ||
+      usersById.get(String(c?.created_by || "")) ||
+      usersByEmail.get(String(c?.created_by || "").trim().toLowerCase()) ||
+      null,
+    provider_name:
+      c?.provider_name_resolved ||
+      c?.provider_name ||
+      (
+        usersById.get(String(c?.provider_id || "")) ||
+        usersByEmail.get(String(c?.provider_email || "").trim().toLowerCase()) ||
+        usersById.get(String(c?.created_by || "")) ||
+        usersByEmail.get(String(c?.created_by || "").trim().toLowerCase())
+      )?.full_name ||
+      [(
+        usersById.get(String(c?.provider_id || "")) ||
+        usersByEmail.get(String(c?.provider_email || "").trim().toLowerCase()) ||
+        usersById.get(String(c?.created_by || "")) ||
+        usersByEmail.get(String(c?.created_by || "").trim().toLowerCase())
+      )?.first_name, (
+        usersById.get(String(c?.provider_id || "")) ||
+        usersByEmail.get(String(c?.provider_email || "").trim().toLowerCase()) ||
+        usersById.get(String(c?.created_by || "")) ||
+        usersByEmail.get(String(c?.created_by || "").trim().toLowerCase())
+      )?.last_name]
+        .filter(Boolean)
+        .join(" ")
+        .trim() ||
+      c?.provider_email ||
+      (String(c?.created_by || "").includes("@") ? String(c.created_by) : "") ||
+      (
+        usersById.get(String(c?.provider_id || "")) ||
+        usersByEmail.get(String(c?.provider_email || "").trim().toLowerCase()) ||
+        usersById.get(String(c?.created_by || "")) ||
+        usersByEmail.get(String(c?.created_by || "").trim().toLowerCase())
+      )?.email ||
+      null,
+    provider_email:
+      c?.provider_email_resolved ||
+      c?.provider_email ||
+      (String(c?.created_by || "").includes("@") ? String(c.created_by) : "") ||
+      (
+        usersById.get(String(c?.provider_id || "")) ||
+        usersByEmail.get(String(c?.provider_email || "").trim().toLowerCase()) ||
+        usersById.get(String(c?.created_by || "")) ||
+        usersByEmail.get(String(c?.created_by || "").trim().toLowerCase())
+      )?.email ||
+      null,
+    document_url: extractDocumentUrl(c),
+  }));
+  // Pending external certs submitted from another school
+  const pendingExternalCerts = normalizedCerts.filter((c) => {
+    const status = String(c?.status || "").toLowerCase();
+    const isExternal = Boolean(c?.certificate_url || c?.service_type_id || c?.issued_by);
+    return status === "pending" && isExternal;
+  });
+
+  const certifiedEnrollmentIds = new Set(normalizedCerts.map(c => c.enrollment_id));
   const pendingCertification = enrollments.filter(e => !certifiedEnrollmentIds.has(e.id));
   const courseMap = Object.fromEntries(courses.map(c => [c.id, c]));
 
@@ -98,7 +187,7 @@ export default function AdminCertifications() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["certifications"] }),
   });
 
-  const filtered = certs.filter(c => !search || c.provider_name?.toLowerCase().includes(search.toLowerCase()) || c.provider_email?.toLowerCase().includes(search.toLowerCase()));
+  const filtered = normalizedCerts.filter(c => !search || c.provider_name?.toLowerCase().includes(search.toLowerCase()) || c.provider_email?.toLowerCase().includes(search.toLowerCase()));
 
   return (
     <div className="space-y-6">
@@ -138,20 +227,35 @@ export default function AdminCertifications() {
                 <div key={c.id} className="bg-white rounded-lg px-4 py-3 space-y-2">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <p className="text-sm font-semibold text-slate-800">{c.provider_name || c.provider_email}</p>
-                      <p className="text-xs text-slate-500 mt-0.5">
-                        <strong>{c.certification_name}</strong> — from {c.issued_by}
-                      </p>
-                      {c.service_type_name && (
-                        <p className="text-xs text-blue-700 mt-0.5">Applying for: <strong>{c.service_type_name}</strong></p>
-                      )}
-                      {c.notes && <p className="text-xs text-slate-400 mt-0.5">{c.notes}</p>}
+                      <p className="text-sm font-semibold text-slate-800">{c.provider_name || "Unknown Provider"}</p>
+                      <p className="text-xs text-slate-500 mt-0.5">{c.provider_email || "No email on record"}</p>
+                      <div className="mt-2 space-y-1 text-xs text-slate-600">
+                        <p><strong>Certification:</strong> {c.certification_name}</p>
+                        <p><strong>Issuing School:</strong> {c.issued_by || "N/A"}</p>
+                        <p><strong>Service Applying For:</strong> {c.service_type_name || "Not selected"}</p>
+                        <p><strong>Status:</strong> {String(c.status || "pending").replaceAll("_", " ")}</p>
+                        {c.category && <p><strong>License Type:</strong> {String(c.category).toUpperCase()}</p>}
+                        {(c.created_date || c.created_at || c.issued_at) && (
+                          <p>
+                            <strong>Submitted:</strong>{" "}
+                            {format(new Date(c.created_date || c.created_at || c.issued_at), "MMM d, yyyy h:mm a")}
+                          </p>
+                        )}
+                      </div>
+                      {c.notes && <p className="text-xs text-slate-400 mt-1">{c.notes}</p>}
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
-                      {c.certificate_url && (
-                        <a href={c.certificate_url} target="_blank" rel="noreferrer">
+                      {c.document_url && (
+                        <a href={c.document_url} target="_blank" rel="noreferrer">
                           <Button size="sm" variant="outline" className="gap-1 h-7 text-xs">
                             <ExternalLink className="w-3 h-3" /> View
+                          </Button>
+                        </a>
+                      )}
+                      {String(c.notes || "").includes("License document: ") && (
+                        <a href={String(c.notes).split("License document: ")[1]?.trim()} target="_blank" rel="noreferrer">
+                          <Button size="sm" variant="outline" className="gap-1 h-7 text-xs">
+                            <ExternalLink className="w-3 h-3" /> View License
                           </Button>
                         </a>
                       )}
@@ -181,7 +285,9 @@ export default function AdminCertifications() {
         <div className="space-y-3">{[1,2,3].map(i => <Card key={i} className="h-20 animate-pulse bg-slate-100" />)}</div>
       ) : (
         <div className="space-y-3">
-          {filtered.map(c => (
+          {filtered.map(c => {
+            const certificateDocUrl = c.document_url || extractDocumentUrl(c);
+            return (
             <Card key={c.id}>
               <CardContent className="pt-4 pb-4">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -200,13 +306,45 @@ export default function AdminCertifications() {
                       </div>
                     </div>
                   </div>
-                  {c.status === "active" && (
-                    <Button size="sm" variant="outline" className="text-red-500" onClick={() => revoke.mutate(c.id)}>Revoke</Button>
+                  {String(c.status || "").toLowerCase() === "pending" && (
+                    <div className="flex items-center gap-2">
+                      {certificateDocUrl && (
+                        <a href={certificateDocUrl} target="_blank" rel="noreferrer">
+                          <Button size="sm" variant="outline" className="gap-1 h-7 text-xs">
+                            <ExternalLink className="w-3 h-3" /> View
+                          </Button>
+                        </a>
+                      )}
+                      <Button
+                        size="sm"
+                        className="gap-1 h-7 text-xs bg-green-600 hover:bg-green-700 text-white"
+                        onClick={() => approveExternalCert.mutate(c)}
+                        disabled={approveExternalCert.isPending}
+                      >
+                        <CheckCircle className="w-3 h-3" /> Approve
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="gap-1 h-7 text-xs text-red-500 border-red-200"
+                        onClick={() => rejectExternalCert.mutate(c.id)}
+                        disabled={rejectExternalCert.isPending}
+                      >
+                        Reject
+                      </Button>
+                    </div>
+                  )}
+                  {String(c.status || "").toLowerCase() !== "pending" && certificateDocUrl && (
+                    <a href={certificateDocUrl} target="_blank" rel="noreferrer">
+                      <Button size="sm" variant="outline" className="gap-1 h-7 text-xs">
+                        <ExternalLink className="w-3 h-3" /> View
+                      </Button>
+                    </a>
                   )}
                 </div>
               </CardContent>
             </Card>
-          ))}
+          )})}
           {filtered.length === 0 && <p className="text-center text-slate-400 py-10">No certifications found</p>}
         </div>
       )}
