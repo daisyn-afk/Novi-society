@@ -62,9 +62,14 @@ const isSupabase = connectionString.includes("supabase.co");
 // Reuse a single pg Pool across warm serverless invocations. Each Vercel
 // function instance is its own Node isolate, so we keep the pool small
 // (max: 1) to play nicely with Supabase's PgBouncer on port 6543.
+const configuredFamily = Number(process.env.DB_IP_FAMILY || 0);
+const ipFamilyOptions = configuredFamily === 4 || configuredFamily === 6
+  ? { family: configuredFamily }
+  : {};
+
 const poolOptions = {
   connectionString,
-  family: 4,
+  ...ipFamilyOptions,
   max: process.env.VERCEL ? 1 : 10,
   idleTimeoutMillis: 10_000,
   ssl: process.env.NODE_ENV === "production" || isSupabase
