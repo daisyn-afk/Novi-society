@@ -22,6 +22,29 @@ const CERT_TYPES = ["RN", "NP", "PA", "MD", "DO", "esthetician", "other"];
 
 const ACTIVATION_STEPS = ["Verify Training", "Select Service", "Sign & Activate"];
 
+function toDateOnly(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  if (/^[A-Za-z]{3}\s+[A-Za-z]{3}\s+\d{1,2}$/.test(raw)) return "";
+  const parsed = new Date(raw);
+  if (!Number.isNaN(parsed.getTime())) {
+    const y = parsed.getFullYear();
+    const m = String(parsed.getMonth() + 1).padStart(2, "0");
+    const d = String(parsed.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+  return raw.slice(0, 10);
+}
+
+function formatSessionDateLabel(value) {
+  const dateOnly = toDateOnly(value);
+  if (!dateOnly) return "TBD";
+  const [y, m, d] = dateOnly.split("-").map(Number);
+  if (!y || !m || !d) return dateOnly;
+  return format(new Date(y, m - 1, d), "MMM d, yyyy");
+}
+
 // NOVI plan / feature highlights
 const NOVI_FEATURES = [
   { icon: Shield, label: "MD Supervision & Coverage", desc: "Full medical director oversight per service" },
@@ -166,12 +189,13 @@ export default function ProviderMDCoverage() {
       base44.entities.Certification.create({
         provider_id: me.id,
         provider_email: me.email,
-        provider_name: me.full_name,
+        provider_name: me.full_name || [me.first_name, me.last_name].filter(Boolean).join(" ").trim() || me.email,
         certification_name: certForm.cert_name,
         issued_by: certForm.issuing_school,
         category: certForm.cert_type,
         certificate_url: certFileUrl,
         status: "pending",
+        issued_at: new Date().toISOString(),
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["my-certs"] });
@@ -706,7 +730,7 @@ export default function ProviderMDCoverage() {
                           .map(e => (
                             <div key={e.id} className="flex items-center justify-between text-sm">
                               <span className="text-slate-700 font-medium">{e.course_title || "Course"}</span>
-                              <span className="text-slate-500">{e.session_date ? format(new Date(e.session_date), "MMM d, yyyy") : "TBD"}</span>
+                              <span className="text-slate-500">{formatSessionDateLabel(e.session_date)}</span>
                             </div>
                           ))}
                       </div>

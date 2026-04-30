@@ -1,0 +1,28 @@
+alter table if exists public.pre_orders
+  add column if not exists service_type_id text,
+  add column if not exists service_name text,
+  add column if not exists certification_document_url text,
+  add column if not exists age_range text,
+  add column if not exists experience_level text,
+  add column if not exists treatment_type text,
+  add column if not exists model_time_slot text,
+  add column if not exists is_waitlist boolean not null default false,
+  add column if not exists rejection_reason text,
+  add column if not exists approved_at timestamptz,
+  add column if not exists approved_by text,
+  add column if not exists rejected_at timestamptz,
+  add column if not exists rejected_by text,
+  add column if not exists payment_link text,
+  add column if not exists payment_status text,
+  add column if not exists payment_link_sent_at timestamptz,
+  add column if not exists promo_code_id text,
+  add column if not exists amount numeric,
+  add column if not exists post_training_email_sent boolean not null default false,
+  add column if not exists confirmation_email_sent boolean not null default false,
+  add column if not exists confirmation_email_sent_at timestamptz,
+  add column if not exists reminder_email_sent_at timestamptz,
+  add column if not exists gfe_initiated_at timestamptz,
+  add column if not exists gfe_completed_at timestamptz,
+  add column if not exists gfe_reminder_sent_at timestamptz;
+
+create index if not exists idx_pre_orders_service_type_id on public.pre_orders(service_type_id);

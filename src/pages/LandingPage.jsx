@@ -1,6 +1,8 @@
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { ArrowRight, Star } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { base44 } from "@/api/base44Client";
 
 // Brand palette from the Novi moodboard
 const BRAND = {
@@ -28,6 +30,13 @@ const PILLARS = [
 ];
 
 export default function LandingPage() {
+  const { data: me } = useQuery({
+    queryKey: ["me"],
+    queryFn: () => base44.auth.me(),
+    retry: false,
+  });
+  const isAuthenticated = Boolean(me);
+
   return (
     <div style={{ fontFamily: "'TT Interphases', 'DM Sans', sans-serif", background: "#f5f3ef", minHeight: "100vh", color: BRAND.dark }}>
       <style>{`
@@ -139,7 +148,20 @@ export default function LandingPage() {
             <span className="novi-sans" style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.22em", textTransform: "uppercase", color: BRAND.teal, paddingBottom: 2 }}>Society</span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <Link to={createPageUrl("Onboarding")} className="btn-outline" style={{ padding: "8px 22px", fontSize: 12 }}>Sign In</Link>
+            <button
+              type="button"
+              onClick={() => {
+                if (isAuthenticated) {
+                  base44.auth.logout(`${window.location.origin}/`);
+                } else {
+                  window.location.href = createPageUrl("Onboarding");
+                }
+              }}
+              className="btn-outline"
+              style={{ padding: "8px 22px", fontSize: 12 }}
+            >
+              {isAuthenticated ? "Sign Out" : "Sign In"}
+            </button>
             <Link to={createPageUrl("Onboarding")} className="btn-dark" style={{ padding: "8px 22px", fontSize: 12 }}>Get Started</Link>
           </div>
         </div>

@@ -28,3 +28,6 @@ dist-ssr
 *.sw?
 
 .env
+
+.cursorrules
+weekly_notes.md

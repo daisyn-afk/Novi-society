@@ -162,7 +162,7 @@ function LockMessage({ currentStatus, feature }) {
 function LockCTA({ currentStatus }) {
   if (currentStatus === "none") {
     return (
-      <Link to={createPageUrl("ProviderApplication")}>
+      <Link to={createPageUrl("ProviderBasicOnboarding")}>
         <button className="w-full py-3.5 rounded-2xl font-bold text-sm text-white flex items-center justify-center gap-2 transition-all hover:opacity-90" style={{ background: "linear-gradient(135deg, #FA6F30, #DA6A63)" }}>
           Apply Now — It Takes 2 Minutes <ArrowRight className="w-4 h-4" />
         </button>
@@ -208,6 +208,17 @@ function LockCTA({ currentStatus }) {
 export default function ProviderSalesLock({ feature, applicationStatus, requiredTier = "full", children }) {
   const meta = FEATURE_META[feature] || FEATURE_META.dashboard;
   const Icon = meta.icon;
+
+  if (applicationStatus === "loading") {
+    return (
+      <div className="min-h-[40vh] flex items-center justify-center">
+        <div className="flex items-center gap-3 px-4 py-3 rounded-2xl" style={{ background: "rgba(255,255,255,0.7)", border: "1px solid rgba(255,255,255,0.9)" }}>
+          <div className="w-4 h-4 rounded-full border-2 border-slate-300 border-t-slate-600 animate-spin" />
+          <p className="text-sm font-semibold" style={{ color: "rgba(30,37,53,0.75)" }}>Checking your provider access…</p>
+        </div>
+      </div>
+    );
+  }
 
   // If provider meets or exceeds the required tier, show real content
   if (tierRank(applicationStatus) >= tierRank(requiredTier)) {

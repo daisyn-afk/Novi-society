@@ -1,21 +1,44 @@
 import { CheckCircle2, Lock, MapPin, Users, Clock, Zap, ChevronDown, ChevronUp } from "lucide-react";
 import { useState } from "react";
 
-export default function CertificationPathway({ serviceType, courses = [], userCerts, userMDSubs, enrolledCourseIds = new Set(), onEnroll, onApplyMD }) {
-  const [expandedCourseId, setExpandedCourseId] = useState(null);
+export default function CertificationPathway({
+  serviceType,
+  courses = [],
+  userCerts,
+  userMDSubs,
+  enrolledCourseIds = new Set(),
+  serviceEnrollments = [],
+  sessionByEnrollment = {},
+  initiallyExpandedCourseId = null,
+  onEnroll,
+  onViewEnrollment,
+  onApplyMD
+}) {
+  const firstEnrolledCourseId = courses.find((course) => enrolledCourseIds.has(course.id))?.id || null;
+  const [expandedCourseId, setExpandedCourseId] = useState(
+    initiallyExpandedCourseId || firstEnrolledCourseId || null
+  );
   if (!serviceType) return null;
 
   const activeCert = userCerts.find(c => c.service_type_id === serviceType?.id && c.status === "active");
   const mdCoverage = userMDSubs.find(s => s.service_type_id === serviceType?.id && s.status === "active");
 
-  // Scalable journey: Purchase → Materials → Course → Certified → Coverage
-  const anyEnrolled = courses.some(c => enrolledCourseIds.has(c.id));
+  // Journey: Purchase -> Materials -> Attend -> Certified -> MD coverage.
+  const anyEnrolled = courses.some((course) => enrolledCourseIds.has(course.id));
+  const attendedEnrollment = serviceEnrollments.find((enrollment) => {
+    if (["attended", "completed"].includes(enrollment.status)) return true;
+    const session = sessionByEnrollment[enrollment.id];
+    return !!session?.code_used;
+  });
+  const hasStudiedProgress = serviceEnrollments.some((enrollment) =>
+    ["paid", "confirmed", "attended", "completed"].includes(enrollment.status)
+  );
   const steps = [
-    { num: 1, label: "Purchase Course", icon: "💳", status: anyEnrolled ? "complete" : "available" },
-    { num: 2, label: "Review Materials", icon: "📚", status: anyEnrolled ? "available" : "locked" },
-    { num: 3, label: "Attend Course", icon: "🎓", status: anyEnrolled ? "available" : "locked" },
-    { num: 4, label: "Get Certified", icon: "⭐", status: activeCert ? "complete" : "locked" },
-    { num: 5, label: "Join Society", icon: "🛡️", status: mdCoverage ? "complete" : activeCert ? "available" : "locked" },
+    { num: 1, label: "Purchase Course", status: anyEnrolled ? "complete" : "available" },
+    { num: 2, label: "Review Materials", status: hasStudiedProgress ? "complete" : anyEnrolled ? "available" : "locked" },
+    { num: 3, label: "Attend Course", status: attendedEnrollment ? "complete" : anyEnrolled ? "available" : "locked" },
+    { num: 4, label: "Get Certified", status: activeCert ? "complete" : anyEnrolled ? "available" : "locked" },
+    { num: 5, label: "Join Society (MD Coverage)", status: mdCoverage ? "complete" : activeCert ? "available" : "locked" },
   ];
 
   const getStepColor = (status) => {
@@ -66,7 +89,14 @@ export default function CertificationPathway({ serviceType, courses = [], userCe
                   {step.status === "complete" ? <CheckCircle2 className="w-5 h-5" /> : step.num}
                 </div>
                 {idx < steps.length - 1 && (
-                  <div className="flex-1 h-0.5 mx-1" style={{ background: idx < (mdCoverage ? 5 : activeCert ? 4 : anyEnrolled ? 3 : 1) ? "rgba(200,230,60,0.4)" : "rgba(30,37,53,0.08)" }} />
+                  <div
+                    className="flex-1 h-0.5 mx-1"
+                    style={{
+                      background: idx < steps.filter((step) => step.status === "complete").length
+                        ? "rgba(200,230,60,0.4)"
+                        : "rgba(30,37,53,0.08)"
+                    }}
+                  />
                 )}
               </div>
             );
@@ -85,17 +115,16 @@ export default function CertificationPathway({ serviceType, courses = [], userCe
         <div className="border-t" style={{ borderColor: "rgba(30,37,53,0.08)" }} />
       </div>
 
-      {/* Courses Section - Only show enrolled courses */}
+      {/* Courses Section */}
       <div className="px-8 py-6 space-y-5">
         {(() => {
-          const enrolledCourses = courses.filter(c => enrolledCourseIds.has(c.id));
-          return enrolledCourses.length === 0 ? (
+          return courses.length === 0 ? (
           <div className="text-center py-8" style={{ color: "rgba(30,37,53,0.5)" }}>
-            <p className="text-sm font-semibold">No enrolled courses yet</p>
+            <p className="text-sm font-semibold">No courses configured for this service yet</p>
           </div>
         ) : (
           <div className="space-y-3">
-            {enrolledCourses.map((course) => {
+            {courses.map((course) => {
               const isEnrolled = enrolledCourseIds.has(course.id);
               const isExpanded = expandedCourseId === course.id;
               return (
@@ -113,6 +142,16 @@ export default function CertificationPathway({ serviceType, courses = [], userCe
                       <p className="text-xs mt-1" style={{ color: "rgba(30,37,53,0.5)" }}>
                         Instructor: {course.instructor_name || "TBD"}
                       </p>
+                      <div className="mt-2">
+                        <span
+                          className="text-[11px] font-bold px-2 py-1 rounded-full"
+                          style={isEnrolled
+                            ? { background: "rgba(123,142,200,0.12)", color: "#4a5fa0", border: "1px solid rgba(123,142,200,0.28)" }
+                            : { background: "rgba(250,111,48,0.12)", color: "#b84f20", border: "1px solid rgba(250,111,48,0.28)" }}
+                        >
+                          {isEnrolled ? "Enrolled" : "Available"}
+                        </span>
+                      </div>
                     </div>
                     <div className="flex-shrink-0 mt-1">
                       {isExpanded ? (
@@ -173,11 +212,11 @@ export default function CertificationPathway({ serviceType, courses = [], userCe
                       {/* CTA Button */}
                       {!activeCert && (
                         <button
-                          onClick={() => onEnroll(course)}
+                          onClick={() => (isEnrolled ? onViewEnrollment?.(course) : onEnroll(course))}
                           className="w-full py-3 rounded-lg font-bold text-white transition-all hover:opacity-90"
-                          style={{ background: "#FA6F30" }}
+                          style={{ background: isEnrolled ? "#7B8EC8" : "#FA6F30" }}
                         >
-                          Purchase & Schedule
+                          {isEnrolled ? "View Enrollment" : "Enroll"}
                         </button>
                       )}
                     </div>

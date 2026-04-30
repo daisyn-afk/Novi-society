@@ -8,7 +8,6 @@ import {
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
-import ProviderSalesLock from "@/components/ProviderSalesLock";
 import { useProviderAccess } from "@/components/useProviderAccess";
 import { isToday, isTomorrow, format, isWithinInterval, startOfMonth, endOfMonth } from "date-fns";
 
@@ -64,7 +63,33 @@ export default function ProviderDashboard() {
 
   const { data: myEnrollments = [] } = useQuery({
     queryKey: ["my-enrollments"],
-    queryFn: async () => { const u = await base44.auth.me(); return base44.entities.Enrollment.filter({ provider_id: u.id }); },
+    queryFn: async () => {
+      const u = await base44.auth.me();
+      const [byProviderIdResult, byEmailResult, preOrdersResult] = await Promise.allSettled([
+        u?.id ? base44.entities.Enrollment.filter({ provider_id: u.id }) : Promise.resolve([]),
+        u?.email ? base44.entities.Enrollment.filter({ provider_email: u.email }) : Promise.resolve([]),
+        base44.entities.PreOrder.list("-created_date", 500),
+      ]);
+      const byProviderId = byProviderIdResult.status === "fulfilled" ? (byProviderIdResult.value || []) : [];
+      const byEmail = byEmailResult.status === "fulfilled" ? (byEmailResult.value || []) : [];
+      const preOrders = preOrdersResult.status === "fulfilled" ? (preOrdersResult.value || []) : [];
+      const email = String(u?.email || "").toLowerCase();
+      const derivedFromPreOrders = preOrders
+        .filter((p) => p?.order_type === "course")
+        .filter((p) => ["paid", "confirmed", "completed"].includes(String(p?.status || "").toLowerCase()))
+        .filter((p) => String(p?.customer_email || "").toLowerCase() === email)
+        .map((p) => ({
+          id: `preorder-${p.id}`,
+          pre_order_id: p.id,
+          course_id: p.course_id,
+          provider_id: u?.id || null,
+          provider_email: p.customer_email,
+          provider_name: p.customer_name,
+          status: p.status === "completed" ? "confirmed" : p.status,
+          created_date: p.created_date,
+        }));
+      return Array.from(new Map([...(byProviderId || []), ...(byEmail || []), ...derivedFromPreOrders].map((row) => [row.pre_order_id || row.id, row])).values());
+    },
   });
   const { data: myCerts = [] } = useQuery({
     queryKey: ["my-certs"],
@@ -571,9 +596,5 @@ export default function ProviderDashboard() {
     </div>
   );
 
-  return (
-    <ProviderSalesLock feature="dashboard" applicationStatus={accessStatus} requiredTier="courses_only">
-      {dashboardContent}
-    </ProviderSalesLock>
-  );
+  return dashboardContent;
 }

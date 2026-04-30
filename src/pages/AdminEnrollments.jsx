@@ -1,28 +1,147 @@
-import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { adminCoursesApi } from "@/api/adminCoursesApi";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
-import { BookOpen, Search, CheckCircle } from "lucide-react";
+import { Clock, Search, ChevronDown, ChevronUp } from "lucide-react";
 import { format } from "date-fns";
 
-const statusColor = {
-  pending_payment: "bg-yellow-100 text-yellow-700",
-  paid: "bg-blue-100 text-blue-700",
-  confirmed: "bg-blue-100 text-blue-700",
-  attended: "bg-indigo-100 text-indigo-700",
-  completed: "bg-green-100 text-green-700",
-  cancelled: "bg-red-100 text-red-700",
-  no_show: "bg-slate-100 text-slate-600",
+const STATUS_COLORS = {
+  paid: { bg: "rgba(123,142,200,0.15)", color: "#7B8EC8", label: "Paid" },
+  confirmed: { bg: "rgba(200,230,60,0.15)", color: "#a8cc20", label: "Confirmed" },
 };
+
+function StatusBadge({ status }) {
+  const s = STATUS_COLORS[status] || { bg: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.5)", label: status };
+  return (
+    <span style={{ fontSize: 10, fontWeight: 700, background: s.bg, color: s.color, borderRadius: 20, padding: "3px 10px", textTransform: "uppercase", letterSpacing: "0.05em", whiteSpace: "nowrap" }}>
+      {s.label}
+    </span>
+  );
+}
+
+function getFileTypeFromUrl(url) {
+  if (!url) return "unknown";
+  const cleanUrl = url.split("?")[0].split("#")[0].toLowerCase();
+  const lowerUrl = url.toLowerCase();
+  if (cleanUrl.endsWith(".pdf") || lowerUrl.includes("pdf")) return "pdf";
+  if (/\.(png|jpe?g|gif|webp|bmp|svg|heic|heif)$/.test(cleanUrl)) return "image";
+  return "unknown";
+}
+
+function LicenseDocumentPreview({ url }) {
+  if (!url) return null;
+  const fileType = getFileTypeFromUrl(url);
+  const isImage = fileType === "image";
+
+  return (
+    <div
+      className={isImage ? "mt-4 max-w-[220px]" : "mt-4"}
+    >
+      <p className="text-xs font-bold uppercase tracking-wider mb-2" style={{ color: "rgba(30,37,53,0.45)" }}>
+        License Document
+      </p>
+
+      {isImage ? (
+        <a href={url} target="_blank" rel="noreferrer">
+          <img
+            src={url}
+            alt="License document"
+            className="w-full h-32 object-contain rounded-lg border"
+            style={{ borderColor: "rgba(30,37,53,0.15)" }}
+          />
+        </a>
+      ) : (
+        <a
+          href={url}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center justify-center rounded-md px-3 py-2 text-sm font-semibold"
+          style={{ borderColor: "rgba(123,142,200,0.55)", color: "#5f73b3", background: "rgba(123,142,200,0.2)" }}
+        >
+          Open PDF
+        </a>
+      )}
+    </div>
+  );
+}
+
+function EnrollmentRow({ enrollment, courseTitle, preOrder, license }) {
+  const [expanded, setExpanded] = useState(false);
+  const licenseDocumentUrl = preOrder?.license_image_url || license?.document_url || "";
+  return (
+    <div className="rounded-2xl overflow-hidden mb-3" style={{ background: "rgba(255,255,255,0.7)", border: "1px solid rgba(30,37,53,0.1)" }}>
+      <div className="flex items-center gap-4 px-5 py-4 cursor-pointer hover:bg-white/5 transition-colors" onClick={() => setExpanded((e) => !e)}>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-3 mb-1">
+            <p className="font-semibold text-sm truncate" style={{ color: "#1e2535" }}>{enrollment.provider_name || "Provider"}</p>
+            <StatusBadge status={enrollment.status} />
+          </div>
+          <p className="text-xs truncate" style={{ color: "rgba(30,37,53,0.55)" }}>
+            {enrollment.provider_email} · {courseTitle}
+          </p>
+        </div>
+        <div className="flex items-center gap-3 flex-shrink-0">
+          <span className="text-sm font-bold" style={{ color: "#1e2535" }}>${enrollment.amount_paid?.toLocaleString() || "—"}</span>
+          <span className="text-xs" style={{ color: "rgba(30,37,53,0.4)" }}>
+            {enrollment.created_date ? format(new Date(enrollment.created_date), "MMM d, yyyy") : ""}
+          </span>
+          {expanded ? <ChevronUp className="w-4 h-4" style={{ color: "rgba(30,37,53,0.4)" }} /> : <ChevronDown className="w-4 h-4" style={{ color: "rgba(30,37,53,0.4)" }} />}
+        </div>
+      </div>
+      {expanded && (
+        <div className="px-5 pb-5 border-t" style={{ borderColor: "rgba(30,37,53,0.08)" }}>
+          <div className="grid sm:grid-cols-3 gap-4 mt-4">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: "rgba(30,37,53,0.4)" }}>Provider</p>
+              <p className="text-sm font-semibold" style={{ color: "#1e2535" }}>{enrollment.provider_name || "—"}</p>
+              <p className="text-xs" style={{ color: "rgba(30,37,53,0.55)" }}>{enrollment.provider_email || "—"}</p>
+            </div>
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: "rgba(30,37,53,0.4)" }}>Course</p>
+              <p className="text-sm font-semibold" style={{ color: "#1e2535" }}>{courseTitle}</p>
+            </div>
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: "rgba(30,37,53,0.4)" }}>Payment</p>
+              <p className="text-sm font-semibold" style={{ color: "#1e2535" }}>${enrollment.amount_paid?.toLocaleString() || "—"}</p>
+              <p className="text-xs" style={{ color: "rgba(30,37,53,0.55)" }}>{enrollment.status?.replace("_", " ")}</p>
+            </div>
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: "rgba(30,37,53,0.4)" }}>License</p>
+              <p className="text-sm font-semibold" style={{ color: "#1e2535" }}>{preOrder?.license_type || license?.license_type || "—"}</p>
+              <p className="text-xs" style={{ color: "rgba(30,37,53,0.55)" }}>{preOrder?.license_number || license?.license_number || "—"}</p>
+            </div>
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: "rgba(30,37,53,0.4)" }}>Phone</p>
+              <p className="text-sm" style={{ color: "rgba(30,37,53,0.7)" }}>{preOrder?.phone || "Not provided"}</p>
+            </div>
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: "rgba(30,37,53,0.4)" }}>Session Date</p>
+              <p className="text-sm" style={{ color: "rgba(30,37,53,0.7)" }}>
+                {enrollment.session_date
+                  ? new Date(enrollment.session_date).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })
+                  : "—"}
+              </p>
+            </div>
+          </div>
+          {preOrder?.notes && (
+            <div className="mt-4 p-3 rounded-xl" style={{ background: "rgba(30,37,53,0.05)" }}>
+              <p className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: "rgba(30,37,53,0.4)" }}>Notes from applicant</p>
+              <p className="text-sm" style={{ color: "rgba(30,37,53,0.7)" }}>{preOrder.notes}</p>
+            </div>
+          )}
+
+          <LicenseDocumentPreview url={licenseDocumentUrl} />
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function AdminEnrollments() {
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const qc = useQueryClient();
+  const [courseFilter, setCourseFilter] = useState("all");
 
   const { data: enrollments = [], isLoading } = useQuery({
     queryKey: ["enrollments"],
@@ -30,99 +149,151 @@ export default function AdminEnrollments() {
   });
 
   const { data: courses = [] } = useQuery({
-    queryKey: ["courses"],
-    queryFn: () => base44.entities.Course.list(),
+    queryKey: ["admin-courses-enrollments"],
+    queryFn: () => adminCoursesApi.list(),
+  });
+  const { data: preOrders = [] } = useQuery({
+    queryKey: ["pre-orders-enrollments"],
+    queryFn: () => base44.entities.PreOrder.list("-created_date", 300),
+  });
+  const { data: licenses = [] } = useQuery({
+    queryKey: ["licenses-enrollments"],
+    queryFn: () => base44.entities.License.list("-created_date"),
   });
 
-  const courseMap = Object.fromEntries(courses.map(c => [c.id, c]));
+  const courseMap = useMemo(() => Object.fromEntries(courses.map(c => [c.id, c])), [courses]);
+  const preOrderMap = useMemo(() => Object.fromEntries(preOrders.map((p) => [p.id, p])), [preOrders]);
+  const latestLicenseByProviderId = useMemo(() => {
+    const map = {};
+    licenses.forEach((l) => {
+      if (l?.provider_id && !map[l.provider_id]) map[l.provider_id] = l;
+    });
+    return map;
+  }, [licenses]);
+  const latestLicenseByProviderEmail = useMemo(() => {
+    const map = {};
+    licenses.forEach((l) => {
+      const key = String(l?.provider_email || "").toLowerCase();
+      if (key && !map[key]) map[key] = l;
+    });
+    return map;
+  }, [licenses]);
+  const paidEnrollments = useMemo(() => {
+    const direct = enrollments.filter((e) => e.status === "paid" || e.status === "confirmed");
+    const existingPreOrderIds = new Set(direct.map((e) => e.pre_order_id).filter(Boolean));
+    const derivedFromPreOrders = preOrders
+      .filter((p) => p.order_type === "course" && (p.status === "paid" || p.status === "confirmed" || p.status === "completed"))
+      .filter((p) => !existingPreOrderIds.has(p.id))
+      .map((p) => ({
+        id: `preorder-${p.id}`,
+        pre_order_id: p.id,
+        course_id: p.course_id,
+        provider_name: p.customer_name,
+        provider_email: p.customer_email,
+        status: p.status === "completed" ? "confirmed" : p.status,
+        session_date: p.course_date,
+        amount_paid: p.amount_paid,
+        created_date: p.created_date,
+      }));
+    return [...direct, ...derivedFromPreOrders];
+  }, [enrollments, preOrders]);
+  const searchable = (value) => String(value || "").toLowerCase();
+  const filtered = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return paidEnrollments.filter((e) => {
+      const courseTitle = courseMap[e.course_id]?.title || "Unknown Course";
+      const byCourse = courseFilter === "all" || String(e.course_id) === String(courseFilter);
+      const bySearch = !term
+        || searchable(e.provider_name).includes(term)
+        || searchable(e.provider_email).includes(term)
+        || searchable(courseTitle).includes(term);
+      return byCourse && bySearch;
+    });
+  }, [paidEnrollments, courseMap, courseFilter, search]);
 
-  const updateStatus = useMutation({
-    mutationFn: ({ id, status }) => base44.entities.Enrollment.update(id, { status }),
-    onSuccess: () => qc.invalidateQueries(["enrollments"]),
-  });
-
-  const filtered = enrollments.filter(e => {
-    const matchSearch = !search || e.provider_name?.toLowerCase().includes(search.toLowerCase()) || e.provider_email?.toLowerCase().includes(search.toLowerCase());
-    const matchStatus = statusFilter === "all" || e.status === statusFilter;
-    return matchSearch && matchStatus;
-  });
+  const courseOptions = useMemo(() => {
+    const ids = [...new Set(paidEnrollments.map((e) => e.course_id).filter(Boolean))];
+    return ids
+      .map((id) => ({ id: String(id), title: courseMap[id]?.title || `Course ${String(id).slice(0, 8)}` }))
+      .sort((a, b) => a.title.localeCompare(b.title));
+  }, [paidEnrollments, courseMap]);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 max-w-5xl w-full">
       <div>
-        <h2 className="text-2xl font-bold text-slate-900">Enrollments</h2>
-        <p className="text-slate-500 text-sm mt-1">{enrollments.length} total enrollments</p>
+        <p className="text-xs font-semibold uppercase tracking-widest mb-1" style={{ color: "rgba(218,106,99,0.9)", letterSpacing: "0.14em" }}>Admin</p>
+        <h1 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 28, color: "#1e2535", lineHeight: 1.15 }}>Enrollments</h1>
+        <p style={{ color: "rgba(30,37,53,0.6)", fontSize: 13, marginTop: 4 }}>Paid and confirmed course enrollments</p>
       </div>
 
       <div className="flex flex-col sm:flex-row gap-3">
         <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-          <Input className="pl-9" placeholder="Search by provider..." value={search} onChange={e => setSearch(e.target.value)} />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: "rgba(30,37,53,0.35)" }} />
+          <Input className="pl-9" placeholder="Search by name, email, or course..." value={search} onChange={e => setSearch(e.target.value)} />
         </div>
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-full sm:w-44">
-            <SelectValue placeholder="Status" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Statuses</SelectItem>
-            {["pending_payment","paid","confirmed","attended","completed","cancelled","no_show"].map(s => (
-              <SelectItem key={s} value={s} className="capitalize">{s.replace("_"," ")}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
       </div>
 
       {isLoading ? (
-        <div className="space-y-3">{[1,2,3].map(i => <Card key={i} className="h-20 animate-pulse bg-slate-100" />)}</div>
-      ) : (
-        <div className="space-y-3">
-          {filtered.map(e => {
-            const course = courseMap[e.course_id];
-            return (
-              <Card key={e.id}>
-                <CardContent className="pt-4 pb-4">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-semibold text-slate-900">{e.provider_name || e.provider_email}</span>
-                        <Badge className={statusColor[e.status]}>{e.status?.replace("_"," ")}</Badge>
-                      </div>
-                      <p className="text-sm text-slate-500 mt-0.5">{course?.title || "Unknown Course"}</p>
-                      <div className="flex gap-3 text-xs text-slate-400 mt-1">
-                        {e.amount_paid && <span>${e.amount_paid.toLocaleString()}</span>}
-                        {e.created_date && <span>{format(new Date(e.created_date), "MMM d, yyyy")}</span>}
-                      </div>
-                    </div>
-                    <div className="flex gap-2 flex-wrap">
-                      {e.status === "paid" && (
-                        <Button size="sm" variant="outline" onClick={() => updateStatus.mutate({ id: e.id, status: "confirmed" })}>
-                          Confirm
-                        </Button>
-                      )}
-                      {e.status === "confirmed" && (
-                        <Button size="sm" variant="outline" onClick={() => updateStatus.mutate({ id: e.id, status: "attended" })}>
-                          Mark Attended
-                        </Button>
-                      )}
-                      {e.status === "attended" && (
-                        <Button size="sm" style={{ background: "var(--novi-gold)", color: "#1A1A2E" }}
-                          onClick={() => updateStatus.mutate({ id: e.id, status: "completed" })}>
-                          <CheckCircle className="w-3.5 h-3.5 mr-1" /> Complete
-                        </Button>
-                      )}
-                      {!["cancelled","completed","no_show"].includes(e.status) && (
-                        <Button size="sm" variant="outline" className="text-red-500" onClick={() => updateStatus.mutate({ id: e.id, status: "cancelled" })}>
-                          Cancel
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
-          {filtered.length === 0 && <p className="text-center text-slate-400 py-10">No enrollments found</p>}
+        <div className="flex justify-center py-16">
+          <div className="w-8 h-8 border-4 rounded-full animate-spin" style={{ borderColor: "rgba(30,37,53,0.1)", borderTopColor: "#C8E63C" }} />
         </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-3 gap-3">
+            {[
+              { label: "Paid / Confirmed", value: paidEnrollments.length, color: "#7B8EC8" },
+              { label: "Filtered Results", value: filtered.length, color: "#FA6F30" },
+              { label: "Unique Courses", value: courseOptions.length, color: "rgba(30,37,53,0.7)" },
+            ].map((s, i) => (
+              <div key={i} className="rounded-2xl p-4" style={{ background: "rgba(255,255,255,0.25)", backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)", border: "1px solid rgba(255,255,255,0.5)", boxShadow: "0 2px 16px rgba(30,37,53,0.07)" }}>
+                <p style={{ fontFamily: "'DM Serif Display', serif", fontSize: 28, color: s.color, lineHeight: 1, fontWeight: 400 }}>{s.value}</p>
+                <p className="text-xs mt-1" style={{ color: "rgba(30,37,53,0.55)" }}>{s.label}</p>
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-2 flex-wrap mt-3">
+            {[{ id: "all", title: "All" }, ...courseOptions].map((c) => (
+              <button
+                key={c.id}
+                onClick={() => setCourseFilter(c.id)}
+                className="px-4 py-2 rounded-full text-xs font-bold transition-all"
+                style={{
+                  background: courseFilter === c.id ? "rgba(200,230,60,0.2)" : "rgba(30,37,53,0.07)",
+                  color: courseFilter === c.id ? "#5a7a20" : "rgba(30,37,53,0.6)",
+                  border: courseFilter === c.id ? "1px solid rgba(200,230,60,0.4)" : "1px solid rgba(30,37,53,0.1)",
+                }}
+              >
+                {c.title}
+              </button>
+            ))}
+          </div>
+          {filtered.length === 0 ? (
+            <div className="text-center py-16 rounded-2xl" style={{ background: "rgba(30,37,53,0.04)", border: "1px solid rgba(30,37,53,0.08)" }}>
+              <Clock className="w-10 h-10 mx-auto mb-3 opacity-20" style={{ color: "#1e2535" }} />
+              <p style={{ color: "rgba(30,37,53,0.4)" }}>No paid enrollments found</p>
+            </div>
+          ) : (
+            <div>
+              {filtered.map((e) => (
+                (() => {
+                  const license =
+                    latestLicenseByProviderId[e.provider_id] ||
+                    latestLicenseByProviderEmail[String(e.provider_email || "").toLowerCase()] ||
+                    null;
+                  return (
+                <EnrollmentRow
+                  key={e.id}
+                  enrollment={e}
+                  courseTitle={courseMap[e.course_id]?.title || "Unknown Course"}
+                  preOrder={preOrderMap[e.pre_order_id]}
+                  license={license}
+                />
+                  );
+                })()
+              ))}
+            </div>
+          )}
+        </>
       )}
     </div>
   );

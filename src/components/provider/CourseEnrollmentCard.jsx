@@ -1,4 +1,4 @@
-import { Calendar, MapPin, Users, Clock, FileText, Trash2, BookOpen, Award, CheckCircle2, Zap } from "lucide-react";
+import { Calendar, MapPin, Users, Clock, FileText, BookOpen, Award, CheckCircle2, Zap } from "lucide-react";
 import { format, differenceInDays } from "date-fns";
 import { useState } from "react";
 
@@ -10,11 +10,15 @@ export default function CourseEnrollmentCard({
   activeSubServiceIds,
   onViewMaterials,
   onCancel,
+  onOpenClassWizard,
+  showClassWizardCta = false,
 }) {
   const [showDetails, setShowDetails] = useState(false);
   if (!course) return null;
 
-  const nextSessionDate = course.session_dates?.find(d => d.date)?.date;
+  const scheduledDate =
+    enrollment.session_date ||
+    course.session_dates?.find((d) => d.date)?.date;
   const earnedCerts = certs.filter(c => c.course_id === course.id && c.status === "active");
   const linkedServiceIds = (course.linked_service_type_ids?.length > 0)
     ? course.linked_service_type_ids
@@ -32,8 +36,8 @@ export default function CourseEnrollmentCard({
   };
 
   const cfg = statusConfig[enrollment.status] || statusConfig.confirmed;
-  const daysUntilClass = nextSessionDate ? differenceInDays(new Date(nextSessionDate), new Date()) : null;
-  const isStudying = ["paid", "confirmed"].includes(enrollment.status) && nextSessionDate;
+  const daysUntilClass = scheduledDate ? differenceInDays(new Date(scheduledDate), new Date()) : null;
+  const isStudying = ["paid", "confirmed"].includes(enrollment.status) && scheduledDate;
   const isCompleted = ["attended", "completed"].includes(enrollment.status);
 
   return (
@@ -94,11 +98,11 @@ export default function CourseEnrollmentCard({
               <div>
                 <p className="text-xs uppercase tracking-widest font-bold" style={{ color: "#FA6F30" }}>Time to Class</p>
                 <p className="text-3xl font-bold mt-1" style={{ color: "#1e2535" }}>{Math.max(daysUntilClass, 0)}</p>
-                <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.5)" }}>days until {nextSessionDate ? format(new Date(nextSessionDate), "MMM d") : "class"}</p>
+                <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.5)" }}>days until {scheduledDate ? format(new Date(scheduledDate), "MMM d") : "class"}</p>
               </div>
               <div className="text-right">
                 <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.4)" }}>Class Date</p>
-                <p className="font-bold text-sm mt-1" style={{ color: "#1e2535" }}>{nextSessionDate ? format(new Date(nextSessionDate), "MMM d, yyyy") : "TBD"}</p>
+                <p className="font-bold text-sm mt-1" style={{ color: "#1e2535" }}>{scheduledDate ? format(new Date(scheduledDate), "MMM d, yyyy") : "TBD"}</p>
               </div>
             </div>
           </div>
@@ -134,10 +138,15 @@ export default function CourseEnrollmentCard({
 
         {/* Quick info grid */}
         <div className="grid grid-cols-2 gap-2">
-         {nextSessionDate && (
+         {scheduledDate ? (
            <div className="flex items-center gap-2.5 text-xs p-2.5 rounded-lg" style={{ background: "rgba(250,111,48,0.08)", border: "1px solid rgba(250,111,48,0.2)", color: "rgba(30,37,53,0.65)" }}>
              <Calendar className="w-4 h-4 flex-shrink-0" style={{ color: "#FA6F30" }} />
-             <span className="font-medium">{format(new Date(nextSessionDate), "MMM d, yyyy")}</span>
+             <span className="font-medium">{format(new Date(scheduledDate), "MMM d, yyyy")}</span>
+           </div>
+         ) : (
+           <div className="flex items-center gap-2.5 text-xs p-2.5 rounded-lg" style={{ background: "rgba(250,111,48,0.08)", border: "1px solid rgba(250,111,48,0.2)", color: "rgba(30,37,53,0.65)" }}>
+             <Calendar className="w-4 h-4 flex-shrink-0" style={{ color: "#FA6F30" }} />
+             <span className="font-medium">Date syncing...</span>
            </div>
          )}
          {course.location && (
@@ -237,27 +246,29 @@ export default function CourseEnrollmentCard({
 
         {/* Actions */}
         <div className="flex gap-2 pt-2 border-t" style={{ borderColor: "rgba(30,37,53,0.08)" }}>
+          {showClassWizardCta && (
+            <button
+              onClick={onOpenClassWizard}
+              className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-xs font-bold transition-all"
+              style={{
+                background: "rgba(250,111,48,0.12)",
+                color: "#c8501f",
+                border: "1px solid rgba(250,111,48,0.25)",
+              }}
+            >
+              <Zap className="w-3.5 h-3.5" /> Class Day Wizard
+            </button>
+          )}
           <button
             onClick={onViewMaterials}
-            className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-xs font-bold transition-all"
+            className={`${showClassWizardCta ? "flex-[1.1]" : "flex-1"} flex items-center justify-center gap-2 py-2.5 rounded-lg text-xs font-bold transition-all`}
             style={{
               background: "rgba(123,142,200,0.1)",
               color: "#4a5fa8",
               border: "1px solid rgba(123,142,200,0.2)",
             }}
           >
-            <FileText className="w-3.5 h-3.5" /> Materials
-          </button>
-          <button
-            onClick={onCancel}
-            className="flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-lg text-xs font-bold transition-all hover:opacity-80"
-            style={{
-              background: "rgba(218,106,99,0.1)",
-              color: "#DA6A63",
-              border: "1px solid rgba(218,106,99,0.2)",
-            }}
-          >
-            <Trash2 className="w-3.5 h-3.5" /> Cancel
+            <FileText className="w-3.5 h-3.5" /> View Materials
           </button>
         </div>
       </div>

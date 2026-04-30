@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useNavigate } from "react-router-dom";
 import { createPageUrl } from "@/utils";
-import { ChevronLeft, Sparkles, Calendar, User, MapPin, Clock, Award, FileText, Shield } from "lucide-react";
+import { ChevronLeft, Sparkles, Calendar, Shield } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 // ─── Mode A: Pre-order ID provided (approval flow) ───────────────────────────
@@ -178,8 +178,10 @@ function DirectServiceCheckout({ itemId }) {
       });
       if (res.data?.checkout_url) {
         window.location.href = res.data.checkout_url;
+      } else if (res.data?.pre_order_id) {
+        window.location.href = `${createPageUrl("PreOrderConfirmation")}?id=${encodeURIComponent(res.data.pre_order_id)}`;
       } else {
-        throw new Error("Failed to create checkout session");
+        throw new Error("Failed to create pre-order.");
       }
     },
   });
@@ -198,7 +200,7 @@ function DirectServiceCheckout({ itemId }) {
       {/* Left summary */}
       <div className="lg:col-span-2">
         <div className="bg-white rounded-3xl p-8 lg:sticky lg:top-8" style={{ border: "1px solid rgba(0,0,0,0.06)", boxShadow: "0 4px 24px rgba(0,0,0,0.06)" }}>
-          <p className="text-xs font-bold uppercase tracking-wider mb-4" style={{ color: "#DA6A63" }}>Service Reservation</p>
+          <p className="text-xs font-bold uppercase tracking-wider mb-4" style={{ color: "#DA6A63" }}>Save Your Spot</p>
           <h2 style={{ fontFamily: "'DM Serif Display', serif", fontSize: "1.6rem", color: "#1e2535", fontStyle: "italic", marginBottom: 16 }}>{item?.name}</h2>
           {item?.description && <p className="text-sm leading-relaxed mb-6" style={{ color: "rgba(30,37,53,0.7)" }}>{item.description}</p>}
           {item?.monthly_fee && (
@@ -214,8 +216,8 @@ function DirectServiceCheckout({ itemId }) {
       {/* Right form */}
       <div className="lg:col-span-3">
         <div className="bg-white rounded-3xl p-8 lg:p-10" style={{ border: "1px solid rgba(0,0,0,0.06)", boxShadow: "0 4px 24px rgba(0,0,0,0.06)" }}>
-          <h3 style={{ fontFamily: "'DM Serif Display', serif", fontSize: "1.6rem", color: "#1e2535", fontStyle: "italic", marginBottom: 6 }}>Your Information</h3>
-          <p className="text-sm mb-8" style={{ color: "rgba(30,37,53,0.6)" }}>Complete your service reservation</p>
+          <h3 style={{ fontFamily: "'DM Serif Display', serif", fontSize: "1.6rem", color: "#1e2535", fontStyle: "italic", marginBottom: 6 }}>Save Your Spot</h3>
+          <p className="text-sm mb-8" style={{ color: "rgba(30,37,53,0.6)" }}>Complete this form to reserve your MD service spot</p>
 
           <div className="space-y-5">
             <div>
@@ -283,12 +285,12 @@ function DirectServiceCheckout({ itemId }) {
             style={{ background: canSubmit ? "linear-gradient(135deg, #C8E63C, #a8c020)" : "rgba(0,0,0,0.08)", color: canSubmit ? "#1a2540" : "rgba(30,37,53,0.3)", boxShadow: canSubmit ? "0 8px 32px rgba(200,230,60,0.25)" : "none" }}
           >
             {createPreOrder.isPending ? (
-              <><div className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin" />Redirecting...</>
+              <><div className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin" />Saving your spot...</>
             ) : (
-              <><Sparkles className="w-5 h-5" />Proceed to Secure Payment</>
+              <><Sparkles className="w-5 h-5" />Save My Spot</>
             )}
           </button>
-          <p className="text-center text-xs mt-3" style={{ color: "rgba(30,37,53,0.4)" }}>Powered by Stripe · License verified on enrollment</p>
+          <p className="text-center text-xs mt-3" style={{ color: "rgba(30,37,53,0.4)" }}>No payment required now · Our team will follow up before launch</p>
         </div>
       </div>
     </div>

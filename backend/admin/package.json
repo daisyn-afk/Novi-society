@@ -1,0 +1,19 @@
+{
+  "name": "novi-admin-api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.103.0",
+    "base44-app": "file:../..",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "multer": "^2.1.1",
+    "pg": "^8.13.3",
+    "stripe": "^22.0.1"
+  }
+}

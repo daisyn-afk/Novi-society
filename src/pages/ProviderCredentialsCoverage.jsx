@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import ProviderSalesLock from "@/components/ProviderSalesLock";
 import { useProviderAccess } from "@/components/useProviderAccess";
 import { base44 } from "@/api/base44Client";
+import { adminApiRequest } from "@/api/adminApiRequest";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -22,6 +23,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { format } from "date-fns";
+import { getSessionWindowForDate, isNowWithinSessionRedeemWindow } from "@/lib/classCodeWindow";
+import { CLASS_TIME_ZONE } from "@/lib/classCodeWindow";
 
 const LICENSE_TYPES = ["RN", "NP", "PA", "MD", "DO", "esthetician", "other"];
 const CERT_TYPES = ["RN", "NP", "PA", "MD", "DO", "esthetician", "other"];
@@ -30,6 +33,29 @@ const FIRST_SERVICE_PRICE = 279;
 const ADDON_SERVICE_PRICE = 129;
 const MAX_SERVICES = 5;
 const MAX_MONTHLY_CAP = 795;
+
+function toDateOnly(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  if (/^[A-Za-z]{3}\s+[A-Za-z]{3}\s+\d{1,2}$/.test(raw)) return "";
+  const parsed = new Date(raw);
+  if (!Number.isNaN(parsed.getTime())) {
+    const y = parsed.getFullYear();
+    const m = String(parsed.getMonth() + 1).padStart(2, "0");
+    const d = String(parsed.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+  return raw.slice(0, 10);
+}
+
+function formatSessionDateLabel(value) {
+  const dateOnly = toDateOnly(value);
+  if (!dateOnly) return "Date TBD";
+  const [y, m, d] = dateOnly.split("-").map(Number);
+  if (!y || !m || !d) return dateOnly;
+  return format(new Date(y, m - 1, d), "MMM d, yyyy");
+}
 
 const statusColorLicense = {
   pending_review: "bg-yellow-100 text-yellow-700 border-yellow-200",
@@ -104,15 +130,22 @@ export default function ProviderCredentialsCoverage() {
   const [extLicenseFileUrl, setExtLicenseFileUrl] = useState("");
   const [uploadingExtCert, setUploadingExtCert] = useState(false);
   const [uploadingExtLicense, setUploadingExtLicense] = useState(false);
+  const [uploadExtCertError, setUploadExtCertError] = useState("");
+  const [uploadExtLicenseError, setUploadExtLicenseError] = useState("");
   const [activateDialog, setActivateDialog] = useState(false);
   const [step, setStep] = useState(-1);
   const [classCode, setClassCode] = useState("");
+  const [selectedCoverageCourseKey, setSelectedCoverageCourseKey] = useState("");
+  const [attendedWindowKeys, setAttendedWindowKeys] = useState(new Set());
   const [codeError, setCodeError] = useState("");
   const [verifiedSession, setVerifiedSession] = useState(null);
   const [useExternalCert, setUseExternalCert] = useState(false);
   const [certForm, setCertForm] = useState({ cert_type: "RN", issuing_school: "", cert_name: "" });
   const [certFileUrl, setCertFileUrl] = useState("");
   const [uploadingCert, setUploadingCert] = useState(false);
+  const [uploadCertError, setUploadCertError] = useState("");
+  const [submitCertError, setSubmitCertError] = useState("");
+  const [submitExtCertError, setSubmitExtCertError] = useState("");
   const [certSubmitted, setCertSubmitted] = useState(false);
   const [selectedServiceTypeId, setSelectedServiceTypeId] = useState(null);
   const [hasSigned, setHasSigned] = useState(false);
@@ -160,9 +193,69 @@ export default function ProviderCredentialsCoverage() {
     queryFn: async () => { const u = await base44.auth.me(); return base44.entities.MDSubscription.filter({ provider_id: u.id }); },
     enabled: !!me,
   });
-  const { data: myEnrollments = [] } = useQuery({
+  const { data: myEnrollments = [], isLoading: loadingMyEnrollments, isFetching: fetchingMyEnrollments } = useQuery({
     queryKey: ["my-enrollments-coverage"],
-    queryFn: async () => { const u = await base44.auth.me(); return base44.entities.Enrollment.filter({ provider_id: u.id }); },
+    queryFn: async () => {
+      const u = await base44.auth.me();
+      const [byProviderIdResult, byEmailResult, preOrdersResult] = await Promise.allSettled([
+        u?.id ? base44.entities.Enrollment.filter({ provider_id: u.id }) : Promise.resolve([]),
+        u?.email ? base44.entities.Enrollment.filter({ provider_email: u.email }) : Promise.resolve([]),
+        base44.entities.PreOrder.list("-created_date", 500),
+      ]);
+      const byProviderId = byProviderIdResult.status === "fulfilled" ? (byProviderIdResult.value || []) : [];
+      const byEmail = byEmailResult.status === "fulfilled" ? (byEmailResult.value || []) : [];
+      const preOrders = preOrdersResult.status === "fulfilled" ? (preOrdersResult.value || []) : [];
+      const email = String(u?.email || "").toLowerCase();
+      const derivedFromPreOrders = preOrders
+        .filter((p) => String(p?.order_type || "").toLowerCase() === "course")
+        .filter((p) => ["paid", "confirmed", "completed"].includes(String(p?.status || "").toLowerCase()))
+        .filter((p) => String(p?.customer_email || "").toLowerCase() === email)
+        .map((p) => ({
+          id: `preorder-${p.id}`,
+          pre_order_id: p.id,
+          course_id: p.course_id,
+          provider_id: u?.id || null,
+          provider_email: p.customer_email || u?.email || null,
+          provider_name: p.customer_name || null,
+          status: String(p?.status || "").toLowerCase() === "completed" ? "attended" : String(p?.status || "").toLowerCase(),
+          session_date: p.course_date || p.session_date || null,
+          amount_paid: p.amount_paid,
+          created_date: p.created_date || p.created_at || null,
+        }));
+      const map = new Map();
+      [...byProviderId, ...byEmail, ...derivedFromPreOrders].forEach((row) => {
+        const dedupeKey = row?.pre_order_id || row?.id || `${row?.course_id || ""}:${row?.session_date || ""}`;
+        if (dedupeKey) map.set(String(dedupeKey), row);
+      });
+      return Array.from(map.values());
+    },
+    enabled: !!me,
+  });
+  const { data: mySessions = [], isLoading: loadingMySessions, isFetching: fetchingMySessions } = useQuery({
+    queryKey: ["my-sessions-coverage", myEnrollments.map((e) => `${e.id}:${e.course_id}:${e.session_date || ""}`).join("|")],
+    queryFn: async () => {
+      const u = await base44.auth.me();
+      const allSessions = await base44.entities.ClassSession.list("-created_date");
+      const enrollmentIds = new Set(myEnrollments.map((e) => String(e.id)));
+      const classDateKeys = new Set(
+        myEnrollments
+          .filter((e) => e.course_id && e.session_date)
+          .map((e) => `class_date:${e.course_id}:${String(e.session_date).slice(0, 10)}`)
+      );
+      const meId = String(u?.id || "");
+      const meEmail = String(u?.email || "").toLowerCase();
+      return (allSessions || []).filter((session) => {
+        const providerId = String(session?.provider_id || "");
+        const providerEmail = String(session?.provider_email || "").toLowerCase();
+        const enrollmentId = String(session?.enrollment_id || "");
+        const sessionCourseId = String(session?.course_id || "");
+        if (providerId && providerId === meId) return true;
+        if (providerEmail && providerEmail === meEmail) return true;
+        if (enrollmentIds.has(enrollmentId)) return true;
+        if (classDateKeys.has(enrollmentId)) return true;
+        return false;
+      });
+    },
     enabled: !!me,
   });
   const { data: courses = [] } = useQuery({
@@ -212,6 +305,13 @@ export default function ProviderCredentialsCoverage() {
     }
   }, [me, serviceTypes, stripeHandled]);
 
+  // Keep Novi Class status fresh whenever Apply dialog opens.
+  useEffect(() => {
+    if (!activateDialog) return;
+    qc.invalidateQueries({ queryKey: ["my-enrollments-coverage"] });
+    qc.invalidateQueries({ queryKey: ["my-sessions-coverage"] });
+  }, [activateDialog, qc]);
+
   // Computed
   const activeCerts = myCerts.filter(c => c.status === "active");
   const pendingCerts = myCerts.filter(c => c.status === "pending");
@@ -222,8 +322,14 @@ export default function ProviderCredentialsCoverage() {
   const pendingRelationships = relationships.filter(r => r.status === "pending");
   const verifiedLicenses = licenses.filter(l => l.status === "verified");
   const pendingLicenses = licenses.filter(l => l.status === "pending_review");
-  const today = format(new Date(), "yyyy-MM-dd");
-  const hasTodayClass = myEnrollments.some(e => e.session_date?.startsWith(today) && ["confirmed", "paid"].includes(e.status));
+  const courseMap = Object.fromEntries(courses.map(c => [c.id, c]));
+  const hasActiveClassCodeWindow = myEnrollments.some((enrollment) => {
+    if (!["confirmed", "paid"].includes(String(enrollment?.status || "").toLowerCase())) return false;
+    if (!enrollment?.session_date) return false;
+    const course = courseMap[enrollment.course_id];
+    if (!course) return false;
+    return isNowWithinSessionRedeemWindow(course, enrollment.session_date);
+  });
   const getMembershipPrice = () => alreadyActiveServices.length === 0 ? FIRST_SERVICE_PRICE : ADDON_SERVICE_PRICE;
   const isAtCap = alreadyActiveServices.length >= MAX_SERVICES;
   const calcMonthlyTotal = (count) => {
@@ -231,24 +337,138 @@ export default function ProviderCredentialsCoverage() {
     if (count >= MAX_SERVICES) return MAX_MONTHLY_CAP;
     return FIRST_SERVICE_PRICE + (count - 1) * ADDON_SERVICE_PRICE;
   };
-  const completedEnrollments = myEnrollments.filter(e => ["completed", "attended"].includes(e.status));
-  const courseMap = Object.fromEntries(courses.map(c => [c.id, c]));
-  const earnedServiceTypeIds = new Set(completedEnrollments.flatMap(e => courseMap[e.course_id]?.linked_service_type_ids || []));
-  const availableServices = serviceTypes.filter(s => !alreadyActiveServices.includes(s.id) && earnedServiceTypeIds.has(s.id));
+  const completedEnrollments = myEnrollments.filter((e) => ["completed", "attended"].includes(String(e?.status || "").toLowerCase()));
+  const unlockedCourseIds = new Set(
+    completedEnrollments
+      .map((e) => String(e?.course_id || ""))
+      .filter(Boolean)
+  );
+  (mySessions || [])
+    .filter((session) => Boolean(session?.code_used))
+    .forEach((session) => {
+      const enrollmentKey = String(session?.enrollment_id || "");
+      const classDateParts = enrollmentKey.startsWith("class_date:") ? enrollmentKey.split(":") : [];
+      const courseId = String(session?.course_id || (classDateParts.length >= 3 ? classDateParts[1] : "") || "");
+      if (courseId) unlockedCourseIds.add(courseId);
+    });
+  const earnedServiceTypeIds = new Set(
+    Array.from(unlockedCourseIds).flatMap((courseId) => courseMap[courseId]?.linked_service_type_ids || [])
+  );
+  const activeCertServiceTypeIds = new Set(
+    (myCerts || [])
+      .filter((cert) => String(cert?.status || "").toLowerCase() === "active")
+      .map((cert) => String(cert?.service_type_id || ""))
+      .filter(Boolean)
+  );
+  const unlockedServiceTypeIds = new Set([...earnedServiceTypeIds, ...activeCertServiceTypeIds]);
+  const availableServices = serviceTypes.filter((s) => !alreadyActiveServices.includes(s.id) && unlockedServiceTypeIds.has(s.id));
   const selectedService = serviceTypes.find(s => s.id === selectedServiceTypeId);
   const activeServices = serviceTypes.filter(s => alreadyActiveServices.includes(s.id));
   const approvedCertsWithoutCoverage = myCerts.filter(c => c.status === "active" && c.service_type_id && !alreadyActiveServices.includes(c.service_type_id));
+  const classCodeEligibleEnrollments = Array.from(
+    [...myEnrollments, ...mySessions.map((session) => {
+      const rawEnrollmentKey = String(session?.enrollment_id || "");
+      const classDateParts = rawEnrollmentKey.startsWith("class_date:") ? rawEnrollmentKey.split(":") : [];
+      const classDateCourseId = classDateParts.length >= 3 ? String(classDateParts[1] || "") : "";
+      const classDateSessionDate = classDateParts.length >= 3 ? toDateOnly(classDateParts[2]) : "";
+      return {
+        id: session?.enrollment_id || `class-session:${session?.id || ""}`,
+        course_id: session?.course_id || classDateCourseId || null,
+        session_date: classDateSessionDate || toDateOnly(session?.session_date) || null,
+        status: session?.code_used ? "attended" : "paid",
+        course_title: session?.course_title || null,
+      };
+    })]
+      .filter((e) => e?.course_id && e?.session_date && ["paid", "confirmed", "attended"].includes(String(e.status || "").toLowerCase()))
+      .reduce((acc, enrollment) => {
+        const dateOnly = toDateOnly(enrollment.session_date);
+        const dedupeKey = `${enrollment.course_id}:${dateOnly}`;
+        const normalized = { ...enrollment, session_date: dateOnly };
+        const existing = acc.get(dedupeKey);
+        const existingStatus = String(existing?.status || "").toLowerCase();
+        const incomingStatus = String(normalized?.status || "").toLowerCase();
+        if (!existing || (existingStatus !== "attended" && incomingStatus === "attended")) {
+          acc.set(dedupeKey, normalized);
+        }
+        return acc;
+      }, new Map())
+      .values()
+  );
+  const formatEstClockTime = (dateValue) =>
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: CLASS_TIME_ZONE,
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    }).format(dateValue);
+  const redeemedSessionKeys = new Set(
+    (mySessions || [])
+      .filter((session) => Boolean(session?.code_used))
+      .map((session) => {
+        const classDateParts = String(session?.enrollment_id || "").startsWith("class_date:")
+          ? String(session.enrollment_id).split(":")
+          : [];
+        const sessionDate = toDateOnly(session?.session_date) || (classDateParts.length >= 3 ? toDateOnly(classDateParts[2]) : "");
+        const sessionCourseId = String(session?.course_id || (classDateParts.length >= 3 ? classDateParts[1] : "") || "");
+        if (!sessionCourseId || !sessionDate) return "";
+        return `${sessionCourseId}:${sessionDate}`;
+      })
+      .filter(Boolean)
+  );
+  const attendedEnrollmentKeys = new Set(
+    (myEnrollments || [])
+      .filter((enrollment) => ["attended", "completed"].includes(String(enrollment?.status || "").toLowerCase()))
+      .map((enrollment) => {
+        const courseId = String(enrollment?.course_id || "");
+        const sessionDate = toDateOnly(enrollment?.session_date);
+        if (!courseId || !sessionDate) return "";
+        return `${courseId}:${sessionDate}`;
+      })
+      .filter(Boolean)
+  );
+  const hasRedeemedSessionForWindow = (enrollment) => {
+    const courseId = String(enrollment?.course_id || "");
+    const sessionDate = toDateOnly(enrollment?.session_date);
+    const classDateKey = courseId && sessionDate ? `class_date:${courseId}:${sessionDate}` : "";
+
+    return (mySessions || []).some((session) => {
+      if (!session?.code_used) return false;
+      const sessionEnrollmentId = String(session?.enrollment_id || "");
+      const classDateParts = sessionEnrollmentId.startsWith("class_date:") ? sessionEnrollmentId.split(":") : [];
+      const sessionCourseId = String(session?.course_id || (classDateParts.length >= 3 ? classDateParts[1] : "") || "");
+      const sessionDateOnly = toDateOnly(session?.session_date) || (classDateParts.length >= 3 ? toDateOnly(classDateParts[2]) : "");
+      if (!courseId || !sessionDate) return false;
+      if (classDateKey && sessionEnrollmentId === classDateKey) return true;
+      return sessionCourseId === courseId && sessionDateOnly === sessionDate;
+    });
+  };
+  const classCodeEnrollmentWindows = classCodeEligibleEnrollments.map((enrollment) => {
+    const course = courseMap[enrollment.course_id];
+    const sessionDate = toDateOnly(enrollment.session_date);
+    const window = getSessionWindowForDate(course, sessionDate);
+    const isOpen = window ? isNowWithinSessionRedeemWindow(course, sessionDate) : false;
+    const key = `${enrollment.course_id}:${sessionDate}`;
+    const isAttended =
+      redeemedSessionKeys.has(key) ||
+      attendedEnrollmentKeys.has(key) ||
+      attendedWindowKeys.has(key) ||
+      hasRedeemedSessionForWindow(enrollment);
+    return { key, enrollment, course, window, isOpen, isAttended };
+  });
+  const selectedCoverageWindow = classCodeEnrollmentWindows.find((entry) => entry.key === selectedCoverageCourseKey) || null;
 
   // Mutations
   const resetActivation = () => {
     setStep(-1); setClassCode(""); setCodeError(""); setVerifiedSession(null);
+    setAttendedWindowKeys(new Set());
     setUseExternalCert(false); setCertForm({ cert_type: "RN", issuing_school: "", cert_name: "" });
-    setCertFileUrl(""); setCertSubmitted(false); setSelectedServiceTypeId(null); setHasSigned(false);
+    setCertFileUrl(""); setUploadCertError(""); setSubmitCertError(""); setCertSubmitted(false); setSelectedServiceTypeId(null); setHasSigned(false);
   };
   const resetExtCertForm = () => {
     setCertSubmitStep(0);
     setExtCertForm({ cert_name: "", issuing_school: "", cert_type: "RN", service_type_id: "", service_type_name: "" });
     setExtCertFileUrl(""); setExtLicenseFileUrl("");
+    setUploadExtCertError(""); setUploadExtLicenseError(""); setSubmitExtCertError("");
   };
 
   const createLicense = useMutation({
@@ -258,55 +478,233 @@ export default function ProviderCredentialsCoverage() {
   const uploadLicenseFile = async (e) => {
     const file = e.target.files[0]; if (!file) return;
     setUploading(true);
-    const { file_url } = await base44.integrations.Core.UploadFile({ file });
-    setLicenseForm(f => ({ ...f, document_url: file_url })); setUploading(false);
+    try {
+      const { file_url } = await base44.integrations.Core.UploadFile({ file });
+      setLicenseForm((f) => ({ ...f, document_url: file_url }));
+    } finally {
+      setUploading(false);
+    }
   };
   const uploadExtCertFile = async (e) => {
     const file = e.target.files[0]; if (!file) return;
     setUploadingExtCert(true);
-    const { file_url } = await base44.integrations.Core.UploadFile({ file });
-    setExtCertFileUrl(file_url); setUploadingExtCert(false);
+    setUploadExtCertError("");
+    try {
+      const { file_url } = await base44.integrations.Core.UploadFile({ file });
+      setExtCertFileUrl(file_url);
+    } catch (err) {
+      setUploadExtCertError(err?.message || "Could not upload certification file. Please try again.");
+    } finally {
+      setUploadingExtCert(false);
+    }
   };
   const uploadExtLicenseFile = async (e) => {
     const file = e.target.files[0]; if (!file) return;
     setUploadingExtLicense(true);
-    const { file_url } = await base44.integrations.Core.UploadFile({ file });
-    setExtLicenseFileUrl(file_url); setUploadingExtLicense(false);
+    setUploadExtLicenseError("");
+    try {
+      const { file_url } = await base44.integrations.Core.UploadFile({ file });
+      setExtLicenseFileUrl(file_url);
+    } catch (err) {
+      setUploadExtLicenseError(err?.message || "Could not upload license file. Please try again.");
+    } finally {
+      setUploadingExtLicense(false);
+    }
   };
   const uploadCertFile = async (e) => {
     const file = e.target.files[0]; if (!file) return;
     setUploadingCert(true);
-    const { file_url } = await base44.integrations.Core.UploadFile({ file });
-    setCertFileUrl(file_url); setUploadingCert(false);
+    setUploadCertError("");
+    try {
+      const { file_url } = await base44.integrations.Core.UploadFile({ file });
+      setCertFileUrl(file_url);
+    } catch (err) {
+      setUploadCertError(err?.message || "Could not upload certification file. Please try again.");
+    } finally {
+      setUploadingCert(false);
+    }
+  };
+  const isUsableUploadedUrl = (value) => {
+    const raw = String(value || "").trim();
+    if (!raw) return false;
+    if (raw === "/N/A" || raw.toUpperCase() === "N/A") return false;
+    return /^https?:\/\//i.test(raw);
+  };
+  const certDebugEnabled =
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("certdebug") === "1";
+  const buildSubmitterAuditNote = (existingNotes, user) => {
+    const note = `[submitter] name=${user?.full_name || [user?.first_name, user?.last_name].filter(Boolean).join(" ").trim() || "n/a"}; email=${user?.email || "n/a"}; id=${user?.id || "n/a"}`;
+    return [String(existingNotes || "").trim(), note].filter(Boolean).join("\n");
+  };
+  const buildCertificationPayload = (payload, user) => {
+    const submitterName = user?.full_name || [user?.first_name, user?.last_name].filter(Boolean).join(" ").trim() || user?.email || null;
+    const submitterEmail = user?.email || null;
+    const submitterId = user?.id || null;
+    return {
+      ...payload,
+      provider_id: payload.provider_id || submitterId,
+      provider_email: payload.provider_email || submitterEmail,
+      provider_name: payload.provider_name || submitterName,
+      user_id: payload.user_id || submitterId,
+      user_email: payload.user_email || submitterEmail,
+      user_name: payload.user_name || submitterName,
+      submitted_by_name: payload.submitted_by_name || submitterName,
+      submitted_by_email: payload.submitted_by_email || submitterEmail,
+      created_by: payload.created_by || submitterId || submitterEmail,
+      created_by_email: payload.created_by_email || submitterEmail,
+      certification_url: payload.certification_url || payload.certificate_url || null,
+      certification_file_url: payload.certification_file_url || payload.certificate_url || null,
+      document_url: payload.document_url || payload.certificate_url || null,
+      file_url: payload.file_url || payload.certificate_url || null,
+      attachment_url: payload.attachment_url || payload.certificate_url || null,
+      notes: buildSubmitterAuditNote(payload.notes, user),
+    };
+  };
+  const createCertificationWithFallback = async (rawPayload, user, debugTag) => {
+    const payload = buildCertificationPayload(rawPayload, user);
+    try {
+      const created = await adminApiRequest("/admin/certifications", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      if (certDebugEnabled) console.info(`[cert-debug][${debugTag}] created-via-admin-api`, created);
+      return created;
+    } catch (adminErr) {
+      if (certDebugEnabled) console.warn(`[cert-debug][${debugTag}] admin-api-failed-fallback-base44`, adminErr);
+      const created = await base44.entities.Certification.create(payload);
+      if (certDebugEnabled) console.info(`[cert-debug][${debugTag}] created-via-base44`, created);
+      const createdId = created?.id;
+      if (createdId) {
+        // Force critical ownership/doc fields in case create path drops sparse keys.
+        try {
+          await base44.entities.Certification.update(createdId, {
+            provider_id: payload.provider_id,
+            provider_email: payload.provider_email,
+            provider_name: payload.provider_name,
+            service_type_id: payload.service_type_id,
+            service_type_name: payload.service_type_name,
+            certificate_url: payload.certificate_url,
+            notes: payload.notes,
+          });
+        } catch (patchErr) {
+          if (certDebugEnabled) console.warn(`[cert-debug][${debugTag}] post-create-patch-failed`, patchErr);
+        }
+      }
+      return created;
+    }
   };
   const submitExtCertMutation = useMutation({
-    mutationFn: async () => base44.entities.Certification.create({
-      provider_id: me.id, provider_email: me.email, provider_name: me.full_name,
+    mutationFn: async () => {
+      const u = await base44.auth.me();
+      if (!u?.id || !u?.email) throw new Error("Your session is not ready. Please refresh and try again.");
+      if (!isUsableUploadedUrl(extCertFileUrl) || !isUsableUploadedUrl(extLicenseFileUrl)) {
+        throw new Error("Please upload valid certification and license files before submit.");
+      }
+      const payload = {
+      provider_id: u.id,
+      provider_email: u.email,
+      provider_name: u.full_name || [u.first_name, u.last_name].filter(Boolean).join(" ").trim() || u.email,
       certification_name: extCertForm.cert_name, issued_by: extCertForm.issuing_school,
       category: extCertForm.cert_type, certificate_url: extCertFileUrl, status: "pending",
       service_type_id: extCertForm.service_type_id, service_type_name: extCertForm.service_type_name,
+      issued_at: new Date().toISOString(),
       notes: extLicenseFileUrl ? `License document: ${extLicenseFileUrl}` : undefined,
-    }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["my-certs"] }); setCertSubmitStep(2); },
+      };
+      if (certDebugEnabled) console.info("[cert-debug][provider-submit-ext] payload", payload);
+      const created = await createCertificationWithFallback(payload, u, "provider-submit-ext");
+      if (certDebugEnabled) console.info("[cert-debug][provider-submit-ext] created", created);
+      return created;
+    },
+    onSuccess: () => { setSubmitExtCertError(""); qc.invalidateQueries({ queryKey: ["my-certs"] }); setCertSubmitStep(2); },
+    onError: (err) => { setSubmitExtCertError(err?.message || "Could not submit external certification."); },
   });
   const submitExternalCertMutation = useMutation({
-    mutationFn: async () => base44.entities.Certification.create({
-      provider_id: me.id, provider_email: me.email, provider_name: me.full_name,
+    mutationFn: async () => {
+      const u = await base44.auth.me();
+      if (!u?.id || !u?.email) throw new Error("Your session is not ready. Please refresh and try again.");
+      if (!isUsableUploadedUrl(certFileUrl)) throw new Error("Please upload a valid certification file before submit.");
+      const payload = {
+      provider_id: u.id,
+      provider_email: u.email,
+      provider_name: u.full_name || [u.first_name, u.last_name].filter(Boolean).join(" ").trim() || u.email,
       certification_name: certForm.cert_name, issued_by: certForm.issuing_school,
       category: certForm.cert_type, certificate_url: certFileUrl, status: "pending",
       service_type_id: certForm.service_type_id, service_type_name: certForm.service_type_name,
-    }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["my-certs"] }); setCertSubmitted(true); },
+      issued_at: new Date().toISOString(),
+      };
+      if (certDebugEnabled) console.info("[cert-debug][provider-submit-standard] payload", payload);
+      const created = await createCertificationWithFallback(payload, u, "provider-submit-standard");
+      if (certDebugEnabled) console.info("[cert-debug][provider-submit-standard] created", created);
+      return created;
+    },
+    onSuccess: () => { setSubmitCertError(""); qc.invalidateQueries({ queryKey: ["my-certs"] }); setCertSubmitted(true); },
+    onError: (err) => { setSubmitCertError(err?.message || "Could not submit external certification."); },
   });
   const verifyCodeMutation = useMutation({
     mutationFn: async () => {
-      const res = await base44.functions.invoke('redeemClassCode', { session_code: classCode });
-      if (!res.data.success) throw new Error(res.data.error || 'Invalid class code');
+      if (!selectedCoverageWindow) throw new Error("Select your enrolled course first.");
+      if (!selectedCoverageWindow.isOpen) throw new Error("Selected course window is closed. You can enter code only during its active time.");
+      const normalizedCode = String(classCode || "").trim().toUpperCase();
+      const selectedCourseId = String(selectedCoverageWindow.enrollment.course_id || "");
+      const selectedDate = String(selectedCoverageWindow.enrollment.session_date || "").slice(0, 10);
+      const codeMatches = mySessions.filter((session) => String(session.session_code || "").toUpperCase() === normalizedCode);
+      if (codeMatches.length === 0) throw new Error("This code does not match any session assigned to you.");
+      const sessionMeta = codeMatches.map((session) => {
+        const sessionCourseId = String(session.course_id || "");
+        const classDateKey = String(session.enrollment_id || "");
+        const classDateParts = classDateKey.startsWith("class_date:") ? classDateKey.split(":") : [];
+        const classDateCourseId = classDateParts.length >= 3 ? String(classDateParts[1] || "") : "";
+        const classDateSessionDate = classDateParts.length >= 3 ? String(classDateParts[2] || "").slice(0, 10) : "";
+        const enrollmentForSession = myEnrollments.find((enrollment) => enrollment.id === session.enrollment_id);
+        const sessionDateOnly = String(
+          session.session_date ||
+          enrollmentForSession?.session_date ||
+          classDateSessionDate ||
+          ""
+        ).slice(0, 10);
+        const effectiveSessionCourseId = sessionCourseId || classDateCourseId || String(enrollmentForSession?.course_id || "");
+        return { session, enrollmentForSession, sessionDateOnly, effectiveSessionCourseId };
+      });
+      const selectedMatch = sessionMeta.find(({ effectiveSessionCourseId, sessionDateOnly }) =>
+        (!selectedCourseId || !effectiveSessionCourseId || effectiveSessionCourseId === selectedCourseId) &&
+        (!selectedDate || !sessionDateOnly || sessionDateOnly === selectedDate)
+      );
+      const matchingSession = (selectedMatch || sessionMeta[0]).session;
+      if (matchingSession.code_used) throw new Error("This class code was already redeemed.");
+      const enrollmentForSession = (selectedMatch || sessionMeta[0]).enrollmentForSession;
+      let res;
+      try {
+        res = await base44.functions.invoke('redeemClassCode', {
+          session_code: normalizedCode,
+          selected_course_id: selectedCoverageWindow?.enrollment?.course_id || null,
+          selected_session_date: String(selectedCoverageWindow?.enrollment?.session_date || "").slice(0, 10) || null,
+        });
+      } catch (err) {
+        throw err;
+      }
+      if (!res.data.success) {
+        const debugWindow = res.data?.debug_window;
+        const debugText = debugWindow
+          ? `\nNow: ${debugWindow.now || "n/a"}\nStart: ${debugWindow.start_at || "n/a"}\nEnd: ${debugWindow.end_at || "n/a"}\nExpires: ${debugWindow.expires_at || "n/a"}\nSelected Course: ${debugWindow.selected_course_id || "n/a"}\nSelected Session Date: ${debugWindow.selected_session_date || "n/a"}\nMatched Course: ${debugWindow.matched_course_id || "n/a"}\nMatched Session Date: ${debugWindow.matched_session_date || "n/a"}`
+          : "";
+        throw new Error(`${res.data.error || "Invalid class code"}${debugText}`);
+      }
       return res.data;
     },
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
       setVerifiedSession({ id: data.session_id, enrollment_id: data.enrollment_id, certifications: data.certifications });
-      setCodeError(""); qc.invalidateQueries({ queryKey: ["my-certs"] }); setStep(1);
+      if (selectedCoverageWindow?.key) {
+        setAttendedWindowKeys((prev) => new Set([...prev, selectedCoverageWindow.key]));
+      }
+      setCodeError("");
+      // Move forward immediately; refresh data in background.
+      setStep(1);
+      Promise.all([
+        qc.invalidateQueries({ queryKey: ["my-certs"] }),
+        qc.invalidateQueries({ queryKey: ["my-enrollments-coverage"] }),
+        qc.invalidateQueries({ queryKey: ["my-sessions-coverage"] }),
+      ]);
     },
     onError: (err) => setCodeError(err.message),
   });
@@ -400,8 +798,8 @@ export default function ProviderCredentialsCoverage() {
         <div key={c.id} className="flex items-center gap-3 px-5 py-4 rounded-2xl" style={{ background: "rgba(200,230,60,0.15)", border: "1px solid rgba(200,230,60,0.4)" }}>
           <CheckCircle className="w-5 h-5 flex-shrink-0" style={{ color: "#C8E63C" }} />
           <div className="flex-1">
-            <p className="font-semibold text-white text-sm">Your <strong>{c.service_type_name || c.certification_name}</strong> certification was approved!</p>
-            <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.6)" }}>You can now apply for MD Board coverage to start offering this service.</p>
+            <p className="font-semibold text-sm" style={{ color: "#3D5600" }}>Your <strong>{c.service_type_name || c.certification_name}</strong> certification was approved!</p>
+            <p className="text-xs mt-0.5" style={{ color: "rgba(61,86,0,0.8)" }}>You can now apply for MD Board coverage to start offering this service.</p>
           </div>
           <Button size="sm" onClick={() => { setActivateDialog(true); resetActivation(); }} style={{ background: "#FA6F30", color: "#fff" }} className="flex-shrink-0 gap-1 h-8 text-xs">
             <Zap className="w-3.5 h-3.5" /> Apply
@@ -1336,6 +1734,12 @@ export default function ProviderCredentialsCoverage() {
               </div>
 
               {!useExternalCert ? (
+                (loadingMyEnrollments || loadingMySessions || fetchingMyEnrollments || fetchingMySessions) ? (
+                  <div className="rounded-xl p-5 space-y-2 text-center" style={{ background: "rgba(123,142,200,0.07)", border: "1px solid rgba(123,142,200,0.2)" }}>
+                    <p className="text-sm font-semibold text-slate-900">Loading your course windows...</p>
+                    <p className="text-xs text-slate-500">Please wait while we refresh your enrollment and class session data.</p>
+                  </div>
+                ) : (
                 myEnrollments.length === 0 ? (
                   <div className="rounded-xl p-5 space-y-3 text-center" style={{ background: "rgba(250,111,48,0.06)", border: "1px solid rgba(250,111,48,0.2)" }}>
                     <BookOpen className="w-8 h-8 mx-auto" style={{ color: "#FA6F30" }} />
@@ -1347,38 +1751,72 @@ export default function ProviderCredentialsCoverage() {
                       </Button>
                     </Link>
                   </div>
-                ) : !hasTodayClass ? (
-                  <div className="rounded-xl p-5 space-y-3" style={{ background: "rgba(123,142,200,0.07)", border: "1px solid rgba(123,142,200,0.2)" }}>
-                    <div className="flex items-start gap-3">
-                      <Clock className="w-5 h-5 flex-shrink-0 mt-0.5" style={{ color: "#7B8EC8" }} />
-                      <div>
-                        <p className="font-bold text-slate-900">Class Code Available Day-Of</p>
-                        <p className="text-sm text-slate-500 mt-1">Your instructor will give you the class code when you arrive on the day of your scheduled class. Come back then to enter it.</p>
-                      </div>
-                    </div>
-                    <div className="rounded-lg divide-y divide-slate-100 overflow-hidden border border-slate-100">
-                      {myEnrollments.filter(e => e.session_date && ["confirmed", "paid"].includes(e.status)).map(e => (
-                        <div key={e.id} className="flex items-center justify-between px-4 py-3 bg-white text-sm">
-                          <span className="font-semibold text-slate-800">{e.course_title || "NOVI Course"}</span>
-                          <span className="text-xs font-bold px-2 py-1 rounded-full" style={{ background: "rgba(123,142,200,0.12)", color: "#7B8EC8" }}>{e.session_date ? format(new Date(e.session_date), "MMM d, yyyy") : "Date TBD"}</span>
-                        </div>
-                      ))}
-                    </div>
-                    <p className="text-xs text-center" style={{ color: "rgba(0,0,0,0.4)" }}>Don't have a class yet? <Link to={createPageUrl("ProviderEnrollments")} onClick={() => setActivateDialog(false)} className="underline font-semibold" style={{ color: "#FA6F30" }}>Browse courses →</Link></p>
-                  </div>
                 ) : (
                   <div className="space-y-3">
-                    <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-sm text-green-800 flex items-center gap-2">
-                      <CheckCircle className="w-4 h-4 flex-shrink-0 text-green-600" />
-                      You have a class today! Enter the code your instructor provides.
+                    <div className="rounded-xl p-4 space-y-2" style={{ background: "rgba(123,142,200,0.07)", border: "1px solid rgba(123,142,200,0.2)" }}>
+                      <p className="text-sm font-semibold text-slate-900">Select your enrolled course and date</p>
                     </div>
-                    <Input placeholder="Enter class code..." value={classCode} onChange={e => { setClassCode(e.target.value.toUpperCase()); setCodeError(""); }} className="text-lg font-mono tracking-widest text-center" />
-                    {codeError && <p className="text-sm text-red-500">{codeError}</p>}
-                    <Button onClick={() => verifyCodeMutation.mutate()} disabled={!classCode || verifyCodeMutation.isPending} className="w-full" style={{ background: "#FA6F30", color: "#fff" }}>
-                      {verifyCodeMutation.isPending ? "Verifying..." : "Verify Code"}
+                    <div className="rounded-lg divide-y divide-slate-100 overflow-hidden border border-slate-100">
+                      {classCodeEnrollmentWindows.map(({ key, enrollment, course, window, isOpen, isAttended }) => (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => { setSelectedCoverageCourseKey(key); setCodeError(""); }}
+                          className={`w-full text-left px-4 py-3 text-sm border-l-4 transition-all ${selectedCoverageCourseKey === key ? "bg-orange-100 border-l-orange-500 shadow-sm" : "bg-white border-l-transparent"}`}
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="font-semibold text-slate-800">{course?.title || enrollment.course_title || "Course"}</span>
+                            <span className={`text-xs font-bold px-2 py-1 rounded-full ${
+                              isAttended
+                                ? "bg-blue-100 text-blue-700"
+                                : isOpen
+                                  ? "bg-green-100 text-green-700"
+                                  : "bg-slate-100 text-slate-600"
+                            }`}>
+                              {isAttended ? "Attended" : isOpen ? "Class is on" : "Class not started"}
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-500 mt-1">
+                            {formatSessionDateLabel(enrollment.session_date)}
+                          </p>
+                          {window ? (
+                            <p className="text-xs text-slate-500 mt-1">
+                              Time (EST): {formatEstClockTime(window.startAt)} - {formatEstClockTime(window.endAt)}
+                            </p>
+                          ) : (
+                            <p className="text-xs text-amber-700 mt-1">Session timing not configured by admin yet.</p>
+                          )}
+                          {!isAttended && (
+                            <p className={`text-xs mt-1 ${isOpen ? "text-green-700" : "text-slate-500"}`}>
+                              {isOpen ? "Class is on for this course. Enter code below." : "Class not started for this course yet."}
+                            </p>
+                          )}
+                          {isOpen && !isAttended && (
+                            <p className="text-xs mt-1 text-green-700">
+                              The course window to enter code will be open for 24 hours after the course end time, in case you missed to enter code during class, you can enter within this timeframe.
+                            </p>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                    {selectedCoverageWindow ? (
+                      <p className="text-xs text-slate-600">
+                        Selected: {selectedCoverageWindow.course?.title || selectedCoverageWindow.enrollment.course_title || "Course"} ({formatSessionDateLabel(selectedCoverageWindow.enrollment.session_date)}) - {selectedCoverageWindow.isAttended ? "Attended" : selectedCoverageWindow.isOpen ? "Class is on" : "Class not started"}
+                      </p>
+                    ) : (
+                      <div className="rounded-lg px-3 py-2.5 border border-amber-300 bg-amber-50 text-amber-800 text-xs font-semibold flex items-center gap-2">
+                        <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+                        Select a course row first to enable code entry.
+                      </div>
+                    )}
+                    <Input placeholder="Enter class code..." value={classCode} onChange={e => { setClassCode(e.target.value.toUpperCase()); setCodeError(""); }} className="text-lg font-mono tracking-widest text-center" disabled={!selectedCoverageWindow || selectedCoverageWindow.isAttended || !selectedCoverageWindow.isOpen} />
+                    {codeError && <p className="text-sm text-red-500 whitespace-pre-line">{codeError}</p>}
+                    <Button onClick={() => verifyCodeMutation.mutate()} disabled={!selectedCoverageWindow || selectedCoverageWindow.isAttended || !selectedCoverageWindow.isOpen || !classCode || verifyCodeMutation.isPending} className="w-full" style={{ background: "#FA6F30", color: "#fff" }}>
+                      {selectedCoverageWindow?.isAttended ? "Already Attended" : verifyCodeMutation.isPending ? "Verifying..." : "Verify Code"}
                     </Button>
+                    <p className="text-xs text-center" style={{ color: "rgba(0,0,0,0.4)" }}>Don't have a class yet? <Link to={createPageUrl("ProviderEnrollments")} onClick={() => setActivateDialog(false)} className="underline font-semibold" style={{ color: "#FA6F30" }}>Browse courses →</Link></p>
                   </div>
-                )
+                ))
               ) : certSubmitted ? (
                 <div className="border border-green-200 bg-green-50 rounded-xl p-6 text-center">
                   <CheckCircle className="w-10 h-10 text-green-500 mx-auto mb-2" />
@@ -1407,7 +1845,12 @@ export default function ProviderCredentialsCoverage() {
                     <span className="text-sm text-slate-500">{uploadingCert ? "Uploading..." : certFileUrl ? "Certificate uploaded ✓" : "Upload certification PDF or image"}</span>
                     <input type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png" onChange={uploadCertFile} />
                   </label>
-                  <Button onClick={() => submitExternalCertMutation.mutate()} disabled={!certForm.cert_name || !certForm.issuing_school || !certFileUrl || !certForm.service_type_id || submitExternalCertMutation.isPending} className="w-full" style={{ background: "#FA6F30", color: "#fff" }}>
+                  {uploadCertError && <p className="text-xs text-red-500">{uploadCertError}</p>}
+                  {submitCertError && <p className="text-xs text-red-500">{submitCertError}</p>}
+                  {!isUsableUploadedUrl(certFileUrl) && !uploadingCert && !uploadCertError && (
+                    <p className="text-xs text-slate-500">Certification file is required before submit.</p>
+                  )}
+                  <Button onClick={() => submitExternalCertMutation.mutate()} disabled={!certForm.cert_name || !certForm.issuing_school || !isUsableUploadedUrl(certFileUrl) || !certForm.service_type_id || submitExternalCertMutation.isPending} className="w-full" style={{ background: "#FA6F30", color: "#fff" }}>
                     {submitExternalCertMutation.isPending ? "Submitting..." : "Submit for Review"}
                   </Button>
                 </div>
@@ -1421,8 +1864,14 @@ export default function ProviderCredentialsCoverage() {
               {availableServices.length === 0 ? (
                 <div className="text-center py-4 space-y-3">
                   <p className="font-semibold text-slate-900">No eligible services yet</p>
-                  <p className="text-sm text-slate-500">Complete a NOVI course to unlock specific services.</p>
-                  <Link to={createPageUrl("ProviderEnrollments")}><Button style={{ background: "#FA6F30", color: "#fff" }} className="w-full">Browse Courses</Button></Link>
+                  <p className="text-sm text-slate-500">
+                    {verifiedSession
+                      ? "Code verified. No service is unlocked yet for MD coverage from this course."
+                      : "Complete a NOVI course to unlock specific services."}
+                  </p>
+                  {!verifiedSession && (
+                    <Link to={createPageUrl("ProviderEnrollments")}><Button style={{ background: "#FA6F30", color: "#fff" }} className="w-full">Browse Courses</Button></Link>
+                  )}
                 </div>
               ) : availableServices.map(s => (
                 <div key={s.id} onClick={() => setSelectedServiceTypeId(s.id)} className={`border-2 rounded-xl p-4 cursor-pointer transition-all ${selectedServiceTypeId === s.id ? "border-orange-400 bg-orange-50" : "border-slate-100 hover:border-slate-300"}`}>
@@ -1659,7 +2108,13 @@ export default function ProviderCredentialsCoverage() {
                   </label>
                 </div>
               ))}
-              <Button onClick={() => setCertSubmitStep(1)} disabled={!extCertForm.cert_name || !extCertForm.issuing_school || !extCertFileUrl || !extLicenseFileUrl} className="w-full" style={{ background: "#FA6F30", color: "#fff" }}>
+              {uploadExtCertError && <p className="text-xs text-red-500">{uploadExtCertError}</p>}
+              {uploadExtLicenseError && <p className="text-xs text-red-500">{uploadExtLicenseError}</p>}
+              {submitExtCertError && <p className="text-xs text-red-500">{submitExtCertError}</p>}
+              {(!isUsableUploadedUrl(extCertFileUrl) || !isUsableUploadedUrl(extLicenseFileUrl)) && !uploadExtCertError && !uploadExtLicenseError && (
+                <p className="text-xs text-slate-500">Upload both certification and license files to continue.</p>
+              )}
+              <Button onClick={() => setCertSubmitStep(1)} disabled={!extCertForm.cert_name || !extCertForm.issuing_school || !isUsableUploadedUrl(extCertFileUrl) || !isUsableUploadedUrl(extLicenseFileUrl)} className="w-full" style={{ background: "#FA6F30", color: "#fff" }}>
                 Continue — Select Service <ChevronRight className="w-4 h-4 ml-1" />
               </Button>
             </div>

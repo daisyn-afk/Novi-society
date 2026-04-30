@@ -15,6 +15,13 @@ export const AuthProvider = ({ children }) => {
     checkAppState();
   }, []);
 
+  const setAuthenticatedSession = (currentUser) => {
+    setUser(currentUser);
+    setIsAuthenticated(true);
+    setAuthError(null);
+    setIsLoadingAuth(false);
+  };
+
   const checkAppState = async () => {
     try {
       // Base44-specific public app bootstrap has been removed.
@@ -36,10 +43,20 @@ export const AuthProvider = ({ children }) => {
     try {
       // Now check if the user is authenticated
       setIsLoadingAuth(true);
+      const hasSession = typeof base44.auth?.hasSession === "function"
+        ? base44.auth.hasSession()
+        : true;
+      if (!hasSession) {
+        setIsLoadingAuth(false);
+        setIsAuthenticated(false);
+        setAuthError({
+          type: "auth_required",
+          message: "Authentication required"
+        });
+        return;
+      }
       const currentUser = await base44.auth.me();
-      setUser(currentUser);
-      setIsAuthenticated(true);
-      setIsLoadingAuth(false);
+      setAuthenticatedSession(currentUser);
     } catch (error) {
       console.error('User auth check failed:', error);
       setIsLoadingAuth(false);
@@ -69,8 +86,11 @@ export const AuthProvider = ({ children }) => {
   };
 
   const navigateToLogin = () => {
-    // Use the SDK's redirectToLogin method
-    base44.auth.redirectToLogin(window.location.href);
+    const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    const loginPath = `/login?next=${encodeURIComponent(currentPath)}`;
+    if (window.location.pathname !== "/login") {
+      window.location.href = loginPath;
+    }
   };
 
   return (
@@ -83,7 +103,8 @@ export const AuthProvider = ({ children }) => {
       appPublicSettings,
       logout,
       navigateToLogin,
-      checkAppState
+      checkAppState,
+      setAuthenticatedSession
     }}>
       {children}
     </AuthContext.Provider>

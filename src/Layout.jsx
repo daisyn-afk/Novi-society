@@ -1,3 +1,4 @@
+// @ts-nocheck — checkJs + untyped base44 client causes false-positive TS errors in this file
 import { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { createPageUrl } from "@/utils";
@@ -6,20 +7,32 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   LayoutDashboard, BookOpen, Award, FileText, Users,
   Calendar, Star, ShieldCheck, ClipboardList, Settings,
-  Menu, X, LogOut, ChevronRight, User, Lock, Stethoscope, Sparkles, Clock, AlertTriangle, ShoppingBag, Mail, Eye, Rocket
+  Menu, X, LogOut, User, Lock, Stethoscope, Sparkles, Clock, AlertTriangle, ShoppingBag, Mail, Rocket, TicketPercent
 } from "lucide-react";
 import { useProviderAccess } from "@/components/useProviderAccess";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import NotificationBell from "@/components/NotificationBell";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { normalizeRole } from "@/lib/routeAccessPolicy";
 
 const navByRole = {
   admin: [
     { label: "Dashboard", icon: LayoutDashboard, page: "AdminDashboard" },
+    { label: "Users", icon: Users, page: "AdminUsers" },
     { label: "Pre-Order Applications", icon: ClipboardList, page: "AdminPreOrders" },
-    { label: "Courses & Enrollments", icon: BookOpen, page: "AdminCourses" },
+    { label: "Courses", icon: BookOpen, page: "admincourses" },
+    { label: "Enrollments", icon: ClipboardList, page: "AdminEnrollments" },
     { label: "Providers", icon: Users, page: "AdminProviders" },
     { label: "Licenses & Certifications", icon: FileText, page: "AdminLicenses" },
     { label: "Service Types", icon: Settings, page: "AdminServiceTypes" },
+    { label: "Promo Codes", icon: TicketPercent, page: "AdminPromoCodes" },
     { label: "Manufacturer Marketplace", icon: ShoppingBag, page: "AdminManufacturers" },
     { label: "Email Automation", icon: Mail, page: "AdminEmailTemplates" },
     { label: "Growth Studio Editor", icon: Rocket, page: "AdminLaunchPad" },
@@ -29,6 +42,7 @@ const navByRole = {
   provider: [
     { label: "Dashboard", icon: LayoutDashboard, page: "ProviderDashboard" },
     { label: "Courses & Enrollments", icon: BookOpen, page: "ProviderEnrollments" },
+    { label: "Class Attendance", icon: Clock, page: "ProviderCodeRedemption" },
     { label: "My Credentials & Coverage", icon: ShieldCheck, page: "ProviderCredentialsCoverage" },
     { label: "Supplier Marketplace", icon: ShoppingBag, page: "ProviderMarketplace" },
     { label: "Growth Studio", icon: Rocket, page: "ProviderLaunchPad" },
@@ -56,8 +70,7 @@ const navByRole = {
   ],
 };
 
-const BARE_PAGES = ["Onboarding", "ProviderBasicOnboarding", "ProviderGettingStarted", "LandingPage", "ProviderApplication", "NoviLanding"];
-const PUBLIC_PAGES = ["NoviLanding", "LandingPage"];
+const BARE_PAGES = ["Onboarding", "ProviderGettingStarted", "LandingPage", "ProviderApplication", "NoviLanding"];
 const PROVIDER_FREE_PAGES = ["ProviderDashboard", "CourseCatalog", "ProviderProfile", "ProviderGettingStarted"];
 
 export default function Layout({ children, currentPageName }) {
@@ -79,14 +92,38 @@ export default function Layout({ children, currentPageName }) {
     }
   }, [isSuccess, user, currentPageName]);
 
-  const role = user?.role || "provider";
-  const navItems = navByRole[role] || navByRole.provider;
+  const role = normalizeRole(user?.role || "provider");
+  const navRole = role;
+  const navItems = navByRole[navRole] || navByRole.provider;
 
   const { data: providerEnrollments = [] } = useQuery({
     queryKey: ["my-enrollments"],
     queryFn: async () => {
       const me = await base44.auth.me();
-      return base44.entities.Enrollment.filter({ provider_id: me.id });
+      const [byProviderIdResult, byEmailResult, preOrdersResult] = await Promise.allSettled([
+        me?.id ? base44.entities.Enrollment.filter({ provider_id: me.id }) : Promise.resolve([]),
+        me?.email ? base44.entities.Enrollment.filter({ provider_email: me.email }) : Promise.resolve([]),
+        base44.entities.PreOrder.list("-created_date", 500),
+      ]);
+      const byProviderId = byProviderIdResult.status === "fulfilled" ? (byProviderIdResult.value || []) : [];
+      const byEmail = byEmailResult.status === "fulfilled" ? (byEmailResult.value || []) : [];
+      const preOrders = preOrdersResult.status === "fulfilled" ? (preOrdersResult.value || []) : [];
+      const email = String(me?.email || "").toLowerCase();
+      const derivedFromPreOrders = preOrders
+        .filter((p) => p?.order_type === "course")
+        .filter((p) => ["paid", "confirmed", "completed"].includes(String(p?.status || "").toLowerCase()))
+        .filter((p) => String(p?.customer_email || "").toLowerCase() === email)
+        .map((p) => ({
+          id: `preorder-${p.id}`,
+          pre_order_id: p.id,
+          course_id: p.course_id,
+          provider_id: me?.id || null,
+          provider_email: p.customer_email,
+          provider_name: p.customer_name,
+          status: p.status === "completed" ? "confirmed" : p.status,
+          created_date: p.created_date,
+        }));
+      return Array.from(new Map([...(byProviderId || []), ...(byEmail || []), ...derivedFromPreOrders].map((row) => [row.pre_order_id || row.id, row])).values());
     },
     enabled: role === "provider",
   });
@@ -101,6 +138,16 @@ export default function Layout({ children, currentPageName }) {
   });
 
   const isProviderUnlocked = true;
+
+  const handleLogout = async () => {
+    try {
+      queryClient.clear();
+    } catch (e) {
+      // no-op
+    }
+    const redirectTarget = `${window.location.origin}/login`;
+    base44.auth.logout(redirectTarget);
+  };
 
   if (BARE_PAGES.includes(currentPageName)) {
     return <div>{children}</div>;
@@ -279,33 +326,6 @@ export default function Layout({ children, currentPageName }) {
           })}
         </nav>
 
-        {/* Role Switcher */}
-        <div className="relative z-10 px-3 pb-3 pt-3" style={{ borderTop: "1px solid rgba(123,142,200,0.1)" }}>
-          <p className="text-xs px-1 mb-2 uppercase tracking-widest font-semibold" style={{ color: "rgba(123,142,200,0.65)", fontSize: "9px" }}>
-            Switch Role
-          </p>
-          <div className="grid grid-cols-2 gap-1">
-            {[
-              { value: "admin", label: "Admin", page: "AdminDashboard" },
-              { value: "provider", label: "Provider", page: "ProviderDashboard" },
-              { value: "patient", label: "Patient", page: "PatientJourney" },
-              { value: "medical_director", label: "MD", page: "MDDashboard" },
-            ].map(({ value, label, page }) => (
-              <button
-                key={value}
-                onClick={async () => {
-                  await base44.auth.updateMe({ role: value });
-                  await queryClient.invalidateQueries({ queryKey: ["me"] });
-                  navigate(createPageUrl(page));
-                }}
-                className={`role-btn ${role === value ? "role-btn-active" : "role-btn-inactive"}`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-
         {/* User footer */}
         <div className="relative z-10 p-4" style={{ borderTop: "1px solid rgba(123,142,200,0.1)" }}>
           <div className="flex items-center gap-2.5">
@@ -319,8 +339,14 @@ export default function Layout({ children, currentPageName }) {
               <p className="text-xs font-semibold truncate" style={{ color: "rgba(30,37,53,0.9)" }}>{user?.full_name || "User"}</p>
               <p className="truncate" style={{ fontSize: 10, color: "rgba(123,142,200,0.65)" }}>{user?.email}</p>
             </div>
-            <button onClick={() => base44.auth.logout()} className="hover:opacity-70 transition-opacity" title="Logout">
-              <LogOut className="w-3.5 h-3.5" style={{ color: "rgba(123,142,200,0.55)" }} />
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-1 px-2 py-1 rounded-md hover:bg-black/5 transition-colors"
+              title="Log out"
+              style={{ color: "rgba(123,142,200,0.85)" }}
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span style={{ fontSize: 11, fontWeight: 600 }}>Log out</span>
             </button>
           </div>
         </div>
@@ -340,12 +366,38 @@ export default function Layout({ children, currentPageName }) {
           </div>
           <div className="flex items-center gap-3 ml-auto">
             <NotificationBell />
-            <Avatar className="w-7 h-7 cursor-pointer">
-              <AvatarImage src={user?.avatar_url} />
-                <AvatarFallback style={{ background: "linear-gradient(135deg, #7B8EC8, #4a6db8)", color: "white", fontSize: 10, fontWeight: 700 }}>
-                {user?.full_name?.[0] || "U"}
-              </AvatarFallback>
-            </Avatar>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  className="rounded-full focus:outline-none focus:ring-2 focus:ring-offset-1"
+                  style={{ outlineColor: "rgba(200,230,60,0.6)" }}
+                  aria-label="Open user menu"
+                >
+                  <Avatar className="w-7 h-7 cursor-pointer">
+                    <AvatarImage src={user?.avatar_url} />
+                    <AvatarFallback style={{ background: "linear-gradient(135deg, #7B8EC8, #4a6db8)", color: "white", fontSize: 10, fontWeight: 700 }}>
+                      {user?.full_name?.[0] || "U"}
+                    </AvatarFallback>
+                  </Avatar>
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel>
+                  <div className="flex flex-col">
+                    <span className="text-sm font-semibold truncate">{user?.full_name || "User"}</span>
+                    <span className="text-xs font-normal text-muted-foreground truncate">{user?.email}</span>
+                  </div>
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={handleLogout}
+                  className="text-red-600 focus:text-red-600 focus:bg-red-50 cursor-pointer"
+                >
+                  <LogOut className="w-4 h-4 mr-2" />
+                  Log out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </header>
 
@@ -355,7 +407,7 @@ export default function Layout({ children, currentPageName }) {
           {role === "provider" && providerAccessStatus === "pending" && (
             <div className="flex items-center gap-3 px-4 py-3 rounded-2xl mb-5" style={{ background: "rgba(250,111,48,0.15)", border: "1px solid rgba(250,111,48,0.4)" }}>
               <Clock className="w-4 h-4 flex-shrink-0" style={{ color: "#FA6F30" }} />
-              <p className="text-sm font-semibold text-white flex-1">
+              <p className="text-sm font-semibold flex-1" style={{ color: "#7A2E11" }}>
                 Your license is under review — courses & full portal unlock once approved.
               </p>
               <span className="text-xs font-bold px-3 py-1 rounded-full flex-shrink-0" style={{ background: "rgba(250,111,48,0.25)", color: "#FA6F30", border: "1px solid rgba(250,111,48,0.4)" }}>
@@ -366,7 +418,7 @@ export default function Layout({ children, currentPageName }) {
           {role === "provider" && providerAccessStatus === "courses_only" && (
             <div className="flex items-center gap-3 px-4 py-3 rounded-2xl mb-5" style={{ background: "rgba(123,142,200,0.15)", border: "1px solid rgba(123,142,200,0.4)" }}>
               <AlertTriangle className="w-4 h-4 flex-shrink-0" style={{ color: "#7B8EC8" }} />
-              <p className="text-sm font-semibold text-white flex-1">
+              <p className="text-sm font-semibold flex-1" style={{ color: "#24395D" }}>
                 License verified! Enroll in a NOVI course or upload an external cert to unlock MD coverage.
               </p>
             </div>
@@ -374,7 +426,7 @@ export default function Layout({ children, currentPageName }) {
           {role === "provider" && providerAccessStatus === "md_eligible" && (
             <div className="flex items-center gap-3 px-4 py-3 rounded-2xl mb-5" style={{ background: "rgba(200,230,60,0.12)", border: "1px solid rgba(200,230,60,0.4)" }}>
               <AlertTriangle className="w-4 h-4 flex-shrink-0" style={{ color: "#C8E63C" }} />
-              <p className="text-sm font-semibold text-white flex-1">
+              <p className="text-sm font-semibold flex-1" style={{ color: "#3D5600" }}>
                 Certification approved! Sign up for an MD Board subscription to unlock full practice features.
               </p>
             </div>

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
+import { adminApiRequest } from "@/api/adminApiRequest";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -79,7 +80,8 @@ const EMPTY_SERVICE = {
   name: "", category: "injectables", description: "", is_active: true,
   requires_novi_course: true, requires_license_types: [], requires_supervision_months: 0,
   allowed_areas: [], max_units_per_session: null, protocol_notes: "", md_agreement_text: "",
-  md_contract_url: "", protocol_document_urls: [], scope_rules: [], coverage_tiers: [],
+  md_contract_url: "", platform_agreement_text: "", protocol_document_urls: [], scope_rules: [], coverage_tiers: [],
+  requires_gfe: false, qualiphy_exam_ids: [], growth_studio_text: "", supplier_accounts_text: "",
 };
 
 const EMPTY_TIER = {
@@ -103,6 +105,7 @@ export default function AdminServiceTypes() {
   const [tierForm, setTierForm] = useState(EMPTY_TIER);
   const [tierNewArea, setTierNewArea] = useState("");
   const [tierNewRule, setTierNewRule] = useState({ rule_name: "", rule_value: "", unit: "" });
+  const [uploadError, setUploadError] = useState("");
 
   const { data: services = [], isLoading } = useQuery({
     queryKey: ["service-types"],
@@ -159,9 +162,21 @@ export default function AdminServiceTypes() {
     const file = e.target.files[0];
     if (!file) return;
     setUploadingContract(true);
-    const { file_url } = await base44.integrations.Core.UploadFile({ file });
-    setForm(f => ({ ...f, md_contract_url: file_url }));
-    setUploadingContract(false);
+    setUploadError("");
+    try {
+      const body = new FormData();
+      body.append("file", file);
+      const uploaded = await adminApiRequest("/admin/uploads/md-document", {
+        method: "POST",
+        body
+      });
+      setForm(f => ({ ...f, md_contract_url: uploaded?.url || "" }));
+    } catch (error) {
+      setUploadError(error?.message || "Failed to upload MD contract.");
+    } finally {
+      setUploadingContract(false);
+      e.target.value = "";
+    }
   };
 
   const uploadProtocol = async (e) => {
@@ -169,10 +184,25 @@ export default function AdminServiceTypes() {
     if (!file) return;
     const name = newProtocolName.trim() || file.name;
     setUploadingProtocol(true);
-    const { file_url } = await base44.integrations.Core.UploadFile({ file });
-    setForm(f => ({ ...f, protocol_document_urls: [...(f.protocol_document_urls || []), { name, url: file_url }] }));
-    setNewProtocolName("");
-    setUploadingProtocol(false);
+    setUploadError("");
+    try {
+      const body = new FormData();
+      body.append("file", file);
+      const uploaded = await adminApiRequest("/admin/uploads/md-document", {
+        method: "POST",
+        body
+      });
+      setForm(f => ({
+        ...f,
+        protocol_document_urls: [...(f.protocol_document_urls || []), { name, url: uploaded?.url || "" }]
+      }));
+      setNewProtocolName("");
+    } catch (error) {
+      setUploadError(error?.message || "Failed to upload protocol document.");
+    } finally {
+      setUploadingProtocol(false);
+      e.target.value = "";
+    }
   };
 
   const removeProtocol = (i) => setForm(f => ({ ...f, protocol_document_urls: f.protocol_document_urls.filter((_, idx) => idx !== i) }));
@@ -690,6 +720,7 @@ export default function AdminServiceTypes() {
                     <input type="file" className="hidden" accept=".pdf,.doc,.docx,.png,.jpg" onChange={uploadProtocol} disabled={uploadingProtocol} />
                   </label>
                 </div>
+                {uploadError && <p className="text-xs text-red-500 mt-2">{uploadError}</p>}
               </div>
             </>}
 

@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -7,6 +8,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { X, Award, FileText, Plus, BookOpen, Users, Clock, DollarSign, ImageIcon } from "lucide-react";
+import { adminUploadsApi } from "@/api/adminUploadsApi";
+import { trainerPrepApi } from "@/api/trainerPrepApi";
 
 export const EMPTY_TEMPLATE = {
   type: "template",
@@ -16,13 +19,36 @@ export const EMPTY_TEMPLATE = {
   what_to_bring: "", getting_ready_info: "",
   certifications_awarded: [], linked_service_type_ids: [],
   pre_course_materials: [], platform_coverage: [],
+  session_dates: [],
+  tags: [],
+  certification_name: "",
+  trainer_prep_supply_list_id: "",
+  trainer_prep_supply_item_ids: [],
   is_active: true, is_featured: false,
 };
 
 export default function CourseTemplateForm({ open, onOpenChange, form, setForm, onSave, saving, editing, serviceTypes }) {
+  const queryClient = useQueryClient();
   const [newCert, setNewCert] = useState({ service_type_id: "", cert_name: "" });
   const [newMaterial, setNewMaterial] = useState({ title: "", type: "pdf", url: "", content: "", required: true });
   const [newCoverage, setNewCoverage] = useState("");
+  const [uploadingCover, setUploadingCover] = useState(false);
+  const [coverUploadError, setCoverUploadError] = useState("");
+  const [selectedSupplyItemId, setSelectedSupplyItemId] = useState("");
+  const [newSupplyItem, setNewSupplyItem] = useState({ item_name: "", purchase_type: "every_course", qty: "" });
+  const [addingSupplyItem, setAddingSupplyItem] = useState(false);
+  const [supplyItemError, setSupplyItemError] = useState("");
+  const [supplyItemSuccess, setSupplyItemSuccess] = useState("");
+  const { data: supplyLists = [] } = useQuery({
+    queryKey: ["trainer-prep-supply-lists"],
+    queryFn: () => trainerPrepApi.listSupplyLists(),
+    enabled: open
+  });
+  const selectedSupplyList = supplyLists.find((l) => l.id === form.trainer_prep_supply_list_id) || supplyLists[0] || null;
+  const selectedTemplateSupplyItems = useMemo(() => {
+    const ids = new Set(form.trainer_prep_supply_item_ids || []);
+    return (selectedSupplyList?.items || []).filter((item) => ids.has(item.id));
+  }, [selectedSupplyList, form.trainer_prep_supply_item_ids]);
 
   const eligibleServiceTypes = serviceTypes.filter(s =>
     s.is_active && s.md_agreement_text?.trim() &&
@@ -62,6 +88,33 @@ export default function CourseTemplateForm({ open, onOpenChange, form, setForm, 
     const ids = f.linked_service_type_ids || [];
     return { ...f, linked_service_type_ids: ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id] };
   });
+
+  const uploadCover = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    setCoverUploadError("");
+    if (!file) return;
+
+    if (file.size > 2 * 1024 * 1024) {
+      setCoverUploadError("Image must be 2MB or smaller.");
+      return;
+    }
+
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      setCoverUploadError("Only JPG, PNG, and WEBP images are allowed.");
+      return;
+    }
+
+    try {
+      setUploadingCover(true);
+      const { url } = await adminUploadsApi.uploadCourseCoverImage(file);
+      setForm((prev) => ({ ...prev, cover_image_url: url }));
+    } catch (error) {
+      setCoverUploadError(error?.message || "Cover image upload failed.");
+    } finally {
+      setUploadingCover(false);
+    }
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -127,9 +180,163 @@ export default function CourseTemplateForm({ open, onOpenChange, form, setForm, 
             </div>
 
             <div>
-              <Label className="text-xs font-semibold text-slate-600 flex items-center gap-1"><ImageIcon className="w-3 h-3" /> Cover Image URL</Label>
-              <Input value={form.cover_image_url} onChange={e => setForm({ ...form, cover_image_url: e.target.value })} placeholder="https://..." className="mt-1" />
-              <p className="text-xs text-slate-400 mt-1">Shown as the course thumbnail in the catalog.</p>
+              <Label className="text-xs font-semibold text-slate-600 flex items-center gap-1"><ImageIcon className="w-3 h-3" /> Cover Image</Label>
+              <Input type="file" accept="image/jpeg,image/png,image/webp" onChange={uploadCover} className="mt-1" disabled={uploadingCover} />
+              <p className="text-xs text-slate-400 mt-1">Upload JPG, PNG, or WEBP. Max size 2MB. Shown as the course thumbnail in the catalog.</p>
+              {uploadingCover && <p className="text-xs mt-1 text-blue-600">Uploading cover image...</p>}
+              {coverUploadError && <p className="text-xs mt-1 text-red-500">{coverUploadError}</p>}
+              {form.cover_image_url && (
+                <div className="mt-2 rounded-xl border border-slate-200 p-2 bg-white space-y-2">
+                  <img src={form.cover_image_url} alt="Course cover preview" className="w-full max-h-40 object-cover rounded-lg" />
+                  <div className="flex justify-end">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setForm((prev) => ({ ...prev, cover_image_url: "" }))}
+                    >
+                      Remove image
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="md:col-span-2">
+              {selectedSupplyList && (
+                <div className="border rounded-xl p-3 bg-slate-50 space-y-3">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Template Checklist Items</p>
+
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <Select value={selectedSupplyItemId} onValueChange={setSelectedSupplyItemId}>
+                      <SelectTrigger className="flex-1 h-auto min-h-10">
+                        <SelectValue placeholder="Select an item to include" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(selectedSupplyList.items || []).map((item) => (
+                          <SelectItem key={item.id} value={item.id} className="whitespace-normal break-words leading-snug py-2">
+                            {item.item_name} - {item.purchase_type === "one_time" ? "One-Time" : "Every Course"}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full sm:w-auto sm:flex-shrink-0"
+                      onClick={() => {
+                        setSupplyItemError("");
+                        setSupplyItemSuccess("");
+                        if (!selectedSupplyItemId) return;
+                        const ids = new Set(form.trainer_prep_supply_item_ids || []);
+                        ids.add(selectedSupplyItemId);
+                        setForm({
+                          ...form,
+                          trainer_prep_supply_list_id: form.trainer_prep_supply_list_id || selectedSupplyList.id,
+                          trainer_prep_supply_item_ids: [...ids]
+                        });
+                        setSelectedSupplyItemId("");
+                        setSupplyItemSuccess("Item added to template checklist.");
+                      }}
+                    >
+                      Add
+                    </Button>
+                  </div>
+
+                  <div className="space-y-1">
+                    {selectedTemplateSupplyItems.map((item) => (
+                      <div key={item.id} className="flex items-center justify-between text-xs bg-white border rounded px-2 py-1.5">
+                        <span>{item.item_name} - {item.purchase_type === "one_time" ? "One-Time" : "Every Course"}</span>
+                        <button
+                          type="button"
+                          className="text-slate-400 hover:text-red-500"
+                          onClick={() => setForm({
+                            ...form,
+                            trainer_prep_supply_item_ids: (form.trainer_prep_supply_item_ids || []).filter((id) => id !== item.id)
+                          })}
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                    {selectedTemplateSupplyItems.length === 0 && (
+                      <p className="text-xs text-slate-400">No items selected yet.</p>
+                    )}
+                  </div>
+
+                  <div className="pt-2 border-t border-slate-200 space-y-2">
+                    <p className="text-xs font-semibold text-slate-600">Add New Item to This List</p>
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                      <Input
+                        className="md:col-span-2"
+                        placeholder="Item name"
+                        value={newSupplyItem.item_name}
+                        onChange={(e) => setNewSupplyItem((prev) => ({ ...prev, item_name: e.target.value }))}
+                      />
+                      <Select
+                        value={newSupplyItem.purchase_type}
+                        onValueChange={(v) => setNewSupplyItem((prev) => ({ ...prev, purchase_type: v }))}
+                      >
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="every_course">Every Course</SelectItem>
+                          <SelectItem value="one_time">One-Time</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Input
+                        type="number"
+                        placeholder="Qty"
+                        value={newSupplyItem.qty}
+                        onChange={(e) => setNewSupplyItem((prev) => ({ ...prev, qty: e.target.value }))}
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={addingSupplyItem}
+                      onClick={async () => {
+                        setSupplyItemError("");
+                        setSupplyItemSuccess("");
+                        if (!selectedSupplyList?.id) {
+                          setSupplyItemError("No trainer prep list found.");
+                          return;
+                        }
+                        if (!newSupplyItem.item_name.trim()) {
+                          setSupplyItemError("Item name is required.");
+                          return;
+                        }
+                        try {
+                          setAddingSupplyItem(true);
+                          const created = await trainerPrepApi.createSupplyItem(selectedSupplyList.id, {
+                            item_name: newSupplyItem.item_name.trim(),
+                            purchase_type: newSupplyItem.purchase_type,
+                            qty: newSupplyItem.qty === "" ? null : Number(newSupplyItem.qty)
+                          });
+                          await queryClient.invalidateQueries({ queryKey: ["trainer-prep-supply-lists"] });
+                          const ids = new Set(form.trainer_prep_supply_item_ids || []);
+                          ids.add(created.id);
+                          setForm({
+                            ...form,
+                            trainer_prep_supply_list_id: form.trainer_prep_supply_list_id || selectedSupplyList.id,
+                            trainer_prep_supply_item_ids: [...ids]
+                          });
+                          setSelectedSupplyItemId("");
+                          setNewSupplyItem({ item_name: "", purchase_type: "every_course", qty: "" });
+                          setSupplyItemSuccess("New checklist item added.");
+                        } catch (error) {
+                          setSupplyItemError(error?.message || "Unable to add item.");
+                        } finally {
+                          setAddingSupplyItem(false);
+                        }
+                      }}
+                    >
+                      <Plus className="w-3.5 h-3.5 mr-1" /> {addingSupplyItem ? "Adding..." : "Add New Item"}
+                    </Button>
+                    {supplyItemError && <p className="text-xs text-red-500">{supplyItemError}</p>}
+                    {supplyItemSuccess && <p className="text-xs text-green-600">{supplyItemSuccess}</p>}
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="md:col-span-2">
@@ -344,6 +551,31 @@ export default function CourseTemplateForm({ open, onOpenChange, form, setForm, 
             </div>
 
 
+
+            {/* ── Tags & legacy cert name (schema) ── */}
+            <div className="md:col-span-2">
+              <Label className="text-xs font-semibold text-slate-600">Tags (comma separated)</Label>
+              <Input
+                className="mt-1"
+                value={(form.tags || []).join(", ")}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    tags: e.target.value.split(",").map((t) => t.trim()).filter(Boolean)
+                  })
+                }
+                placeholder="e.g. hands-on, certification"
+              />
+            </div>
+            <div className="md:col-span-2">
+              <Label className="text-xs font-semibold text-slate-600">Certification name (legacy)</Label>
+              <Input
+                className="mt-1"
+                value={form.certification_name || ""}
+                onChange={(e) => setForm({ ...form, certification_name: e.target.value })}
+                placeholder="Optional single cert label for older flows"
+              />
+            </div>
 
             {/* ── SECTION: Visibility ── */}
             <div className="md:col-span-2 flex items-center gap-2 pb-1 border-b border-slate-100 pt-2">
