@@ -577,7 +577,7 @@ async function sendMdServiceConfirmationEmail({ to, customerName, serviceName })
     }
     return result.ok;
   } catch (error) {
-    // eslint-disable-next-line no-console
+    // eslint-disable-next-line no-consolee
     console.error("[checkout] md service confirmation request failed:", error);
     return false;
   }
