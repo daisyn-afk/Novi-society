@@ -30,7 +30,7 @@ const supabaseAdmin = supabaseUrl && supabaseServiceRoleKey
       auth: { persistSession: false, autoRefreshToken: false }
     })
   : null;
-const preorderFallbackTimeoutMs = Number(process.env.PREORDER_FALLBACK_TIMEOUT_MS || 8000);
+const preorderFallbackTimeoutMs = Number(process.env.PREORDER_FALLBACK_TIMEOUT_MS || 4000);
 let coursePromoColumnsPromise = null;
 
 function resolveFrontendBaseUrl(requestOrigin) {
@@ -681,7 +681,9 @@ export async function getPreOrder({ id, sessionId }) {
   const client = await pool.connect();
   try {
     let { rows } = await client.query(
-      `select id, order_type, type, status, course_title, course_date, customer_email, amount_paid, paid_at, created_at, stripe_session_id
+      `select id, order_type, type, status, course_id, course_title, course_date,
+              customer_name, customer_email, amount_paid, paid_at, created_at,
+              stripe_session_id, confirmation_email_sent
        from public.pre_orders
        where ${whereClause}
        limit 1`,
@@ -714,29 +716,32 @@ export async function getPreOrder({ id, sessionId }) {
           const stripeSession = await stripe.checkout.sessions.retrieve(fallbackSessionId);
           const isPaid = stripeSession?.payment_status === "paid" && stripeSession?.status === "complete";
           if (!isPaid) return;
-          try {
-            await processCompletedCheckoutSession(stripeSession);
-          } catch (reconcileErr) {
-            // Keep confirmation unblocked when non-critical reconciliation fails.
-            // eslint-disable-next-line no-console
-            console.error("[checkout] paid-session reconciliation failed, forcing paid status:", reconcileErr?.message || reconcileErr);
-            await client.query(
-              `update public.pre_orders
-               set status = 'paid',
-                   paid_at = coalesce(paid_at, now()),
-                   stripe_payment_intent_id = coalesce($2, stripe_payment_intent_id),
-                   stripe_customer_id = coalesce($3, stripe_customer_id),
-                   updated_at = now()
-               where id = $1`,
-              [
-                preOrder?.id,
-                stripeSession?.payment_intent ? String(stripeSession.payment_intent) : null,
-                stripeSession?.customer ? String(stripeSession.customer) : null
-              ]
-            );
-          }
+          await client.query(
+            `update public.pre_orders
+             set status = 'paid',
+                 paid_at = coalesce(paid_at, now()),
+                 stripe_payment_intent_id = coalesce($2, stripe_payment_intent_id),
+                 stripe_customer_id = coalesce($3, stripe_customer_id),
+                 updated_at = now()
+             where id = $1`,
+            [
+              preOrder?.id,
+              stripeSession?.payment_intent ? String(stripeSession.payment_intent) : null,
+              stripeSession?.customer ? String(stripeSession.customer) : null
+            ]
+          );
+          void (async () => {
+            try {
+              await processCompletedCheckoutSession(stripeSession);
+            } catch (reconcileErr) {
+              // eslint-disable-next-line no-console
+              console.error("[checkout] async paid-session reconciliation failed:", reconcileErr?.message || reconcileErr);
+            }
+          })();
           const refreshed = await client.query(
-            `select id, order_type, type, status, course_title, course_date, customer_email, amount_paid, paid_at, created_at, stripe_session_id
+            `select id, order_type, type, status, course_id, course_title, course_date,
+                    customer_name, customer_email, amount_paid, paid_at, created_at,
+                    stripe_session_id, confirmation_email_sent
              from public.pre_orders
              where ${whereClause}
              limit 1`,
@@ -762,59 +767,62 @@ export async function getPreOrder({ id, sessionId }) {
 
     // Best-effort recovery: if payment is completed but confirmation email
     // was not sent (or failed previously), retry on read.
-    if (preOrder?.status === "paid" && preOrder?.order_type === "course") {
+    if (
+      preOrder?.status === "paid" &&
+      preOrder?.order_type === "course" &&
+      !preOrder?.confirmation_email_sent
+    ) {
       try {
-        const paymentRes = await client.query(
-          `select id, confirmation_email_sent
-           from public.course_payments
-           where pre_order_id = $1
-           limit 1`,
-          [preOrder.id]
-        );
-        const paymentRow = paymentRes.rows[0] || null;
-        if (paymentRow && !paymentRow.confirmation_email_sent) {
-          let courseData = null;
-          if (preOrder.course_id) {
-            const courseRes = await client.query(
-              `select location, session_dates
-               from public.scheduled_courses
-               where id = $1
-               limit 1`,
-              [preOrder.course_id]
-            );
-            const course = courseRes.rows[0] || null;
-            let sessionDates = course?.session_dates || [];
-            if (typeof sessionDates === "string") {
-              try {
-                sessionDates = JSON.parse(sessionDates);
-              } catch {
-                sessionDates = [];
-              }
+        let courseData = null;
+        if (preOrder.course_id) {
+          const courseRes = await client.query(
+            `select location, session_dates
+             from public.scheduled_courses
+             where id = $1
+             limit 1`,
+            [preOrder.course_id]
+          );
+          const course = courseRes.rows[0] || null;
+          let sessionDates = course?.session_dates || [];
+          if (typeof sessionDates === "string") {
+            try {
+              sessionDates = JSON.parse(sessionDates);
+            } catch {
+              sessionDates = [];
             }
-            if (!Array.isArray(sessionDates)) sessionDates = [];
-            courseData = {
-              course_location: course?.location || "",
-              course_session_dates: sessionDates
-            };
           }
+          if (!Array.isArray(sessionDates)) sessionDates = [];
+          courseData = {
+            course_location: course?.location || "",
+            course_session_dates: sessionDates
+          };
+        }
 
-          const sent = await sendConfirmationEmail({
-            to: preOrder.customer_email,
-            customerName: preOrder.customer_name,
-            courseTitle: preOrder.course_title,
-            courseData,
-            courseDate: preOrder.course_date
-          });
+        const sent = await sendConfirmationEmail({
+          to: preOrder.customer_email,
+          customerName: preOrder.customer_name,
+          courseTitle: preOrder.course_title,
+          courseData,
+          courseDate: preOrder.course_date
+        });
 
-          if (sent) {
-            await client.query(
-              `update public.course_payments
-               set confirmation_email_sent = true,
-                   updated_at = now()
-               where id = $1`,
-              [paymentRow.id]
-            );
-          }
+        if (sent) {
+          await client.query(
+            `update public.pre_orders
+             set confirmation_email_sent = true,
+                 confirmation_email_sent_at = now(),
+                 updated_at = now()
+             where id = $1`,
+            [preOrder.id]
+          );
+          await client.query(
+            `update public.course_payments
+             set confirmation_email_sent = true,
+                 updated_at = now()
+             where pre_order_id = $1`,
+            [preOrder.id]
+          );
+          preOrder = { ...preOrder, confirmation_email_sent: true };
         }
       } catch (emailRetryErr) {
         // eslint-disable-next-line no-console

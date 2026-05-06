@@ -37,8 +37,8 @@ export default function PreOrderConfirmation() {
     // Keep polling for course orders until payment status is actually "paid".
     refetchInterval: (query) => {
       const data = query.state.data;
-      if (!data) return 2000;
-      if (data.order_type === "course" && data.status !== "paid") return 2000;
+      if (!data) return 1000;
+      if (data.order_type === "course" && data.status !== "paid") return 1000;
       return false;
     },
     retry: 1
