@@ -581,7 +581,9 @@ export async function getPreOrder({ id, sessionId }) {
   const client = await pool.connect();
   try {
     let { rows } = await client.query(
-      `select id, order_type, type, status, course_title, course_date, customer_email, amount_paid, paid_at, created_at
+      `select id, order_type, type, status, course_id, course_title, course_date,
+              customer_name, customer_email, amount_paid, paid_at, created_at,
+              stripe_session_id, confirmation_email_sent
        from public.pre_orders
        where ${whereClause}
        limit 1`,
@@ -599,7 +601,9 @@ export async function getPreOrder({ id, sessionId }) {
           if (!isPaid) return;
           await processCompletedCheckoutSession(stripeSession);
           const refreshed = await client.query(
-            `select id, order_type, type, status, course_title, course_date, customer_email, amount_paid, paid_at, created_at
+            `select id, order_type, type, status, course_id, course_title, course_date,
+                    customer_name, customer_email, amount_paid, paid_at, created_at,
+                    stripe_session_id, confirmation_email_sent
              from public.pre_orders
              where ${whereClause}
              limit 1`,
@@ -620,6 +624,64 @@ export async function getPreOrder({ id, sessionId }) {
       } catch (error) {
         // eslint-disable-next-line no-console
         console.error("[checkout] pre-order fallback processing failed:", error?.code || error?.message || error);
+      }
+    }
+
+    // Confirmation-page safety net: send course email from pre_orders state
+    // even if downstream course_payments reconciliation partially failed.
+    if (
+      preOrder?.status === "paid" &&
+      preOrder?.order_type === "course" &&
+      !preOrder?.confirmation_email_sent
+    ) {
+      try {
+        let courseData = null;
+        if (preOrder.course_id) {
+          const courseRes = await client.query(
+            `select location, session_dates
+             from public.scheduled_courses
+             where id = $1
+             limit 1`,
+            [preOrder.course_id]
+          );
+          const course = courseRes.rows[0] || null;
+          let sessionDates = course?.session_dates || [];
+          if (typeof sessionDates === "string") {
+            try {
+              sessionDates = JSON.parse(sessionDates);
+            } catch {
+              sessionDates = [];
+            }
+          }
+          if (!Array.isArray(sessionDates)) sessionDates = [];
+          courseData = {
+            course_location: course?.location || "",
+            course_session_dates: sessionDates
+          };
+        }
+
+        const sent = await sendConfirmationEmail({
+          to: preOrder.customer_email,
+          customerName: preOrder.customer_name,
+          courseTitle: preOrder.course_title,
+          courseData,
+          courseDate: preOrder.course_date
+        });
+
+        if (sent) {
+          await client.query(
+            `update public.pre_orders
+             set confirmation_email_sent = true,
+                 confirmation_email_sent_at = now(),
+                 updated_at = now()
+             where id = $1`,
+            [preOrder.id]
+          );
+          preOrder = { ...preOrder, confirmation_email_sent: true };
+        }
+      } catch (emailErr) {
+        // eslint-disable-next-line no-console
+        console.error("[checkout] getPreOrder email retry failed:", emailErr?.message || emailErr);
       }
     }
 
