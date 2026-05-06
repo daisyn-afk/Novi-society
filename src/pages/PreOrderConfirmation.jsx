@@ -1,11 +1,20 @@
-import { useQuery } from "@tanstack/react-query";
-import { adminApiRequest } from "@/api/adminApiRequest";
+import { useEffect, useMemo } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle, Sparkles, Calendar, Mail, ArrowLeft } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { adminApiRequest } from "@/api/adminApiRequest";
+import { adminCoursesApi } from "@/api/adminCoursesApi";
+import { queryClientAdmincourses } from "@/lib/query-client";
 import { createPageUrl } from "@/utils";
+
+const normalizeLandingCourse = (course) => ({
+  ...course,
+  session_dates: Array.isArray(course?.session_dates) ? course.session_dates : []
+});
 
 export default function PreOrderConfirmation() {
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const params = new URLSearchParams(window.location.search);
   const orderId = params.get("id");
   const sessionId = params.get("session_id");
@@ -29,6 +38,48 @@ export default function PreOrderConfirmation() {
     refetchInterval: (query) => (query.state.data ? false : 2000),
     retry: 1
   });
+
+  const paidCourseSyncKey = useMemo(() => {
+    if (order?.status !== "paid" || order?.order_type !== "course") return null;
+    return order.id ?? orderId ?? sessionId ?? null;
+  }, [order?.id, order?.status, order?.order_type, orderId, sessionId]);
+
+  useEffect(() => {
+    if (!paidCourseSyncKey) return;
+
+    const syncSeatCaches = () => {
+      const landingQueryFn = async () => {
+        const scheduledCourses = await adminCoursesApi.list("scheduled");
+        return (scheduledCourses || [])
+          .filter((course) => course?.is_active !== false)
+          .map(normalizeLandingCourse);
+      };
+
+      // refetchType "all" refetches inactive observers too (e.g. user on confirmation while landing tab is in background).
+      void qc.invalidateQueries({ queryKey: ["landing-courses"], refetchType: "all" });
+      void qc.prefetchQuery({ queryKey: ["landing-courses"], queryFn: landingQueryFn });
+      void qc.invalidateQueries({ queryKey: ["courses"], refetchType: "all" });
+      void qc.invalidateQueries({ queryKey: ["admin-courses"], refetchType: "all" });
+
+      void queryClientAdmincourses.invalidateQueries({
+        queryKey: ["courses", "admin-api-scheduled"],
+        refetchType: "all"
+      });
+      void queryClientAdmincourses.prefetchQuery({
+        queryKey: ["courses", "admin-api-scheduled"],
+        queryFn: () => adminCoursesApi.list()
+      });
+    };
+
+    syncSeatCaches();
+    // Stripe webhook / seat decrement can trail the pre-order "paid" read by a moment — bump again.
+    const t1 = setTimeout(syncSeatCaches, 900);
+    const t2 = setTimeout(syncSeatCaches, 2500);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, [paidCourseSyncKey, qc]);
 
   if (!orderId && !sessionId) {
     return (

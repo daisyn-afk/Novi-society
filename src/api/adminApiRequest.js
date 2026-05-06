@@ -81,9 +81,12 @@ export async function adminApiRequest(path, options = {}) {
       body = {};
     }
 
-    const message =
+    let message =
       body.error ||
       `Request failed (${response.status}) at ${url}. Ensure backend is running and VITE_APP_API_BASE_URL is correct.`;
+    if (Array.isArray(body.details) && body.details.length > 0) {
+      message = `${message}: ${body.details.join("; ")}`;
+    }
     const error = new Error(message);
     error.details = body.details;
     error.status = response.status;

@@ -216,9 +216,22 @@ export function createLovableProviderClient() {
           list: (_sort = "", limit = 200) => authRequest(`/admin/pre-orders?limit=${encodeURIComponent(String(limit || 200))}`, { method: "GET" }),
           get: (id) => requestJson(`/admin/checkout/pre-order?id=${encodeURIComponent(id)}`, { method: "GET" }),
           create: createNotImplementedMethod("entities.PreOrder.create"),
-          update: createNotImplementedMethod("entities.PreOrder.update"),
+          update: (id, payload) => authRequest(`/admin/pre-orders/${encodeURIComponent(id)}`, {
+            method: "PATCH",
+            body: JSON.stringify(payload || {})
+          }),
           delete: createNotImplementedMethod("entities.PreOrder.delete"),
-          filter: createNotImplementedMethod("entities.PreOrder.filter")
+          filter: async (filters = {}, _sort = "", limit = 200) => {
+            const all = await authRequest(`/admin/pre-orders?limit=${encodeURIComponent(String(limit || 200))}`, { method: "GET" });
+            const rows = Array.isArray(all) ? all : [];
+            const orderType = filters?.order_type ? String(filters.order_type) : "";
+            const status = filters?.status ? String(filters.status) : "";
+            return rows.filter((row) => {
+              if (orderType && String(row?.order_type || "") !== orderType) return false;
+              if (status && String(row?.status || "") !== status) return false;
+              return true;
+            });
+          }
         };
       }
       if (name === "License") {
@@ -317,7 +330,15 @@ export function createLovableProviderClient() {
       if (name === "Course") {
         return {
           list: () => authRequest("/admin/courses", { method: "GET" }),
-          filter: () => authRequest("/admin/courses", { method: "GET" }),
+          filter: async (filters = {}) => {
+            const all = await authRequest("/admin/courses", { method: "GET" });
+            const rows = Array.isArray(all) ? all : [];
+            const type = filters?.type ? String(filters.type) : "";
+            return rows.filter((row) => {
+              if (type && String(row?.type || "") !== type) return false;
+              return true;
+            });
+          },
           get: (id) => authRequest(`/admin/courses/${encodeURIComponent(id)}`, { method: "GET" }),
           create: (payload) => authRequest("/admin/courses", {
             method: "POST",

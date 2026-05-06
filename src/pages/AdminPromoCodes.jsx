@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 
 const EMPTY_FORM = {
   code: "",
+  applies_to: "course",
   description: "",
   discount_type: "percentage",
   discount_value: "",
@@ -39,6 +40,7 @@ export default function AdminPromoCodes() {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [activeTab, setActiveTab] = useState("course");
   const [form, setForm] = useState(EMPTY_FORM);
 
   const { data: promoCodes = [], isLoading } = useQuery({
@@ -64,11 +66,23 @@ export default function AdminPromoCodes() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["admin-promo-codes"] })
   });
 
-  const activeCount = useMemo(() => promoCodes.filter((p) => p.is_active).length, [promoCodes]);
+  const scopedPromoCodes = useMemo(
+    () => promoCodes.filter((p) => String(p?.applies_to || "course").toLowerCase() === activeTab),
+    [promoCodes, activeTab]
+  );
+  const activeCount = useMemo(() => scopedPromoCodes.filter((p) => p.is_active).length, [scopedPromoCodes]);
+  const courseCount = useMemo(
+    () => promoCodes.filter((p) => String(p?.applies_to || "course").toLowerCase() === "course").length,
+    [promoCodes]
+  );
+  const modelCount = useMemo(
+    () => promoCodes.filter((p) => String(p?.applies_to || "course").toLowerCase() === "model").length,
+    [promoCodes]
+  );
 
   const openCreate = () => {
     setEditing(null);
-    setForm(EMPTY_FORM);
+    setForm({ ...EMPTY_FORM, applies_to: activeTab });
     setOpen(true);
   };
 
@@ -76,6 +90,7 @@ export default function AdminPromoCodes() {
     setEditing(promo);
     setForm({
       code: promo.code || "",
+      applies_to: String(promo.applies_to || "course").toLowerCase() === "model" ? "model" : "course",
       description: promo.description || "",
       discount_type: uiDiscountType(promo.discount_type) || "percentage",
       discount_value: promo.discount_value ?? "",
@@ -88,9 +103,13 @@ export default function AdminPromoCodes() {
   };
 
   const handleSave = () => {
+    const resolvedAppliesTo = editing
+      ? (String(editing.applies_to || "course").toLowerCase() === "model" ? "model" : "course")
+      : activeTab;
     saveMutation.mutate({
       ...form,
       code: form.code.trim().toUpperCase(),
+      applies_to: resolvedAppliesTo,
       discount_type: dbDiscountType(form.discount_type),
       valid_from: form.valid_from ? new Date(form.valid_from).toISOString() : null,
       valid_until: form.valid_until ? new Date(form.valid_until).toISOString() : null
@@ -102,20 +121,43 @@ export default function AdminPromoCodes() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold text-slate-900">Promo Codes</h2>
-          <p className="text-slate-500 text-sm mt-1">Create and manage discount codes for course checkout.</p>
+          <p className="text-slate-500 text-sm mt-1">Create and manage promo codes for course checkout and model signups.</p>
         </div>
         <Button onClick={openCreate} style={{ background: "#C8E63C", color: "#1a2540" }}>
           <Plus className="w-4 h-4 mr-1" /> New Promo Code
         </Button>
       </div>
 
+      <div className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white p-1">
+        <button
+          type="button"
+          onClick={() => setActiveTab("course")}
+          className={`px-3 py-1.5 rounded-full text-xs font-semibold ${activeTab === "course" ? "bg-slate-900 text-white" : "text-slate-600"}`}
+        >
+          Course Promos ({courseCount})
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab("model")}
+          className={`px-3 py-1.5 rounded-full text-xs font-semibold ${activeTab === "model" ? "bg-slate-900 text-white" : "text-slate-600"}`}
+        >
+          Model Promos ({modelCount})
+        </button>
+      </div>
+
+      <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+        {activeTab === "course"
+          ? "These codes apply to course enrollments only and will not work on the model sign-up page."
+          : "These codes apply to model signups only and will not work for course enrollments."}
+      </div>
+
       <div className="text-sm text-slate-600">
-        Total: <strong>{promoCodes.length}</strong> · Active: <strong>{activeCount}</strong>
+        Total: <strong>{scopedPromoCodes.length}</strong> · Active: <strong>{activeCount}</strong>
       </div>
 
       {isLoading ? (
         <div className="space-y-3">{[1, 2, 3].map((i) => <div key={i} className="h-20 bg-slate-100 rounded-xl animate-pulse" />)}</div>
-      ) : promoCodes.length === 0 ? (
+      ) : scopedPromoCodes.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center">
             <TicketPercent className="w-10 h-10 mx-auto text-slate-300 mb-3" />
@@ -124,7 +166,7 @@ export default function AdminPromoCodes() {
         </Card>
       ) : (
         <div className="space-y-3">
-          {promoCodes.map((promo) => (
+          {scopedPromoCodes.map((promo) => (
             <Card key={promo.id}>
               <CardContent className="py-4 flex items-start justify-between gap-3">
                 <div className="min-w-0">
@@ -167,6 +209,17 @@ export default function AdminPromoCodes() {
                 <label className="text-xs font-semibold text-slate-600 mb-1 block">Code *</label>
                 <Input value={form.code} onChange={(e) => setForm((f) => ({ ...f, code: e.target.value.toUpperCase() }))} placeholder="NOVI20" />
               </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-600 mb-1 block">Scope</label>
+                <div className="h-10 rounded-md border border-slate-200 bg-slate-50 px-3 flex items-center text-sm text-slate-600">
+                  {editing
+                    ? (String(editing.applies_to || "course").toLowerCase() === "model" ? "Model Promo" : "Course Promo")
+                    : (activeTab === "model" ? "Model Promo" : "Course Promo")}
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs font-semibold text-slate-600 mb-1 block">Type *</label>
                 <Select value={form.discount_type} onValueChange={(v) => setForm((f) => ({ ...f, discount_type: v }))}>

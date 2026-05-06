@@ -19,6 +19,12 @@ function validatePromoInput(payload) {
     err.statusCode = 400;
     throw err;
   }
+  const appliesTo = String(payload?.applies_to || "course").toLowerCase();
+  if (!["course", "model"].includes(appliesTo)) {
+    const err = new Error("applies_to must be 'course' or 'model'.");
+    err.statusCode = 400;
+    throw err;
+  }
 }
 
 export const promoCodesRouter = Router();

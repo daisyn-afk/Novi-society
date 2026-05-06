@@ -10,7 +10,11 @@ export const checkoutRouter = Router();
 
 checkoutRouter.post("/course", async (req, res, next) => {
   try {
-    const result = await createCourseCheckout(req.body || {});
+    const requestOrigin =
+      req.get("origin") ||
+      req.get("referer") ||
+      `${req.get("x-forwarded-proto") || req.protocol}://${req.get("x-forwarded-host") || req.get("host")}`;
+    const result = await createCourseCheckout(req.body || {}, { requestOrigin });
     res.status(201).json(result);
   } catch (error) {
     next(error);
