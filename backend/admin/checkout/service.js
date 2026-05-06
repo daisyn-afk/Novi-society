@@ -32,6 +32,7 @@ const supabaseAdmin = supabaseUrl && supabaseServiceRoleKey
   : null;
 const preorderFallbackTimeoutMs = Number(process.env.PREORDER_FALLBACK_TIMEOUT_MS || 4000);
 let coursePromoColumnsPromise = null;
+let usersAuthUserIdNullablePromise = null;
 
 function resolveFrontendBaseUrl(requestOrigin) {
   const raw = String(requestOrigin || "").trim();
@@ -74,6 +75,22 @@ async function hasCoursePromoColumn(client, columnName) {
   }
   const cols = await coursePromoColumnsPromise;
   return cols.has(String(columnName || "").toLowerCase());
+}
+
+async function isUsersAuthUserIdNullable(client) {
+  if (!usersAuthUserIdNullablePromise) {
+    usersAuthUserIdNullablePromise = client.query(
+      `select is_nullable
+       from information_schema.columns
+       where table_schema = 'public'
+         and table_name = 'users'
+         and column_name = 'auth_user_id'
+       limit 1`
+    )
+      .then((res) => String(res.rows?.[0]?.is_nullable || "YES").toUpperCase() === "YES")
+      .catch(() => true);
+  }
+  return usersAuthUserIdNullablePromise;
 }
 
 function computeDiscount({ discountType, discountValue, subtotal }) {
@@ -1072,13 +1089,12 @@ async function sendNewUserInviteEmail({ to, firstName, signupLink }) {
         </td></tr>
         <tr><td style="background:#fff;padding:40px;border-radius:0 0 16px 16px">
           <p style="margin:0 0 16px;font-size:16px;color:#374151;line-height:1.6">Hi ${greetingName},</p>
-          <p style="margin:0 0 16px;font-size:15px;color:#374151;line-height:1.6">You are almost ready to start. Use the button below to set your password and access your NOVI Society account.</p>
+          <p style="margin:0 0 16px;font-size:15px;color:#374151;line-height:1.6">You are almost ready to start. Use the button below to set up your NOVI Society account.</p>
           <p style="margin:0 0 28px">
             <a href="${signupLink}" style="display:inline-block;background:#2D6B7F;color:#fff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:600;font-size:14px">
-              Set your password
+              Set your account
             </a>
           </p>
-          <p style="margin:0;font-size:13px;color:#6b7280;line-height:1.6">Set your password: <a href="${signupLink}" style="color:#2D6B7F">${signupLink}</a></p>
         </td></tr>
       </table>
     </td></tr>
@@ -1221,6 +1237,13 @@ async function upsertProviderUserByEmail(client, {
       ]
     );
     return updated.rows[0] ?? null;
+  }
+
+  const authUserIdNullable = await isUsersAuthUserIdNullable(client);
+  if (!authUserIdNullable) {
+    // Some environments enforce users.auth_user_id NOT NULL.
+    // In that case, skip email-only inserts; the row will be created once auth user exists.
+    return null;
   }
 
   const inserted = await client.query(
