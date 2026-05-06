@@ -806,7 +806,16 @@ export async function getPreOrder({ id, sessionId }) {
 }
 
 async function sendConfirmationEmail({ to, customerName, courseTitle, courseData, courseDate }) {
-  if (!resendApiKey || !to) return false;
+  if (!to) {
+    // eslint-disable-next-line no-console
+    console.warn("[checkout] course confirmation skipped: missing recipient email");
+    return false;
+  }
+  if (!resendApiKey) {
+    // eslint-disable-next-line no-console
+    console.warn("[checkout] course confirmation skipped: RESEND_API_KEY is not configured");
+    return false;
+  }
   const safeFirstName = customerName || "there";
   const safeCourseName = courseTitle || "your course";
   const formatCourseDate = (value) => {
@@ -953,7 +962,21 @@ async function sendConfirmationEmail({ to, customerName, courseTitle, courseData
 }
 
 async function sendNewUserInviteEmail({ to, firstName, signupLink }) {
-  if (!resendApiKey || !to || !signupLink) return false;
+  if (!to) {
+    // eslint-disable-next-line no-console
+    console.warn("[checkout] account setup email skipped: missing recipient email");
+    return false;
+  }
+  if (!signupLink) {
+    // eslint-disable-next-line no-console
+    console.warn("[checkout] account setup email skipped: missing signup link");
+    return false;
+  }
+  if (!resendApiKey) {
+    // eslint-disable-next-line no-console
+    console.warn("[checkout] account setup email skipped: RESEND_API_KEY is not configured");
+    return false;
+  }
   const greetingName = firstName || "there";
   const html = `
 <!DOCTYPE html>
