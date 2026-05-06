@@ -131,6 +131,9 @@ export async function createCourseCheckout(payload, options = {}) {
   const client = await pool.connect();
   try {
     await client.query("begin");
+    // Fail fast on row locks / long queries in serverless environments.
+    await client.query("set local lock_timeout = '8s'");
+    await client.query("set local statement_timeout = '20s'");
 
     const courseRes = await client.query(
       `select id, title, price, available_seats, is_active, session_dates
