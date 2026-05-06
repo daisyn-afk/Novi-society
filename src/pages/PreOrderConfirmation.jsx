@@ -1,11 +1,20 @@
-import { useQuery } from "@tanstack/react-query";
-import { adminApiRequest } from "@/api/adminApiRequest";
+import { useEffect, useMemo } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle, Sparkles, Calendar, Mail, ArrowLeft } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { adminApiRequest } from "@/api/adminApiRequest";
+import { adminCoursesApi } from "@/api/adminCoursesApi";
+import { queryClientAdmincourses } from "@/lib/query-client";
 import { createPageUrl } from "@/utils";
+
+const normalizeLandingCourse = (course) => ({
+  ...course,
+  session_dates: Array.isArray(course?.session_dates) ? course.session_dates : []
+});
 
 export default function PreOrderConfirmation() {
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const params = new URLSearchParams(window.location.search);
   const orderId = params.get("id");
   const sessionId = params.get("session_id");
@@ -24,11 +33,58 @@ export default function PreOrderConfirmation() {
       return adminApiRequest(`/admin/checkout/pre-order?${query.toString()}`);
     },
     enabled: !!orderId || !!sessionId,
-    // After Stripe redirects back, webhook can take a moment to settle.
-    // Poll briefly while no order has loaded yet.
-    refetchInterval: (query) => (query.state.data ? false : 2000),
+    // After Stripe redirects back, webhook/fallback processing can take a moment.
+    // Keep polling for course orders until payment status is actually "paid".
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (!data) return 1000;
+      if (data.order_type === "course" && data.status !== "paid") return 1000;
+      return false;
+    },
     retry: 1
   });
+
+  const paidCourseSyncKey = useMemo(() => {
+    if (order?.status !== "paid" || order?.order_type !== "course") return null;
+    return order.id ?? orderId ?? sessionId ?? null;
+  }, [order?.id, order?.status, order?.order_type, orderId, sessionId]);
+
+  useEffect(() => {
+    if (!paidCourseSyncKey) return;
+
+    const syncSeatCaches = () => {
+      const landingQueryFn = async () => {
+        const scheduledCourses = await adminCoursesApi.list("scheduled");
+        return (scheduledCourses || [])
+          .filter((course) => course?.is_active !== false)
+          .map(normalizeLandingCourse);
+      };
+
+      // refetchType "all" refetches inactive observers too (e.g. user on confirmation while landing tab is in background).
+      void qc.invalidateQueries({ queryKey: ["landing-courses"], refetchType: "all" });
+      void qc.prefetchQuery({ queryKey: ["landing-courses"], queryFn: landingQueryFn });
+      void qc.invalidateQueries({ queryKey: ["courses"], refetchType: "all" });
+      void qc.invalidateQueries({ queryKey: ["admin-courses"], refetchType: "all" });
+
+      void queryClientAdmincourses.invalidateQueries({
+        queryKey: ["courses", "admin-api-scheduled"],
+        refetchType: "all"
+      });
+      void queryClientAdmincourses.prefetchQuery({
+        queryKey: ["courses", "admin-api-scheduled"],
+        queryFn: () => adminCoursesApi.list()
+      });
+    };
+
+    syncSeatCaches();
+    // Stripe webhook / seat decrement can trail the pre-order "paid" read by a moment — bump again.
+    const t1 = setTimeout(syncSeatCaches, 900);
+    const t2 = setTimeout(syncSeatCaches, 2500);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, [paidCourseSyncKey, qc]);
 
   if (!orderId && !sessionId) {
     return (
@@ -78,6 +134,28 @@ export default function PreOrderConfirmation() {
       </div>
     );
   }
+
+  if (order.order_type === "course" && order.status !== "paid") {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-4" style={{ background: "#f5f3ef" }}>
+        <div className="max-w-lg w-full rounded-2xl p-6 text-center" style={{ background: "#fff", border: "1px solid rgba(30,37,53,0.08)" }}>
+          <div className="animate-pulse text-sm mb-3" style={{ color: "rgba(30,37,53,0.6)" }}>Finalizing your payment...</div>
+          <h2 className="text-xl font-semibold mb-2" style={{ color: "#1e2535" }}>Please wait a moment</h2>
+          <p className="text-sm mb-4" style={{ color: "rgba(30,37,53,0.65)" }}>
+            We are confirming your checkout with Stripe and preparing your enrollment details.
+          </p>
+          <button
+            onClick={() => window.location.reload()}
+            className="px-5 py-2 rounded-xl"
+            style={{ background: "#1e2535", color: "#fff" }}
+          >
+            Refresh
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex items-center justify-center px-4 py-16" style={{ fontFamily: "'DM Sans', sans-serif", background: "#f5f3ef" }}>
       <div className="w-full max-w-2xl text-center">

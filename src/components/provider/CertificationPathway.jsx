@@ -1,5 +1,6 @@
 import { CheckCircle2, Lock, MapPin, Users, Clock, Zap, ChevronDown, ChevronUp } from "lucide-react";
 import { useState } from "react";
+import { formatMinAvailableSeatsLabel } from "@/lib/sessionDateSeats";
 
 export default function CertificationPathway({
   serviceType,
@@ -127,6 +128,7 @@ export default function CertificationPathway({
             {courses.map((course) => {
               const isEnrolled = enrolledCourseIds.has(course.id);
               const isExpanded = expandedCourseId === course.id;
+              const seatsHint = formatMinAvailableSeatsLabel(course);
               return (
                 <div key={course.id} className="rounded-xl overflow-hidden" style={{ background: "rgba(255,255,255,0.7)", border: "1px solid rgba(30,37,53,0.1)" }}>
                   {/* Collapsible Header */}
@@ -201,10 +203,10 @@ export default function CertificationPathway({
                             <span>{course.duration_hours}h</span>
                           </div>
                         )}
-                        {course.max_seats && (
+                        {seatsHint != null && (
                           <div className="flex items-center gap-1.5 text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>
                             <Users className="w-3.5 h-3.5 flex-shrink-0" />
-                            <span>{course.available_seats || 0} left</span>
+                            <span>{seatsHint}</span>
                           </div>
                         )}
                       </div>

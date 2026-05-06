@@ -9,23 +9,19 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { adminLocationsApi } from "@/api/adminLocationsApi";
+import { normalizeScheduledSessionDatesEntries } from "@/lib/sessionDateSeats";
 import { X, Calendar, Plus, ChevronDown, ChevronRight, Check, Loader2 } from "lucide-react";
 
-export const EMPTY_SCHEDULED = {
-  type: "scheduled",
-  template_id: "",
-  title: "",
-  price: "",
-  location: "",
-  max_seats: "",
-  available_seats: "",
-  instructor_name: "",
-  session_dates: [],
-  is_active: true,
-  is_featured: false,
-};
+const EMPTY_DATE_DRAFT = { date: "", start_time: "", end_time: "", location: "", label: "", max_seats: "", available_seats: "" };
 
-const EMPTY_DATE_DRAFT = { date: "", start_time: "", end_time: "", location: "", label: "" };
+/** Treat blank number inputs as missing (avoid Number("") === 0). */
+function parseSeatField(value) {
+  if (value === undefined || value === null) return null;
+  const s = String(value).trim();
+  if (s === "") return null;
+  const n = Math.floor(Number(s));
+  return Number.isFinite(n) ? n : null;
+}
 
 function generateSessionId() {
   return `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -85,7 +81,17 @@ function buildCollapseMap(sessions = [], collapsed = false) {
   }, {});
 }
 
-export default function ScheduleCourseForm({ open, onOpenChange, form, setForm, onSave, saving, editing, templates }) {
+export default function ScheduleCourseForm({
+  open,
+  onOpenChange,
+  form,
+  setForm,
+  onSave,
+  saving,
+  editing,
+  templates,
+  previousSessionDatesForNormalize = null,
+}) {
   const qc = useQueryClient();
   const [sessions, setSessions] = useState(() => hydrateSessions(form.session_dates));
   const [newDatesBySession, setNewDatesBySession] = useState(() => buildDraftMap(hydrateSessions(form.session_dates)));
@@ -103,6 +109,8 @@ export default function ScheduleCourseForm({ open, onOpenChange, form, setForm, 
     zip_code: "",
   });
   const saveInFlightRef = useRef(false);
+  const lastHydratedSessionDatesJson = useRef(null);
+  const [seatErrors, setSeatErrors] = useState("");
 
   const selectedTemplate = templates.find(t => t.id === form.template_id);
   const { data: locationOptions = [], isLoading: loadingLocations } = useQuery({
@@ -137,7 +145,13 @@ export default function ScheduleCourseForm({ open, onOpenChange, form, setForm, 
   });
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      lastHydratedSessionDatesJson.current = null;
+      return;
+    }
+    const fp = JSON.stringify(form?.session_dates ?? []);
+    if (lastHydratedSessionDatesJson.current === fp) return;
+    lastHydratedSessionDatesJson.current = fp;
     const hydrated = hydrateSessions(form.session_dates);
     setSessions(hydrated);
     setNewDatesBySession(buildDraftMap(hydrated));
@@ -147,8 +161,9 @@ export default function ScheduleCourseForm({ open, onOpenChange, form, setForm, 
     setShowAddLocationFormSessionId(null);
     setNewLocationTargetSessionId(null);
     setLocationFormError("");
+    setSeatErrors("");
     saveInFlightRef.current = false;
-  }, [open]);
+  }, [open, form.session_dates]);
 
   useEffect(() => {
     if (!saving) {
@@ -231,16 +246,36 @@ export default function ScheduleCourseForm({ open, onOpenChange, form, setForm, 
   const addDateToSession = (sessionId) => {
     const newDate = newDatesBySession[sessionId] || EMPTY_DATE_DRAFT;
     if (!newDate.date) return;
+    if (!String(newDate.location || "").trim()) {
+      setSeatErrors("Location is required. Select a saved location or add a new one.");
+      return;
+    }
+    const maxNum = parseSeatField(newDate.max_seats);
+    let availNum = parseSeatField(newDate.available_seats);
+    if (maxNum === 0 && availNum == null) availNum = 0;
+    if (maxNum == null || maxNum < 0 || availNum == null || availNum < 0) {
+      setSeatErrors("Max seats (0 or more) and available seats (0 or more) are both required.");
+      return;
+    }
+    if (availNum > maxNum) {
+      setSeatErrors("Available seats cannot be greater than max seats.");
+      return;
+    }
+    setSeatErrors("");
 
     updateSessions((prev) =>
       prev.map((session) => {
         if (session.id !== sessionId) return session;
+        const { max_seats: _dm, available_seats: _da, ...restDraft } = newDate;
+        const datePayload = {
+          ...restDraft,
+          max_seats: maxNum,
+          available_seats: availNum,
+          _localId: `date-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        };
         const dates = [
           ...(session.dates || []),
-          {
-            ...newDate,
-            _localId: `date-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          },
+          datePayload,
         ].sort((a, b) => (a.date || "") > (b.date || "") ? 1 : -1);
         return { ...session, dates };
       })
@@ -253,6 +288,18 @@ export default function ScheduleCourseForm({ open, onOpenChange, form, setForm, 
       prev.map((session) => {
         if (session.id !== sessionId) return session;
         return { ...session, dates: (session.dates || []).filter((dateEntry) => dateEntry._localId !== dateLocalId) };
+      })
+    );
+  };
+
+  const updateDateEntryInSession = (sessionId, dateLocalId, patch) => {
+    updateSessions((prev) =>
+      prev.map((session) => {
+        if (session.id !== sessionId) return session;
+        return {
+          ...session,
+          dates: (session.dates || []).map((d) => (d._localId === dateLocalId ? { ...d, ...patch } : d)),
+        };
       })
     );
   };
@@ -284,11 +331,41 @@ export default function ScheduleCourseForm({ open, onOpenChange, form, setForm, 
     createLocationMutation.mutate(newLocationForm);
   };
 
+  const validateAllSeatRowsForDates = (dates) => {
+    for (const d of dates) {
+      if (!d?.date?.trim()) {
+        setSeatErrors("Every session date must have a calendar date.");
+        return false;
+      }
+      if (!String(d.location || "").trim()) {
+        setSeatErrors("Every session date must have a location.");
+        return false;
+      }
+      const max = parseSeatField(d.max_seats);
+      const avail = parseSeatField(d.available_seats);
+      if (max == null || max < 0 || avail == null || avail < 0) {
+        setSeatErrors("Every session date requires max seats (0 or more) and available seats (0 or more).");
+        return false;
+      }
+      if (avail > max) {
+        setSeatErrors("Available seats cannot be greater than max seats.");
+        return false;
+      }
+    }
+    setSeatErrors("");
+    return true;
+  };
+
   const handleSaveClick = () => {
     if (saveInFlightRef.current || saving) return;
-    if (!form.template_id || (form.session_dates || []).length === 0) return;
+    if (!form.template_id) return;
+    const flat = flattenSessions(sessions);
+    if (flat.length === 0) return;
+    const normalized = normalizeScheduledSessionDatesEntries(flat, previousSessionDatesForNormalize);
+    if (!validateAllSeatRowsForDates(normalized)) return;
+    setForm((prev) => ({ ...prev, session_dates: normalized }));
     saveInFlightRef.current = true;
-    onSave();
+    onSave({ session_dates: normalized });
   };
 
   return (
@@ -323,13 +400,9 @@ export default function ScheduleCourseForm({ open, onOpenChange, form, setForm, 
               <Label>Display Title</Label>
               <Input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} placeholder="Defaults to template title" />
             </div>
-            <div>
+            <div className="col-span-2">
               <Label>Price ($)</Label>
               <Input type="number" value={form.price} onChange={e => setForm({ ...form, price: e.target.value || "" })} placeholder="Override template price" />
-            </div>
-            <div>
-              <Label>Max Seats</Label>
-              <Input type="number" value={form.max_seats} onChange={e => setForm({ ...form, max_seats: e.target.value || "", available_seats: e.target.value || "" })} />
             </div>
             <div className="col-span-2">
               <Label>Instructor</Label>
@@ -383,17 +456,88 @@ export default function ScheduleCourseForm({ open, onOpenChange, form, setForm, 
                     <>
                       <div className="space-y-2">
                         {(session.dates || []).map((s) => (
-                          <div key={s._localId} className="flex items-center gap-2 bg-white rounded-xl px-3 py-2.5 border text-sm">
-                            <Calendar className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#4a5fa0" }} />
-                            <div className="flex-1">
-                              {s.label && <span className="font-semibold text-xs mr-2" style={{ color: "#4a5fa0" }}>{s.label}</span>}
-                              <span className="font-medium" style={{ color: "#1a2540" }}>{s.date}</span>
-                              {(s.start_time || s.end_time) && <span className="ml-2" style={{ color: "#8891a8" }}>{s.start_time}{s.end_time ? ` – ${s.end_time}` : ""}</span>}
-                              {s.location && <span className="ml-2" style={{ color: "#8891a8" }}>· {s.location}</span>}
+                          <div key={s._localId} className="space-y-2 bg-white rounded-xl px-3 py-2.5 border text-sm">
+                            <div className="flex items-center gap-2">
+                              <Calendar className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#4a5fa0" }} />
+                              <div className="flex-1 min-w-0">
+                                {s.label && <span className="font-semibold text-xs mr-2" style={{ color: "#4a5fa0" }}>{s.label}</span>}
+                                <span className="font-medium" style={{ color: "#1a2540" }}>{s.date}</span>
+                                {(s.start_time || s.end_time) && <span className="ml-2" style={{ color: "#8891a8" }}>{s.start_time}{s.end_time ? ` – ${s.end_time}` : ""}</span>}
+                                {s.location && <span className="ml-2" style={{ color: "#8891a8" }}>· {s.location}</span>}
+                                {Number.isFinite(Number(s.max_seats)) && Number.isFinite(Number(s.available_seats)) && (
+                                  <span
+                                    className="ml-2 text-[10px] font-semibold rounded px-1.5 py-0.5 align-middle"
+                                    style={{ background: "rgba(74,95,160,0.12)", color: "#2f437d" }}
+                                    title="Remaining bookable seats vs capacity for this date (updates after enrollments)"
+                                  >
+                                    Seats: {s.available_seats} / {s.max_seats}
+                                  </span>
+                                )}
+                              </div>
+                              <button type="button" onClick={() => removeDateFromSession(session.id, s._localId)} className="text-slate-300 hover:text-red-400 flex-shrink-0">
+                                <X className="w-3.5 h-3.5" />
+                              </button>
                             </div>
-                            <button type="button" onClick={() => removeDateFromSession(session.id, s._localId)} className="text-slate-300 hover:text-red-400">
-                              <X className="w-3.5 h-3.5" />
-                            </button>
+                            <div className="grid grid-cols-2 gap-2 pl-6">
+                              <div>
+                                <Label className="text-[10px] uppercase tracking-wide">Max seats *</Label>
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  className="h-8 text-xs"
+                                  value={s.max_seats === undefined || s.max_seats === null ? "" : s.max_seats}
+                                  onChange={(e) => {
+                                    const v = e.target.value;
+                                    const maxVal = v === "" ? NaN : Number(v);
+                                    const maxNum = Number.isFinite(maxVal) && maxVal >= 0 ? Math.floor(maxVal) : null;
+                                    if (maxNum == null) {
+                                      updateDateEntryInSession(session.id, s._localId, {
+                                        max_seats: "",
+                                        available_seats: s.available_seats,
+                                      });
+                                      return;
+                                    }
+                                    const prevMax = Number.isFinite(Number(s.max_seats)) ? Math.floor(Number(s.max_seats)) : NaN;
+                                    let avail = Number(s.available_seats);
+                                    if (!Number.isFinite(avail)) avail = maxNum;
+                                    if (Number.isFinite(prevMax) && prevMax > 0 && maxNum > prevMax) avail += maxNum - prevMax;
+                                    else if (Number.isFinite(prevMax) && prevMax > 0 && maxNum < prevMax) avail = Math.min(avail, maxNum);
+                                    else avail = Math.min(maxNum, Math.max(0, avail));
+                                    updateDateEntryInSession(session.id, s._localId, {
+                                      max_seats: maxNum,
+                                      available_seats: Math.min(maxNum, Math.max(0, avail)),
+                                    });
+                                  }}
+                                />
+                              </div>
+                              <div>
+                                <Label className="text-[10px] uppercase tracking-wide">Available *</Label>
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  className="h-8 text-xs"
+                                  disabled={
+                                    s.max_seats === "" ||
+                                    s.max_seats === undefined ||
+                                    s.max_seats === null ||
+                                    !Number.isFinite(Number(s.max_seats)) ||
+                                    Math.floor(Number(s.max_seats)) < 0
+                                  }
+                                  value={s.available_seats === undefined || s.available_seats === null ? "" : s.available_seats}
+                                  onChange={(e) => {
+                                    const maxNum = Math.floor(Number(s.max_seats));
+                                    if (!Number.isFinite(maxNum) || maxNum < 0) return;
+                                    const raw = e.target.value;
+                                    const v = raw === "" ? NaN : Number(raw);
+                                    const avail = Number.isFinite(v) ? Math.min(maxNum, Math.max(0, Math.floor(v))) : "";
+                                    updateDateEntryInSession(session.id, s._localId, { available_seats: avail });
+                                  }}
+                                />
+                              </div>
+                            </div>
+                            <p className="text-[10px] pl-6" style={{ color: "#8891a8" }}>
+                              Location, max seats, and available seats are required on every date. Use 0 / 0 for no capacity. Available cannot exceed max.
+                            </p>
                           </div>
                         ))}
                         {(session.dates || []).length === 0 && (
@@ -436,7 +580,7 @@ export default function ScheduleCourseForm({ open, onOpenChange, form, setForm, 
                         </div>
                         <div className="col-span-2 space-y-2">
                           <div className="flex items-center justify-between">
-                            <Label className="text-xs">Location</Label>
+                            <Label className="text-xs">Location *</Label>
                             <button
                               type="button"
                               className="text-xs font-semibold hover:underline"
@@ -588,6 +732,24 @@ export default function ScheduleCourseForm({ open, onOpenChange, form, setForm, 
                             </form>
                           )}
                         </div>
+                        <div>
+                          <Label className="text-xs">Max seats *</Label>
+                          <Input
+                            type="number"
+                            min={0}
+                            value={(newDatesBySession[session.id] || EMPTY_DATE_DRAFT).max_seats}
+                            onChange={(e) => updateDateDraft(session.id, { max_seats: e.target.value })}
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-xs">Available seats *</Label>
+                          <Input
+                            type="number"
+                            min={0}
+                            value={(newDatesBySession[session.id] || EMPTY_DATE_DRAFT).available_seats}
+                            onChange={(e) => updateDateDraft(session.id, { available_seats: e.target.value })}
+                          />
+                        </div>
                       </div>
                       <Button
                         type="button"
@@ -607,9 +769,18 @@ export default function ScheduleCourseForm({ open, onOpenChange, form, setForm, 
           <div className="flex items-center gap-3"><Switch checked={form.is_active} onCheckedChange={v => setForm({ ...form, is_active: v })} /><Label>Visible to providers</Label></div>
           <div className="flex items-center gap-3"><Switch checked={form.is_featured} onCheckedChange={v => setForm({ ...form, is_featured: v })} /><Label>Featured</Label></div>
 
+          {seatErrors && (
+            <p className="text-sm text-red-600 px-1">{seatErrors}</p>
+          )}
+
           <div className="flex gap-3 pt-2 justify-end">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button type="button" onClick={handleSaveClick} disabled={saving || !form.template_id || (form.session_dates || []).length === 0} style={{ background: "linear-gradient(135deg, #DA6A63, #FA6F30)", color: "#fff" }}>
+            <Button
+              type="button"
+              onClick={handleSaveClick}
+              disabled={saving || !form.template_id || flattenSessions(sessions).length === 0}
+              style={{ background: "linear-gradient(135deg, #DA6A63, #FA6F30)", color: "#fff" }}
+            >
               {saving ? "Saving..." : editing ? "Save Changes" : "Schedule Course"}
             </Button>
           </div>

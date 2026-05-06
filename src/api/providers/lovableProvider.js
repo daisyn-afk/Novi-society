@@ -21,15 +21,21 @@ function createNotImplementedMethod(path) {
 
 function resolveAdminApiBaseUrl() {
   const raw = (import.meta.env.VITE_APP_API_BASE_URL || "").trim();
-  // In dev, always route through the Vite proxy (relative URLs) so the `/api`
-  // prefix gets stripped before reaching the Express server. A localhost base
-  // URL in .env would bypass the proxy and 404 on the `/api/*` mount path.
-  if (!import.meta.env.DEV) return raw;
   if (!raw) return "";
   try {
     const u = new URL(raw);
     const h = u.hostname.toLowerCase();
-    if (h === "localhost" || h === "127.0.0.1") return "";
+    const isLocalTarget = h === "localhost" || h === "127.0.0.1";
+
+    // In dev, always use Vite proxy for localhost backends.
+    if (import.meta.env.DEV && isLocalTarget) return "";
+
+    // In production, never call the end user's localhost.
+    if (!import.meta.env.DEV && isLocalTarget && typeof window !== "undefined") {
+      const currentHost = String(window.location.hostname || "").toLowerCase();
+      const isCurrentHostLocal = currentHost === "localhost" || currentHost === "127.0.0.1";
+      if (!isCurrentHostLocal) return "";
+    }
   } catch {
     return raw;
   }
@@ -216,9 +222,22 @@ export function createLovableProviderClient() {
           list: (_sort = "", limit = 200) => authRequest(`/admin/pre-orders?limit=${encodeURIComponent(String(limit || 200))}`, { method: "GET" }),
           get: (id) => requestJson(`/admin/checkout/pre-order?id=${encodeURIComponent(id)}`, { method: "GET" }),
           create: createNotImplementedMethod("entities.PreOrder.create"),
-          update: createNotImplementedMethod("entities.PreOrder.update"),
+          update: (id, payload) => authRequest(`/admin/pre-orders/${encodeURIComponent(id)}`, {
+            method: "PATCH",
+            body: JSON.stringify(payload || {})
+          }),
           delete: createNotImplementedMethod("entities.PreOrder.delete"),
-          filter: createNotImplementedMethod("entities.PreOrder.filter")
+          filter: async (filters = {}, _sort = "", limit = 200) => {
+            const all = await authRequest(`/admin/pre-orders?limit=${encodeURIComponent(String(limit || 200))}`, { method: "GET" });
+            const rows = Array.isArray(all) ? all : [];
+            const orderType = filters?.order_type ? String(filters.order_type) : "";
+            const status = filters?.status ? String(filters.status) : "";
+            return rows.filter((row) => {
+              if (orderType && String(row?.order_type || "") !== orderType) return false;
+              if (status && String(row?.status || "") !== status) return false;
+              return true;
+            });
+          }
         };
       }
       if (name === "License") {
@@ -317,7 +336,15 @@ export function createLovableProviderClient() {
       if (name === "Course") {
         return {
           list: () => authRequest("/admin/courses", { method: "GET" }),
-          filter: () => authRequest("/admin/courses", { method: "GET" }),
+          filter: async (filters = {}) => {
+            const all = await authRequest("/admin/courses", { method: "GET" });
+            const rows = Array.isArray(all) ? all : [];
+            const type = filters?.type ? String(filters.type) : "";
+            return rows.filter((row) => {
+              if (type && String(row?.type || "") !== type) return false;
+              return true;
+            });
+          },
           get: (id) => authRequest(`/admin/courses/${encodeURIComponent(id)}`, { method: "GET" }),
           create: (payload) => authRequest("/admin/courses", {
             method: "POST",

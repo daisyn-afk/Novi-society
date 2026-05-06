@@ -5,6 +5,7 @@ const SELECT_COLUMNS = `
   created_at,
   updated_at,
   code,
+  coalesce(applies_to, 'course') as applies_to,
   description,
   discount_type,
   discount_value,
@@ -18,8 +19,10 @@ const SELECT_COLUMNS = `
 function normalizePayload(payload = {}) {
   const rawDiscountType = String(payload.discount_type || "").toLowerCase();
   const normalizedDiscountType = rawDiscountType === "percentage" ? "percent" : rawDiscountType;
+  const appliesTo = String(payload.applies_to || "course").toLowerCase() === "model" ? "model" : "course";
   return {
     code: String(payload.code || "").trim().toUpperCase(),
+    applies_to: appliesTo,
     description: payload.description || null,
     discount_type: normalizedDiscountType,
     discount_value: payload.discount_value === "" ? null : Number(payload.discount_value),
@@ -43,11 +46,12 @@ export async function createPromoCode(payload) {
   const data = normalizePayload(payload);
   const { rows } = await query(
     `insert into public.course_promo_codes (
-      code, description, discount_type, discount_value, max_uses, starts_at, ends_at, active
-    ) values ($1,$2,$3,$4,$5,$6,$7,$8)
+      code, applies_to, description, discount_type, discount_value, max_uses, starts_at, ends_at, active
+    ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
     returning ${SELECT_COLUMNS}`,
     [
       data.code,
+      data.applies_to,
       data.description,
       data.discount_type,
       data.discount_value,
@@ -65,18 +69,20 @@ export async function updatePromoCode(id, payload) {
   const { rows } = await query(
     `update public.course_promo_codes
      set code = $2,
-         description = $3,
-         discount_type = $4,
-         discount_value = $5,
-         max_uses = $6,
-         starts_at = $7,
-         ends_at = $8,
-         active = $9
+         applies_to = $3,
+         description = $4,
+         discount_type = $5,
+         discount_value = $6,
+         max_uses = $7,
+         starts_at = $8,
+         ends_at = $9,
+         active = $10
      where id = $1
      returning ${SELECT_COLUMNS}`,
     [
       id,
       data.code,
+      data.applies_to,
       data.description,
       data.discount_type,
       data.discount_value,

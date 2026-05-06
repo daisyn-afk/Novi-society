@@ -1,5 +1,5 @@
 // @ts-nocheck — Base44 + checkJs
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { Button } from "@/components/ui/button";
@@ -12,7 +12,8 @@ import {
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import CourseTemplateForm, { EMPTY_TEMPLATE } from "@/components/admin/CourseTemplateForm";
-import ScheduleCourseForm, { EMPTY_SCHEDULED } from "@/components/admin/ScheduleCourseForm";
+import ScheduleCourseForm from "@/components/admin/ScheduleCourseForm";
+import { EMPTY_SCHEDULED } from "@/components/admin/scheduleScheduledCourseConstants";
 import TrainingCalendarView from "@/components/admin/TrainingCalendarView";
 import TrainerPrepView from "@/components/admin/TrainerPrepView";
 
@@ -123,6 +124,8 @@ export default function AdminCourses() {
   const { data: allCourses = [], isLoading: loadingCourses } = useQuery({
     queryKey: ["courses", "base44"],
     queryFn: () => base44.entities.Course.list("-created_date"),
+    refetchOnWindowFocus: true,
+    refetchOnMount: "always",
   });
   const { data: enrollments = [], isLoading: loadingEnrollments } = useQuery({ queryKey: ["enrollments"], queryFn: () => base44.entities.Enrollment.list("-created_date") });
   const { data: sessions = [], isLoading: loadingSessions } = useQuery({ queryKey: ["class-sessions"], queryFn: () => base44.entities.ClassSession.list("-created_date") });
@@ -130,6 +133,12 @@ export default function AdminCourses() {
 
   const templates = allCourses.filter(c => c.type === "template");
   const scheduledCourses = allCourses.filter(c => c.type === "scheduled");
+  const previousSessionDatesForNormalize = useMemo(() => {
+    if (!scheduleOpen || !editingSchedule) return null;
+    const c = scheduledCourses.find((x) => x.id === editingSchedule);
+    if (!c?.session_dates || !Array.isArray(c.session_dates) || c.session_dates.length === 0) return null;
+    return JSON.parse(JSON.stringify(c.session_dates));
+  }, [scheduleOpen, editingSchedule, scheduledCourses]);
   const courseMap = Object.fromEntries(allCourses.map(c => [c.id, c]));
   const enrollCountFor = (id) => enrollments.filter(e => e.course_id === id).length;
   const templateFor = (scheduled) => templates.find(t => t.id === scheduled.template_id);
@@ -160,8 +169,8 @@ export default function AdminCourses() {
         price: data.price ? Number(data.price) : tmpl?.price,
         duration_hours: tmpl?.duration_hours,
         location: data.location || tmpl?.location,
-        max_seats: data.max_seats ? Number(data.max_seats) : undefined,
-        available_seats: data.max_seats ? Number(data.max_seats) : undefined,
+        max_seats: null,
+        available_seats: null,
         instructor_name: data.instructor_name || tmpl?.instructor_name,
         cover_image_url: tmpl?.cover_image_url,
         certifications_awarded: tmpl?.certifications_awarded,
@@ -472,7 +481,7 @@ export default function AdminCourses() {
 
                   <div className="flex gap-2 pt-2 border-t" style={{ borderColor: "rgba(0,0,0,0.05)" }}>
                     <button className="flex-1 flex items-center justify-center gap-1 py-2 text-xs font-semibold rounded-xl hover:opacity-70 transition-opacity" style={{ background: "rgba(74,95,160,0.08)", color: "#4a5fa0" }}
-                      onClick={() => { setScheduleForm({ template_id: c.template_id, title: c.title, price: c.price, location: c.location, max_seats: c.max_seats, instructor_name: c.instructor_name, session_dates: c.session_dates||[], is_active: c.is_active, is_featured: c.is_featured }); setEditingSchedule(c.id); setScheduleOpen(true); }}>
+                      onClick={() => { setScheduleForm({ template_id: c.template_id, title: c.title, price: c.price, location: c.location, instructor_name: c.instructor_name, session_dates: c.session_dates || [], is_active: c.is_active, is_featured: c.is_featured }); setEditingSchedule(c.id); setScheduleOpen(true); }}>
                       <Pencil className="w-3.5 h-3.5" /> Edit
                     </button>
                     <button className="py-2 px-3 text-xs font-semibold rounded-xl hover:opacity-70 transition-opacity" style={{ background: "rgba(218,106,99,0.08)", color: "#DA6A63" }} onClick={() => removeTemplate.mutate(c.id)}>
@@ -561,7 +570,13 @@ export default function AdminCourses() {
       <ScheduleCourseForm
         open={scheduleOpen} onOpenChange={setScheduleOpen}
         form={scheduleForm} setForm={setScheduleForm}
-        onSave={() => saveScheduled.mutate({ data: scheduleForm, editingId: editingSchedule })}
+        previousSessionDatesForNormalize={previousSessionDatesForNormalize}
+        onSave={(patch) =>
+          saveScheduled.mutate({
+            data: { ...scheduleForm, ...patch },
+            editingId: editingSchedule,
+          })
+        }
         saving={saveScheduled.isPending} editing={editingSchedule}
         templates={templates}
       />
