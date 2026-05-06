@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { listPreOrders, updatePreOrderStatus } from "./repository.js";
+import { listPreOrders, updatePreOrderStatus, patchPreOrder } from "./repository.js";
 
 export const preOrdersRouter = Router();
 
@@ -7,6 +7,16 @@ preOrdersRouter.get("/", async (req, res, next) => {
   try {
     const rows = await listPreOrders({ limit: req.query?.limit || 200 });
     res.json(rows);
+  } catch (error) {
+    next(error);
+  }
+});
+
+preOrdersRouter.patch("/:id", async (req, res, next) => {
+  try {
+    const row = await patchPreOrder(req.params.id, req.body || {});
+    if (!row) return res.status(404).json({ error: "Pre-order not found." });
+    res.json(row);
   } catch (error) {
     next(error);
   }

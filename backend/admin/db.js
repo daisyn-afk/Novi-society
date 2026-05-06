@@ -26,13 +26,17 @@ function buildSupabaseDbUrlFromEnv() {
   const dbPassword = process.env.SUPABASE_DB_PASSWORD;
   const dbUser = process.env.SUPABASE_DB_USER || "postgres";
   const dbName = process.env.SUPABASE_DB_NAME || "postgres";
-  const dbPort = process.env.SUPABASE_DB_PORT || "5432";
+  const dbPort = process.env.SUPABASE_DB_PORT || "6543";
   const explicitHost = process.env.SUPABASE_DB_HOST;
+  const poolerHost = process.env.SUPABASE_POOLER_HOST;
+  const connectTimeoutSeconds = Number(process.env.DB_CONNECT_TIMEOUT_SECONDS || 8);
 
   if (!supabaseUrl || !dbPassword) return null;
 
   let host;
-  if (explicitHost) {
+  if (poolerHost) {
+    host = poolerHost;
+  } else if (explicitHost) {
     host = explicitHost;
   } else {
     try {
@@ -44,7 +48,7 @@ function buildSupabaseDbUrlFromEnv() {
     }
   }
 
-  return `postgresql://${encodeURIComponent(dbUser)}:${encodeURIComponent(dbPassword)}@${host}:${dbPort}/${dbName}?sslmode=require`;
+  return `postgresql://${encodeURIComponent(dbUser)}:${encodeURIComponent(dbPassword)}@${host}:${dbPort}/${dbName}?sslmode=require&connect_timeout=${encodeURIComponent(String(connectTimeoutSeconds))}`;
 }
 
 const connectionString = withLibpqCompatIfNeeded(
@@ -66,6 +70,7 @@ const poolOptions = {
   connectionString,
   family: 4,
   max: process.env.VERCEL ? 1 : 10,
+  connectionTimeoutMillis: Number(process.env.DB_CONNECT_TIMEOUT_MS || 8000),
   idleTimeoutMillis: 10_000,
   ssl: process.env.NODE_ENV === "production" || isSupabase
     ? { rejectUnauthorized: false }

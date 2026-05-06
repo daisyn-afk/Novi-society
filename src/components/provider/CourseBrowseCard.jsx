@@ -1,4 +1,5 @@
 import { Clock, MapPin, Award } from "lucide-react";
+import { formatMinAvailableSeatsLabel, isCourseFullySoldOut } from "@/lib/sessionDateSeats";
 
 const categoryMeta = {
   botox: { color: "#DA6A63", image: "https://images.unsplash.com/photo-1576091160550-2173dba999ef?w=1000&q=80" },
@@ -16,9 +17,8 @@ export default function CourseBrowseCard({ course, isEnrolled, onSelect }) {
   const meta = categoryMeta[course?.category] || categoryMeta.other;
   const heroImage = course.cover_image_url || meta.image;
   const nextDate = course.session_dates?.find(d => d.date)?.date;
-  const seatsLeft = course.available_seats ?? course.max_seats;
-  const hasSeatLimit = course.available_seats !== null && course.available_seats !== undefined;
-  const isFull = hasSeatLimit && Number(course.available_seats) <= 0;
+  const seatsLabel = formatMinAvailableSeatsLabel(course);
+  const isFull = isCourseFullySoldOut(course);
 
   return (
     <div
@@ -112,9 +112,9 @@ export default function CourseBrowseCard({ course, isEnrolled, onSelect }) {
         )}
 
         {/* Seats Status */}
-        {seatsLeft != null && (
+        {seatsLabel != null && (
           <p className="text-xs font-semibold text-center" style={{ color: isFull ? "#c0504d" : "rgba(30,37,53,0.5)" }}>
-            {isFull ? "Class Full" : `${seatsLeft} seats left`}
+            {isFull ? "Class Full" : seatsLabel}
           </p>
         )}
 

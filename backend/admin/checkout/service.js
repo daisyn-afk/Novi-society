@@ -1,6 +1,18 @@
 import Stripe from "stripe";
 import { createClient } from "@supabase/supabase-js";
-import { pool } from "../db.js";
+import { pool, query } from "../db.js";
+import {
+  canDecrementSessionDateSeat,
+  decrementSessionDateSeatInArray,
+  findSessionEntryByDate,
+  findSessionEntryForSelection,
+  getUpcomingSessionEntries,
+  legacyCourseLevelSoldOut,
+  normalizeCourseDateInput,
+  resolveDecrementTargetForPaidCourse,
+  sessionEntryCalendarKeys,
+  toSessionDateKey
+} from "../lib/sessionDateSeats.js";
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
 const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
@@ -18,7 +30,23 @@ const supabaseAdmin = supabaseUrl && supabaseServiceRoleKey
       auth: { persistSession: false, autoRefreshToken: false }
     })
   : null;
-const preorderFallbackTimeoutMs = Number(process.env.PREORDER_FALLBACK_TIMEOUT_MS || 8000);
+const preorderFallbackTimeoutMs = Number(process.env.PREORDER_FALLBACK_TIMEOUT_MS || 4000);
+let coursePromoColumnsPromise = null;
+let usersAuthUserIdNullablePromise = null;
+
+function resolveFrontendBaseUrl(requestOrigin) {
+  const raw = String(requestOrigin || "").trim();
+  if (!raw) return String(appBaseUrl || "").replace(/\/+$/, "");
+  try {
+    const parsed = new URL(raw);
+    if (!/^https?:$/i.test(parsed.protocol)) {
+      return String(appBaseUrl || "").replace(/\/+$/, "");
+    }
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch {
+    return String(appBaseUrl || "").replace(/\/+$/, "");
+  }
+}
 
 function normalizeRole(role) {
   const value = String(role || "provider").trim().toLowerCase();
@@ -34,6 +62,37 @@ function normalizePromoCode(code) {
   return String(code || "").trim().toUpperCase();
 }
 
+async function hasCoursePromoColumn(client, columnName) {
+  if (!coursePromoColumnsPromise) {
+    coursePromoColumnsPromise = client.query(
+      `select column_name
+       from information_schema.columns
+       where table_schema = 'public'
+         and table_name = 'course_promo_codes'`
+    )
+      .then((res) => new Set((res.rows || []).map((row) => String(row.column_name || "").toLowerCase())))
+      .catch(() => new Set());
+  }
+  const cols = await coursePromoColumnsPromise;
+  return cols.has(String(columnName || "").toLowerCase());
+}
+
+async function isUsersAuthUserIdNullable(client) {
+  if (!usersAuthUserIdNullablePromise) {
+    usersAuthUserIdNullablePromise = client.query(
+      `select is_nullable
+       from information_schema.columns
+       where table_schema = 'public'
+         and table_name = 'users'
+         and column_name = 'auth_user_id'
+       limit 1`
+    )
+      .then((res) => String(res.rows?.[0]?.is_nullable || "YES").toUpperCase() === "YES")
+      .catch(() => true);
+  }
+  return usersAuthUserIdNullablePromise;
+}
+
 function computeDiscount({ discountType, discountValue, subtotal }) {
   if (!discountType || !discountValue || subtotal <= 0) return 0;
   if (discountType === "percent" || discountType === "percentage") {
@@ -43,12 +102,20 @@ function computeDiscount({ discountType, discountValue, subtotal }) {
   return 0;
 }
 
-export async function createCourseCheckout(payload) {
+function normalizePaidEnrollmentStatus(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+export async function createCourseCheckout(payload, options = {}) {
   if (!stripe) throw new Error("STRIPE_SECRET_KEY is not configured.");
+  const frontendBaseUrl = resolveFrontendBaseUrl(options?.requestOrigin);
 
   const {
     course_id,
     course_date,
+    course_session_id,
+    course_start_time,
+    course_end_time,
     customer_email,
     customer_name,
     first_name,
@@ -63,7 +130,8 @@ export async function createCourseCheckout(payload) {
   } = payload || {};
   const normalizedCustomerEmail = String(customer_email || "").trim().toLowerCase();
   const normalizedCustomerName = String(customer_name || fullName(first_name, last_name) || "").trim();
-  const normalizedCourseDate = course_date || null;
+  const courseDateNorm = normalizeCourseDateInput(course_date);
+  const normalizedCourseDate = courseDateNorm ? (toSessionDateKey(courseDateNorm) || courseDateNorm) : null;
 
   if (!course_id || !normalizedCustomerEmail || !normalizedCustomerName) {
     const err = new Error("Missing required checkout fields: course_id, customer_email, customer_name.");
@@ -80,9 +148,12 @@ export async function createCourseCheckout(payload) {
   const client = await pool.connect();
   try {
     await client.query("begin");
+    // Fail fast on row locks / long queries in serverless environments.
+    await client.query("set local lock_timeout = '8s'");
+    await client.query("set local statement_timeout = '20s'");
 
     const courseRes = await client.query(
-      `select id, title, price, available_seats, is_active
+      `select id, title, price, available_seats, is_active, session_dates
        from public.scheduled_courses
        where id = $1
        limit 1
@@ -95,7 +166,42 @@ export async function createCourseCheckout(payload) {
       err.statusCode = 404;
       throw err;
     }
-    if (course.available_seats !== null && Number(course.available_seats) <= 0) {
+
+    let sessionDates = course.session_dates;
+    if (typeof sessionDates === "string") {
+      try {
+        sessionDates = JSON.parse(sessionDates);
+      } catch {
+        sessionDates = [];
+      }
+    }
+    if (!Array.isArray(sessionDates)) sessionDates = [];
+
+    const upcoming = getUpcomingSessionEntries(sessionDates);
+    if (upcoming.length > 0 && !normalizedCourseDate) {
+      const err = new Error("Please select a session date.");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    if (normalizedCourseDate) {
+      const entry = findSessionEntryForSelection(sessionDates, {
+        courseDate: normalizedCourseDate,
+        sessionId: course_session_id,
+        startTime: course_start_time,
+        endTime: course_end_time
+      });
+      if (!entry) {
+        const err = new Error("Invalid session date.");
+        err.statusCode = 400;
+        throw err;
+      }
+      if (!canDecrementSessionDateSeat(entry)) {
+        const err = new Error("This session date is sold out.");
+        err.statusCode = 409;
+        throw err;
+      }
+    } else if (upcoming.length === 0 && legacyCourseLevelSoldOut(course)) {
       const err = new Error("This course is sold out.");
       err.statusCode = 409;
       throw err;
@@ -125,10 +231,13 @@ export async function createCourseCheckout(payload) {
     let promoRecord = null;
     if (promo_code) {
       const normalizedCode = normalizePromoCode(promo_code);
+      const hasAppliesTo = await hasCoursePromoColumn(client, "applies_to");
+      const appliesWhere = hasAppliesTo ? "and coalesce(applies_to, 'course') = 'course'" : "";
       const promoRes = await client.query(
-        `select id, code, discount_type, discount_value, max_uses, times_used, active, starts_at, ends_at
+        `select id, code, discount_type, discount_value, max_uses, times_used, active, starts_at, ends_at, ${hasAppliesTo ? "coalesce(applies_to, 'course')" : "'course'"} as applies_to
          from public.course_promo_codes
          where upper(code) = $1
+           ${appliesWhere}
          limit 1
          for update`,
         [normalizedCode]
@@ -208,8 +317,8 @@ export async function createCourseCheckout(payload) {
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
       customer_email: normalizedCustomerEmail,
-      success_url: `${appBaseUrl}/PreOrderConfirmation?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${appBaseUrl}/`,
+      success_url: `${frontendBaseUrl}/PreOrderConfirmation?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${frontendBaseUrl}/`,
       line_items: [
         {
           price_data: {
@@ -226,9 +335,14 @@ export async function createCourseCheckout(payload) {
       metadata: {
         pre_order_id: preOrderId,
         course_id: String(course.id),
+        course_date: normalizedCourseDate || "",
+        course_session_id: String(course_session_id || ""),
+        course_start_time: String(course_start_time || ""),
+        course_end_time: String(course_end_time || ""),
         provider_email: String(normalizedCustomerEmail),
         provider_name: String(customer_name),
-        app_source: "novi-landing"
+        app_source: "novi-landing",
+        app_base_url: frontendBaseUrl
       }
     });
 
@@ -480,7 +594,7 @@ async function sendMdServiceConfirmationEmail({ to, customerName, serviceName })
     }
     return result.ok;
   } catch (error) {
-    // eslint-disable-next-line no-console
+    // eslint-disable-next-line no-consolee
     console.error("[checkout] md service confirmation request failed:", error);
     return false;
   }
@@ -512,10 +626,13 @@ export async function validateCoursePromoCode({ courseId, promoCode }) {
       throw err;
     }
 
+    const hasAppliesTo = await hasCoursePromoColumn(client, "applies_to");
+    const appliesWhere = hasAppliesTo ? "and coalesce(applies_to, 'course') = 'course'" : "";
     const promoRes = await client.query(
-      `select id, code, discount_type, discount_value, max_uses, times_used, active, starts_at, ends_at
+      `select id, code, discount_type, discount_value, max_uses, times_used, active, starts_at, ends_at, ${hasAppliesTo ? "coalesce(applies_to, 'course')" : "'course'"} as applies_to
        from public.course_promo_codes
        where upper(code) = $1
+         ${appliesWhere}
        limit 1`,
       [normalizedCode]
     );
@@ -582,7 +699,8 @@ export async function getPreOrder({ id, sessionId }) {
   try {
     let { rows } = await client.query(
       `select id, order_type, type, status, course_id, course_title, course_date,
-              customer_name, customer_email, amount_paid, paid_at, created_at,
+              customer_name, customer_email, first_name, last_name,
+              amount_paid, paid_at, created_at,
               stripe_session_id, confirmation_email_sent
        from public.pre_orders
        where ${whereClause}
@@ -593,16 +711,55 @@ export async function getPreOrder({ id, sessionId }) {
 
     // Fallback path: if webhook did not arrive yet but Stripe marks session as paid,
     // process the completed session on demand so confirmation page and email remain reliable.
-    if (preOrder?.status !== "paid" && sessionId && stripe) {
+    const fallbackSessionId = sessionId || preOrder?.stripe_session_id || null;
+    if (fallbackSessionId && stripe) {
       try {
+        // If the order is already paid, return immediately and run reconciliation in background.
+        // This avoids a slow confirmation screen while still self-healing seats/payments.
+        if (preOrder?.status === "paid") {
+          void (async () => {
+            try {
+              const stripeSession = await stripe.checkout.sessions.retrieve(fallbackSessionId);
+              const isPaid = stripeSession?.payment_status === "paid" && stripeSession?.status === "complete";
+              if (isPaid) await processCompletedCheckoutSession(stripeSession);
+            } catch (error) {
+              // eslint-disable-next-line no-console
+              console.error("[checkout] async pre-order paid reconciliation failed:", error?.code || error?.message || error);
+            }
+          })();
+          return preOrder;
+        }
+
         const fallbackTask = async () => {
-          const stripeSession = await stripe.checkout.sessions.retrieve(sessionId);
+          const stripeSession = await stripe.checkout.sessions.retrieve(fallbackSessionId);
           const isPaid = stripeSession?.payment_status === "paid" && stripeSession?.status === "complete";
           if (!isPaid) return;
-          await processCompletedCheckoutSession(stripeSession);
+          await client.query(
+            `update public.pre_orders
+             set status = 'paid',
+                 paid_at = coalesce(paid_at, now()),
+                 stripe_payment_intent_id = coalesce($2, stripe_payment_intent_id),
+                 stripe_customer_id = coalesce($3, stripe_customer_id),
+                 updated_at = now()
+             where id = $1`,
+            [
+              preOrder?.id,
+              stripeSession?.payment_intent ? String(stripeSession.payment_intent) : null,
+              stripeSession?.customer ? String(stripeSession.customer) : null
+            ]
+          );
+          void (async () => {
+            try {
+              await processCompletedCheckoutSession(stripeSession);
+            } catch (reconcileErr) {
+              // eslint-disable-next-line no-console
+              console.error("[checkout] async paid-session reconciliation failed:", reconcileErr?.message || reconcileErr);
+            }
+          })();
           const refreshed = await client.query(
             `select id, order_type, type, status, course_id, course_title, course_date,
-                    customer_name, customer_email, amount_paid, paid_at, created_at,
+                    customer_name, customer_email, first_name, last_name,
+                    amount_paid, paid_at, created_at,
                     stripe_session_id, confirmation_email_sent
              from public.pre_orders
              where ${whereClause}
@@ -627,8 +784,8 @@ export async function getPreOrder({ id, sessionId }) {
       }
     }
 
-    // Confirmation-page safety net: send course email from pre_orders state
-    // even if downstream course_payments reconciliation partially failed.
+    // Best-effort recovery: if payment is completed but confirmation email
+    // was not sent (or failed previously), retry on read.
     if (
       preOrder?.status === "paid" &&
       preOrder?.order_type === "course" &&
@@ -677,11 +834,54 @@ export async function getPreOrder({ id, sessionId }) {
              where id = $1`,
             [preOrder.id]
           );
+          await client.query(
+            `update public.course_payments
+             set confirmation_email_sent = true,
+                 updated_at = now()
+             where pre_order_id = $1`,
+            [preOrder.id]
+          );
           preOrder = { ...preOrder, confirmation_email_sent: true };
         }
-      } catch (emailErr) {
+      } catch (emailRetryErr) {
         // eslint-disable-next-line no-console
-        console.error("[checkout] getPreOrder email retry failed:", emailErr?.message || emailErr);
+        console.error("[checkout] confirmation email retry failed in getPreOrder:", emailRetryErr?.message || emailRetryErr);
+      }
+    }
+
+    // Safety net: ensure provider row and setup invite are attempted even when
+    // async reconciliation path did not complete.
+    if (preOrder?.status === "paid" && preOrder?.order_type === "course") {
+      try {
+        await upsertProviderUserByEmail(client, {
+          email: preOrder.customer_email,
+          firstName: preOrder.first_name,
+          lastName: preOrder.last_name
+        });
+      } catch (profileErr) {
+        // eslint-disable-next-line no-console
+        console.error("[checkout] getPreOrder provider upsert failed:", profileErr?.message || profileErr);
+      }
+
+      try {
+        const inviteResult = await inviteUserIfNeeded(
+          preOrder.customer_email,
+          preOrder.first_name,
+          preOrder.last_name,
+          null,
+          client
+        );
+        // eslint-disable-next-line no-console
+        console.log("[checkout] getPreOrder invite result:", {
+          preOrderId: preOrder.id,
+          email: preOrder.customer_email,
+          wasNewUser: Boolean(inviteResult?.wasNewUser),
+          inviteSent: Boolean(inviteResult?.inviteSent),
+          hasAuthUserId: Boolean(inviteResult?.authUserId)
+        });
+      } catch (inviteErr) {
+        // eslint-disable-next-line no-console
+        console.error("[checkout] getPreOrder invite flow failed:", inviteErr?.message || inviteErr);
       }
     }
 
@@ -692,7 +892,16 @@ export async function getPreOrder({ id, sessionId }) {
 }
 
 async function sendConfirmationEmail({ to, customerName, courseTitle, courseData, courseDate }) {
-  if (!resendApiKey || !to) return false;
+  if (!to) {
+    // eslint-disable-next-line no-console
+    console.warn("[checkout] course confirmation skipped: missing recipient email");
+    return false;
+  }
+  if (!resendApiKey) {
+    // eslint-disable-next-line no-console
+    console.warn("[checkout] course confirmation skipped: RESEND_API_KEY is not configured");
+    return false;
+  }
   const safeFirstName = customerName || "there";
   const safeCourseName = courseTitle || "your course";
   const formatCourseDate = (value) => {
@@ -721,21 +930,14 @@ async function sendConfirmationEmail({ to, customerName, courseTitle, courseData
     if (start && end) return `${start} - ${end}`;
     return start || end || "";
   };
-  const toDateKey = (value) => {
-    if (!value) return null;
-    const d = new Date(value);
-    if (Number.isNaN(d.getTime())) return null;
-    return d.toISOString().slice(0, 10);
-  };
-
   let courseDateStr = formatCourseDate(courseDate);
   let courseTimeStr = "";
   let courseLocation = "";
 
   if (courseDate && courseData?.course_session_dates && Array.isArray(courseData.course_session_dates)) {
-    const dateKey = toDateKey(courseDate);
+    const dateKey = toSessionDateKey(courseDate);
     const selectedSession = dateKey
-      ? courseData.course_session_dates.find((session) => toDateKey(session?.date) === dateKey)
+      ? courseData.course_session_dates.find((session) => sessionEntryCalendarKeys(session).has(dateKey))
       : null;
     if (selectedSession) {
       courseDateStr = formatCourseDate(selectedSession.date || courseDate);
@@ -798,6 +1000,7 @@ async function sendConfirmationEmail({ to, customerName, courseTitle, courseData
             <li>Our team will be available for any questions leading up to your course</li>
           </ul>
 
+          <p style="margin:0 0 16px;font-size:15px;color:#374151;line-height:1.6">To further access your course details set up your account, follow the steps in "Set up your NOVI Society account" email or if you already have an account login to the account.</p>
           <p style="margin:0 0 32px;font-size:15px;color:#374151;line-height:1.6">If you have any questions in the meantime, feel free to reach out - we're here to support you every step of the way.</p>
 
           <div style="border-top:1px solid #e5e7eb;padding-top:28px;margin-top:8px">
@@ -818,23 +1021,37 @@ async function sendConfirmationEmail({ to, customerName, courseTitle, courseData
 </html>`;
 
   try {
-    const res = await fetch("https://api.resend.com/emails", {
+    const primaryFrom = resendFromEmail;
+    const fallbackFrom = String(process.env.RESEND_FALLBACK_FROM_EMAIL || "").trim();
+    const sendWithFrom = async (fromAddress) => fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${resendApiKey}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        from: resendFromEmail,
+        from: fromAddress,
         to: [to],
         subject: "Your NOVI course enrollment is confirmed",
         html
       })
     });
+    let res = await sendWithFrom(primaryFrom);
     if (!res.ok) {
-      const bodyText = await res.text();
+      const bodyText = await res.text().catch(() => "");
       // eslint-disable-next-line no-console
-      console.error("[checkout] resend send failed:", res.status, bodyText);
+      console.error("[checkout] resend send failed (primary sender):", res.status, bodyText);
+      if (fallbackFrom && fallbackFrom !== primaryFrom) {
+        res = await sendWithFrom(fallbackFrom);
+        if (!res.ok) {
+          const fallbackBody = await res.text().catch(() => "");
+          // eslint-disable-next-line no-console
+          console.error("[checkout] resend send failed (fallback sender):", res.status, fallbackBody);
+        } else {
+          // eslint-disable-next-line no-console
+          console.warn(`[checkout] resend send succeeded with fallback sender: ${fallbackFrom}`);
+        }
+      }
     }
     return res.ok;
   } catch (error) {
@@ -844,8 +1061,22 @@ async function sendConfirmationEmail({ to, customerName, courseTitle, courseData
   }
 }
 
-async function sendNewUserInviteEmail({ to, firstName, inviteLink }) {
-  if (!resendApiKey || !to || !inviteLink) return false;
+async function sendNewUserInviteEmail({ to, firstName, signupLink }) {
+  if (!to) {
+    // eslint-disable-next-line no-console
+    console.warn("[checkout] account setup email skipped: missing recipient email");
+    return false;
+  }
+  if (!signupLink) {
+    // eslint-disable-next-line no-console
+    console.warn("[checkout] account setup email skipped: missing signup link");
+    return false;
+  }
+  if (!resendApiKey) {
+    // eslint-disable-next-line no-console
+    console.warn("[checkout] account setup email skipped: RESEND_API_KEY is not configured");
+    return false;
+  }
   const greetingName = firstName || "there";
   const html = `
 <!DOCTYPE html>
@@ -860,13 +1091,12 @@ async function sendNewUserInviteEmail({ to, firstName, inviteLink }) {
         </td></tr>
         <tr><td style="background:#fff;padding:40px;border-radius:0 0 16px 16px">
           <p style="margin:0 0 16px;font-size:16px;color:#374151;line-height:1.6">Hi ${greetingName},</p>
-          <p style="margin:0 0 16px;font-size:15px;color:#374151;line-height:1.6">Your NOVI Society account is ready. Use the button below to set your password and access your account.</p>
+          <p style="margin:0 0 16px;font-size:15px;color:#374151;line-height:1.6">You are almost ready to start. Use the button below to set up your NOVI Society account.</p>
           <p style="margin:0 0 28px">
-            <a href="${inviteLink}" style="display:inline-block;background:#2D6B7F;color:#fff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:600;font-size:14px">
-              Set up your account
+            <a href="${signupLink}" style="display:inline-block;background:#2D6B7F;color:#fff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:600;font-size:14px">
+              Set your account
             </a>
           </p>
-          <p style="margin:0;font-size:13px;color:#6b7280;line-height:1.6">If the button does not work, copy and paste this link into your browser:<br>${inviteLink}</p>
         </td></tr>
       </table>
     </td></tr>
@@ -874,23 +1104,37 @@ async function sendNewUserInviteEmail({ to, firstName, inviteLink }) {
 </body>
 </html>`;
   try {
-    const res = await fetch("https://api.resend.com/emails", {
+    const primaryFrom = resendFromEmail;
+    const fallbackFrom = String(process.env.RESEND_FALLBACK_FROM_EMAIL || "").trim();
+    const sendWithFrom = async (fromAddress) => fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${resendApiKey}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        from: resendFromEmail,
+        from: fromAddress,
         to: [to],
         subject: "Set up your NOVI Society account",
         html
       })
     });
+    let res = await sendWithFrom(primaryFrom);
     if (!res.ok) {
-      const bodyText = await res.text();
+      const bodyText = await res.text().catch(() => "");
       // eslint-disable-next-line no-console
-      console.error("[checkout] invite resend failed:", res.status, bodyText);
+      console.error("[checkout] invite resend failed (primary sender):", res.status, bodyText);
+      if (fallbackFrom && fallbackFrom !== primaryFrom) {
+        res = await sendWithFrom(fallbackFrom);
+        if (!res.ok) {
+          const fallbackBody = await res.text().catch(() => "");
+          // eslint-disable-next-line no-console
+          console.error("[checkout] invite resend failed (fallback sender):", res.status, fallbackBody);
+        } else {
+          // eslint-disable-next-line no-console
+          console.warn(`[checkout] invite resend succeeded with fallback sender: ${fallbackFrom}`);
+        }
+      }
     }
     return res.ok;
   } catch (error) {
@@ -959,8 +1203,69 @@ async function upsertProviderUserRow(client, {
   return inserted.rows[0] ?? null;
 }
 
-async function inviteUserIfNeeded(email, firstName, lastName) {
-  if (!supabaseAdmin || !email) {
+async function upsertProviderUserByEmail(client, {
+  email,
+  firstName,
+  lastName
+}) {
+  if (!client || !email) return null;
+  const normalizedEmail = String(email).trim().toLowerCase();
+  const normalizedRole = normalizeRole("provider");
+  const mergedName = fullName(firstName, lastName);
+
+  const existing = await client.query(
+    `select id
+     from public.users
+     where lower(email) = lower($1)
+     limit 1`,
+    [normalizedEmail]
+  );
+  if (existing.rows[0]?.id) {
+    const updated = await client.query(
+      `update public.users
+       set first_name = coalesce(public.users.first_name, $2),
+           last_name = coalesce(public.users.last_name, $3),
+           full_name = coalesce(public.users.full_name, $4),
+           role = coalesce(public.users.role, $5),
+           updated_at = now()
+       where id = $1
+       returning id, auth_user_id, email, role`,
+      [
+        existing.rows[0].id,
+        firstName || null,
+        lastName || null,
+        mergedName,
+        normalizedRole
+      ]
+    );
+    return updated.rows[0] ?? null;
+  }
+
+  const authUserIdNullable = await isUsersAuthUserIdNullable(client);
+  if (!authUserIdNullable) {
+    // Some environments enforce users.auth_user_id NOT NULL.
+    // In that case, skip email-only inserts; the row will be created once auth user exists.
+    return null;
+  }
+
+  const inserted = await client.query(
+    `insert into public.users (
+       email, first_name, last_name, full_name, role
+     ) values ($1, $2, $3, $4, $5)
+     returning id, auth_user_id, email, role`,
+    [
+      normalizedEmail,
+      firstName || null,
+      lastName || null,
+      mergedName,
+      normalizedRole
+    ]
+  );
+  return inserted.rows[0] ?? null;
+}
+
+async function inviteUserIfNeeded(email, firstName, lastName, frontendBaseUrlOverride = null, dbClient = null) {
+  if (!email) {
     return {
       wasNewUser: false,
       existingUser: false,
@@ -969,71 +1274,97 @@ async function inviteUserIfNeeded(email, firstName, lastName) {
     };
   }
   try {
+    const runQuery = async (sql, params = []) => (dbClient ? dbClient.query(sql, params) : query(sql, params));
     const normalizedEmail = String(email).trim().toLowerCase();
-    const linkRes = await supabaseAdmin.auth.admin.generateLink({
-      type: "invite",
-      email: normalizedEmail,
-      options: {
-        data: {
-          first_name: firstName || null,
-          last_name: lastName || null
-        },
-        redirectTo: `${appBaseUrl}/`
-      }
-    });
+    const signupBaseUrl = resolveFrontendBaseUrl(frontendBaseUrlOverride);
+    const defaultSignupLink = `${signupBaseUrl}/signup?email=${encodeURIComponent(normalizedEmail)}`;
 
-    if (linkRes.error) {
-      const message = String(linkRes.error.message || "");
-      if (message.toLowerCase().includes("already")) {
-        return {
-          wasNewUser: false,
-          existingUser: true,
-          inviteSent: false,
-          authUserId: null
-        };
+    const generateSetupLink = async (linkType = "invite") => {
+      if (!supabaseAdmin?.auth?.admin?.generateLink) return "";
+      const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
+        type: linkType,
+        email: normalizedEmail,
+        options: {
+          redirectTo: `${signupBaseUrl}/set-password`
+        }
+      });
+      if (linkError) {
+        // eslint-disable-next-line no-console
+        console.error(`[checkout] ${linkType} link generation failed:`, linkError.message || linkError);
+        return "";
       }
-      // eslint-disable-next-line no-console
-      console.error("[checkout] generate invite link failed:", linkRes.error);
+      return linkData?.properties?.action_link || linkData?.action_link || "";
+    };
+
+    const existingUserRes = await runQuery(
+      `select auth_user_id
+       from public.users
+       where lower(email) = lower($1)
+       limit 1`,
+      [normalizedEmail]
+    );
+    const existingAuthUserId = existingUserRes.rows[0]?.auth_user_id || null;
+    if (existingAuthUserId) {
       return {
         wasNewUser: false,
-        existingUser: false,
+        existingUser: true,
         inviteSent: false,
-        authUserId: null
+        authUserId: existingAuthUserId
       };
     }
 
-    const inviteLink = linkRes.data?.properties?.action_link || linkRes.data?.action_link;
-    const authUserId = linkRes.data?.user?.id || null;
+    let signupLink = defaultSignupLink;
+    let createdAuthUserId = null;
 
-    let inviteSent = false;
-    if (inviteLink) {
-      inviteSent = await sendNewUserInviteEmail({ to: normalizedEmail, firstName, inviteLink });
-    }
-
-    if (!inviteSent) {
-      const inviteRes = await supabaseAdmin.auth.admin.inviteUserByEmail(normalizedEmail, {
-        data: {
-          first_name: firstName || null,
-          last_name: lastName || null
-        },
-        redirectTo: `${appBaseUrl}/`
-      });
-      if (inviteRes.error) {
-        const message = String(inviteRes.error.message || "");
-        if (!message.toLowerCase().includes("already")) {
-          // eslint-disable-next-line no-console
-          console.error("[checkout] supabase invite fallback failed:", inviteRes.error);
+    if (supabaseAdmin?.auth?.admin?.generateLink) {
+      const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
+        type: "invite",
+        email: normalizedEmail,
+        options: {
+          redirectTo: `${signupBaseUrl}/set-password`
         }
+      });
+      if (linkError) {
+        // eslint-disable-next-line no-console
+        console.error("[checkout] invite link generation failed:", linkError.message || linkError);
       } else {
-        inviteSent = true;
+        const generatedLink = linkData?.properties?.action_link || linkData?.action_link || "";
+        if (generatedLink) signupLink = generatedLink;
+        createdAuthUserId = linkData?.user?.id || null;
       }
     }
+
+    let inviteSent = await sendNewUserInviteEmail({
+      to: normalizedEmail,
+      firstName,
+      signupLink
+    });
+    if (!inviteSent) {
+      const recoveryLink = await generateSetupLink("recovery");
+      inviteSent = await sendNewUserInviteEmail({
+        to: normalizedEmail,
+        firstName,
+        signupLink: recoveryLink || signupLink
+      });
+      // eslint-disable-next-line no-console
+      console.warn("[checkout] invite resend attempted with recovery link:", {
+        email: normalizedEmail,
+        resent: inviteSent
+      });
+    }
+    // eslint-disable-next-line no-console
+    console.log("[checkout] invite send result:", {
+      email: normalizedEmail,
+      wasNewUser: true,
+      inviteSent,
+      hasAuthUserId: Boolean(createdAuthUserId)
+    });
 
     return {
       wasNewUser: true,
       existingUser: false,
       inviteSent,
-      authUserId
+      authUserId: createdAuthUserId
     };
   } catch (error) {
     // eslint-disable-next-line no-console
@@ -1062,6 +1393,8 @@ export async function processCompletedCheckoutSession(session) {
   if (!stripeSessionId) return;
 
   const client = await pool.connect();
+  let postCommitEmail = null;
+  let postCommitPaymentId = null;
   try {
     await client.query("begin");
 
@@ -1078,66 +1411,283 @@ export async function processCompletedCheckoutSession(session) {
       await client.query("rollback");
       return;
     }
-    if (preOrder.status === "paid") {
-      await client.query("commit");
-      return;
-    }
+    const existingPaymentRes = await client.query(
+      `select id, confirmation_email_sent, stripe_metadata
+       from public.course_payments
+       where pre_order_id = $1
+       limit 1`,
+      [preOrder.id]
+    );
+    const existingPaymentRow = existingPaymentRes.rows[0] ?? null;
+    const existingPaymentId = existingPaymentRow?.id ?? null;
+    const existingPaymentConfirmationSent = Boolean(existingPaymentRow?.confirmation_email_sent);
+    const existingPaymentSeatApplied =
+      existingPaymentRow?.stripe_metadata &&
+      typeof existingPaymentRow.stripe_metadata === "object" &&
+      existingPaymentRow.stripe_metadata.seat_decrement_applied === true;
 
     const paidAt = new Date().toISOString();
     const paymentIntentId = session.payment_intent ? String(session.payment_intent) : null;
     const customerId = session.customer ? String(session.customer) : null;
 
-    await client.query(
-      `update public.pre_orders
-       set status = 'paid',
-           paid_at = $2,
-           stripe_payment_intent_id = coalesce($3, stripe_payment_intent_id),
-           stripe_customer_id = coalesce($4, stripe_customer_id)
-       where id = $1`,
-      [preOrder.id, paidAt, paymentIntentId, customerId]
-    );
+    if (preOrder.status !== "paid") {
+      await client.query(
+        `update public.pre_orders
+         set status = 'paid',
+             paid_at = $2,
+             stripe_payment_intent_id = coalesce($3, stripe_payment_intent_id),
+             stripe_customer_id = coalesce($4, stripe_customer_id)
+         where id = $1`,
+        [preOrder.id, paidAt, paymentIntentId, customerId]
+      );
+    }
+
+    const metaCourseDateRaw = normalizeCourseDateInput(session?.metadata?.course_date);
+    const metaCourseDate = metaCourseDateRaw ? (toSessionDateKey(metaCourseDateRaw) || metaCourseDateRaw) : null;
+    const courseDateStored = normalizeCourseDateInput(preOrder.course_date);
+    const metaSessionId = session?.metadata?.course_session_id || null;
+    const metaStartTime = session?.metadata?.course_start_time || null;
+    const metaEndTime = session?.metadata?.course_end_time || null;
+    const courseDateRaw =
+      (courseDateStored ? (toSessionDateKey(courseDateStored) || courseDateStored) : null) || metaCourseDate;
+
+    if (!courseDateStored && metaCourseDate) {
+      await client.query(
+        `update public.pre_orders set course_date = $2, updated_at = now() where id = $1`,
+        [preOrder.id, metaCourseDate]
+      );
+    }
+
+    const enrollmentSessionDate = courseDateRaw || preOrder.course_date;
+
+    const orderTypeRaw = preOrder.order_type;
+    const orderType =
+      orderTypeRaw == null || String(orderTypeRaw).trim() === ""
+        ? "course"
+        : String(orderTypeRaw).toLowerCase();
+    // Only tuition "course" checkouts create enrollments, course_payments, and consume scheduled_courses seats.
+    if (orderType !== "course" || !preOrder.course_id) {
+      await client.query("commit");
+      return;
+    }
 
     const billingDetails = session.customer_details || {};
-    const enrollmentRes = await client.query(
-      `insert into public.enrollments (
-         course_id, pre_order_id, provider_name, provider_email, customer_name,
-         status, session_date, amount_paid, paid_at
-       ) values ($1, $2, $3, $4, $5, 'paid', $6, $7, $8)
-       returning id`,
-      [
-        preOrder.course_id,
-        preOrder.id,
-        preOrder.customer_name,
-        preOrder.customer_email,
-        preOrder.customer_name,
-        preOrder.course_date,
-        preOrder.amount_paid,
-        paidAt
-      ]
+    const existingEnrollmentRes = await client.query(
+      `select id
+       from public.enrollments
+       where pre_order_id = $1
+       limit 1`,
+      [preOrder.id]
     );
-    const enrollmentId = enrollmentRes.rows[0].id;
+    const existingEnrollmentId = existingEnrollmentRes.rows[0]?.id ?? null;
+
+    let enrollmentId = existingEnrollmentId;
+    if (!enrollmentId) {
+      const enrollmentRes = await client.query(
+        `insert into public.enrollments (
+           course_id, pre_order_id, provider_name, provider_email, customer_name,
+           status, session_date, amount_paid, paid_at
+         ) values ($1, $2, $3, $4, $5, 'paid', $6, $7, $8)
+         returning id`,
+        [
+          preOrder.course_id,
+          preOrder.id,
+          preOrder.customer_name,
+          preOrder.customer_email,
+          preOrder.customer_name,
+          enrollmentSessionDate,
+          preOrder.amount_paid,
+          paidAt
+        ]
+      );
+      enrollmentId = enrollmentRes.rows[0].id;
+    }
 
     const { rows: courseRows } = await client.query(
       `select location, session_dates
        from public.scheduled_courses
        where id = $1
-       limit 1`,
+       limit 1
+       for update`,
       [preOrder.course_id]
     );
     const selectedCourse = courseRows[0] || null;
 
+    let sessionDatesForWrite = selectedCourse?.session_dates;
+    if (typeof sessionDatesForWrite === "string") {
+      try {
+        sessionDatesForWrite = JSON.parse(sessionDatesForWrite);
+      } catch {
+        sessionDatesForWrite = [];
+      }
+    }
+    if (!Array.isArray(sessionDatesForWrite)) sessionDatesForWrite = [];
+
+    let sessionDatesForEmail = sessionDatesForWrite;
+
+    let decrementedSessionDates = false;
+    let seatDecrementApplied = Boolean(existingPaymentSeatApplied);
+    if (!seatDecrementApplied) {
+      const selectedSessionEntry = findSessionEntryForSelection(sessionDatesForWrite, {
+        courseDate: courseDateRaw,
+        sessionId: metaSessionId,
+        startTime: metaStartTime,
+        endTime: metaEndTime
+      });
+      const resolvedSeat = selectedSessionEntry
+        ? { entry: selectedSessionEntry, mapKey: selectedSessionEntry.date ?? selectedSessionEntry.session_date ?? courseDateRaw }
+        : resolveDecrementTargetForPaidCourse(sessionDatesForWrite, courseDateRaw);
+
+      if (resolvedSeat && canDecrementSessionDateSeat(resolvedSeat.entry)) {
+        const nextSessionDates = decrementSessionDateSeatInArray(sessionDatesForWrite, resolvedSeat.mapKey);
+        await client.query(
+          `update public.scheduled_courses
+           set session_dates = $1::jsonb, updated_at = now()
+           where id = $2`,
+          [JSON.stringify(nextSessionDates), preOrder.course_id]
+        );
+        sessionDatesForEmail = nextSessionDates;
+        decrementedSessionDates = true;
+        seatDecrementApplied = true;
+      } else if (sessionDatesForWrite.length > 0) {
+        const bookableRows = sessionDatesForWrite.filter((e) => canDecrementSessionDateSeat(e));
+        // If course_date was never stored but there is exactly one bookable session row, consume that seat.
+        if (!courseDateRaw && bookableRows.length === 1) {
+          const only = bookableRows[0];
+          const anchor = only.date ?? only.session_date;
+          if (anchor) {
+            // eslint-disable-next-line no-console
+            console.warn("[checkout] paid course: pre_order.course_date empty; decrementing sole bookable session_dates row", {
+              preOrderId: preOrder.id,
+              courseId: preOrder.course_id
+            });
+            const nextSessionDates = decrementSessionDateSeatInArray(sessionDatesForWrite, anchor);
+            await client.query(
+              `update public.scheduled_courses
+               set session_dates = $1::jsonb, updated_at = now()
+               where id = $2`,
+              [JSON.stringify(nextSessionDates), preOrder.course_id]
+            );
+            sessionDatesForEmail = nextSessionDates;
+            decrementedSessionDates = true;
+            seatDecrementApplied = true;
+          }
+        } else if (courseDateRaw) {
+          const entryForSeat = findSessionEntryByDate(sessionDatesForWrite, courseDateRaw);
+          // eslint-disable-next-line no-console
+          console.error("[checkout] paid course: session_dates seat row not decremented", {
+            preOrderId: preOrder.id,
+            courseId: preOrder.course_id,
+            courseDateRawStored: preOrder.course_date,
+            courseDateRaw,
+            normalizedCourseDateKey: toSessionDateKey(courseDateRaw),
+            sessionDateKeys: sessionDatesForWrite.map((s) => [...sessionEntryCalendarKeys(s)].join("|")),
+            entryFound: Boolean(entryForSeat),
+            canDecrement: entryForSeat ? canDecrementSessionDateSeat(entryForSeat) : false,
+            bookableRowCount: bookableRows.length
+          });
+        } else if (!courseDateRaw && bookableRows.length > 1) {
+          // eslint-disable-next-line no-console
+          console.error("[checkout] paid course: course_date missing and multiple bookable session_dates rows", {
+            preOrderId: preOrder.id,
+            courseId: preOrder.course_id,
+            sessionDateKeys: sessionDatesForWrite.map((s) => [...sessionEntryCalendarKeys(s)].join("|"))
+          });
+        }
+      }
+    }
+
+    // Course-level cap only when there is no per-date inventory in JSON (never use this branch to "skip" session_dates).
+    if (!decrementedSessionDates && sessionDatesForWrite.length === 0 && !courseDateRaw) {
+      await client.query(
+        `update public.scheduled_courses
+         set available_seats = case
+           when available_seats is null then null
+           when available_seats > 0 then available_seats - 1
+           else 0
+         end
+         where id = $1`,
+        [preOrder.course_id]
+      );
+    }
+
+    // Final safety net: ensure per-date seats reflect the true paid enrollment count for this date.
+    // This guards against historical data drift or any missed decrement path.
+    if (sessionDatesForWrite.length > 0 && enrollmentSessionDate) {
+      const targetEntry =
+        findSessionEntryForSelection(sessionDatesForWrite, {
+          courseDate: enrollmentSessionDate,
+          sessionId: metaSessionId,
+          startTime: metaStartTime,
+          endTime: metaEndTime
+        }) || findSessionEntryByDate(sessionDatesForWrite, enrollmentSessionDate);
+      const targetDateKey = toSessionDateKey(enrollmentSessionDate);
+      const targetMaxSeats = parseInt(String(targetEntry?.max_seats ?? ""), 10);
+      if (targetEntry && targetDateKey && Number.isFinite(targetMaxSeats) && targetMaxSeats >= 0) {
+        const { rows: paidEnrollRows } = await client.query(
+          `select count(*)::int as count
+           from public.enrollments
+           where course_id = $1
+             and session_date::date = $2::date
+             and lower(coalesce(status, '')) = any($3::text[])`,
+          [
+            preOrder.course_id,
+            targetDateKey,
+            ["paid", "confirmed", "completed", "attended"].map(normalizePaidEnrollmentStatus)
+          ]
+        );
+        const paidCount = Number(paidEnrollRows[0]?.count || 0);
+        const expectedAvailable = Math.max(0, targetMaxSeats - paidCount);
+        const currentAvailable = Number(targetEntry?.available_seats ?? NaN);
+        if (!Number.isFinite(currentAvailable) || currentAvailable !== expectedAvailable) {
+          const nextSessionDates = sessionDatesForWrite.map((entry) => {
+            if (!sessionEntryCalendarKeys(entry).has(targetDateKey)) return entry;
+            const sameSessionId = metaSessionId
+              ? String(entry?.session_id || "") === String(metaSessionId)
+              : true;
+            if (!sameSessionId && targetEntry?.session_id) return entry;
+            const maxSeats = parseInt(String(entry?.max_seats ?? targetMaxSeats), 10);
+            const boundedMax = Number.isFinite(maxSeats) && maxSeats >= 0 ? maxSeats : targetMaxSeats;
+            return { ...entry, max_seats: boundedMax, available_seats: Math.max(0, Math.min(boundedMax, expectedAvailable)) };
+          });
+          await client.query(
+            `update public.scheduled_courses
+             set session_dates = $1::jsonb, updated_at = now()
+             where id = $2`,
+            [JSON.stringify(nextSessionDates), preOrder.course_id]
+          );
+          sessionDatesForEmail = nextSessionDates;
+          seatDecrementApplied = true;
+        }
+      }
+    }
+
     let wasNewUser = false;
     let linkedUserId = null;
+
+    try {
+      await upsertProviderUserByEmail(client, {
+        email: preOrder.customer_email,
+        firstName: preOrder.first_name,
+        lastName: preOrder.last_name
+      });
+    } catch (profileErr) {
+      // Never block payment finalization on profile projection failures.
+      // eslint-disable-next-line no-console
+      console.error("[checkout] provider profile upsert skipped:", profileErr?.message || profileErr);
+    }
 
     const inviteResult = await inviteUserIfNeeded(
       preOrder.customer_email,
       preOrder.first_name,
-      preOrder.last_name
+      preOrder.last_name,
+      session?.metadata?.app_base_url || null,
+      client
     );
     wasNewUser = Boolean(inviteResult?.wasNewUser);
     linkedUserId = inviteResult?.authUserId || null;
 
-    if (wasNewUser && linkedUserId) {
+    if (linkedUserId) {
       await upsertProviderUserRow(client, {
         authUserId: linkedUserId,
         email: preOrder.customer_email,
@@ -1146,74 +1696,101 @@ export async function processCompletedCheckoutSession(session) {
       });
     }
 
-    const emailSent = await sendConfirmationEmail({
-      to: preOrder.customer_email,
-      customerName: preOrder.customer_name,
-      courseTitle: preOrder.course_title,
-      courseData: {
-        course_session_dates: selectedCourse?.session_dates || [],
-        course_location: selectedCourse?.location || ""
-      },
-      courseDate: preOrder.course_date
-    });
+    if (existingPaymentId) {
+      if (seatDecrementApplied && !existingPaymentSeatApplied) {
+        await client.query(
+          `update public.course_payments
+           set stripe_metadata = coalesce(stripe_metadata, '{}'::jsonb) || $2::jsonb,
+               updated_at = now()
+           where id = $1`,
+          [existingPaymentId, JSON.stringify({ seat_decrement_applied: true })]
+        );
+      }
+      postCommitPaymentId = existingPaymentId;
+    } else {
+      const paymentStripeMetadata = {
+        ...(session.metadata || {}),
+        seat_decrement_applied: seatDecrementApplied
+      };
+      const paymentInsertRes = await client.query(
+        `insert into public.course_payments (
+          pre_order_id, enrollment_id, course_id, course_title,
+          customer_name, customer_email, linked_user_id,
+          stripe_session_id, stripe_payment_intent_id, stripe_customer_id,
+          amount_total, amount_subtotal, currency,
+          billing_name, billing_email, billing_phone, billing_address, stripe_metadata,
+          status, was_new_user, confirmation_email_sent
+        ) values (
+          $1, $2, $3, $4,
+          $5, $6, $7,
+          $8, $9, $10,
+          $11, $12, $13,
+          $14, $15, $16, $17::jsonb, $18::jsonb,
+          'completed', $19, false
+        )
+        returning id`,
+        [
+          preOrder.id,
+          enrollmentId,
+          preOrder.course_id,
+          preOrder.course_title,
+          preOrder.customer_name,
+          preOrder.customer_email,
+          linkedUserId,
+          stripeSessionId,
+          paymentIntentId,
+          customerId,
+          Number(session.amount_total || 0) / 100,
+          Number(session.amount_subtotal || 0) / 100,
+          session.currency || "usd",
+          billingDetails.name || null,
+          billingDetails.email || preOrder.customer_email,
+          billingDetails.phone || null,
+          JSON.stringify(billingDetails.address || {}),
+          JSON.stringify(paymentStripeMetadata),
+          wasNewUser
+        ]
+      );
+      postCommitPaymentId = paymentInsertRes.rows[0]?.id ?? null;
+    }
 
-    await client.query(
-      `insert into public.course_payments (
-        pre_order_id, enrollment_id, course_id, course_title,
-        customer_name, customer_email, linked_user_id,
-        stripe_session_id, stripe_payment_intent_id, stripe_customer_id,
-        amount_total, amount_subtotal, currency,
-        billing_name, billing_email, billing_phone, billing_address, stripe_metadata,
-        status, was_new_user, confirmation_email_sent
-      ) values (
-        $1, $2, $3, $4,
-        $5, $6, $7,
-        $8, $9, $10,
-        $11, $12, $13,
-        $14, $15, $16, $17::jsonb, $18::jsonb,
-        'completed', $19, $20
-      )`,
-      [
-        preOrder.id,
-        enrollmentId,
-        preOrder.course_id,
-        preOrder.course_title,
-        preOrder.customer_name,
-        preOrder.customer_email,
-        linkedUserId,
-        stripeSessionId,
-        paymentIntentId,
-        customerId,
-        Number(session.amount_total || 0) / 100,
-        Number(session.amount_subtotal || 0) / 100,
-        session.currency || "usd",
-        billingDetails.name || null,
-        billingDetails.email || preOrder.customer_email,
-        billingDetails.phone || null,
-        JSON.stringify(billingDetails.address || {}),
-        JSON.stringify(session.metadata || {}),
-        wasNewUser,
-        emailSent
-      ]
-    );
-
-    // Keep current business behavior requested: decrement seat again in webhook.
-    await client.query(
-      `update public.scheduled_courses
-       set available_seats = case
-         when available_seats is null then null
-         when available_seats > 0 then available_seats - 1
-         else 0
-       end
-       where id = $1`,
-      [preOrder.course_id]
-    );
+    if (!existingPaymentConfirmationSent) {
+      postCommitEmail = {
+        to: preOrder.customer_email,
+        customerName: preOrder.customer_name,
+        courseTitle: preOrder.course_title,
+        courseData: {
+          course_session_dates: sessionDatesForEmail,
+          course_location: selectedCourse?.location || ""
+        },
+        courseDate: enrollmentSessionDate
+      };
+    }
 
     await client.query("commit");
   } catch (error) {
     await client.query("rollback");
+    postCommitEmail = null;
+    postCommitPaymentId = null;
     throw error;
   } finally {
     client.release();
+  }
+
+  if (postCommitEmail) {
+    try {
+      const emailSent = await sendConfirmationEmail(postCommitEmail);
+      if (postCommitPaymentId) {
+        await query(
+          `update public.course_payments
+           set confirmation_email_sent = $1, updated_at = now()
+           where id = $2`,
+          [Boolean(emailSent), postCommitPaymentId]
+        );
+      }
+    } catch (emailErr) {
+      // eslint-disable-next-line no-console
+      console.error("[checkout] post-commit confirmation email failed:", emailErr?.message || emailErr);
+    }
   }
 }

@@ -1,3 +1,9 @@
+import {
+  normalizeScheduledSessionDatesEntries,
+  parseSeatCount,
+  toSessionDateKey
+} from "../lib/sessionDateSeats.js";
+
 const COURSE_TYPES = ["template", "scheduled"];
 const COURSE_CATEGORIES = [
   "botox",
@@ -22,7 +28,7 @@ function parseNullableNumber(value) {
   return Number.isFinite(num) ? num : null;
 }
 
-export function validateCourseInput(input, { partial = false } = {}) {
+export function validateCourseInput(input, { partial = false, previousSessionDates } = {}) {
   const data = { ...input };
   const errors = [];
 
@@ -39,12 +45,42 @@ export function validateCourseInput(input, { partial = false } = {}) {
   }
 
   const resolvedType = data.type;
+  let normalizedSessionDates = ensureArray(data.session_dates);
+
   if ((!partial && resolvedType === "scheduled") || (partial && data.type === "scheduled")) {
     if (!data.template_id) {
       errors.push("template_id is required when type is scheduled");
     }
     if (!Array.isArray(data.session_dates) || data.session_dates.length === 0) {
       errors.push("session_dates must include at least one date when type is scheduled");
+    }
+    normalizedSessionDates = normalizeScheduledSessionDatesEntries(
+      ensureArray(data.session_dates),
+      previousSessionDates
+    );
+    for (const entry of normalizedSessionDates) {
+      if (!toSessionDateKey(entry?.date)) {
+        errors.push("each session_dates entry must have a valid date");
+        break;
+      }
+      if (!String(entry.location || "").trim()) {
+        errors.push("each session date requires location");
+        break;
+      }
+      const max = parseSeatCount(entry.max_seats);
+      const avail = parseSeatCount(entry.available_seats);
+      if (max == null || max < 0) {
+        errors.push("each session date requires max_seats (minimum 0)");
+        break;
+      }
+      if (avail == null || avail < 0) {
+        errors.push("each session date requires available_seats (minimum 0)");
+        break;
+      }
+      if (avail > max) {
+        errors.push("available_seats cannot be greater than max_seats for any session date");
+        break;
+      }
     }
   }
 
@@ -58,7 +94,7 @@ export function validateCourseInput(input, { partial = false } = {}) {
 
   const maxSeats = parseNullableNumber(data.max_seats);
   const availableSeats = parseNullableNumber(data.available_seats);
-  if (maxSeats !== null && availableSeats !== null && availableSeats > maxSeats) {
+  if (resolvedType !== "scheduled" && maxSeats !== null && availableSeats !== null && availableSeats > maxSeats) {
     errors.push("available_seats cannot exceed max_seats");
   }
 
@@ -68,6 +104,11 @@ export function validateCourseInput(input, { partial = false } = {}) {
     err.details = errors;
     throw err;
   }
+
+  const scheduledSeatFields =
+    resolvedType === "scheduled"
+      ? { max_seats: null, available_seats: null }
+      : { max_seats: maxSeats, available_seats: availableSeats };
 
   return {
     title: data.title,
@@ -87,9 +128,9 @@ export function validateCourseInput(input, { partial = false } = {}) {
     price: parseNullableNumber(data.price),
     duration_hours: parseNullableNumber(data.duration_hours),
     location: data.location ?? null,
-    max_seats: maxSeats,
-    available_seats: availableSeats,
-    session_dates: ensureArray(data.session_dates),
+    max_seats: scheduledSeatFields.max_seats,
+    available_seats: scheduledSeatFields.available_seats,
+    session_dates: normalizedSessionDates,
     cover_image_url: data.cover_image_url ?? null,
     instructor_name: data.instructor_name ?? null,
     instructor_bio: data.instructor_bio ?? null,
