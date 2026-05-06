@@ -714,7 +714,27 @@ export async function getPreOrder({ id, sessionId }) {
           const stripeSession = await stripe.checkout.sessions.retrieve(fallbackSessionId);
           const isPaid = stripeSession?.payment_status === "paid" && stripeSession?.status === "complete";
           if (!isPaid) return;
-          await processCompletedCheckoutSession(stripeSession);
+          try {
+            await processCompletedCheckoutSession(stripeSession);
+          } catch (reconcileErr) {
+            // Keep confirmation unblocked when non-critical reconciliation fails.
+            // eslint-disable-next-line no-console
+            console.error("[checkout] paid-session reconciliation failed, forcing paid status:", reconcileErr?.message || reconcileErr);
+            await client.query(
+              `update public.pre_orders
+               set status = 'paid',
+                   paid_at = coalesce(paid_at, now()),
+                   stripe_payment_intent_id = coalesce($2, stripe_payment_intent_id),
+                   stripe_customer_id = coalesce($3, stripe_customer_id),
+                   updated_at = now()
+               where id = $1`,
+              [
+                preOrder?.id,
+                stripeSession?.payment_intent ? String(stripeSession.payment_intent) : null,
+                stripeSession?.customer ? String(stripeSession.customer) : null
+              ]
+            );
+          }
           const refreshed = await client.query(
             `select id, order_type, type, status, course_title, course_date, customer_email, amount_paid, paid_at, created_at, stripe_session_id
              from public.pre_orders
