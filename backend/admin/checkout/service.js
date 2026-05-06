@@ -1291,7 +1291,26 @@ async function inviteUserIfNeeded(email, firstName, lastName, frontendBaseUrlOve
     }
 
     const signupBaseUrl = resolveFrontendBaseUrl(frontendBaseUrlOverride);
-    const signupLink = `${signupBaseUrl}/signup?email=${encodeURIComponent(normalizedEmail)}`;
+    let signupLink = `${signupBaseUrl}/signup?email=${encodeURIComponent(normalizedEmail)}`;
+    let createdAuthUserId = null;
+
+    if (supabaseAdmin?.auth?.admin?.generateLink) {
+      const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
+        type: "invite",
+        email: normalizedEmail,
+        options: {
+          redirectTo: `${signupBaseUrl}/set-password`
+        }
+      });
+      if (linkError) {
+        // eslint-disable-next-line no-console
+        console.error("[checkout] invite link generation failed:", linkError.message || linkError);
+      } else {
+        const generatedLink = linkData?.properties?.action_link || linkData?.action_link || "";
+        if (generatedLink) signupLink = generatedLink;
+        createdAuthUserId = linkData?.user?.id || null;
+      }
+    }
 
     const inviteSent = await sendNewUserInviteEmail({
       to: normalizedEmail,
@@ -1303,7 +1322,7 @@ async function inviteUserIfNeeded(email, firstName, lastName, frontendBaseUrlOve
       wasNewUser: true,
       existingUser: false,
       inviteSent,
-      authUserId: null
+      authUserId: createdAuthUserId
     };
   } catch (error) {
     // eslint-disable-next-line no-console
@@ -1625,7 +1644,7 @@ export async function processCompletedCheckoutSession(session) {
     wasNewUser = Boolean(inviteResult?.wasNewUser);
     linkedUserId = inviteResult?.authUserId || null;
 
-    if (wasNewUser && linkedUserId) {
+    if (linkedUserId) {
       await upsertProviderUserRow(client, {
         authUserId: linkedUserId,
         email: preOrder.customer_email,
