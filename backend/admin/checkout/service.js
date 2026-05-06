@@ -867,7 +867,9 @@ export async function getPreOrder({ id, sessionId }) {
         const inviteResult = await inviteUserIfNeeded(
           preOrder.customer_email,
           preOrder.first_name,
-          preOrder.last_name
+          preOrder.last_name,
+          null,
+          client
         );
         // eslint-disable-next-line no-console
         console.log("[checkout] getPreOrder invite result:", {
@@ -1262,7 +1264,7 @@ async function upsertProviderUserByEmail(client, {
   return inserted.rows[0] ?? null;
 }
 
-async function inviteUserIfNeeded(email, firstName, lastName, frontendBaseUrlOverride = null) {
+async function inviteUserIfNeeded(email, firstName, lastName, frontendBaseUrlOverride = null, dbClient = null) {
   if (!email) {
     return {
       wasNewUser: false,
@@ -1272,6 +1274,7 @@ async function inviteUserIfNeeded(email, firstName, lastName, frontendBaseUrlOve
     };
   }
   try {
+    const runQuery = async (sql, params = []) => (dbClient ? dbClient.query(sql, params) : query(sql, params));
     const normalizedEmail = String(email).trim().toLowerCase();
     const signupBaseUrl = resolveFrontendBaseUrl(frontendBaseUrlOverride);
     const defaultSignupLink = `${signupBaseUrl}/signup?email=${encodeURIComponent(normalizedEmail)}`;
@@ -1293,7 +1296,7 @@ async function inviteUserIfNeeded(email, firstName, lastName, frontendBaseUrlOve
       return linkData?.properties?.action_link || linkData?.action_link || "";
     };
 
-    const existingUserRes = await query(
+    const existingUserRes = await runQuery(
       `select auth_user_id
        from public.users
        where lower(email) = lower($1)
@@ -1331,10 +1334,30 @@ async function inviteUserIfNeeded(email, firstName, lastName, frontendBaseUrlOve
       }
     }
 
-    const inviteSent = await sendNewUserInviteEmail({
+    let inviteSent = await sendNewUserInviteEmail({
       to: normalizedEmail,
       firstName,
       signupLink
+    });
+    if (!inviteSent) {
+      const recoveryLink = await generateSetupLink("recovery");
+      inviteSent = await sendNewUserInviteEmail({
+        to: normalizedEmail,
+        firstName,
+        signupLink: recoveryLink || signupLink
+      });
+      // eslint-disable-next-line no-console
+      console.warn("[checkout] invite resend attempted with recovery link:", {
+        email: normalizedEmail,
+        resent: inviteSent
+      });
+    }
+    // eslint-disable-next-line no-console
+    console.log("[checkout] invite send result:", {
+      email: normalizedEmail,
+      wasNewUser: true,
+      inviteSent,
+      hasAuthUserId: Boolean(createdAuthUserId)
     });
 
     return {
@@ -1658,7 +1681,8 @@ export async function processCompletedCheckoutSession(session) {
       preOrder.customer_email,
       preOrder.first_name,
       preOrder.last_name,
-      session?.metadata?.app_base_url || null
+      session?.metadata?.app_base_url || null,
+      client
     );
     wasNewUser = Boolean(inviteResult?.wasNewUser);
     linkedUserId = inviteResult?.authUserId || null;
