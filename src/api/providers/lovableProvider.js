@@ -21,15 +21,21 @@ function createNotImplementedMethod(path) {
 
 function resolveAdminApiBaseUrl() {
   const raw = (import.meta.env.VITE_APP_API_BASE_URL || "").trim();
-  // In dev, always route through the Vite proxy (relative URLs) so the `/api`
-  // prefix gets stripped before reaching the Express server. A localhost base
-  // URL in .env would bypass the proxy and 404 on the `/api/*` mount path.
-  if (!import.meta.env.DEV) return raw;
   if (!raw) return "";
   try {
     const u = new URL(raw);
     const h = u.hostname.toLowerCase();
-    if (h === "localhost" || h === "127.0.0.1") return "";
+    const isLocalTarget = h === "localhost" || h === "127.0.0.1";
+
+    // In dev, always use Vite proxy for localhost backends.
+    if (import.meta.env.DEV && isLocalTarget) return "";
+
+    // In production, never call the end user's localhost.
+    if (!import.meta.env.DEV && isLocalTarget && typeof window !== "undefined") {
+      const currentHost = String(window.location.hostname || "").toLowerCase();
+      const isCurrentHostLocal = currentHost === "localhost" || currentHost === "127.0.0.1";
+      if (!isCurrentHostLocal) return "";
+    }
   } catch {
     return raw;
   }

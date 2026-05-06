@@ -737,6 +737,68 @@ export async function getPreOrder({ id, sessionId }) {
       }
     }
 
+    // Best-effort recovery: if payment is completed but confirmation email
+    // was not sent (or failed previously), retry on read.
+    if (preOrder?.status === "paid" && preOrder?.order_type === "course") {
+      try {
+        const paymentRes = await client.query(
+          `select id, confirmation_email_sent
+           from public.course_payments
+           where pre_order_id = $1
+           limit 1`,
+          [preOrder.id]
+        );
+        const paymentRow = paymentRes.rows[0] || null;
+        if (paymentRow && !paymentRow.confirmation_email_sent) {
+          let courseData = null;
+          if (preOrder.course_id) {
+            const courseRes = await client.query(
+              `select location, session_dates
+               from public.scheduled_courses
+               where id = $1
+               limit 1`,
+              [preOrder.course_id]
+            );
+            const course = courseRes.rows[0] || null;
+            let sessionDates = course?.session_dates || [];
+            if (typeof sessionDates === "string") {
+              try {
+                sessionDates = JSON.parse(sessionDates);
+              } catch {
+                sessionDates = [];
+              }
+            }
+            if (!Array.isArray(sessionDates)) sessionDates = [];
+            courseData = {
+              course_location: course?.location || "",
+              course_session_dates: sessionDates
+            };
+          }
+
+          const sent = await sendConfirmationEmail({
+            to: preOrder.customer_email,
+            customerName: preOrder.customer_name,
+            courseTitle: preOrder.course_title,
+            courseData,
+            courseDate: preOrder.course_date
+          });
+
+          if (sent) {
+            await client.query(
+              `update public.course_payments
+               set confirmation_email_sent = true,
+                   updated_at = now()
+               where id = $1`,
+              [paymentRow.id]
+            );
+          }
+        }
+      } catch (emailRetryErr) {
+        // eslint-disable-next-line no-console
+        console.error("[checkout] confirmation email retry failed in getPreOrder:", emailRetryErr?.message || emailRetryErr);
+      }
+    }
+
     return preOrder;
   } finally {
     client.release();
