@@ -967,7 +967,7 @@ async function sendConfirmationEmail({ to, customerName, courseTitle, courseData
 
   try {
     const primaryFrom = resendFromEmail;
-    const fallbackFrom = process.env.RESEND_FALLBACK_FROM_EMAIL || "NOVI Society <onboarding@resend.dev>";
+    const fallbackFrom = String(process.env.RESEND_FALLBACK_FROM_EMAIL || "").trim();
     const sendWithFrom = async (fromAddress) => fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
@@ -1051,7 +1051,7 @@ async function sendNewUserInviteEmail({ to, firstName, signupLink }) {
 </html>`;
   try {
     const primaryFrom = resendFromEmail;
-    const fallbackFrom = process.env.RESEND_FALLBACK_FROM_EMAIL || "NOVI Society <onboarding@resend.dev>";
+    const fallbackFrom = String(process.env.RESEND_FALLBACK_FROM_EMAIL || "").trim();
     const sendWithFrom = async (fromAddress) => fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
