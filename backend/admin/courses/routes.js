@@ -46,7 +46,10 @@ coursesRouter.put("/:id", async (req, res, next) => {
     if (!existing) return res.status(404).json({ error: "Course not found" });
 
     const merged = { ...existing, ...req.body };
-    const validated = validateCourseInput(merged, { partial: false });
+    const validated = validateCourseInput(merged, {
+      partial: false,
+      previousSessionDates: existing.session_dates
+    });
     const updated = await updateCourse(req.params.id, validated);
     res.json(updated);
   } catch (error) {

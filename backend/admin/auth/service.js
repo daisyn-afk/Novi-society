@@ -7,17 +7,71 @@ const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 const appBaseUrl = process.env.APP_BASE_URL || "http://localhost:5173";
 
+const supabaseFetchTimeoutMs = Number(process.env.SUPABASE_FETCH_TIMEOUT_MS || 45000);
+
+/** Longer request timeout than undici’s default connect window; merges with caller `signal` when supported. */
+function supabaseFetch(url, init = {}) {
+  const timeoutSignal = AbortSignal.timeout(supabaseFetchTimeoutMs);
+  const signal =
+    init.signal && typeof AbortSignal.any === "function"
+      ? AbortSignal.any([init.signal, timeoutSignal])
+      : init.signal || timeoutSignal;
+  return fetch(url, { ...init, signal });
+}
+
+const supabaseClientOptions = {
+  auth: { persistSession: false, autoRefreshToken: false },
+  global: { fetch: supabaseFetch }
+};
+
 const authClient = supabaseUrl && supabasePublishableKey
-  ? createClient(supabaseUrl, supabasePublishableKey, {
-      auth: { persistSession: false, autoRefreshToken: false }
-    })
+  ? createClient(supabaseUrl, supabasePublishableKey, supabaseClientOptions)
   : null;
 
 const adminClient = supabaseUrl && supabaseServiceRoleKey
-  ? createClient(supabaseUrl, supabaseServiceRoleKey, {
-      auth: { persistSession: false, autoRefreshToken: false }
-    })
+  ? createClient(supabaseUrl, supabaseServiceRoleKey, supabaseClientOptions)
   : null;
+
+/**
+ * `@supabase/auth-js` logs the raw undici `TypeError: fetch failed` with `console.error` before
+ * turning it into `AuthRetryableFetchError`, which duplicates our own 503 handling and clutters dev logs.
+ */
+let authJsFetchConsoleMuteDepth = 0;
+let savedConsoleErrorRef = console.error.bind(console);
+
+function muteAuthJsNetworkFetchConsoleError() {
+  if (authJsFetchConsoleMuteDepth === 0) {
+    savedConsoleErrorRef = console.error.bind(console);
+    console.error = (...args) => {
+      const first = args[0];
+      const isUndiciFetchFailure =
+        authJsFetchConsoleMuteDepth > 0 &&
+        first &&
+        typeof first === "object" &&
+        first.name === "TypeError" &&
+        String(first.message || "").includes("fetch failed");
+      if (isUndiciFetchFailure) return;
+      savedConsoleErrorRef(...args);
+    };
+  }
+  authJsFetchConsoleMuteDepth += 1;
+}
+
+function unmuteAuthJsNetworkFetchConsoleError() {
+  authJsFetchConsoleMuteDepth = Math.max(0, authJsFetchConsoleMuteDepth - 1);
+  if (authJsFetchConsoleMuteDepth === 0) {
+    console.error = savedConsoleErrorRef;
+  }
+}
+
+async function withMutedAuthJsFetchConsole(fn) {
+  muteAuthJsNetworkFetchConsoleError();
+  try {
+    return await fn();
+  } finally {
+    unmuteAuthJsNetworkFetchConsoleError();
+  }
+}
 
 function ensureAuthClients() {
   if (!authClient) {
@@ -269,10 +323,12 @@ export async function signup(payload) {
     role
   });
 
-  const { data: loginData, error: loginError } = await authClient.auth.signInWithPassword({
-    email,
-    password
-  });
+  const { data: loginData, error: loginError } = await withMutedAuthJsFetchConsole(() =>
+    authClient.auth.signInWithPassword({
+      email,
+      password
+    })
+  );
   if (loginError) {
     const err = new Error(loginError.message || "Account created, but automatic login failed.");
     err.statusCode = 400;
@@ -302,7 +358,9 @@ export async function login(payload) {
     throw err;
   }
 
-  const { data, error } = await authClient.auth.signInWithPassword({ email, password });
+  const { data, error } = await withMutedAuthJsFetchConsole(() =>
+    authClient.auth.signInWithPassword({ email, password })
+  );
   if (error) {
     const err = new Error(error.message || "Invalid login credentials.");
     err.statusCode = 401;
@@ -333,48 +391,75 @@ export async function getMeFromAccessToken(accessToken) {
     throw err;
   }
 
-  let data;
-  let error;
   try {
-    const result = await authClient.auth.getUser(accessToken);
-    data = result?.data;
-    error = result?.error;
-  } catch (fetchErr) {
-    const err = new Error("Auth service unavailable. Please try again.");
-    err.statusCode = 503;
-    err.isOperational = true;
-    throw err;
-  }
-  if (error || !data?.user?.id) {
-    const message = String(error?.message || "Invalid or expired token.");
-    const lowered = message.toLowerCase();
-    const isTimeout = lowered.includes("timeout") || lowered.includes("fetch failed");
-    const err = new Error(isTimeout ? "Auth service unavailable. Please try again." : message);
-    err.statusCode = isTimeout ? 503 : 401;
-    err.isOperational = Boolean(isTimeout);
-    throw err;
-  }
+    let data;
+    let error;
+    try {
+      const result = await withMutedAuthJsFetchConsole(() => authClient.auth.getUser(accessToken));
+      data = result?.data;
+      error = result?.error;
+    } catch (fetchErr) {
+      const err = new Error("Auth service unavailable. Please try again.");
+      err.statusCode = 503;
+      err.isOperational = true;
+      throw err;
+    }
+    if (error || !data?.user?.id) {
+      const message = String(error?.message || "Invalid or expired token.");
+      const lowered = message.toLowerCase();
+      const isTimeout =
+        lowered.includes("timeout") ||
+        lowered.includes("fetch failed") ||
+        lowered.includes("network") ||
+        lowered.includes("eai_again");
+      const err = new Error(isTimeout ? "Auth service unavailable. Please try again." : message);
+      err.statusCode = isTimeout ? 503 : 401;
+      err.isOperational = Boolean(isTimeout);
+      throw err;
+    }
 
-  const profile = await getUserRowByAuthUserId(data.user.id);
-  const metaName = readNameFromAuthUser(data.user || {});
-  const providerProfile = profile?.role === "provider"
-    ? await getProviderProfileByUserId(profile?.id)
-    : null;
-  return {
-    id: data.user.id,
-    email: data.user.email,
-    role: profile?.role || data.user.user_metadata?.role || "provider",
-    first_name: profile?.first_name || metaName.firstName || null,
-    last_name: profile?.last_name || metaName.lastName || null,
-    full_name: profile?.full_name || metaName.fullName || null,
-    dob: providerProfile?.dob || null,
-    address_line1: providerProfile?.address_line1 || null,
-    address_line2: providerProfile?.address_line2 || null,
-    city: providerProfile?.city || null,
-    state: providerProfile?.state || null,
-    zip: providerProfile?.zip || null,
-    onboarding_completed: providerProfile?.onboarding_completed || false
-  };
+    const profile = await getUserRowByAuthUserId(data.user.id);
+    const metaName = readNameFromAuthUser(data.user || {});
+    const providerProfile = profile?.role === "provider"
+      ? await getProviderProfileByUserId(profile?.id)
+      : null;
+    return {
+      id: data.user.id,
+      email: data.user.email,
+      role: profile?.role || data.user.user_metadata?.role || "provider",
+      first_name: profile?.first_name || metaName.firstName || null,
+      last_name: profile?.last_name || metaName.lastName || null,
+      full_name: profile?.full_name || metaName.fullName || null,
+      dob: providerProfile?.dob || null,
+      address_line1: providerProfile?.address_line1 || null,
+      address_line2: providerProfile?.address_line2 || null,
+      city: providerProfile?.city || null,
+      state: providerProfile?.state || null,
+      zip: providerProfile?.zip || null,
+      onboarding_completed: providerProfile?.onboarding_completed || false
+    };
+  } catch (e) {
+    if (e?.isOperational && e.statusCode === 503) throw e;
+    const code = e?.cause?.code || e?.code;
+    const msg = String(e?.message || "");
+    if (
+      code === "UND_ERR_CONNECT_TIMEOUT" ||
+      code === "UND_ERR_SOCKET" ||
+      code === "EAI_AGAIN" ||
+      code === "ETIMEDOUT" ||
+      code === "EHOSTUNREACH" ||
+      code === "ECONNRESET" ||
+      code === "ECONNREFUSED" ||
+      msg === "fetch failed" ||
+      msg.includes("fetch failed")
+    ) {
+      const err = new Error("Auth service unavailable. Please try again.");
+      err.statusCode = 503;
+      err.isOperational = true;
+      throw err;
+    }
+    throw e;
+  }
 }
 
 export async function refreshSession(refreshToken) {
@@ -386,9 +471,11 @@ export async function refreshSession(refreshToken) {
     throw err;
   }
 
-  const { data, error } = await authClient.auth.refreshSession({
-    refresh_token: safeRefreshToken
-  });
+  const { data, error } = await withMutedAuthJsFetchConsole(() =>
+    authClient.auth.refreshSession({
+      refresh_token: safeRefreshToken
+    })
+  );
   if (error || !data?.session?.access_token || !data?.user?.id) {
     const err = new Error(error?.message || "Invalid or expired refresh token.");
     err.statusCode = 401;

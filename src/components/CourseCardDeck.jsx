@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { ChevronLeft, ChevronRight, BookOpen, Clock, MapPin, Users } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { formatMinAvailableSeatsLabel } from "@/lib/sessionDateSeats";
 
 const levelColor = { beginner: "bg-green-100 text-green-700", intermediate: "bg-blue-100 text-blue-700", advanced: "bg-purple-100 text-purple-700" };
 
@@ -56,6 +57,7 @@ export default function CourseCardDeck({ courses, onSelectCourse, enrolledIds })
   if (!current) return null;
 
   const enrolled = enrolledIds?.has(current.id);
+  const seatsHint = formatMinAvailableSeatsLabel(current);
 
   return (
     <div className="w-full max-w-5xl mx-auto">
@@ -117,10 +119,10 @@ export default function CourseCardDeck({ courses, onSelectCourse, enrolledIds })
                   <span className="text-xs" style={{ color: "#5a6480" }}>{current.location}</span>
                 </div>
               )}
-              {current.available_seats !== undefined && (
+              {seatsHint != null && (
                 <div className="flex items-center gap-2">
                   <Users className="w-4 h-4" style={{ color: "#7B8EC8" }} />
-                  <span className="text-xs" style={{ color: "#5a6480" }}>{current.available_seats} left</span>
+                  <span className="text-xs" style={{ color: "#5a6480" }}>{seatsHint}</span>
                 </div>
               )}
             </div>

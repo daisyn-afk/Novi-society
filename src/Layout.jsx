@@ -38,6 +38,7 @@ const navByRole = {
     { label: "Growth Studio Editor", icon: Rocket, page: "AdminLaunchPad" },
     { label: "Wizard Configuration", icon: Settings, page: "AdminWizardConfig" },
     { label: "Compliance & Reviews", icon: ShieldCheck, page: "AdminCompliance" },
+    { label: "Model sign-ups", icon: Users, page: "AdminModelSignups" },
   ],
   provider: [
     { label: "Dashboard", icon: LayoutDashboard, page: "ProviderDashboard" },
@@ -70,7 +71,7 @@ const navByRole = {
   ],
 };
 
-const BARE_PAGES = ["Onboarding", "ProviderGettingStarted", "LandingPage", "ProviderApplication", "NoviLanding"];
+const BARE_PAGES = ["Onboarding", "ProviderGettingStarted", "LandingPage", "ProviderApplication", "NoviLanding", "ModelSignup", "ModelBookingLookup"];
 const PROVIDER_FREE_PAGES = ["ProviderDashboard", "CourseCatalog", "ProviderProfile", "ProviderGettingStarted"];
 
 export default function Layout({ children, currentPageName }) {
