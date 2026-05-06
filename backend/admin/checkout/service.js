@@ -938,23 +938,37 @@ async function sendConfirmationEmail({ to, customerName, courseTitle, courseData
 </html>`;
 
   try {
-    const res = await fetch("https://api.resend.com/emails", {
+    const primaryFrom = resendFromEmail;
+    const fallbackFrom = process.env.RESEND_FALLBACK_FROM_EMAIL || "NOVI Society <onboarding@resend.dev>";
+    const sendWithFrom = async (fromAddress) => fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${resendApiKey}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        from: resendFromEmail,
+        from: fromAddress,
         to: [to],
         subject: "Your NOVI course enrollment is confirmed",
         html
       })
     });
+    let res = await sendWithFrom(primaryFrom);
     if (!res.ok) {
-      const bodyText = await res.text();
+      const bodyText = await res.text().catch(() => "");
       // eslint-disable-next-line no-console
-      console.error("[checkout] resend send failed:", res.status, bodyText);
+      console.error("[checkout] resend send failed (primary sender):", res.status, bodyText);
+      if (fallbackFrom && fallbackFrom !== primaryFrom) {
+        res = await sendWithFrom(fallbackFrom);
+        if (!res.ok) {
+          const fallbackBody = await res.text().catch(() => "");
+          // eslint-disable-next-line no-console
+          console.error("[checkout] resend send failed (fallback sender):", res.status, fallbackBody);
+        } else {
+          // eslint-disable-next-line no-console
+          console.warn(`[checkout] resend send succeeded with fallback sender: ${fallbackFrom}`);
+        }
+      }
     }
     return res.ok;
   } catch (error) {
@@ -1008,23 +1022,37 @@ async function sendNewUserInviteEmail({ to, firstName, signupLink }) {
 </body>
 </html>`;
   try {
-    const res = await fetch("https://api.resend.com/emails", {
+    const primaryFrom = resendFromEmail;
+    const fallbackFrom = process.env.RESEND_FALLBACK_FROM_EMAIL || "NOVI Society <onboarding@resend.dev>";
+    const sendWithFrom = async (fromAddress) => fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${resendApiKey}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        from: resendFromEmail,
+        from: fromAddress,
         to: [to],
         subject: "Set up your NOVI Society account",
         html
       })
     });
+    let res = await sendWithFrom(primaryFrom);
     if (!res.ok) {
-      const bodyText = await res.text();
+      const bodyText = await res.text().catch(() => "");
       // eslint-disable-next-line no-console
-      console.error("[checkout] invite resend failed:", res.status, bodyText);
+      console.error("[checkout] invite resend failed (primary sender):", res.status, bodyText);
+      if (fallbackFrom && fallbackFrom !== primaryFrom) {
+        res = await sendWithFrom(fallbackFrom);
+        if (!res.ok) {
+          const fallbackBody = await res.text().catch(() => "");
+          // eslint-disable-next-line no-console
+          console.error("[checkout] invite resend failed (fallback sender):", res.status, fallbackBody);
+        } else {
+          // eslint-disable-next-line no-console
+          console.warn(`[checkout] invite resend succeeded with fallback sender: ${fallbackFrom}`);
+        }
+      }
     }
     return res.ok;
   } catch (error) {
@@ -1083,6 +1111,60 @@ async function upsertProviderUserRow(client, {
      returning id, auth_user_id, email, role`,
     [
       authUserId,
+      normalizedEmail,
+      firstName || null,
+      lastName || null,
+      mergedName,
+      normalizedRole
+    ]
+  );
+  return inserted.rows[0] ?? null;
+}
+
+async function upsertProviderUserByEmail(client, {
+  email,
+  firstName,
+  lastName
+}) {
+  if (!client || !email) return null;
+  const normalizedEmail = String(email).trim().toLowerCase();
+  const normalizedRole = normalizeRole("provider");
+  const mergedName = fullName(firstName, lastName);
+
+  const existing = await client.query(
+    `select id
+     from public.users
+     where lower(email) = lower($1)
+     limit 1`,
+    [normalizedEmail]
+  );
+  if (existing.rows[0]?.id) {
+    const updated = await client.query(
+      `update public.users
+       set first_name = coalesce(public.users.first_name, $2),
+           last_name = coalesce(public.users.last_name, $3),
+           full_name = coalesce(public.users.full_name, $4),
+           role = coalesce(public.users.role, $5),
+           updated_at = now()
+       where id = $1
+       returning id, auth_user_id, email, role`,
+      [
+        existing.rows[0].id,
+        firstName || null,
+        lastName || null,
+        mergedName,
+        normalizedRole
+      ]
+    );
+    return updated.rows[0] ?? null;
+  }
+
+  const inserted = await client.query(
+    `insert into public.users (
+       email, first_name, last_name, full_name, role
+     ) values ($1, $2, $3, $4, $5)
+     returning id, auth_user_id, email, role`,
+    [
       normalizedEmail,
       firstName || null,
       lastName || null,
@@ -1434,6 +1516,12 @@ export async function processCompletedCheckoutSession(session) {
 
     let wasNewUser = false;
     let linkedUserId = null;
+
+    await upsertProviderUserByEmail(client, {
+      email: preOrder.customer_email,
+      firstName: preOrder.first_name,
+      lastName: preOrder.last_name
+    });
 
     const inviteResult = await inviteUserIfNeeded(
       preOrder.customer_email,
