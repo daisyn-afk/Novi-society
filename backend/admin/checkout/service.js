@@ -1517,11 +1517,17 @@ export async function processCompletedCheckoutSession(session) {
     let wasNewUser = false;
     let linkedUserId = null;
 
-    await upsertProviderUserByEmail(client, {
-      email: preOrder.customer_email,
-      firstName: preOrder.first_name,
-      lastName: preOrder.last_name
-    });
+    try {
+      await upsertProviderUserByEmail(client, {
+        email: preOrder.customer_email,
+        firstName: preOrder.first_name,
+        lastName: preOrder.last_name
+      });
+    } catch (profileErr) {
+      // Never block payment finalization on profile projection failures.
+      // eslint-disable-next-line no-console
+      console.error("[checkout] provider profile upsert skipped:", profileErr?.message || profileErr);
+    }
 
     const inviteResult = await inviteUserIfNeeded(
       preOrder.customer_email,
