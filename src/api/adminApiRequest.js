@@ -44,6 +44,7 @@ function toApiPath(path) {
 
 export async function adminApiRequest(path, options = {}) {
   const url = `${API_BASE_URL}${toApiPath(path)}`;
+  const timeoutMs = Number(options.timeoutMs || API_REQUEST_TIMEOUT_MS);
   const headers = { ...(options.headers || {}) };
   const hasContentType =
     Object.prototype.hasOwnProperty.call(headers, "Content-Type") ||
@@ -62,20 +63,21 @@ export async function adminApiRequest(path, options = {}) {
 
   let response;
   try {
-    const timeoutSignal = AbortSignal.timeout(API_REQUEST_TIMEOUT_MS);
+    const timeoutSignal = AbortSignal.timeout(timeoutMs);
     const signal =
       options.signal && typeof AbortSignal.any === "function"
         ? AbortSignal.any([options.signal, timeoutSignal])
         : options.signal || timeoutSignal;
+    const { timeoutMs: _timeoutMs, ...fetchOptions } = options;
     response = await fetch(url, {
-      ...options,
+      ...fetchOptions,
       headers,
       signal
     });
   } catch (e) {
     const isTimeout = String(e?.name || "").toLowerCase() === "timeouterror" || String(e?.message || "").toLowerCase().includes("timeout");
     const hint = isTimeout
-      ? `Request timed out after ${API_REQUEST_TIMEOUT_MS}ms at ${url}.`
+      ? `Request timed out after ${timeoutMs}ms at ${url}.`
       : `Run npm run dev (Vite + admin API). Ensure .env has DATABASE_URL so backend/admin does not exit. Request: ${url}`;
     const err = new Error(`Cannot reach admin API. ${hint}`);
     err.cause = e;
