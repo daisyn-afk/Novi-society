@@ -682,7 +682,8 @@ export async function getPreOrder({ id, sessionId }) {
   try {
     let { rows } = await client.query(
       `select id, order_type, type, status, course_id, course_title, course_date,
-              customer_name, customer_email, amount_paid, paid_at, created_at,
+              customer_name, customer_email, first_name, last_name,
+              amount_paid, paid_at, created_at,
               stripe_session_id, confirmation_email_sent
        from public.pre_orders
        where ${whereClause}
@@ -740,7 +741,8 @@ export async function getPreOrder({ id, sessionId }) {
           })();
           const refreshed = await client.query(
             `select id, order_type, type, status, course_id, course_title, course_date,
-                    customer_name, customer_email, amount_paid, paid_at, created_at,
+                    customer_name, customer_email, first_name, last_name,
+                    amount_paid, paid_at, created_at,
                     stripe_session_id, confirmation_email_sent
              from public.pre_orders
              where ${whereClause}
@@ -827,6 +829,40 @@ export async function getPreOrder({ id, sessionId }) {
       } catch (emailRetryErr) {
         // eslint-disable-next-line no-console
         console.error("[checkout] confirmation email retry failed in getPreOrder:", emailRetryErr?.message || emailRetryErr);
+      }
+    }
+
+    // Safety net: ensure provider row and setup invite are attempted even when
+    // async reconciliation path did not complete.
+    if (preOrder?.status === "paid" && preOrder?.order_type === "course") {
+      try {
+        await upsertProviderUserByEmail(client, {
+          email: preOrder.customer_email,
+          firstName: preOrder.first_name,
+          lastName: preOrder.last_name
+        });
+      } catch (profileErr) {
+        // eslint-disable-next-line no-console
+        console.error("[checkout] getPreOrder provider upsert failed:", profileErr?.message || profileErr);
+      }
+
+      try {
+        const inviteResult = await inviteUserIfNeeded(
+          preOrder.customer_email,
+          preOrder.first_name,
+          preOrder.last_name
+        );
+        // eslint-disable-next-line no-console
+        console.log("[checkout] getPreOrder invite result:", {
+          preOrderId: preOrder.id,
+          email: preOrder.customer_email,
+          wasNewUser: Boolean(inviteResult?.wasNewUser),
+          inviteSent: Boolean(inviteResult?.inviteSent),
+          hasAuthUserId: Boolean(inviteResult?.authUserId)
+        });
+      } catch (inviteErr) {
+        // eslint-disable-next-line no-console
+        console.error("[checkout] getPreOrder invite flow failed:", inviteErr?.message || inviteErr);
       }
     }
 
