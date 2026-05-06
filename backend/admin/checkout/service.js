@@ -1273,6 +1273,26 @@ async function inviteUserIfNeeded(email, firstName, lastName, frontendBaseUrlOve
   }
   try {
     const normalizedEmail = String(email).trim().toLowerCase();
+    const signupBaseUrl = resolveFrontendBaseUrl(frontendBaseUrlOverride);
+    const defaultSignupLink = `${signupBaseUrl}/signup?email=${encodeURIComponent(normalizedEmail)}`;
+
+    const generateSetupLink = async (linkType = "invite") => {
+      if (!supabaseAdmin?.auth?.admin?.generateLink) return "";
+      const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
+        type: linkType,
+        email: normalizedEmail,
+        options: {
+          redirectTo: `${signupBaseUrl}/set-password`
+        }
+      });
+      if (linkError) {
+        // eslint-disable-next-line no-console
+        console.error(`[checkout] ${linkType} link generation failed:`, linkError.message || linkError);
+        return "";
+      }
+      return linkData?.properties?.action_link || linkData?.action_link || "";
+    };
+
     const existingUserRes = await query(
       `select auth_user_id
        from public.users
@@ -1290,8 +1310,7 @@ async function inviteUserIfNeeded(email, firstName, lastName, frontendBaseUrlOve
       };
     }
 
-    const signupBaseUrl = resolveFrontendBaseUrl(frontendBaseUrlOverride);
-    let signupLink = `${signupBaseUrl}/signup?email=${encodeURIComponent(normalizedEmail)}`;
+    let signupLink = defaultSignupLink;
     let createdAuthUserId = null;
 
     if (supabaseAdmin?.auth?.admin?.generateLink) {
