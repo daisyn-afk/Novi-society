@@ -42,6 +42,15 @@ function resolveFrontendBaseUrl(requestOrigin) {
     if (!/^https?:$/i.test(parsed.protocol)) {
       return String(appBaseUrl || "").replace(/\/+$/, "");
     }
+    const hostname = String(parsed.hostname || "").toLowerCase();
+    const isLocalHost =
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname === "::1" ||
+      hostname.endsWith(".local");
+    if (isLocalHost) {
+      return String(appBaseUrl || "").replace(/\/+$/, "");
+    }
     return `${parsed.protocol}//${parsed.host}`;
   } catch {
     return String(appBaseUrl || "").replace(/\/+$/, "");
