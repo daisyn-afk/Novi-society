@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -8,11 +8,11 @@ import { BookOpen, Clock, MapPin, Award, CheckCircle, ArrowLeft, CreditCard, Cal
 import { format } from "date-fns";
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
+import { courseCheckoutApi } from "@/api/courseCheckoutApi";
 
 export default function CourseCheckout() {
   const params = new URLSearchParams(window.location.search);
   const courseId = params.get("course_id");
-  const qc = useQueryClient();
 
   const { data: course, isLoading: loadingCourse } = useQuery({
     queryKey: ["course", courseId],
@@ -35,68 +35,27 @@ export default function CourseCheckout() {
 
   const alreadyEnrolled = myEnrollments.some(e => e.course_id === courseId && e.status !== "cancelled");
 
-  const [success, setSuccess] = useState(false);
   const [selectedDate, setSelectedDate] = useState("");
-
-  // Check for Stripe return
-  useEffect(() => {
-    const status = params.get("payment_status");
-    const enrollmentId = params.get("enrollment_id");
-    if (status === "success" && enrollmentId) {
-      // Update enrollment to paid
-      base44.entities.Enrollment.update(enrollmentId, { status: "paid", paid_at: new Date().toISOString() })
-        .then(() => { qc.invalidateQueries(["my-enrollments"]); setSuccess(true); });
-    }
-  }, []);
 
   const checkout = useMutation({
     mutationFn: async () => {
-      // Create enrollment record first
-      const enrollment = await base44.entities.Enrollment.create({
+      const response = await courseCheckoutApi.createCheckout({
         course_id: courseId,
-        provider_id: me.id,
-        provider_email: me.email,
-        provider_name: me.full_name,
-        status: "pending_payment",
-        amount_paid: course.price,
-        session_date: selectedDate || null,
+        course_date: selectedDate || null,
+        customer_name: me?.full_name || "",
+        first_name: me?.first_name || me?.full_name?.split(" ")[0] || "",
+        last_name: me?.last_name || me?.full_name?.split(" ").slice(1).join(" ") || "",
+        customer_email: me?.email || "",
+        terms_confirmed: true,
+        refund_policy_confirmed: true,
       });
-
-      // Invoke Stripe checkout function
-      const res = await base44.functions.invoke("createCheckoutSession", {
-        course_id: courseId,
-        enrollment_id: enrollment.id,
-        amount: course.price,
-        course_title: course.title,
-      });
-
-      if (res.data?.url) {
-        window.location.href = res.data.url;
+      if (response?.checkout_url) {
+        window.location.href = response.checkout_url;
+      } else {
+        throw new Error("Stripe checkout URL was not returned.");
       }
     },
   });
-
-  if (success) {
-    return (
-      <div className="max-w-2xl mx-auto mt-16 text-center space-y-5 px-5">
-        <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto" style={{ background: "rgba(200,230,60,0.2)" }}>
-          <CheckCircle className="w-8 h-8" style={{ color: "#C8E63C" }} />
-        </div>
-        <div>
-          <h2 className="text-3xl font-bold" style={{ color: "#1e2535", fontFamily: "'DM Serif Display', serif", fontStyle: "italic" }}>Enrollment Confirmed!</h2>
-          <p className="text-sm mt-2" style={{ color: "rgba(30,37,53,0.6)" }}>You're now enrolled in <strong>{course?.title}</strong>. Check your enrollments for details.</p>
-        </div>
-        <div className="flex gap-3 justify-center pt-2">
-          <Link to={createPageUrl("ProviderEnrollments")}>
-            <Button style={{ background: "#FA6F30", color: "#fff", borderRadius: 12 }} className="font-bold">View My Enrollments</Button>
-          </Link>
-          <Link to={createPageUrl("CourseCatalog")}>
-            <Button variant="outline" style={{ borderRadius: 12, borderColor: "rgba(30,37,53,0.2)", color: "#1e2535" }} className="font-bold">Browse More Courses</Button>
-          </Link>
-        </div>
-      </div>
-    );
-  }
 
   if (loadingCourse) return <div className="text-center py-16" style={{ color: "rgba(30,37,53,0.4)" }}>Loading...</div>;
   if (!course) return <div className="text-center py-16" style={{ color: "rgba(30,37,53,0.4)" }}>Course not found.</div>;

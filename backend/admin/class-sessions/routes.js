@@ -3,9 +3,9 @@ import { createClassSession, listClassSessions, updateClassSession } from "./rep
 
 export const classSessionsRouter = Router();
 
-classSessionsRouter.get("/", async (_req, res, next) => {
+classSessionsRouter.get("/", async (req, res, next) => {
   try {
-    const rows = await listClassSessions();
+    const rows = await listClassSessions(req.query || {});
     return res.json(rows);
   } catch (error) {
     return next(error);
