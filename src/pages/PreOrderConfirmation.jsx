@@ -6,6 +6,7 @@ import { adminApiRequest } from "@/api/adminApiRequest";
 import { adminCoursesApi } from "@/api/adminCoursesApi";
 import { queryClientAdmincourses } from "@/lib/query-client";
 import { createPageUrl } from "@/utils";
+import { useAuth } from "@/lib/AuthContext";
 
 const normalizeLandingCourse = (course) => ({
   ...course,
@@ -15,6 +16,7 @@ const normalizeLandingCourse = (course) => ({
 export default function PreOrderConfirmation() {
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const { isAuthenticated } = useAuth();
   const params = new URLSearchParams(window.location.search);
   const orderId = params.get("id");
   const sessionId = params.get("session_id");
@@ -154,7 +156,7 @@ export default function PreOrderConfirmation() {
       </div>
     );
   }
-  const returnPath = order.order_type === "course"
+  const returnPath = isAuthenticated
     ? createPageUrl("ProviderEnrollments")
     : createPageUrl("NoviLanding");
   return (
