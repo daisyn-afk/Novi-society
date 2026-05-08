@@ -134,12 +134,6 @@ export default function PreOrderConfirmation() {
       </div>
     );
   }
-<<<<<<< feat/provider-payment
-  const returnPath = order.order_type === "course"
-    ? createPageUrl("ProviderEnrollments")
-    : createPageUrl("NoviLanding");
-=======
-
   if (order.order_type === "course" && order.status !== "paid") {
     return (
       <div className="min-h-screen flex items-center justify-center px-4" style={{ background: "#f5f3ef" }}>
@@ -160,8 +154,9 @@ export default function PreOrderConfirmation() {
       </div>
     );
   }
-
->>>>>>> master
+  const returnPath = order.order_type === "course"
+    ? createPageUrl("ProviderEnrollments")
+    : createPageUrl("NoviLanding");
   return (
     <div className="min-h-screen flex items-center justify-center px-4 py-16" style={{ fontFamily: "'DM Sans', sans-serif", background: "#f5f3ef" }}>
       <div className="w-full max-w-2xl text-center">

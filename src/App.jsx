@@ -32,6 +32,8 @@ import Forbidden from './pages/Forbidden';
 import SetPassword from './pages/SetPassword';
 import ModelSignup from './pages/ModelSignup';
 import ModelBookingLookup from './pages/ModelBookingLookup';
+import ThankYou from './pages/ThankYou';
+import RequestInformation from './pages/RequestInformation';
 import { base44 } from "@/api/base44Client";
 import { getDashboardPathForRole, normalizeRole, isPageAllowedForRole } from "@/lib/routeAccessPolicy";
 import RouteErrorBoundary from "@/components/RouteErrorBoundary";
@@ -104,6 +106,8 @@ const AuthenticatedApp = () => {
     "/PreOrderConfirmation",
     "/ModelSignup",
     "/ModelBookingLookup",
+    "/thank-you",
+    "/request-information",
     "/login",
     "/signup",
     "/set-password"
@@ -198,9 +202,13 @@ const AuthenticatedApp = () => {
           <ModelBookingLookup />
         </LayoutWrapper>
       } />
+      <Route path="/thank-you" element={<ThankYou />} />
+      <Route path="/request-information" element={<RequestInformation />} />
       <Route path="/modelsignup" element={<Navigate to="/ModelSignup" replace />} />
       <Route path="/model-booking-lookup" element={<Navigate to="/ModelBookingLookup" replace />} />
       <Route path="/modelbookinglookup" element={<Navigate to="/ModelBookingLookup" replace />} />
+      <Route path="/ThankYou" element={<Navigate to="/thank-you" replace />} />
+      <Route path="/RequestInformation" element={<Navigate to="/request-information" replace />} />
       <Route caseSensitive path="/adminmodelsignups" element={<Navigate to="/AdminModelSignups" replace />} />
       <Route path="/login" element={<Login />} />
       <Route path="/signup" element={<Signup />} />
