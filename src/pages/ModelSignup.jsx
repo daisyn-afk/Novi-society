@@ -220,7 +220,7 @@ export default function ModelSignup() {
             setShowWaitlist(true);
             setSelectedTimeSlot(null);
           }
-          window.open(res.data.url, "_blank");
+          window.location.href = res.data.url;
         }
       } catch (err) {
         console.error("Payment error:", err);
