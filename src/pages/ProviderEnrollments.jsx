@@ -35,6 +35,16 @@ export default function ProviderEnrollments() {
   const { status: accessStatus } = useProviderAccess();
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const enrollmentCacheSnapshot = qc.getQueryData(["my-enrollments"]);
+  const getCurrentUser = React.useCallback(
+    () =>
+      qc.ensureQueryData({
+        queryKey: ["me"],
+        queryFn: () => base44.auth.me(),
+        staleTime: 30_000,
+      }),
+    [qc]
+  );
   const [activeTab, setActiveTab] = useState("browse");
   const [search, setSearch] = useState("");
   const [preMaterialsCourse, setPreMaterialsCourse] = useState(null);
@@ -45,13 +55,20 @@ export default function ProviderEnrollments() {
       cancelled_at: new Date().toISOString(),
       cancellation_reason: "Cancelled by provider",
     }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["my-enrollments"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["my-enrollments"] });
+      qc.invalidateQueries({ queryKey: ["provider-my-enrollments-with-dates"] });
+    },
   });
 
-  const { data: myEnrollments = [], isLoading } = useQuery({
+  const {
+    data: myEnrollments = [],
+    isLoading: loadingEnrollments,
+    isFetched: hasFetchedEnrollments,
+  } = useQuery({
     queryKey: ["provider-my-enrollments-with-dates"],
     queryFn: async () => {
-      const me = await base44.auth.me();
+      const me = await getCurrentUser();
       const [byProviderIdResult, byEmailResult, preOrdersResult] = await Promise.allSettled([
         me?.id ? base44.entities.Enrollment.filter({ provider_id: me.id }, "-created_date") : Promise.resolve([]),
         me?.email ? base44.entities.Enrollment.filter({ provider_email: me.email }, "-created_date") : Promise.resolve([]),
@@ -102,21 +119,24 @@ export default function ProviderEnrollments() {
       );
     },
     retry: 3,
-    refetchOnMount: "always",
-    placeholderData: (previousData) => previousData,
+    // Respect cache freshness so we can render instantly from cache.
+    refetchOnMount: true,
+    // Use the Layout-cached enrollment snapshot immediately on first paint.
+    placeholderData: (previousData) =>
+      previousData ?? qc.getQueryData(["my-enrollments"]),
   });
 
   const { data: sessions = [] } = useQuery({
     queryKey: ["my-sessions"],
     queryFn: async () => {
-      const me = await base44.auth.me();
-      const all = await base44.entities.ClassSession.list("-created_date");
-      const email = String(me?.email || "").toLowerCase();
-      const filtered = (all || []).filter((session) =>
-        session?.provider_id === me?.id ||
-        String(session?.provider_email || "").toLowerCase() === email
-      );
-      const deduped = Array.from(new Map(filtered.map((row) => [row.id, row])).values());
+      const me = await getCurrentUser();
+      const [byProviderIdResult, byEmailResult] = await Promise.allSettled([
+        me?.id ? base44.entities.ClassSession.filter({ provider_id: me.id }) : Promise.resolve([]),
+        me?.email ? base44.entities.ClassSession.filter({ provider_email: me.email }) : Promise.resolve([]),
+      ]);
+      const byProviderId = byProviderIdResult.status === "fulfilled" ? (byProviderIdResult.value || []) : [];
+      const byEmail = byEmailResult.status === "fulfilled" ? (byEmailResult.value || []) : [];
+      const deduped = Array.from(new Map([...byProviderId, ...byEmail].map((row) => [row.id, row])).values());
       return deduped.sort(
         (a, b) => new Date(b.created_date || b.created_at || 0).getTime() - new Date(a.created_date || a.created_at || 0).getTime()
       );
@@ -131,7 +151,7 @@ export default function ProviderEnrollments() {
   const { data: certs = [] } = useQuery({
     queryKey: ["my-certs"],
     queryFn: async () => {
-      const me = await base44.auth.me();
+      const me = await getCurrentUser();
       return base44.entities.Certification.filter({ provider_id: me.id });
     },
   });
@@ -139,7 +159,7 @@ export default function ProviderEnrollments() {
   const { data: myMDSubs = [] } = useQuery({
     queryKey: ["my-md-subscriptions"],
     queryFn: async () => {
-      const me = await base44.auth.me();
+      const me = await getCurrentUser();
       return base44.entities.MDSubscription.filter({ provider_id: me.id });
     },
   });
@@ -167,6 +187,9 @@ export default function ProviderEnrollments() {
   const activeSubServiceIds = new Set(myMDSubs.filter(s => s.status === "active").map(s => s.service_type_id));
   const activeEnrollments = myEnrollments.filter(e => e.status !== "cancelled");
   const enrolledCourseIds = new Set(myEnrollments.map(e => e.course_id));
+  const shouldShowEnrollmentStatusLoading =
+    !hasFetchedEnrollments &&
+    !Array.isArray(enrollmentCacheSnapshot);
 
   const todayEnrollment = activeEnrollments.find(e => {
     const course = courseMap[e.course_id];
@@ -274,6 +297,7 @@ export default function ProviderEnrollments() {
                         key={categoryKey}
                         title={categoryMeta[categoryKey]?.label || categoryKey}
                         courses={categoryCourses}
+                        enrollmentStatusLoading={shouldShowEnrollmentStatusLoading}
                         isEnrolled={(courseId) => enrolledCourseIds.has(courseId)}
                         onEnroll={(course) => navigate(createPageUrl(`CourseCheckout?course_id=${course.id}`))}
                         onSelect={(course) => navigate(createPageUrl(`CourseCheckout?course_id=${course.id}`))}
@@ -337,7 +361,7 @@ export default function ProviderEnrollments() {
               </div>
             )}
 
-            {isLoading ? (
+            {loadingEnrollments ? (
               <div className="space-y-4">{[1,2].map(i => <div key={i} className="h-64 animate-pulse rounded-3xl" style={{ background: "rgba(255,255,255,0.15)" }} />)}</div>
             ) : activeEnrollments.length === 0 ? (
               <div className="text-center py-20 rounded-3xl" style={{ background: "rgba(255,255,255,0.1)" }}>
