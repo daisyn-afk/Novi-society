@@ -122,6 +122,7 @@ export default function ProviderCredentialsCoverage() {
   const [activeTab, setActiveTab] = useState("overview");
   const [licenseOpen, setLicenseOpen] = useState(false);
   const [licenseForm, setLicenseForm] = useState({ license_type: "RN" });
+  const [licenseExpiryError, setLicenseExpiryError] = useState("");
   const [uploading, setUploading] = useState(false);
   const [certSubmitOpen, setCertSubmitOpen] = useState(false);
   const [certSubmitStep, setCertSubmitStep] = useState(0);
@@ -470,10 +471,32 @@ export default function ProviderCredentialsCoverage() {
     setExtCertFileUrl(""); setExtLicenseFileUrl("");
     setUploadExtCertError(""); setUploadExtLicenseError(""); setSubmitExtCertError("");
   };
+  const isExpiredLicenseDate = (dateValue) => {
+    const raw = String(dateValue || "").trim();
+    if (!raw) return false;
+    const exp = new Date(`${raw}T00:00:00`);
+    if (Number.isNaN(exp.getTime())) return false;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return exp < today;
+  };
+  const handleSubmitLicense = () => {
+    if (isExpiredLicenseDate(licenseForm.expiration_date)) {
+      setLicenseExpiryError("Your license has already expired");
+      return;
+    }
+    setLicenseExpiryError("");
+    createLicense.mutate();
+  };
 
   const createLicense = useMutation({
     mutationFn: async () => { const u = await base44.auth.me(); return base44.entities.License.create({ ...licenseForm, provider_id: u.id, provider_email: u.email }); },
-    onSuccess: () => { qc.invalidateQueries(["my-licenses"]); setLicenseOpen(false); setLicenseForm({ license_type: "RN" }); },
+    onSuccess: () => {
+      qc.invalidateQueries(["my-licenses"]);
+      setLicenseOpen(false);
+      setLicenseForm({ license_type: "RN" });
+      setLicenseExpiryError("");
+    },
   });
   const uploadLicenseFile = async (e) => {
     const file = e.target.files[0]; if (!file) return;
@@ -1051,9 +1074,6 @@ export default function ProviderCredentialsCoverage() {
                   </div>
                 );
               })}
-              <button onClick={() => setLicenseOpen(true)} className="w-full py-3 rounded-xl text-sm font-semibold transition-all hover:brightness-95" style={{ background: "rgba(255,255,255,0.5)", border: "1px dashed rgba(30,37,53,0.2)", color: "rgba(30,37,53,0.55)" }}>
-                + Add Another License
-              </button>
             </div>
           )}
         </TabsContent>
@@ -1103,9 +1123,6 @@ export default function ProviderCredentialsCoverage() {
                   {otherCerts.map(c => <CertRow key={c.id} cert={c} muted />)}
                 </div>
               )}
-              <button onClick={() => { setCertSubmitOpen(true); resetExtCertForm(); }} className="w-full py-3 rounded-xl text-sm font-semibold transition-all hover:brightness-95" style={{ background: "rgba(255,255,255,0.5)", border: "1px dashed rgba(30,37,53,0.2)", color: "rgba(30,37,53,0.55)" }}>
-                + Submit Another External Cert
-              </button>
             </div>
           )}
         </TabsContent>
@@ -1561,7 +1578,10 @@ export default function ProviderCredentialsCoverage() {
       {/* ─── DIALOGS ────────────────────────────────────────────────────────── */}
 
       {/* Add License */}
-      <Dialog open={licenseOpen} onOpenChange={setLicenseOpen}>
+      <Dialog open={licenseOpen} onOpenChange={(open) => {
+        setLicenseOpen(open);
+        if (!open) setLicenseExpiryError("");
+      }}>
         <DialogContent>
           <DialogHeader><DialogTitle>Add Professional License</DialogTitle></DialogHeader>
           <div className="space-y-4 pt-2">
@@ -1587,7 +1607,16 @@ export default function ProviderCredentialsCoverage() {
               </div>
               <div className="col-span-2">
                 <Label>Expiration Date</Label>
-                <Input type="date" value={licenseForm.expiration_date || ""} onChange={e => setLicenseForm({ ...licenseForm, expiration_date: e.target.value })} />
+                <Input
+                  type="date"
+                  value={licenseForm.expiration_date || ""}
+                  onChange={e => {
+                    const nextExpirationDate = e.target.value;
+                    setLicenseForm({ ...licenseForm, expiration_date: nextExpirationDate });
+                    setLicenseExpiryError(isExpiredLicenseDate(nextExpirationDate) ? "Your license has already expired" : "");
+                  }}
+                />
+                {licenseExpiryError && <p className="text-xs text-red-500 mt-1">{licenseExpiryError}</p>}
               </div>
             </div>
             <label className="flex items-center gap-2 cursor-pointer border-2 border-dashed rounded-xl p-4 hover:bg-slate-50 transition-colors">
@@ -1597,7 +1626,11 @@ export default function ProviderCredentialsCoverage() {
             </label>
             <div className="flex gap-2 justify-end">
               <Button variant="outline" onClick={() => setLicenseOpen(false)}>Cancel</Button>
-              <Button style={{ background: "#FA6F30", color: "#fff" }} onClick={() => createLicense.mutate()} disabled={!licenseForm.license_number || createLicense.isPending || uploading}>
+              <Button
+                style={{ background: "#FA6F30", color: "#fff" }}
+                onClick={handleSubmitLicense}
+                disabled={!licenseForm.license_number || createLicense.isPending || uploading || isExpiredLicenseDate(licenseForm.expiration_date)}
+              >
                 {createLicense.isPending ? "Submitting..." : "Submit License"}
               </Button>
             </div>
@@ -2110,11 +2143,10 @@ export default function ProviderCredentialsCoverage() {
               ))}
               {uploadExtCertError && <p className="text-xs text-red-500">{uploadExtCertError}</p>}
               {uploadExtLicenseError && <p className="text-xs text-red-500">{uploadExtLicenseError}</p>}
-              {submitExtCertError && <p className="text-xs text-red-500">{submitExtCertError}</p>}
               {(!isUsableUploadedUrl(extCertFileUrl) || !isUsableUploadedUrl(extLicenseFileUrl)) && !uploadExtCertError && !uploadExtLicenseError && (
                 <p className="text-xs text-slate-500">Upload both certification and license files to continue.</p>
               )}
-              <Button onClick={() => setCertSubmitStep(1)} disabled={!extCertForm.cert_name || !extCertForm.issuing_school || !isUsableUploadedUrl(extCertFileUrl) || !isUsableUploadedUrl(extLicenseFileUrl)} className="w-full" style={{ background: "#FA6F30", color: "#fff" }}>
+              <Button onClick={() => { setSubmitExtCertError(""); setCertSubmitStep(1); }} disabled={!extCertForm.cert_name || !extCertForm.issuing_school || !isUsableUploadedUrl(extCertFileUrl) || !isUsableUploadedUrl(extLicenseFileUrl)} className="w-full" style={{ background: "#FA6F30", color: "#fff" }}>
                 Continue — Select Service <ChevronRight className="w-4 h-4 ml-1" />
               </Button>
             </div>
@@ -2124,14 +2156,15 @@ export default function ProviderCredentialsCoverage() {
               <p className="text-sm text-slate-500">Which service are you applying to provide on NOVI?</p>
               <div className="space-y-2 max-h-64 overflow-y-auto">
                 {serviceTypes.map(s => (
-                  <button key={s.id} onClick={() => setExtCertForm(f => ({ ...f, service_type_id: s.id, service_type_name: s.name }))} className={`w-full text-left px-4 py-3 rounded-xl border-2 transition-all flex items-center justify-between ${extCertForm.service_type_id === s.id ? "border-orange-400 bg-orange-50" : "border-slate-100 hover:border-slate-300"}`}>
+                  <button key={s.id} onClick={() => { setSubmitExtCertError(""); setExtCertForm(f => ({ ...f, service_type_id: s.id, service_type_name: s.name })); }} className={`w-full text-left px-4 py-3 rounded-xl border-2 transition-all flex items-center justify-between ${extCertForm.service_type_id === s.id ? "border-orange-400 bg-orange-50" : "border-slate-100 hover:border-slate-300"}`}>
                     <div><p className="text-sm font-semibold text-slate-900">{s.name}</p><p className="text-xs text-slate-400 capitalize">{s.category?.replace("_", " ")}</p></div>
                     {extCertForm.service_type_id === s.id && <CheckCircle className="w-5 h-5 text-orange-500 flex-shrink-0" />}
                   </button>
                 ))}
               </div>
+              {submitExtCertError && <p className="text-xs text-red-500">{submitExtCertError}</p>}
               <div className="flex gap-2">
-                <Button variant="outline" onClick={() => setCertSubmitStep(0)} className="flex-1">Back</Button>
+                <Button variant="outline" onClick={() => { setSubmitExtCertError(""); setCertSubmitStep(0); }} className="flex-1">Back</Button>
                 <Button onClick={() => submitExtCertMutation.mutate()} disabled={!extCertForm.service_type_id || submitExtCertMutation.isPending} className="flex-1" style={{ background: "#FA6F30", color: "#fff" }}>
                   {submitExtCertMutation.isPending ? "Submitting..." : "Submit for Review"}
                 </Button>

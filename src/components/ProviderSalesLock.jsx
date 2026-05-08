@@ -179,13 +179,13 @@ function LockCTA({ currentStatus }) {
   }
   if (currentStatus === "courses_only") {
     return (
-      <div className="space-y-2">
-        <Link to={createPageUrl("ProviderEnrollments")}>
+      <div className="space-y-3">
+        <Link to={createPageUrl("ProviderEnrollments")} className="block">
           <button className="w-full py-3.5 rounded-2xl font-bold text-sm text-white flex items-center justify-center gap-2 transition-all hover:opacity-90" style={{ background: "linear-gradient(135deg, #FA6F30, #DA6A63)" }}>
             <BookOpen className="w-4 h-4" /> Browse & Enroll in NOVI Courses
           </button>
         </Link>
-        <Link to={createPageUrl("ProviderCredentialsCoverage") + "?tab=certifications"}>
+        <Link to={createPageUrl("ProviderCredentialsCoverage") + "?tab=certifications"} className="block">
           <button className="w-full py-2.5 rounded-2xl font-semibold text-sm flex items-center justify-center gap-2 transition-all hover:opacity-80" style={{ background: "rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.7)", border: "1px solid rgba(255,255,255,0.2)" }}>
             <Award className="w-4 h-4" /> Upload External Certification Instead
           </button>
