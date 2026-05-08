@@ -338,8 +338,43 @@ export default function ProviderCodeRedemption() {
             ) : enrollmentWindows.length === 0 ? (
               <p className="text-sm text-slate-500">No eligible paid/confirmed course sessions found yet.</p>
             ) : enrollmentWindows.map(({ key, enrollment, course, window, isOpen, isAttended }) => (
-              <button key={key} type="button" onClick={() => { setSelectedCourseWindowKey(key); setError(""); }}
-                className={`w-full rounded-lg border p-3 text-left flex items-start justify-between gap-3 ${selectedCourseWindowKey === key ? "border-orange-400 bg-orange-50/40" : ""}`}>
+              (!isOpen && !isAttended) ? (
+                <div
+                  key={key}
+                  className={`w-full rounded-lg border p-3 text-left flex items-start justify-between gap-3 ${selectedCourseWindowKey === key ? "border-orange-400 bg-orange-50/40" : ""}`}
+                >
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="font-medium text-slate-900">{course?.title || enrollment.course_title || "Course"}</p>
+                      <span className="text-xs font-bold px-2 py-1 rounded-full bg-blue-100 text-blue-700 capitalize">
+                        {String(enrollment.status || "unknown").replaceAll("_", " ")}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Session date: {formatSessionDateLabel(enrollment.session_date)}
+                    </p>
+                    {window ? (
+                      <p className="text-xs text-slate-500 mt-1">
+                        Window: {formatWindowDateTime(window.startAt)} - {formatWindowDateTime(window.expiresAt)}
+                      </p>
+                    ) : (
+                      <p className="text-xs text-amber-700 mt-1">Session timing not configured by admin yet.</p>
+                    )}
+                  </div>
+                  <Badge className="bg-slate-100 text-slate-600 hover:bg-slate-100 transition-none pointer-events-none">
+                    Class not started
+                  </Badge>
+                </div>
+              ) : (
+              <button
+                key={key}
+                type="button"
+                onClick={() => {
+                  setSelectedCourseWindowKey(key);
+                  setError("");
+                }}
+                className={`w-full rounded-lg border p-3 text-left flex items-start justify-between gap-3 ${selectedCourseWindowKey === key ? "border-orange-400 bg-orange-50/40" : ""} cursor-pointer`}
+              >
                 <div>
                   <div className="flex items-center gap-2 flex-wrap">
                     <p className="font-medium text-slate-900">{course?.title || enrollment.course_title || "Course"}</p>
@@ -362,6 +397,7 @@ export default function ProviderCodeRedemption() {
                   {isAttended ? "Attended" : isOpen ? "Class is on" : "Class not started"}
                 </Badge>
               </button>
+              )
             ))}
             <p className="text-xs text-slate-500 pt-1">
               Pick the course row first. You can enter code only for rows marked "Class is on".

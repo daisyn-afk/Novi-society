@@ -31,6 +31,7 @@ export const ALLOWED_PAGES_BY_ROLE: Record<string, Set<string>> = {
     "AdminCourseStyling",
     "AdminClassDaySimulator",
     "AdminCoursesAdminRoute",
+    "AdminModelSignups",
   ]),
   provider: new Set([
     "ProviderDashboard",
@@ -71,13 +72,15 @@ export const ALLOWED_PAGES_BY_ROLE: Record<string, Set<string>> = {
     "PatientProfile",
     "PatientOnboarding",
   ]),
-  staff: new Set(["AdminDashboard", "AdminEnrollments", "AdminProviders"]),
+  staff: new Set(["AdminDashboard", "AdminEnrollments", "AdminProviders", "AdminModelSignups"]),
 };
 
 export const SHARED_AUTH_PAGES = new Set([
   "Onboarding",
   "LandingPage",
   "NoviLanding",
+  "ModelSignup",
+  "ModelBookingLookup",
 ]);
 
 export function normalizeRole(role?: string | null) {

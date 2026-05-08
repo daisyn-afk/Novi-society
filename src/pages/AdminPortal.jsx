@@ -71,13 +71,14 @@ function parseTagInput(value) {
 }
 
 function normalizePayload(form) {
+  const scheduled = form.type === "scheduled";
   return {
     ...form,
-    template_id: form.type === "scheduled" ? form.template_id : null,
+    template_id: scheduled ? form.template_id : null,
     price: form.price === "" ? null : Number(form.price),
     duration_hours: form.duration_hours === "" ? null : Number(form.duration_hours),
-    max_seats: form.max_seats === "" ? null : Number(form.max_seats),
-    available_seats: form.available_seats === "" ? null : Number(form.available_seats),
+    max_seats: scheduled ? null : form.max_seats === "" ? null : Number(form.max_seats),
+    available_seats: scheduled ? null : form.available_seats === "" ? null : Number(form.available_seats),
     tags: Array.isArray(form.tags) ? form.tags : [],
     linked_service_type_ids: Array.isArray(form.linked_service_type_ids) ? form.linked_service_type_ids : [],
     platform_coverage: Array.isArray(form.platform_coverage) ? form.platform_coverage : []
@@ -156,10 +157,27 @@ export function AdminCoursesSection() {
     if (!form.title?.trim()) return "Title is required";
     if (!typeOptions.includes(form.type)) return "Type must be template or scheduled";
     if (form.type === "scheduled" && !form.template_id) return "Template is required for scheduled courses";
-    const maxSeats = form.max_seats === "" ? null : Number(form.max_seats);
-    const availableSeats = form.available_seats === "" ? null : Number(form.available_seats);
-    if (maxSeats !== null && availableSeats !== null && availableSeats > maxSeats) {
-      return "Available seats cannot exceed max seats";
+    if (form.type === "scheduled" && Array.isArray(form.session_dates)) {
+      for (const row of form.session_dates) {
+        if (!row?.date) return "Each session date row must have a date";
+        if (!String(row.location || "").trim()) return "Each session date requires a location";
+        const maxEmpty = row.max_seats === "" || row.max_seats === undefined;
+        const availEmpty = row.available_seats === "" || row.available_seats === undefined;
+        const max = maxEmpty ? NaN : Number(row.max_seats);
+        let avail = availEmpty ? NaN : Number(row.available_seats);
+        if (Number.isFinite(max) && max === 0 && !Number.isFinite(avail)) avail = 0;
+        if (!Number.isFinite(max) || max < 0 || !Number.isFinite(avail) || avail < 0) {
+          return "Each session date requires max seats (0 or more) and available seats (0 or more)";
+        }
+        if (avail > max) return "Available seats cannot be greater than max seats";
+      }
+    }
+    if (form.type !== "scheduled") {
+      const maxSeats = form.max_seats === "" ? null : Number(form.max_seats);
+      const availableSeats = form.available_seats === "" ? null : Number(form.available_seats);
+      if (maxSeats !== null && availableSeats !== null && availableSeats > maxSeats) {
+        return "Available seats cannot exceed max seats";
+      }
     }
     return "";
   };
@@ -337,8 +355,12 @@ export function AdminCoursesSection() {
             <div><Label>Price</Label><Input type="number" value={form.price} onChange={(e) => setForm((p) => ({ ...p, price: e.target.value }))} /></div>
             <div><Label>Duration Hours</Label><Input type="number" value={form.duration_hours} onChange={(e) => setForm((p) => ({ ...p, duration_hours: e.target.value }))} /></div>
             <div><Label>Location</Label><Input value={form.location} onChange={(e) => setForm((p) => ({ ...p, location: e.target.value }))} /></div>
-            <div><Label>Max Seats</Label><Input type="number" value={form.max_seats} onChange={(e) => setForm((p) => ({ ...p, max_seats: e.target.value }))} /></div>
-            <div><Label>Available Seats</Label><Input type="number" value={form.available_seats} onChange={(e) => setForm((p) => ({ ...p, available_seats: e.target.value }))} /></div>
+            {form.type !== "scheduled" && (
+              <>
+                <div><Label>Max Seats</Label><Input type="number" value={form.max_seats} onChange={(e) => setForm((p) => ({ ...p, max_seats: e.target.value }))} /></div>
+                <div><Label>Available Seats</Label><Input type="number" value={form.available_seats} onChange={(e) => setForm((p) => ({ ...p, available_seats: e.target.value }))} /></div>
+              </>
+            )}
             <div><Label>Certification Name (legacy)</Label><Input value={form.certification_name} onChange={(e) => setForm((p) => ({ ...p, certification_name: e.target.value }))} /></div>
 
             <div className="md:col-span-2 space-y-2 rounded-md border p-3">
@@ -359,14 +381,16 @@ export function AdminCoursesSection() {
             </div>
 
             <div className="md:col-span-2 space-y-2 rounded-md border p-3">
-              <div className="flex items-center justify-between"><Label>Session Dates</Label><Button size="sm" variant="outline" onClick={() => addArrayItem("session_dates", { date: "", start_time: "", end_time: "", location: "", label: "" })}>Add</Button></div>
+              <div className="flex items-center justify-between"><Label>Session Dates</Label><Button size="sm" variant="outline" onClick={() => addArrayItem("session_dates", { date: "", start_time: "", end_time: "", location: "", label: "", max_seats: "", available_seats: "" })}>Add</Button></div>
               {(form.session_dates || []).map((item, idx) => (
                 <div key={`d-${idx}`} className="grid grid-cols-1 gap-2 rounded border p-2 md:grid-cols-2">
                   <Input type="date" value={item.date || ""} onChange={(e) => setForm((p) => ({ ...p, session_dates: p.session_dates.map((x, i) => i === idx ? { ...x, date: e.target.value } : x) }))} />
                   <Input placeholder="label" value={item.label || ""} onChange={(e) => setForm((p) => ({ ...p, session_dates: p.session_dates.map((x, i) => i === idx ? { ...x, label: e.target.value } : x) }))} />
                   <Input placeholder="start_time" value={item.start_time || ""} onChange={(e) => setForm((p) => ({ ...p, session_dates: p.session_dates.map((x, i) => i === idx ? { ...x, start_time: e.target.value } : x) }))} />
                   <Input placeholder="end_time" value={item.end_time || ""} onChange={(e) => setForm((p) => ({ ...p, session_dates: p.session_dates.map((x, i) => i === idx ? { ...x, end_time: e.target.value } : x) }))} />
-                  <Input placeholder="location" value={item.location || ""} onChange={(e) => setForm((p) => ({ ...p, session_dates: p.session_dates.map((x, i) => i === idx ? { ...x, location: e.target.value } : x) }))} />
+                  <Input placeholder="location *" value={item.location || ""} onChange={(e) => setForm((p) => ({ ...p, session_dates: p.session_dates.map((x, i) => i === idx ? { ...x, location: e.target.value } : x) }))} />
+                  <Input type="number" placeholder="max seats *" value={item.max_seats ?? ""} onChange={(e) => setForm((p) => ({ ...p, session_dates: p.session_dates.map((x, i) => i === idx ? { ...x, max_seats: e.target.value } : x) }))} />
+                  <Input type="number" placeholder="available seats *" value={item.available_seats ?? ""} onChange={(e) => setForm((p) => ({ ...p, session_dates: p.session_dates.map((x, i) => i === idx ? { ...x, available_seats: e.target.value } : x) }))} />
                   <Button size="sm" variant="destructive" onClick={() => removeArrayItem("session_dates", idx)}>Remove</Button>
                 </div>
               ))}

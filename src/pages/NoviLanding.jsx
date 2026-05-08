@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { useToast } from "@/components/ui/use-toast";
@@ -13,6 +13,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { adminCoursesApi } from "@/api/adminCoursesApi";
 import { courseCheckoutApi } from "@/api/courseCheckoutApi";
 import { getDashboardPathForRole } from "@/lib/routeAccessPolicy";
+import {
+  effectiveAvailableSeats,
+  isCourseFullySoldOut,
+  isSessionDateEntrySoldOut,
+} from "@/lib/sessionDateSeats";
 import {
   Sparkles, Award, Shield, Users, Heart, ArrowRight, Check,
   BookOpen, Clock, MapPin, ChevronRight, Calendar, Zap, CheckCircle2, User, Upload, ImageIcon
@@ -95,10 +100,33 @@ const normalizeCourseRecord = (course) => ({
   session_dates: Array.isArray(course?.session_dates) ? course.session_dates : [],
 });
 
-const isCourseSoldOut = (course) =>
-  course?.available_seats !== null &&
-  course?.available_seats !== undefined &&
-  Number(course.available_seats) <= 0;
+const resolveSelectedSessionEntry = (course, selectedSession, selectedDate) => {
+  const sessions = Array.isArray(course?.session_dates) ? course.session_dates : [];
+  if (sessions.length === 0) return null;
+
+  const date = selectedSession?.date || selectedDate || null;
+  if (!date) return null;
+
+  const sameDate = sessions.filter((s) => s?.date === date);
+  if (sameDate.length === 0) return null;
+
+  if (selectedSession?.session_id) {
+    const byId = sameDate.find((s) => String(s?.session_id || "") === String(selectedSession.session_id));
+    if (byId) return byId;
+  }
+
+  if (selectedSession?.start_time || selectedSession?.end_time) {
+    const byTime = sameDate.find(
+      (s) =>
+        String(s?.start_time || "") === String(selectedSession?.start_time || "") &&
+        String(s?.end_time || "") === String(selectedSession?.end_time || "")
+    );
+    if (byTime) return byTime;
+  }
+
+  const firstBookable = sameDate.find((s) => !isSessionDateEntrySoldOut(s));
+  return firstBookable || sameDate[0];
+};
 
 export default function NoviLanding() {
   const { toast } = useToast();
@@ -114,6 +142,7 @@ export default function NoviLanding() {
   // Course modal steps: "dates" | "info" | "submitted"
   const [courseStep, setCourseStep] = useState("dates");
   const [selectedCourseDate, setSelectedCourseDate] = useState(null);
+  const [selectedCourseSession, setSelectedCourseSession] = useState(null);
   const [form, setForm] = useState(BLANK_FORM);
   const [promoPreview, setPromoPreview] = useState(null);
   const [serviceForm, setServiceForm] = useState({
@@ -131,6 +160,8 @@ export default function NoviLanding() {
   const [serviceLicenseUploading, setServiceLicenseUploading] = useState(false);
   const [serviceCertUploading, setServiceCertUploading] = useState(false);
   const [serviceUploadError, setServiceUploadError] = useState("");
+  const selectedSessionEntry = resolveSelectedSessionEntry(selectedCourse, selectedCourseSession, selectedCourseDate);
+  const selectedSessionIsSoldOut = Boolean(selectedSessionEntry && isSessionDateEntrySoldOut(selectedSessionEntry));
 
   const { data: courses = [], isLoading: isLoadingCourses } = useQuery({
     queryKey: ["landing-courses"],
@@ -141,6 +172,14 @@ export default function NoviLanding() {
         .map(normalizeCourseRecord);
     },
   });
+
+  // After checkout, course list refetches — keep the open modal in sync so seat counts update.
+  useEffect(() => {
+    const id = selectedCourse?.id;
+    if (!id || !Array.isArray(courses) || courses.length === 0) return;
+    const fresh = courses.find((c) => c.id === id);
+    if (fresh && fresh !== selectedCourse) setSelectedCourse(fresh);
+  }, [courses, selectedCourse]);
 
   const { data: serviceTypes = [] } = useQuery({
     queryKey: ["landing-services"],
@@ -158,9 +197,11 @@ export default function NoviLanding() {
     },
     onError: (error) => {
       if (Number(error?.status) === 409) {
+        const msg = String(error?.message || "");
+        const soldOut = /sold out/i.test(msg);
         toast({
-          title: "Course already purchased",
-          description: error?.message || "You already purchased this course for the selected date.",
+          title: soldOut ? "Sold out" : "Course already purchased",
+          description: soldOut ? msg : msg || "You already purchased this course for the selected date.",
           variant: "destructive"
         });
       }
@@ -168,10 +209,11 @@ export default function NoviLanding() {
   });
 
   const openCourseModal = (course) => {
-    if (isCourseSoldOut(course)) return;
+    if (isCourseFullySoldOut(course)) return;
     setSelectedCourse(course);
     setCourseStep("dates");
     setSelectedCourseDate(null);
+    setSelectedCourseSession(null);
     setForm(BLANK_FORM);
     setPromoPreview(null);
   };
@@ -180,6 +222,7 @@ export default function NoviLanding() {
     setSelectedCourse(null);
     setCourseStep("dates");
     setSelectedCourseDate(null);
+    setSelectedCourseSession(null);
     setForm(BLANK_FORM);
     setPromoPreview(null);
   };
@@ -193,12 +236,24 @@ export default function NoviLanding() {
     onSuccess: (result) => setPromoPreview(result)
   });
 
+  const clearPromoCode = () => {
+    setForm((f) => ({ ...f, promo_code: "" }));
+    setPromoPreview(null);
+    promoMutation.reset();
+  };
+  const isValidPromoApplied = Boolean(promoPreview && promoPreview.code);
+
   const handleSubmitApplication = () => {
     if (!form.first_name || !form.last_name || !form.customer_email || !form.phone || !form.rn_confirmation || !form.refund_policy_confirmation) return;
+    if (selectedSessionIsSoldOut) return;
+    if (isCourseFullySoldOut(selectedCourse)) return;
     const fullName = `${form.first_name} ${form.last_name}`.trim();
     submitMutation.mutate({
       course_id: selectedCourse.id,
-      course_date: selectedCourseDate || null,
+      course_date: selectedSessionEntry?.date || selectedCourseDate || null,
+      course_session_id: selectedSessionEntry?.session_id || null,
+      course_start_time: selectedSessionEntry?.start_time || null,
+      course_end_time: selectedSessionEntry?.end_time || null,
       customer_name: fullName,
       first_name: form.first_name,
       last_name: form.last_name,
@@ -772,7 +827,7 @@ export default function NoviLanding() {
                 )}
                 {courses.map(course => (
                   (() => {
-                    const soldOut = isCourseSoldOut(course);
+                    const soldOut = isCourseFullySoldOut(course);
                     return (
                   <div key={course.id}
                     onClick={() => !soldOut && openCourseModal(course)}
@@ -949,7 +1004,7 @@ export default function NoviLanding() {
 
           {selectedCourse && courseStep === "dates" && (
             <div className="space-y-4 pt-2">
-              {isCourseSoldOut(selectedCourse) && (
+              {isCourseFullySoldOut(selectedCourse) && (
                 <div className="px-4 py-3 rounded-xl text-sm font-semibold" style={{ background: "rgba(218,106,99,0.1)", border: "1px solid rgba(218,106,99,0.25)", color: "#DA6A63" }}>
                   This course is sold out. Registration is closed.
                 </div>
@@ -989,34 +1044,67 @@ export default function NoviLanding() {
 
                   return (
                     <div className="space-y-2">
-                      {upcomingDates.map((session, idx) => (
+                      {upcomingDates.map((session, idx) => {
+                        const dateSoldOut = isSessionDateEntrySoldOut(session);
+                        const muted = "rgba(30,37,53,0.38)";
+                        const strong = "#1e2535";
+                        return (
                         <div key={idx}
-                          onClick={() => setSelectedCourseDate(session.date)}
-                          className="p-4 rounded-xl cursor-pointer transition-all"
+                          role={dateSoldOut ? "presentation" : "button"}
+                          tabIndex={dateSoldOut ? -1 : 0}
+                          aria-disabled={dateSoldOut}
+                          onClick={() => {
+                            if (!dateSoldOut) {
+                              setSelectedCourseDate(session.date);
+                              setSelectedCourseSession(session);
+                            }
+                          }}
+                          onKeyDown={(e) => {
+                            if (!dateSoldOut && (e.key === "Enter" || e.key === " ")) {
+                              e.preventDefault();
+                              setSelectedCourseDate(session.date);
+                              setSelectedCourseSession(session);
+                            }
+                          }}
+                          className="p-4 rounded-xl transition-all"
                           style={{
-                            background: selectedCourseDate === session.date ? "rgba(200,230,60,0.1)" : "rgba(0,0,0,0.02)",
-                            border: selectedCourseDate === session.date ? "2px solid #C8E63C" : "1px solid rgba(0,0,0,0.07)",
+                            background: selectedCourseSession === session && !dateSoldOut ? "rgba(200,230,60,0.1)" : "rgba(0,0,0,0.02)",
+                            border: selectedCourseSession === session && !dateSoldOut ? "2px solid #C8E63C" : "1px solid rgba(0,0,0,0.07)",
+                            cursor: dateSoldOut ? "not-allowed" : "pointer",
                           }}>
-                          <div className="flex items-center justify-between">
-                            <div>
-                              {session.label && <p className="text-xs font-bold uppercase tracking-wide mb-0.5" style={{ color: "#2D6B7F" }}>{session.label}</p>}
-                              <p className="font-semibold text-sm" style={{ color: "#1e2535" }}>
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="min-w-0">
+                              {session.label && (
+                                <p className="text-xs font-bold uppercase tracking-wide mb-0.5" style={{ color: dateSoldOut ? muted : "#2D6B7F" }}>{session.label}</p>
+                              )}
+                              <p className="font-semibold text-sm" style={{ color: dateSoldOut ? muted : strong }}>
                                 {new Date(session.date).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
                               </p>
                               {(session.start_time || session.end_time) && (
-                                <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.5)" }}>
+                                <p className="text-xs mt-0.5" style={{ color: dateSoldOut ? muted : "rgba(30,37,53,0.5)" }}>
                                   {session.start_time}{session.end_time ? ` – ${session.end_time}` : ""}
                                   {session.location ? ` · ${session.location}` : ""}
                                 </p>
                               )}
+                              {!dateSoldOut && (
+                                <p className="text-xs mt-1 font-semibold" style={{ color: "rgba(45,107,127,0.9)" }}>
+                                  {effectiveAvailableSeats(session)} spots left
+                                </p>
+                              )}
                             </div>
-                            {selectedCourseDate === session.date
-                              ? <Check className="w-5 h-5 flex-shrink-0" style={{ color: "#5a7a20" }} />
-                              : <div className="w-5 h-5 rounded-full border-2 flex-shrink-0" style={{ borderColor: "rgba(0,0,0,0.15)" }} />
-                            }
+                            <div className="flex flex-col items-end justify-center gap-1 flex-shrink-0 min-h-[2.5rem]">
+                              {dateSoldOut ? (
+                                <span className="text-[10px] font-bold uppercase tracking-wide px-2.5 py-1 rounded-md" style={{ background: "rgba(218,106,99,0.18)", color: "#DA6A63", border: "1px solid rgba(218,106,99,0.35)" }}>Sold out</span>
+                              ) : selectedCourseSession === session ? (
+                                <Check className="w-5 h-5" style={{ color: "#5a7a20" }} />
+                              ) : (
+                                <div className="w-5 h-5 rounded-full border-2 shrink-0" style={{ borderColor: "rgba(0,0,0,0.2)" }} aria-hidden />
+                              )}
+                            </div>
                           </div>
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   );
                 })()}
@@ -1026,11 +1114,20 @@ export default function NoviLanding() {
                 className="w-full py-5 text-base font-bold rounded-xl"
                 style={{ background: "#C8E63C", color: "#1a2540" }}
                 onClick={() => setCourseStep("info")}
-                disabled={isCourseSoldOut(selectedCourse) || (() => { const t = new Date(); t.setHours(0,0,0,0); return selectedCourse.session_dates?.filter(s => s.date && new Date(s.date.split('T')[0] + 'T12:00:00') >= t).length > 0 && !selectedCourseDate; })()}
+                disabled={(() => {
+                  const t = new Date(); t.setHours(0,0,0,0);
+                  const upcoming = selectedCourse.session_dates?.filter(s => s.date && new Date(s.date.split('T')[0] + 'T12:00:00') >= t) || [];
+                  const needDate = upcoming.length > 0;
+                  return (
+                    isCourseFullySoldOut(selectedCourse) ||
+                    (needDate && !selectedCourseSession) ||
+                    Boolean(selectedSessionIsSoldOut)
+                  );
+                })()}
               >
                 Continue <ArrowRight className="ml-2 w-4 h-4" />
               </Button>
-              {(() => { const t = new Date(); t.setHours(0,0,0,0); return selectedCourse.session_dates?.filter(s => s.date && new Date(s.date.split('T')[0] + 'T12:00:00') >= t).length > 0 && !selectedCourseDate; })() && (
+              {(() => { const t = new Date(); t.setHours(0,0,0,0); return selectedCourse.session_dates?.filter(s => s.date && new Date(s.date.split('T')[0] + 'T12:00:00') >= t).length > 0 && !selectedCourseSession; })() && (
                 <p className="text-center text-xs" style={{ color: "rgba(30,37,53,0.4)" }}>Please select a date to continue</p>
               )}
             </div>
@@ -1038,6 +1135,11 @@ export default function NoviLanding() {
 
           {selectedCourse && courseStep === "info" && (
             <div className="space-y-5 pt-2">
+              {selectedSessionIsSoldOut && (
+                <div className="px-4 py-3 rounded-xl text-sm font-semibold" style={{ background: "rgba(218,106,99,0.1)", border: "1px solid rgba(218,106,99,0.25)", color: "#DA6A63" }}>
+                  This session date is sold out. Choose another date or check back later.
+                </div>
+              )}
               {selectedCourseDate && (
                 <div className="flex items-center gap-3 p-3 rounded-xl" style={{ background: "rgba(200,230,60,0.08)", border: "1px solid rgba(200,230,60,0.25)" }}>
                   <Calendar className="w-4 h-4 flex-shrink-0" style={{ color: "#5a7a20" }} />
@@ -1112,24 +1214,38 @@ export default function NoviLanding() {
                       const value = e.target.value;
                       setForm(f => ({ ...f, promo_code: value }));
                       setPromoPreview(null);
+                      promoMutation.reset();
                     }}
                     placeholder="Enter promo code"
                     className="h-11 rounded-xl"
                     style={{ border: "1.5px solid rgba(0,0,0,0.1)" }}
                   />
-                  <Button
-                    type="button"
-                    className="h-11 rounded-xl px-5 font-bold sm:w-auto w-full"
-                    style={{
-                      background: "rgb(45, 107, 127)",
-                      color: "#fff",
-                      opacity: form.promo_code.trim() ? 1 : 0.45,
-                    }}
-                    onClick={() => promoMutation.mutate()}
-                    disabled={!form.promo_code.trim() || promoMutation.isPending}
-                  >
-                    {promoMutation.isPending ? "Applying..." : "Apply"}
-                  </Button>
+                  {!isValidPromoApplied && (
+                    <Button
+                      type="button"
+                      className="h-11 rounded-xl px-5 font-bold sm:w-auto w-full"
+                      style={{
+                        background: "rgb(45, 107, 127)",
+                        color: "#fff",
+                        opacity: form.promo_code.trim() ? 1 : 0.45,
+                      }}
+                      onClick={() => promoMutation.mutate()}
+                      disabled={!form.promo_code.trim() || promoMutation.isPending}
+                    >
+                      {promoMutation.isPending ? "Applying..." : "Apply"}
+                    </Button>
+                  )}
+                  {isValidPromoApplied && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-11 rounded-xl px-5 font-bold sm:w-auto w-full"
+                      onClick={clearPromoCode}
+                      disabled={promoMutation.isPending}
+                    >
+                      Remove
+                    </Button>
+                  )}
                 </div>
                 {promoMutation.error && (
                   <p className="text-xs mt-2" style={{ color: "#DA6A63" }}>{promoMutation.error.message}</p>
@@ -1165,7 +1281,17 @@ export default function NoviLanding() {
                 <Button
                   className="flex-1 py-5 text-base font-bold rounded-xl"
                   style={{ background: "#C8E63C", color: "#1a2540" }}
-                  disabled={isCourseSoldOut(selectedCourse) || !form.first_name || !form.last_name || !form.customer_email || !form.phone || !form.rn_confirmation || !form.refund_policy_confirmation || submitMutation.isPending}
+                  disabled={
+                    isCourseFullySoldOut(selectedCourse) ||
+                    selectedSessionIsSoldOut ||
+                    !form.first_name ||
+                    !form.last_name ||
+                    !form.customer_email ||
+                    !form.phone ||
+                    !form.rn_confirmation ||
+                    !form.refund_policy_confirmation ||
+                    submitMutation.isPending
+                  }
                   onClick={handleSubmitApplication}
                 >
                   {submitMutation.isPending ? (

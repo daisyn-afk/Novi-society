@@ -61,14 +61,37 @@ export const AuthProvider = ({ children }) => {
       console.error('User auth check failed:', error);
       setIsLoadingAuth(false);
       setIsAuthenticated(false);
-      
-      // If user auth fails, it might be an expired token
-      if (error.status === 401 || error.status === 403) {
+
+      const message = String(error?.message || "");
+      const status = Number(error?.status || 0);
+      const isAuthFailure = status === 401 || status === 403;
+      const isServiceUnavailable =
+        status >= 500 ||
+        /unavailable|timeout|fetch failed|network/i.test(message);
+
+      // Prevent repeated /me retries with stale tokens during upstream failures.
+      if (isServiceUnavailable) {
+        try {
+          base44.auth.logout();
+        } catch {
+          // Ignore token-clear failures.
+        }
+      }
+
+      if (isAuthFailure) {
         setAuthError({
           type: 'auth_required',
           message: 'Authentication required'
         });
+        return;
       }
+
+      setAuthError({
+        type: isServiceUnavailable ? 'auth_unavailable' : 'unknown',
+        message: isServiceUnavailable
+          ? 'Authentication service is temporarily unavailable. Please try again.'
+          : (message || 'Unable to verify authentication')
+      });
     }
   };
 

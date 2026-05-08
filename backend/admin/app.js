@@ -59,9 +59,27 @@ export function createAdminApp() {
   app.use("/functions", functionsRouter);
 
   app.use((error, _req, res, _next) => {
-    if ((error.statusCode || 500) >= 500 && !error.isOperational) {
+    const status = error.statusCode || 500;
+    const causeCode = error?.cause?.code;
+    const syscallCode = error?.code;
+    const msg = String(error?.message || "");
+    const isConnectivity =
+      Boolean(error?.isOperational) ||
+      status === 503 ||
+      causeCode === "UND_ERR_CONNECT_TIMEOUT" ||
+      causeCode === "UND_ERR_SOCKET" ||
+      syscallCode === "ETIMEDOUT" ||
+      syscallCode === "EHOSTUNREACH" ||
+      syscallCode === "EAI_AGAIN" ||
+      syscallCode === "ECONNRESET" ||
+      syscallCode === "ECONNREFUSED" ||
+      /fetch failed|network|timeout|unavailable/i.test(msg);
+    if (status >= 500 && !isConnectivity) {
       // eslint-disable-next-line no-console
       console.error("[admin-api] request failed:", error);
+    } else if (status >= 500 && isConnectivity) {
+      // eslint-disable-next-line no-console
+      console.warn("[admin-api] upstream unavailable:", msg || causeCode || status);
     }
     if (error instanceof multer.MulterError && error.code === "LIMIT_FILE_SIZE") {
       return res.status(400).json({

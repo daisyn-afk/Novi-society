@@ -30,8 +30,11 @@ import Login from './pages/Login';
 import Signup from './pages/Signup';
 import Forbidden from './pages/Forbidden';
 import SetPassword from './pages/SetPassword';
+import ModelSignup from './pages/ModelSignup';
+import ModelBookingLookup from './pages/ModelBookingLookup';
 import { base44 } from "@/api/base44Client";
 import { getDashboardPathForRole, normalizeRole, isPageAllowedForRole } from "@/lib/routeAccessPolicy";
+import RouteErrorBoundary from "@/components/RouteErrorBoundary";
 
 const { Pages, Layout, mainPage } = pagesConfig;
 const mainPageKey = mainPage ?? Object.keys(Pages)[0];
@@ -99,6 +102,8 @@ const AuthenticatedApp = () => {
     "/Onboarding",
     "/PreOrderCheckout",
     "/PreOrderConfirmation",
+    "/ModelSignup",
+    "/ModelBookingLookup",
     "/login",
     "/signup",
     "/set-password"
@@ -118,8 +123,8 @@ const AuthenticatedApp = () => {
     navigate("/set-password", { replace: true });
   }, [navigate]);
 
-  // Show loading spinner while checking app public settings or auth
-  if (isLoadingPublicSettings || isLoadingAuth) {
+  // Public routes must not block on auth-me checks (e.g. Stripe success redirect).
+  if (isLoadingPublicSettings || (!isPublicRoute && isLoadingAuth)) {
     return (
       <div className="fixed inset-0 flex items-center justify-center">
         <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin"></div>
@@ -128,9 +133,20 @@ const AuthenticatedApp = () => {
   }
 
   // Handle authentication errors
-  if (authError) {
+  if (authError && !isPublicRoute) {
     if (authError.type === 'user_not_registered') {
       return <UserNotRegisteredError />;
+    } else if (authError.type === 'auth_unavailable') {
+      return (
+        <div className="min-h-screen flex items-center justify-center px-6">
+          <div className="max-w-md text-center space-y-3">
+            <h1 className="text-xl font-semibold text-slate-900">Auth service unavailable</h1>
+            <p className="text-sm text-slate-600">
+              We could not verify your session right now. Please refresh in a moment.
+            </p>
+          </div>
+        </div>
+      );
     } else if (authError.type === 'auth_required' && !isAuthenticated) {
       if (!isPublicRoute) {
         const nextPath = `${location.pathname}${location.search}${location.hash}`;
@@ -172,6 +188,20 @@ const AuthenticatedApp = () => {
       <Route path="/providerbasiconboarding" element={<Navigate to="/ProviderBasicOnboarding" replace />} />
       <Route path="/PreOrderCheckout" element={<PreOrderCheckout />} />
       <Route path="/PreOrderConfirmation" element={<PreOrderConfirmation />} />
+      <Route path="/ModelSignup" element={
+        <LayoutWrapper currentPageName="ModelSignup">
+          <ModelSignup />
+        </LayoutWrapper>
+      } />
+      <Route path="/ModelBookingLookup" element={
+        <LayoutWrapper currentPageName="ModelBookingLookup">
+          <ModelBookingLookup />
+        </LayoutWrapper>
+      } />
+      <Route path="/modelsignup" element={<Navigate to="/ModelSignup" replace />} />
+      <Route path="/model-booking-lookup" element={<Navigate to="/ModelBookingLookup" replace />} />
+      <Route path="/modelbookinglookup" element={<Navigate to="/ModelBookingLookup" replace />} />
+      <Route caseSensitive path="/adminmodelsignups" element={<Navigate to="/AdminModelSignups" replace />} />
       <Route path="/login" element={<Login />} />
       <Route path="/signup" element={<Signup />} />
       <Route path="/set-password" element={<SetPassword />} />
@@ -280,7 +310,9 @@ function App() {
       <QueryClientProvider client={queryClientInstance}>
         <Router>
           <NavigationTracker />
-          <AuthenticatedApp />
+          <RouteErrorBoundary>
+            <AuthenticatedApp />
+          </RouteErrorBoundary>
         </Router>
         <Toaster />
       </QueryClientProvider>

@@ -15,9 +15,11 @@ import {
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import CourseTemplateForm, { EMPTY_TEMPLATE } from "@/components/admin/CourseTemplateForm";
-import ScheduleCourseForm, { EMPTY_SCHEDULED } from "@/components/admin/ScheduleCourseForm";
+import ScheduleCourseForm from "@/components/admin/ScheduleCourseForm";
+import { EMPTY_SCHEDULED } from "@/components/admin/scheduleScheduledCourseConstants";
 import TrainingCalendarView from "@/components/admin/TrainingCalendarView";
 import TrainerPrepView from "@/components/admin/TrainerPrepView";
+import { effectiveAvailableSeats, hasValidSessionSeatEntry } from "@/lib/sessionDateSeats";
 
 function generateCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -102,6 +104,8 @@ export default function Admincourses() {
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [scheduleForm, setScheduleForm] = useState(EMPTY_SCHEDULED);
   const [editingSchedule, setEditingSchedule] = useState(null);
+  /** Snapshot of `session_dates` when the editor opened (for save-time normalize); avoids stale list rows after payments. */
+  const [scheduleSessionDatesBaseline, setScheduleSessionDatesBaseline] = useState(null);
 
   const [collapsedSessionsByCourse, setCollapsedSessionsByCourse] = useState({});
 
@@ -118,6 +122,8 @@ export default function Admincourses() {
   const { data: allCourses = [], isLoading: loadingCourses } = useQuery({
     queryKey: ["courses", "admin-api-scheduled"],
     queryFn: () => adminCoursesApi.list(),
+    refetchOnWindowFocus: true,
+    refetchOnMount: "always",
   });
   const { data: enrollments = [], isLoading: loadingEnrollments } = useQuery({ queryKey: ["enrollments"], queryFn: () => base44.entities.Enrollment.list("-created_date") });
   const { data: sessions = [], isLoading: loadingSessions } = useQuery({ queryKey: ["class-sessions"], queryFn: () => base44.entities.ClassSession.list("-created_date") });
@@ -139,8 +145,8 @@ export default function Admincourses() {
       price: data.price ? Number(data.price) : tmpl?.price,
       duration_hours: tmpl?.duration_hours,
       location: data.location || tmpl?.location,
-      max_seats: data.max_seats ? Number(data.max_seats) : undefined,
-      available_seats: data.max_seats ? Number(data.max_seats) : undefined,
+      max_seats: null,
+      available_seats: null,
       instructor_name: data.instructor_name || tmpl?.instructor_name,
       instructor_bio: tmpl?.instructor_bio,
       cover_image_url: tmpl?.cover_image_url,
@@ -261,6 +267,7 @@ export default function Admincourses() {
       setScheduleOpen(false);
       setScheduleForm(EMPTY_SCHEDULED);
       setEditingSchedule(null);
+      setScheduleSessionDatesBaseline(null);
       return { previousCourses, tempId, isEditing, editingId };
     },
     onSuccess: (savedCourse, _vars, context) => {
@@ -303,6 +310,50 @@ export default function Admincourses() {
       qc.invalidateQueries({ queryKey: ["courses", "admin-api-scheduled"] });
     },
   });
+
+  const openScheduledCourseEditor = async (c) => {
+    try {
+      const fresh = await adminCoursesApi.getById(c.id);
+      const sessions = Array.isArray(fresh.session_dates) ? fresh.session_dates : [];
+      setScheduleSessionDatesBaseline(JSON.parse(JSON.stringify(sessions)));
+      setScheduleForm({
+        template_id: fresh.template_id,
+        title: fresh.title,
+        price: fresh.price,
+        location: fresh.location,
+        instructor_name: fresh.instructor_name,
+        session_dates: sessions,
+        is_active: fresh.is_active,
+        is_featured: fresh.is_featured,
+      });
+      setEditingSchedule(c.id);
+      setScheduleOpen(true);
+      void qc.invalidateQueries({ queryKey: ["courses", "admin-api-scheduled"] });
+    } catch (err) {
+      toast({
+        title: "Could not load latest seats",
+        description: err?.message || "Using list data; try again in a moment.",
+        variant: "destructive",
+      });
+      const fallbackSessions = Array.isArray(c.session_dates) ? c.session_dates : [];
+      setScheduleSessionDatesBaseline(
+        fallbackSessions.length ? JSON.parse(JSON.stringify(fallbackSessions)) : null
+      );
+      setScheduleForm({
+        template_id: c.template_id,
+        title: c.title,
+        price: c.price,
+        location: c.location,
+        instructor_name: c.instructor_name,
+        session_dates: fallbackSessions,
+        is_active: c.is_active,
+        is_featured: c.is_featured,
+      });
+      setEditingSchedule(c.id);
+      setScheduleOpen(true);
+    }
+  };
+
   const createSession = useMutation({
     mutationFn: (data) => base44.entities.ClassSession.create(data),
     onSuccess: () => { qc.invalidateQueries(["class-sessions"]); setSessionOpen(false); },
@@ -393,7 +444,7 @@ export default function Admincourses() {
             </button>
           )}
           {tab === "scheduled" && (
-            <button onClick={() => { setScheduleForm(EMPTY_SCHEDULED); setEditingSchedule(null); setScheduleOpen(true); }} className="flex items-center gap-2 text-sm font-semibold px-4 py-2.5 rounded-2xl text-white" style={{ background: "linear-gradient(135deg, #DA6A63, #FA6F30)" }} disabled={templates.length === 0}>
+            <button onClick={() => { setScheduleForm(EMPTY_SCHEDULED); setEditingSchedule(null); setScheduleSessionDatesBaseline(null); setScheduleOpen(true); }} className="flex items-center gap-2 text-sm font-semibold px-4 py-2.5 rounded-2xl text-white" style={{ background: "linear-gradient(135deg, #DA6A63, #FA6F30)" }} disabled={templates.length === 0}>
               <Plus className="w-4 h-4" /> Schedule Course
             </button>
           )}
@@ -487,7 +538,7 @@ export default function Admincourses() {
               {templates.length === 0 ? "Create a course template first, then schedule it with dates." : "Pick a template and add specific dates for providers to enroll in."}
             </p>
             {templates.length > 0 && (
-              <button onClick={() => { setScheduleForm(EMPTY_SCHEDULED); setEditingSchedule(null); setScheduleOpen(true); }} className="text-sm font-semibold px-5 py-2.5 rounded-2xl text-white" style={{ background: "linear-gradient(135deg, #DA6A63, #FA6F30)" }}>
+              <button onClick={() => { setScheduleForm(EMPTY_SCHEDULED); setEditingSchedule(null); setScheduleSessionDatesBaseline(null); setScheduleOpen(true); }} className="text-sm font-semibold px-5 py-2.5 rounded-2xl text-white" style={{ background: "linear-gradient(135deg, #DA6A63, #FA6F30)" }}>
                 <Plus className="w-4 h-4 inline mr-1" /> Schedule Course
               </button>
             )}
@@ -551,12 +602,24 @@ export default function Admincourses() {
                                 return (
                                   <div key={`${sessionGroup.id}-${d.date}-${dayIdx}`} className="rounded-xl overflow-hidden" style={{ border: "1px solid rgba(74,95,160,0.12)" }}>
                                     {/* Date header row */}
-                                    <div className="flex items-center gap-2 px-3 py-2.5" style={{ background: "rgba(74,95,160,0.05)" }}>
+                                    <div className="flex items-center gap-2 px-3 py-2.5 flex-wrap" style={{ background: "rgba(74,95,160,0.05)" }}>
                                       <Calendar className="w-3 h-3 flex-shrink-0" style={{ color: "#4a5fa0" }} />
                                       <span className="text-xs font-bold" style={{ color: "#4a5fa0" }}>{dayLabel}</span>
                                       <span className="text-xs font-medium" style={{ color: "#1a2540" }}>{d.date}</span>
                                       {(d.start_time || d.end_time) && <span className="text-xs" style={{ color: "#8891a8" }}>{d.start_time}{d.end_time ? `–${d.end_time}` : ""}</span>}
                                       {d.location && <span className="text-xs" style={{ color: "#8891a8" }}>· {d.location}</span>}
+                                      {hasValidSessionSeatEntry(d) && (
+                                        <span
+                                          className="text-[11px] font-bold tabular-nums ml-auto px-2 py-0.5 rounded-md"
+                                          style={{
+                                            background: (effectiveAvailableSeats(d) ?? 0) <= 0 ? "rgba(218,106,99,0.12)" : "rgba(200,230,60,0.15)",
+                                            color: (effectiveAvailableSeats(d) ?? 0) <= 0 ? "#DA6A63" : "#3d5a0a"
+                                          }}
+                                          title="Enrollment seats for this calendar date"
+                                        >
+                                          {effectiveAvailableSeats(d)} / {Number(d.max_seats)} seats
+                                        </span>
+                                      )}
                                     </div>
                                     {/* Code section */}
                                     <div className="px-3 py-2.5 flex items-center gap-2">
@@ -618,7 +681,7 @@ export default function Admincourses() {
 
                   <div className="flex gap-2 pt-2 border-t" style={{ borderColor: "rgba(0,0,0,0.05)" }}>
                     <button className="flex-1 flex items-center justify-center gap-1 py-2 text-xs font-semibold rounded-xl hover:opacity-70 transition-opacity" style={{ background: "rgba(74,95,160,0.08)", color: "#4a5fa0" }}
-                      onClick={() => { setScheduleForm({ template_id: c.template_id, title: c.title, price: c.price, location: c.location, max_seats: c.max_seats, instructor_name: c.instructor_name, session_dates: c.session_dates||[], is_active: c.is_active, is_featured: c.is_featured }); setEditingSchedule(c.id); setScheduleOpen(true); }}>
+                      onClick={() => void openScheduledCourseEditor(c)}>
                       <Pencil className="w-3.5 h-3.5" /> Edit
                     </button>
                     <button className="py-2 px-3 text-xs font-semibold rounded-xl hover:opacity-70 transition-opacity" style={{ background: "rgba(218,106,99,0.08)", color: "#DA6A63" }} onClick={() => removeScheduled.mutate(c.id)}>
@@ -651,9 +714,19 @@ export default function Admincourses() {
         serviceTypes={serviceTypes}
       />
       <ScheduleCourseForm
-        open={scheduleOpen} onOpenChange={setScheduleOpen}
+        open={scheduleOpen}
+        onOpenChange={(next) => {
+          if (!next) setScheduleSessionDatesBaseline(null);
+          setScheduleOpen(next);
+        }}
         form={scheduleForm} setForm={setScheduleForm}
-        onSave={() => saveScheduled.mutate({ data: scheduleForm, editingId: editingSchedule })}
+        previousSessionDatesForNormalize={scheduleSessionDatesBaseline}
+        onSave={(patch) =>
+          saveScheduled.mutate({
+            data: { ...scheduleForm, ...patch },
+            editingId: editingSchedule,
+          })
+        }
         saving={saveScheduled.isPending} editing={editingSchedule}
         templates={templates}
       />

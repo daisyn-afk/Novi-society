@@ -102,9 +102,6 @@ export default function AdminLicenses() {
   const [issueDialog, setIssueDialog] = useState(null);
   const [issueForm, setIssueForm] = useState({});
   const qc = useQueryClient();
-  const certDebugEnabled =
-    typeof window !== "undefined" &&
-    new URLSearchParams(window.location.search).get("certdebug") === "1";
 
   // --- Licenses ---
   const { data: licenses = [], isLoading: licLoading } = useQuery({
@@ -364,15 +361,6 @@ export default function AdminLicenses() {
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["certifications"] }),
   });
-  const repairBrokenCert = useMutation({
-    mutationFn: ({ id, data }) =>
-      adminApiRequest(`/admin/certifications/${id}`, {
-        method: "PATCH",
-        body: JSON.stringify(data),
-      }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["certifications"] }),
-  });
-
   const filteredCerts = normalizedCerts.filter((c) => {
     const q = String(certSearch || "").toLowerCase();
     if (!q) return true;
@@ -506,108 +494,6 @@ export default function AdminLicenses() {
             </Card>
           )}
 
-          {pendingExternalCerts.length > 0 && (
-            <Card className="border-blue-200 bg-blue-50">
-              <CardContent className="pt-4 pb-4">
-                <div className="space-y-2">
-                  {pendingExternalCerts.map(c => {
-                    const certificateDocUrl = extractDocumentUrl(c);
-                    if (certDebugEnabled) {
-                      console.info("[cert-debug][admin-pending-row]", {
-                        id: c.id,
-                        provider_display_name: c.provider_display_name,
-                        provider_display_email: c.provider_display_email,
-                        provider_name: c.provider_name,
-                        provider_name_resolved: c.provider_name_resolved,
-                        provider_email: c.provider_email,
-                        provider_email_resolved: c.provider_email_resolved,
-                        provider_id: c.provider_id,
-                        created_by: c.created_by,
-                        created_by_email: c.created_by_email,
-                        certificate_url: c.certificate_url,
-                        notes: c.notes,
-                        extracted_document_url: certificateDocUrl,
-                      });
-                    }
-                    return (
-                    <div key={c.id} className="bg-white rounded-lg px-4 py-3 space-y-2">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-semibold text-slate-800">{c.provider_display_name}</p>
-                          <p className="text-xs text-slate-500 mt-0.5">{c.provider_display_email || "No email on file"}</p>
-                          <p className="text-xs text-slate-600 mt-1"><strong>{c.certification_name}</strong> — from {c.issued_by || "Unknown school"}</p>
-                          {c.issued_display_at && <p className="text-xs text-slate-500 mt-0.5">Submitted {format(new Date(c.issued_display_at), "MMM d, yyyy")}</p>}
-                          {c.service_type_name && <p className="text-xs text-blue-700 mt-0.5">Applying for: <strong>{c.service_type_name}</strong></p>}
-                          {certDebugEnabled && (
-                            <div className="mt-2 rounded border border-slate-200 bg-slate-50 p-2">
-                              <p className="text-[11px] font-semibold text-slate-700">Debug</p>
-                              <p className="text-[11px] text-slate-600">row_id: {c.id || "n/a"}</p>
-                              <p className="text-[11px] text-slate-600">provider_id: {c.provider_id || "n/a"}</p>
-                              <p className="text-[11px] text-slate-600">provider_name_raw: {String(c.provider_name || "n/a")}</p>
-                              <p className="text-[11px] text-slate-600">provider_name_resolved: {String(c.provider_name_resolved || "n/a")}</p>
-                              <p className="text-[11px] text-slate-600">provider_email_raw: {String(c.provider_email || "n/a")}</p>
-                              <p className="text-[11px] text-slate-600">provider_email_resolved: {String(c.provider_email_resolved || "n/a")}</p>
-                              <p className="text-[11px] text-slate-600">created_by: {String(c.created_by || "n/a")}</p>
-                              <p className="text-[11px] text-slate-600">certificate_url_raw: {String(c.certificate_url || "n/a")}</p>
-                              <p className="text-[11px] text-slate-600">extracted_document_url: {String(certificateDocUrl || "n/a")}</p>
-                              <div className="mt-2">
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-6 text-[11px]"
-                                  disabled={repairBrokenCert.isPending}
-                                  onClick={() => {
-                                    const providerName = window.prompt("Provider name", c.provider_display_name && c.provider_display_name !== "Unknown Provider" ? c.provider_display_name : "");
-                                    if (providerName === null) return;
-                                    const providerEmail = window.prompt("Provider email", c.provider_display_email && c.provider_display_email !== "No email on file" ? c.provider_display_email : "");
-                                    if (providerEmail === null) return;
-                                    const certificateUrl = window.prompt("Certificate URL", certificateDocUrl || "");
-                                    if (certificateUrl === null) return;
-                                    repairBrokenCert.mutate({
-                                      id: c.id,
-                                      data: {
-                                        provider_name: String(providerName || "").trim() || null,
-                                        provider_email: String(providerEmail || "").trim() || null,
-                                        certificate_url: String(certificateUrl || "").trim() || null,
-                                        certification_url: String(certificateUrl || "").trim() || null,
-                                        document_url: String(certificateUrl || "").trim() || null,
-                                      },
-                                    });
-                                  }}
-                                >
-                                  Repair Row
-                                </Button>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2 flex-shrink-0">
-                          {certificateDocUrl ? (
-                            <a href={certificateDocUrl} target="_blank" rel="noreferrer">
-                              <Button size="sm" variant="outline" className="gap-1 h-7 text-xs"><ExternalLink className="w-3 h-3" /> View Certificate</Button>
-                            </a>
-                          ) : (
-                            <Button size="sm" variant="outline" className="gap-1 h-7 text-xs" disabled>
-                              <ExternalLink className="w-3 h-3" /> View Certificate
-                            </Button>
-                          )}
-                          <Button size="sm" className="gap-1 h-7 text-xs bg-green-600 hover:bg-green-700 text-white"
-                            onClick={() => approveExternalCert.mutate(c)} disabled={approveExternalCert.isPending}>
-                            <CheckCircle className="w-3 h-3" /> Approve
-                          </Button>
-                          <Button size="sm" variant="outline" className="gap-1 h-7 text-xs text-red-500 border-red-200"
-                            onClick={() => rejectExternalCert.mutate(c.id)} disabled={rejectExternalCert.isPending}>
-                            Reject
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  )})}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
             <Input className="pl-9" placeholder="Search certifications..." value={certSearch} onChange={e => setCertSearch(e.target.value)} />
@@ -639,7 +525,7 @@ export default function AdminLicenses() {
                           )}
                           <div className="flex gap-3 text-xs text-slate-400 mt-1">
                             <span>#{c.certificate_display_number}</span>
-                            {c.issued_display_at && <span>Issued {format(new Date(c.issued_display_at), "MMM d, yyyy")}</span>}
+                            {c.issued_display_at && <span>Submitted {format(new Date(c.issued_display_at), "MMM d, yyyy")}</span>}
                             {c.expires_at && <span>Expires {format(new Date(c.expires_at), "MMM d, yyyy")}</span>}
                           </div>
                         </div>

@@ -1,6 +1,7 @@
 import { Calendar, MapPin, Users, Clock, FileText, BookOpen, Award, CheckCircle2, Zap } from "lucide-react";
 import { format, differenceInDays } from "date-fns";
 import { useState } from "react";
+import { sessionDateSeatsSummaryForEnrollment } from "@/lib/sessionDateSeats";
 
 export default function CourseEnrollmentCard({
   enrollment,
@@ -24,6 +25,7 @@ export default function CourseEnrollmentCard({
     ? course.linked_service_type_ids
     : (course.certifications_awarded || []).map(c => c.service_type_id).filter(Boolean);
   const allServicesCovered = linkedServiceIds.every(id => activeSubServiceIds.has(id));
+  const seatsSummary = sessionDateSeatsSummaryForEnrollment(course, scheduledDate);
 
   const statusConfig = {
     pending_payment: { bg: "rgba(218,106,99,0.12)", color: "#DA6A63", label: "Awaiting Payment" },
@@ -161,10 +163,10 @@ export default function CourseEnrollmentCard({
              <span className="font-medium">{course.duration_hours}h class</span>
            </div>
          )}
-         {course.max_seats && (
+         {seatsSummary && (
            <div className="flex items-center gap-2.5 text-xs p-2.5 rounded-lg" style={{ background: "rgba(45,107,127,0.08)", border: "1px solid rgba(45,107,127,0.2)", color: "rgba(30,37,53,0.65)" }}>
              <Users className="w-4 h-4 flex-shrink-0" style={{ color: "#2D6B7F" }} />
-             <span className="font-medium">{course.available_seats || 0} seats left</span>
+             <span className="font-medium">{seatsSummary}</span>
            </div>
          )}
         </div>

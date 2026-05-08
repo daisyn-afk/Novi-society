@@ -430,8 +430,14 @@ export default function AdminServiceTypes() {
                 <div>
                   <label className="text-xs font-semibold text-slate-600 mb-1 block">Supervision Required</label>
                   <div className="relative">
-                    <Input type="number" value={form.requires_supervision_months || 0} onChange={e => setForm(f => ({ ...f, requires_supervision_months: parseInt(e.target.value) || 0 }))} />
-                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs">months</span>
+                    <Input
+                      type="number"
+                      min={0}
+                      className="pr-16"
+                      value={form.requires_supervision_months || 0}
+                      onChange={e => setForm(f => ({ ...f, requires_supervision_months: parseInt(e.target.value, 10) || 0 }))}
+                    />
+                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs">months</span>
                   </div>
                 </div>
               </div>
