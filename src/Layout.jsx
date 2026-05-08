@@ -96,11 +96,16 @@ export default function Layout({ children, currentPageName }) {
   const role = normalizeRole(user?.role || "provider");
   const navRole = role;
   const navItems = navByRole[navRole] || navByRole.provider;
+  const isProviderUserReady = role === "provider" && Boolean(user?.id || user?.email);
 
   const { data: providerEnrollments = [] } = useQuery({
     queryKey: ["my-enrollments"],
     queryFn: async () => {
-      const me = await base44.auth.me();
+      const me = await queryClient.ensureQueryData({
+        queryKey: ["me"],
+        queryFn: () => base44.auth.me(),
+        staleTime: 30_000,
+      });
       const [byProviderIdResult, byEmailResult, preOrdersResult] = await Promise.allSettled([
         me?.id ? base44.entities.Enrollment.filter({ provider_id: me.id }) : Promise.resolve([]),
         me?.email ? base44.entities.Enrollment.filter({ provider_email: me.email }) : Promise.resolve([]),
@@ -126,16 +131,21 @@ export default function Layout({ children, currentPageName }) {
         }));
       return Array.from(new Map([...(byProviderId || []), ...(byEmail || []), ...derivedFromPreOrders].map((row) => [row.pre_order_id || row.id, row])).values());
     },
-    enabled: role === "provider",
+    enabled: isProviderUserReady,
+    staleTime: 30_000,
   });
 
   const { data: providerCerts = [] } = useQuery({
     queryKey: ["my-certs"],
     queryFn: async () => {
-      const me = await base44.auth.me();
+      const me = await queryClient.ensureQueryData({
+        queryKey: ["me"],
+        queryFn: () => base44.auth.me(),
+        staleTime: 30_000,
+      });
       return base44.entities.Certification.filter({ provider_id: me.id });
     },
-    enabled: role === "provider",
+    enabled: isProviderUserReady,
   });
 
   const isProviderUnlocked = true;

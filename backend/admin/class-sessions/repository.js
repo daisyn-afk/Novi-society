@@ -22,6 +22,8 @@ async function ensureClassSessionTable() {
          attendance_confirmed boolean not null default false
        );
        create index if not exists idx_class_session_course_date on public.class_session(course_id, session_date);
+       create index if not exists idx_class_session_provider_id on public.class_session(provider_id);
+       create index if not exists idx_class_session_provider_email on public.class_session(lower(provider_email));
        create unique index if not exists idx_class_session_enrollment_id on public.class_session(enrollment_id)
        where enrollment_id is not null;`
     ).catch((error) => {
@@ -63,12 +65,54 @@ function rowToApi(row) {
   };
 }
 
-export async function listClassSessions() {
+export async function listClassSessions(filters = {}) {
   await ensureClassSessionTable();
+  const id = filters?.id ? String(filters.id).trim() : "";
+  const providerId = filters?.provider_id ? String(filters.provider_id).trim() : "";
+  const providerEmail = filters?.provider_email ? String(filters.provider_email).trim().toLowerCase() : "";
+  const courseId = filters?.course_id ? String(filters.course_id).trim() : "";
+  const enrollmentId = filters?.enrollment_id ? String(filters.enrollment_id).trim() : "";
+  const sessionCode = filters?.session_code ? String(filters.session_code).trim().toUpperCase() : "";
+  const sessionDate = filters?.session_date ? String(filters.session_date).trim() : "";
+
+  const whereClauses = [];
+  const params = [];
+  if (id) {
+    params.push(id);
+    whereClauses.push(`id::text = $${params.length}`);
+  }
+  if (providerId) {
+    params.push(providerId);
+    whereClauses.push(`provider_id::text = $${params.length}`);
+  }
+  if (providerEmail) {
+    params.push(providerEmail);
+    whereClauses.push(`lower(provider_email) = $${params.length}`);
+  }
+  if (courseId) {
+    params.push(courseId);
+    whereClauses.push(`course_id::text = $${params.length}`);
+  }
+  if (enrollmentId) {
+    params.push(enrollmentId);
+    whereClauses.push(`enrollment_id = $${params.length}`);
+  }
+  if (sessionCode) {
+    params.push(sessionCode);
+    whereClauses.push(`upper(session_code) = $${params.length}`);
+  }
+  if (sessionDate) {
+    params.push(sessionDate);
+    whereClauses.push(`session_date::text = $${params.length}`);
+  }
+  const whereSql = whereClauses.length ? `where ${whereClauses.join(" and ")}` : "";
+
   const { rows } = await query(
     `select *
      from public.class_session
-     order by created_date desc`
+     ${whereSql}
+     order by created_date desc`,
+    params
   );
   return rows.map(rowToApi);
 }

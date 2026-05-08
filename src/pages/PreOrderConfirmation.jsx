@@ -134,6 +134,11 @@ export default function PreOrderConfirmation() {
       </div>
     );
   }
+<<<<<<< feat/provider-payment
+  const returnPath = order.order_type === "course"
+    ? createPageUrl("ProviderEnrollments")
+    : createPageUrl("NoviLanding");
+=======
 
   if (order.order_type === "course" && order.status !== "paid") {
     return (
@@ -156,6 +161,7 @@ export default function PreOrderConfirmation() {
     );
   }
 
+>>>>>>> master
   return (
     <div className="min-h-screen flex items-center justify-center px-4 py-16" style={{ fontFamily: "'DM Sans', sans-serif", background: "#f5f3ef" }}>
       <div className="w-full max-w-2xl text-center">
@@ -215,7 +221,7 @@ export default function PreOrderConfirmation() {
           </div>
         </div>
 
-        <button onClick={() => navigate(createPageUrl("NoviLanding"))} className="flex items-center gap-2 mx-auto transition-colors" style={{ color: "rgba(30,37,53,0.65)" }}>
+        <button onClick={() => navigate(returnPath)} className="flex items-center gap-2 mx-auto transition-colors" style={{ color: "rgba(30,37,53,0.65)" }}>
           <ArrowLeft className="w-4 h-4" /> Return to NOVI Society
         </button>
       </div>

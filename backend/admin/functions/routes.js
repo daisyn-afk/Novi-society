@@ -71,23 +71,66 @@ function splitNameParts(fullName) {
 async function resolveQualiphyExamIdForCourse({ courseId, treatmentType }) {
   if (!courseId) return null;
   const { rows: courseRows } = await query(
-    `select linked_service_type_ids
+    `select linked_service_type_ids, certifications_awarded, category, template_id
      from public.scheduled_courses
      where id = $1
      limit 1`,
     [courseId]
   );
-  const linkedServiceTypeIds = Array.isArray(courseRows?.[0]?.linked_service_type_ids)
-    ? courseRows[0].linked_service_type_ids.map((id) => String(id ?? "").trim()).filter(Boolean)
+  const course = courseRows?.[0] || {};
+  const linkedServiceTypeIds = Array.isArray(course.linked_service_type_ids)
+    ? course.linked_service_type_ids.map((id) => String(id ?? "").trim()).filter(Boolean)
     : [];
-  if (linkedServiceTypeIds.length === 0) return null;
+  let templateLinkedServiceTypeIds = [];
+  if (linkedServiceTypeIds.length === 0 && course?.template_id) {
+    const { rows: templateRows } = await query(
+      `select linked_service_type_ids
+       from public.template_courses
+       where id = $1
+       limit 1`,
+      [course.template_id]
+    );
+    templateLinkedServiceTypeIds = Array.isArray(templateRows?.[0]?.linked_service_type_ids)
+      ? templateRows[0].linked_service_type_ids.map((id) => String(id ?? "").trim()).filter(Boolean)
+      : [];
+  }
+  const awardedServiceTypeIds = Array.isArray(course.certifications_awarded)
+    ? course.certifications_awarded
+      .map((entry) => String(entry?.service_type_id ?? "").trim())
+      .filter(Boolean)
+    : [];
+  const serviceTypeIds = Array.from(new Set([
+    ...linkedServiceTypeIds,
+    ...templateLinkedServiceTypeIds,
+    ...awardedServiceTypeIds
+  ]));
+  const courseCategory = String(course?.category || "").trim().toLowerCase();
+  const preferredCategory =
+    treatmentType === "filler" ? "fillers"
+      : (treatmentType === "tox" || treatmentType === "both") ? "injectables"
+        : null;
 
-  const { rows: serviceRows } = await query(
-    `select id, category, requires_gfe, qualiphy_exam_ids
-     from public.service_type
-     where id = any($1::text[])`,
-    [linkedServiceTypeIds]
-  );
+  let serviceRows = [];
+  if (serviceTypeIds.length > 0) {
+    const { rows } = await query(
+      `select id, category, requires_gfe, qualiphy_exam_ids
+       from public.service_type
+       where id = any($1::text[])`,
+      [serviceTypeIds]
+    );
+    serviceRows = rows;
+  }
+  if ((!Array.isArray(serviceRows) || serviceRows.length === 0) && (preferredCategory || courseCategory)) {
+    const categoriesToTry = Array.from(new Set([preferredCategory, courseCategory].filter(Boolean)));
+    const { rows } = await query(
+      `select id, category, requires_gfe, qualiphy_exam_ids
+       from public.service_type
+       where category = any($1::text[])
+         and requires_gfe = true`,
+      [categoriesToTry]
+    );
+    serviceRows = rows;
+  }
   if (!Array.isArray(serviceRows) || serviceRows.length === 0) return null;
 
   const withExamIds = serviceRows
@@ -102,10 +145,6 @@ async function resolveQualiphyExamIdForCourse({ courseId, treatmentType }) {
     .filter((row) => row.requires_gfe === true);
   const candidates = gfeRequiredFirst.length > 0 ? gfeRequiredFirst : withExamIds;
 
-  const preferredCategory =
-    treatmentType === "filler" ? "fillers"
-      : (treatmentType === "tox" || treatmentType === "both") ? "injectables"
-        : null;
   if (preferredCategory) {
     const preferred = candidates.find((row) => String(row.category || "").toLowerCase() === preferredCategory);
     if (preferred) return preferred.examIds[0];

@@ -16,7 +16,26 @@ import {
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
 const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-const appBaseUrl = process.env.APP_BASE_URL || "http://localhost:5173";
+const runtimeVercelUrl =
+  process.env.VERCEL_PROJECT_PRODUCTION_URL ||
+  process.env.VERCEL_URL ||
+  "";
+const appBaseUrl = (() => {
+  const configured = String(process.env.APP_BASE_URL || "").trim();
+  const fallback = configured || (runtimeVercelUrl ? `https://${runtimeVercelUrl}` : "http://localhost:5173");
+  const isProdRuntime = Boolean(process.env.VERCEL) || process.env.NODE_ENV === "production";
+  try {
+    const u = new URL(fallback);
+    const host = String(u.hostname || "").toLowerCase();
+    const isLocalHost = host === "localhost" || host === "127.0.0.1" || host === "::1" || host.endsWith(".local");
+    if (isProdRuntime && isLocalHost && runtimeVercelUrl) {
+      return `https://${runtimeVercelUrl}`;
+    }
+  } catch {
+    // Keep fallback as-is when URL parsing fails.
+  }
+  return fallback;
+})();
 const resendApiKey = process.env.RESEND_API_KEY;
 const resendFromEmail = process.env.RESEND_FROM_EMAIL || "NOVI Society <support@novisociety.com>";
 const noviEmailLogoUrl = process.env.NOVI_EMAIL_LOGO_URL || `${appBaseUrl}/novi-email-logo.png`;
@@ -42,9 +61,42 @@ function resolveFrontendBaseUrl(requestOrigin) {
     if (!/^https?:$/i.test(parsed.protocol)) {
       return String(appBaseUrl || "").replace(/\/+$/, "");
     }
+    const hostname = String(parsed.hostname || "").toLowerCase();
+    const isLocalHost =
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname === "::1" ||
+      hostname.endsWith(".local");
+    if (isLocalHost) {
+      return String(appBaseUrl || "").replace(/\/+$/, "");
+    }
     return `${parsed.protocol}//${parsed.host}`;
   } catch {
     return String(appBaseUrl || "").replace(/\/+$/, "");
+  }
+}
+
+function coercePublicBaseUrl(maybeUrl) {
+  const fallback = String(appBaseUrl || "").replace(/\/+$/, "");
+  const raw = String(maybeUrl || "").trim();
+  const candidate = raw || fallback;
+  const isProdRuntime = Boolean(process.env.VERCEL) || process.env.NODE_ENV === "production";
+  const runtimeVercelUrl =
+    process.env.VERCEL_PROJECT_PRODUCTION_URL ||
+    process.env.VERCEL_URL ||
+    "";
+
+  try {
+    const u = new URL(candidate);
+    const host = String(u.hostname || "").toLowerCase();
+    const isLocalHost = host === "localhost" || host === "127.0.0.1" || host === "::1" || host.endsWith(".local");
+    if (isProdRuntime && isLocalHost && runtimeVercelUrl) {
+      return `https://${runtimeVercelUrl}`;
+    }
+    return `${u.protocol}//${u.host}`;
+  } catch {
+    if (runtimeVercelUrl) return `https://${runtimeVercelUrl}`;
+    return fallback;
   }
 }
 
@@ -1276,7 +1328,7 @@ async function inviteUserIfNeeded(email, firstName, lastName, frontendBaseUrlOve
   try {
     const runQuery = async (sql, params = []) => (dbClient ? dbClient.query(sql, params) : query(sql, params));
     const normalizedEmail = String(email).trim().toLowerCase();
-    const signupBaseUrl = resolveFrontendBaseUrl(frontendBaseUrlOverride);
+    const signupBaseUrl = coercePublicBaseUrl(resolveFrontendBaseUrl(frontendBaseUrlOverride));
     const defaultSignupLink = `${signupBaseUrl}/signup?email=${encodeURIComponent(normalizedEmail)}`;
 
     const generateSetupLink = async (linkType = "invite") => {
@@ -1284,9 +1336,7 @@ async function inviteUserIfNeeded(email, firstName, lastName, frontendBaseUrlOve
       const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
         type: linkType,
         email: normalizedEmail,
-        options: {
-          redirectTo: `${signupBaseUrl}/set-password`
-        }
+        options: { redirectTo: `${signupBaseUrl}/set-password` }
       });
       if (linkError) {
         // eslint-disable-next-line no-console
