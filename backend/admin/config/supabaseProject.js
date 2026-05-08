@@ -1,9 +1,9 @@
-export const DEFAULT_SUPABASE_URL = "https://hjelcmcfqogoflxkhhpj.supabase.co";
-
 export function resolveSupabaseUrl() {
-  return (
-    process.env.SUPABASE_URL ||
-    process.env.NEXT_PUBLIC_SUPABASE_URL ||
-    DEFAULT_SUPABASE_URL
-  );
+  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  if (!url) {
+    throw new Error(
+      "Missing required env var: SUPABASE_URL or NEXT_PUBLIC_SUPABASE_URL"
+    );
+  }
+  return url;
 }
