@@ -102,8 +102,12 @@ export default function ProviderEnrollments() {
       );
     },
     retry: 3,
-    refetchOnMount: "always",
-    placeholderData: (previousData) => previousData,
+    // Show stale/placeholder data immediately on first visit so enrollment
+    // statuses are visible without waiting for the full refetch.  Falls back
+    // to the ["my-enrollments"] slice that Layout already fetched.
+    refetchOnMount: true,
+    placeholderData: (previousData) =>
+      previousData ?? qc.getQueryData(["my-enrollments"]),
   });
 
   const { data: sessions = [] } = useQuery({

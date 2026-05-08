@@ -1,0 +1,93 @@
+import { query } from "../db.js";
+
+const SELECT_COLUMNS = `
+  id,
+  name,
+  trigger,
+  recipient_type,
+  subject,
+  body_html,
+  is_active,
+  send_delay_minutes,
+  total_sent,
+  last_sent_at,
+  created_at,
+  updated_at
+`;
+
+function normalizePayload(payload = {}) {
+  return {
+    name: String(payload.name || "").trim(),
+    trigger: String(payload.trigger || "").trim(),
+    recipient_type: String(payload.recipient_type || "provider").trim(),
+    subject: String(payload.subject || "").trim(),
+    body_html: String(payload.body_html || "").trim(),
+    is_active: payload.is_active !== false,
+    send_delay_minutes: Number(payload.send_delay_minutes) || 0,
+  };
+}
+
+export async function listEmailTemplates() {
+  const { rows } = await query(
+    `select ${SELECT_COLUMNS}
+     from public.email_templates
+     order by created_at desc`
+  );
+  return rows;
+}
+
+export async function getEmailTemplate(id) {
+  const { rows } = await query(
+    `select ${SELECT_COLUMNS} from public.email_templates where id = $1`,
+    [id]
+  );
+  return rows[0] || null;
+}
+
+export async function createEmailTemplate(payload) {
+  const d = normalizePayload(payload);
+  const { rows } = await query(
+    `insert into public.email_templates
+       (name, trigger, recipient_type, subject, body_html, is_active, send_delay_minutes)
+     values ($1,$2,$3,$4,$5,$6,$7)
+     returning ${SELECT_COLUMNS}`,
+    [d.name, d.trigger, d.recipient_type, d.subject, d.body_html, d.is_active, d.send_delay_minutes]
+  );
+  return rows[0];
+}
+
+export async function updateEmailTemplate(id, payload) {
+  const d = normalizePayload(payload);
+  const { rows } = await query(
+    `update public.email_templates
+     set name               = $2,
+         trigger            = $3,
+         recipient_type     = $4,
+         subject            = $5,
+         body_html          = $6,
+         is_active          = $7,
+         send_delay_minutes = $8
+     where id = $1
+     returning ${SELECT_COLUMNS}`,
+    [id, d.name, d.trigger, d.recipient_type, d.subject, d.body_html, d.is_active, d.send_delay_minutes]
+  );
+  return rows[0] || null;
+}
+
+export async function deleteEmailTemplate(id) {
+  const { rowCount } = await query(
+    `delete from public.email_templates where id = $1`,
+    [id]
+  );
+  return rowCount > 0;
+}
+
+export async function incrementTemplateSentCount(id) {
+  await query(
+    `update public.email_templates
+     set total_sent   = total_sent + 1,
+         last_sent_at = now()
+     where id = $1`,
+    [id]
+  );
+}

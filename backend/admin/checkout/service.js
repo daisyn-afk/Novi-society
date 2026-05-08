@@ -1,6 +1,7 @@
 import Stripe from "stripe";
 import { createClient } from "@supabase/supabase-js";
 import { pool, query } from "../db.js";
+import { resolveSupabaseUrl } from "../config/supabaseProject.js";
 import {
   canDecrementSessionDateSeat,
   decrementSessionDateSeatInArray,
@@ -40,7 +41,7 @@ const resendApiKey = process.env.RESEND_API_KEY;
 const resendFromEmail = process.env.RESEND_FROM_EMAIL || "NOVI Society <support@novisociety.com>";
 const noviEmailLogoUrl = process.env.NOVI_EMAIL_LOGO_URL || `${appBaseUrl}/novi-email-logo.png`;
 
-const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseUrl = resolveSupabaseUrl();
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 const stripe = stripeSecretKey ? new Stripe(stripeSecretKey) : null;

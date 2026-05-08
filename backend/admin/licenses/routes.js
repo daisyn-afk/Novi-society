@@ -2,13 +2,14 @@ import { Router } from "express";
 import { createClient } from "@supabase/supabase-js";
 import { pool } from "../db.js";
 import { getMeFromAccessToken } from "../auth/service.js";
+import { resolveSupabaseUrl } from "../config/supabaseProject.js";
 
 export const licensesRouter = Router();
 const resendApiKey = process.env.RESEND_API_KEY;
 const resendFromEmail = process.env.RESEND_FROM_EMAIL || "NOVI Society <support@novisociety.com>";
 const appBaseUrl = process.env.APP_BASE_URL || "http://localhost:5173";
 const noviEmailLogoUrl = process.env.NOVI_EMAIL_LOGO_URL || `${appBaseUrl}/novi-email-logo.png`;
-const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseUrl = resolveSupabaseUrl();
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const supabaseAdmin = supabaseUrl && supabaseServiceRoleKey
   ? createClient(supabaseUrl, supabaseServiceRoleKey, {

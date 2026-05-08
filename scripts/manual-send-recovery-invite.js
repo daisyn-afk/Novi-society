@@ -1,9 +1,10 @@
 import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
+import { DEFAULT_SUPABASE_URL } from "../backend/admin/config/supabaseProject.js";
 
 dotenv.config({ path: ".env" });
 
-const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || DEFAULT_SUPABASE_URL;
 const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const appBaseUrl = process.env.APP_BASE_URL || "http://localhost:5173";
 const resendApiKey = process.env.RESEND_API_KEY;

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { base44 } from "@/api/base44Client";
+import { emailTemplatesApi } from "@/api/emailTemplatesApi";
+import { useToast } from "@/components/ui/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,7 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Switch } from "@/components/ui/switch";
 import {
   Mail, Plus, Zap, Edit2, Trash2, CheckCircle, Send,
-  Users, BookOpen, Award, Shield, Calendar, Clock, Eye
+  BookOpen, Award, Shield, Calendar, Eye, FlaskConical,
 } from "lucide-react";
 import { format } from "date-fns";
 
@@ -44,6 +45,17 @@ const PLACEHOLDERS = [
   { tag: "{{provider_name}}", desc: "Provider name" },
   { tag: "{{patient_name}}", desc: "Patient name" },
 ];
+
+const DEFAULT_PLACEHOLDER_VALUES = {
+  first_name: "Test",
+  full_name: "Test User",
+  email: "test@example.com",
+  app_url: "https://app.novisociety.com",
+  course_name: "Sample Course",
+  service_name: "Sample Service",
+  provider_name: "Test Provider",
+  patient_name: "Test Patient",
+};
 
 const DEFAULT_TEMPLATES = [
   {
@@ -111,81 +123,157 @@ const CARD_STYLE = {
   boxShadow: "0 2px 16px rgba(30,37,53,0.07)",
 };
 
-export default function AdminEmailTemplates() {
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [editing, setEditing] = useState(null);
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [previewTemplate, setPreviewTemplate] = useState(null);
-  const [form, setForm] = useState({
-    name: "", trigger: "", recipient_type: "provider", subject: "", body_html: "", is_active: true, send_delay_minutes: 0
+const EMPTY_FORM = {
+  name: "", trigger: "", recipient_type: "provider",
+  subject: "", body_html: "", is_active: true, send_delay_minutes: 0
+};
+
+const tagToKey = (tag) => tag.replace("{{", "").replace("}}", "");
+
+function applyPlaceholderValues(content, values) {
+  return String(content || "").replace(/\{\{(\w+)\}\}/g, (full, key) => {
+    if (!Object.prototype.hasOwnProperty.call(values, key)) return full;
+    return values[key] ?? "";
   });
+}
+
+export default function AdminEmailTemplates() {
+  const { toast, dismiss } = useToast();
   const qc = useQueryClient();
 
-  const { data: templates = [], isLoading } = useQuery({
+  // Dialog state
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState(EMPTY_FORM);
+  const [placeholderValues, setPlaceholderValues] = useState(DEFAULT_PLACEHOLDER_VALUES);
+  const [activePlaceholderTag, setActivePlaceholderTag] = useState(null);
+
+  // Preview dialog
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewTemplate, setPreviewTemplate] = useState(null);
+
+  // Test-send dialog
+  const [testOpen, setTestOpen] = useState(false);
+  const [testTemplate, setTestTemplate] = useState(null);
+  const [testEmail, setTestEmail] = useState("");
+
+  // ── Queries ──────────────────────────────────────────────────────────────
+  const { data: templates = [], isLoading, isError } = useQuery({
     queryKey: ["email-templates"],
-    queryFn: () => base44.entities.EmailTemplate.list("-created_date"),
+    queryFn: emailTemplatesApi.list,
   });
 
+  // ── Mutations ────────────────────────────────────────────────────────────
   const saveMutation = useMutation({
     mutationFn: async () => {
-      if (editing) {
-        return base44.entities.EmailTemplate.update(editing.id, form);
-      }
-      return base44.entities.EmailTemplate.create(form);
+      if (editing) return emailTemplatesApi.update(editing.id, form);
+      return emailTemplatesApi.create(form);
     },
     onSuccess: () => {
-      qc.invalidateQueries(["email-templates"]);
+      qc.invalidateQueries({ queryKey: ["email-templates"] });
       setDialogOpen(false);
       setEditing(null);
+      const { id } = toast({ title: editing ? "Template updated" : "Template created" });
+      setTimeout(() => dismiss(id), 5000);
+    },
+    onError: (err) => {
+      toast({ title: "Save failed", description: err.message, variant: "destructive" });
     },
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id) => base44.entities.EmailTemplate.delete(id),
-    onSuccess: () => qc.invalidateQueries(["email-templates"]),
+    mutationFn: emailTemplatesApi.remove,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["email-templates"] });
+      toast({ title: "Template deleted" });
+    },
+    onError: (err) => {
+      toast({ title: "Delete failed", description: err.message, variant: "destructive" });
+    },
   });
 
   const toggleMutation = useMutation({
-    mutationFn: ({ id, is_active }) => base44.entities.EmailTemplate.update(id, { is_active }),
-    onSuccess: () => qc.invalidateQueries(["email-templates"]),
+    mutationFn: ({ id, is_active }) => emailTemplatesApi.patch(id, { is_active }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["email-templates"] }),
+    onError: (err) => {
+      toast({ title: "Update failed", description: err.message, variant: "destructive" });
+    },
   });
 
-  const seedDefaultsMutation = useMutation({
+  const seedMutation = useMutation({
     mutationFn: async () => {
       for (const t of DEFAULT_TEMPLATES) {
-        await base44.entities.EmailTemplate.create(t);
+        await emailTemplatesApi.create(t);
       }
     },
-    onSuccess: () => qc.invalidateQueries(["email-templates"]),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["email-templates"] });
+      toast({ title: "Starter templates loaded" });
+    },
+    onError: (err) => {
+      toast({ title: "Seed failed", description: err.message, variant: "destructive" });
+    },
   });
 
-  const openNew = () => {
+  const testSendMutation = useMutation({
+    mutationFn: ({ id, to }) => emailTemplatesApi.testSend(id, to),
+    onSuccess: (_, { to }) => {
+      toast({ title: "Test email sent", description: `Sent to ${to}` });
+      setTestOpen(false);
+      setTestEmail("");
+    },
+    onError: (err) => {
+      toast({ title: "Send failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  const openNew = (prefillTrigger = "") => {
     setEditing(null);
-    setForm({ name: "", trigger: "", recipient_type: "provider", subject: "", body_html: "", is_active: true, send_delay_minutes: 0 });
+    setForm({ ...EMPTY_FORM, trigger: prefillTrigger });
+    setPlaceholderValues({ ...DEFAULT_PLACEHOLDER_VALUES });
+    setActivePlaceholderTag(null);
     setDialogOpen(true);
   };
 
   const openEdit = (t) => {
     setEditing(t);
-    setForm({ name: t.name, trigger: t.trigger, recipient_type: t.recipient_type, subject: t.subject, body_html: t.body_html, is_active: t.is_active, send_delay_minutes: t.send_delay_minutes || 0 });
+    setForm({
+      name: t.name, trigger: t.trigger, recipient_type: t.recipient_type,
+      subject: t.subject, body_html: t.body_html, is_active: t.is_active,
+      send_delay_minutes: t.send_delay_minutes || 0
+    });
+    setPlaceholderValues({ ...DEFAULT_PLACEHOLDER_VALUES });
+    setActivePlaceholderTag(null);
     setDialogOpen(true);
+  };
+
+  const openTest = (t) => {
+    setTestTemplate(t);
+    setTestEmail("");
+    setTestOpen(true);
   };
 
   const insertPlaceholder = (tag) => {
     setForm(f => ({ ...f, body_html: f.body_html + tag }));
+    setActivePlaceholderTag(tag);
   };
 
   const triggerMeta = (trigger) => TRIGGERS.find(t => t.value === trigger);
+  const renderedSubject = applyPlaceholderValues(form.subject, placeholderValues);
+  const renderedBody = applyPlaceholderValues(form.body_html, placeholderValues);
 
-  // Group templates by trigger
+  // Group by trigger for the overview table
   const byTrigger = {};
   templates.forEach(t => {
     byTrigger[t.trigger] = byTrigger[t.trigger] || [];
     byTrigger[t.trigger].push(t);
   });
 
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="max-w-5xl space-y-6">
+
       {/* Header */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
@@ -196,12 +284,12 @@ export default function AdminEmailTemplates() {
           </p>
         </div>
         <div className="flex gap-2 flex-shrink-0">
-          {templates.length === 0 && (
-            <Button variant="outline" onClick={() => seedDefaultsMutation.mutate()} disabled={seedDefaultsMutation.isPending} className="gap-2 text-sm">
-              <Zap className="w-4 h-4" /> {seedDefaultsMutation.isPending ? "Loading..." : "Load Starter Templates"}
+          {templates.length === 0 && !isLoading && (
+            <Button variant="outline" onClick={() => seedMutation.mutate()} disabled={seedMutation.isPending} className="gap-2 text-sm">
+              <Zap className="w-4 h-4" /> {seedMutation.isPending ? "Loading..." : "Load Starter Templates"}
             </Button>
           )}
-          <Button onClick={openNew} className="gap-2 font-bold" style={{ background: "#FA6F30", color: "#fff", borderRadius: 12 }}>
+          <Button onClick={() => openNew()} className="gap-2 font-bold" style={{ background: "#FA6F30", color: "#fff", borderRadius: 12 }}>
             <Plus className="w-4 h-4" /> New Template
           </Button>
         </div>
@@ -222,55 +310,78 @@ export default function AdminEmailTemplates() {
         ))}
       </div>
 
+      {/* Loading / error states */}
+      {isLoading && (
+        <div className="flex items-center justify-center py-16">
+          <div className="w-6 h-6 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+        </div>
+      )}
+
+      {isError && !isLoading && (
+        <div className="rounded-2xl px-5 py-4 text-sm" style={{ background: "rgba(218,106,99,0.1)", border: "1px solid rgba(218,106,99,0.3)", color: "#DA6A63" }}>
+          Failed to load templates. Make sure the admin API is running and the migration is applied.
+        </div>
+      )}
+
       {/* Trigger overview */}
-      <div className="rounded-2xl overflow-hidden" style={CARD_STYLE}>
-        <div className="px-6 py-4 border-b" style={{ borderColor: "rgba(30,37,53,0.08)" }}>
-          <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.5)" }}>All Trigger Events</p>
-          <p className="text-sm mt-0.5" style={{ color: "rgba(30,37,53,0.6)" }}>Each trigger fires automatically when the event occurs</p>
+      {!isLoading && (
+        <div className="rounded-2xl overflow-hidden" style={CARD_STYLE}>
+          <div className="px-6 py-4 border-b" style={{ borderColor: "rgba(30,37,53,0.08)" }}>
+            <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.5)" }}>All Trigger Events</p>
+            <p className="text-sm mt-0.5" style={{ color: "rgba(30,37,53,0.6)" }}>Each trigger fires automatically when the event occurs</p>
+          </div>
+          <div className="divide-y" style={{ borderColor: "rgba(30,37,53,0.06)" }}>
+            {TRIGGERS.map(trigger => {
+              const tpls = byTrigger[trigger.value] || [];
+              const Icon = trigger.icon;
+              return (
+                <div key={trigger.value} className="px-6 py-4 flex items-center gap-4">
+                  <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: `${trigger.color}18` }}>
+                    <Icon className="w-4 h-4" style={{ color: trigger.color }} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-sm" style={{ color: "#1e2535" }}>{trigger.label}</p>
+                    <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.5)" }}>{trigger.desc}</p>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0 flex-wrap justify-end">
+                    {tpls.length === 0 ? (
+                      <span className="text-xs px-2.5 py-1 rounded-full" style={{ background: "rgba(30,37,53,0.06)", color: "rgba(30,37,53,0.4)" }}>No template</span>
+                    ) : (
+                      tpls.map(t => (
+                        <div key={t.id} className="flex items-center gap-1.5">
+                          <span className="text-xs font-semibold px-2.5 py-1 rounded-full" style={{
+                            background: t.is_active ? "rgba(200,230,60,0.15)" : "rgba(30,37,53,0.06)",
+                            color: t.is_active ? "#4a6b10" : "rgba(30,37,53,0.4)"
+                          }}>
+                            {t.is_active ? "Active" : "Off"} · {t.recipient_type}
+                          </span>
+                          <button onClick={() => openEdit(t)} className="text-xs px-2.5 py-1.5 rounded-lg font-semibold transition-all hover:opacity-80 flex items-center gap-1" style={{ background: "rgba(123,142,200,0.1)", color: "#7B8EC8", border: "1px solid rgba(123,142,200,0.25)" }}>
+                            <Edit2 className="w-3 h-3" />Edit
+                          </button>
+                        </div>
+                      ))
+                    )}
+                    <button
+                      onClick={() => openNew(trigger.value)}
+                      className="text-xs px-2.5 py-1.5 rounded-lg font-semibold transition-all hover:opacity-80"
+                      style={{ background: "rgba(250,111,48,0.1)", color: "#FA6F30", border: "1px solid rgba(250,111,48,0.25)" }}>
+                      <Plus className="w-3 h-3 inline mr-1" />Add
+                    </button>
+                    {tpls.length > 0 && (
+                      <button
+                        onClick={() => openTest(tpls.find(t => t.is_active) || tpls[0])}
+                        className="text-xs px-2.5 py-1.5 rounded-lg font-semibold transition-all hover:opacity-80 flex items-center gap-1"
+                        style={{ background: "rgba(45,107,127,0.1)", color: "#2D6B7F", border: "1px solid rgba(45,107,127,0.25)" }}>
+                        <Send className="w-3 h-3" />Test
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
-        <div className="divide-y" style={{ borderColor: "rgba(30,37,53,0.06)" }}>
-          {TRIGGERS.map(trigger => {
-            const tpls = byTrigger[trigger.value] || [];
-            const Icon = trigger.icon;
-            return (
-              <div key={trigger.value} className="px-6 py-4 flex items-center gap-4">
-                <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: `${trigger.color}18` }}>
-                  <Icon className="w-4 h-4" style={{ color: trigger.color }} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="font-semibold text-sm" style={{ color: "#1e2535" }}>{trigger.label}</p>
-                  <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.5)" }}>{trigger.desc}</p>
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  {tpls.length === 0 ? (
-                    <span className="text-xs px-2.5 py-1 rounded-full" style={{ background: "rgba(30,37,53,0.06)", color: "rgba(30,37,53,0.4)" }}>No template</span>
-                  ) : (
-                    tpls.map(t => (
-                      <div key={t.id} className="flex items-center gap-1.5">
-                        <span className="text-xs font-semibold px-2.5 py-1 rounded-full" style={{
-                          background: t.is_active ? "rgba(200,230,60,0.15)" : "rgba(30,37,53,0.06)",
-                          color: t.is_active ? "#4a6b10" : "rgba(30,37,53,0.4)"
-                        }}>
-                          {t.is_active ? "Active" : "Off"} · {t.recipient_type}
-                        </span>
-                        <button onClick={() => openEdit(t)} className="text-xs px-2 py-1 rounded-lg hover:opacity-80 transition-opacity" style={{ background: "rgba(123,142,200,0.12)", color: "#7B8EC8" }}>
-                          <Edit2 className="w-3 h-3" />
-                        </button>
-                      </div>
-                    ))
-                  )}
-                  <button
-                    onClick={() => { setForm(f => ({ ...f, trigger: trigger.value })); openNew(); }}
-                    className="text-xs px-2.5 py-1.5 rounded-lg font-semibold transition-all hover:opacity-80"
-                    style={{ background: "rgba(250,111,48,0.1)", color: "#FA6F30", border: "1px solid rgba(250,111,48,0.25)" }}>
-                    <Plus className="w-3 h-3 inline mr-1" />Add
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      )}
 
       {/* All templates list */}
       {templates.length > 0 && (
@@ -297,7 +408,7 @@ export default function AdminEmailTemplates() {
                     </p>
                     <p className="text-xs mt-0.5 truncate" style={{ color: "rgba(30,37,53,0.4)" }}>Subject: {t.subject}</p>
                   </div>
-                  <div className="flex items-center gap-3 flex-shrink-0">
+                  <div className="flex items-center gap-2 flex-shrink-0">
                     <Switch
                       checked={t.is_active}
                       onCheckedChange={(v) => toggleMutation.mutate({ id: t.id, is_active: v })}
@@ -305,10 +416,18 @@ export default function AdminEmailTemplates() {
                     <button onClick={() => { setPreviewTemplate(t); setPreviewOpen(true); }} className="p-1.5 rounded-lg hover:opacity-80 transition-opacity" style={{ color: "#7B8EC8" }} title="Preview">
                       <Eye className="w-4 h-4" />
                     </button>
-                    <button onClick={() => openEdit(t)} className="p-1.5 rounded-lg hover:opacity-80 transition-opacity" style={{ color: "#FA6F30" }}>
+                    <button onClick={() => openTest(t)} className="p-1.5 rounded-lg hover:opacity-80 transition-opacity" style={{ color: "#2D6B7F" }} title="Send test email">
+                      <FlaskConical className="w-4 h-4" />
+                    </button>
+                    <button onClick={() => openEdit(t)} className="p-1.5 rounded-lg hover:opacity-80 transition-opacity" style={{ color: "#FA6F30" }} title="Edit">
                       <Edit2 className="w-4 h-4" />
                     </button>
-                    <button onClick={() => { if (confirm("Delete this template?")) deleteMutation.mutate(t.id); }} className="p-1.5 rounded-lg hover:opacity-80 transition-opacity" style={{ color: "#DA6A63" }}>
+                    <button
+                      onClick={() => { if (window.confirm("Delete this template?")) deleteMutation.mutate(t.id); }}
+                      className="p-1.5 rounded-lg hover:opacity-80 transition-opacity"
+                      style={{ color: "#DA6A63" }}
+                      title="Delete"
+                    >
                       <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
@@ -319,14 +438,8 @@ export default function AdminEmailTemplates() {
         </div>
       )}
 
-      {isLoading && (
-        <div className="flex items-center justify-center py-16">
-          <div className="w-6 h-6 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
-        </div>
-      )}
-
-      {/* Edit / Create Dialog */}
-      <Dialog open={dialogOpen} onOpenChange={(v) => { if (!v) setDialogOpen(false); }}>
+      {/* ── Edit / Create Dialog ─────────────────────────────────────────── */}
+      <Dialog open={dialogOpen} onOpenChange={(v) => { if (!v) { setDialogOpen(false); setEditing(null); setActivePlaceholderTag(null); } }}>
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle style={{ fontFamily: "'DM Serif Display', serif", fontSize: 20 }}>
@@ -371,11 +484,41 @@ export default function AdminEmailTemplates() {
                 {PLACEHOLDERS.map(p => (
                   <button key={p.tag} onClick={() => insertPlaceholder(p.tag)} title={p.desc}
                     className="text-xs px-2.5 py-1 rounded-full font-mono transition-all hover:opacity-80"
-                    style={{ background: "rgba(123,142,200,0.15)", color: "#4a5fa8", border: "1px solid rgba(123,142,200,0.3)" }}>
+                    style={{
+                      background: activePlaceholderTag === p.tag ? "rgba(123,142,200,0.24)" : "rgba(123,142,200,0.15)",
+                      color: "#4a5fa8",
+                      border: activePlaceholderTag === p.tag ? "1px solid rgba(74,95,168,0.55)" : "1px solid rgba(123,142,200,0.3)"
+                    }}>
                     {p.tag}
                   </button>
                 ))}
               </div>
+              {activePlaceholderTag && (
+                <div className="mt-3 rounded-lg p-3" style={{ background: "rgba(255,255,255,0.7)", border: "1px solid rgba(123,142,200,0.28)" }}>
+                  <div className="flex items-center justify-between gap-2">
+                    <Label className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>
+                      Value for {activePlaceholderTag}
+                    </Label>
+                    <button
+                      type="button"
+                      onClick={() => setActivePlaceholderTag(null)}
+                      className="text-xs font-semibold"
+                      style={{ color: "#7B8EC8" }}
+                    >
+                      Hide
+                    </button>
+                  </div>
+                  <Input
+                    value={placeholderValues[tagToKey(activePlaceholderTag)] || ""}
+                    onChange={(e) => setPlaceholderValues((prev) => ({
+                      ...prev,
+                      [tagToKey(activePlaceholderTag)]: e.target.value
+                    }))}
+                    placeholder={PLACEHOLDERS.find((p) => p.tag === activePlaceholderTag)?.desc}
+                    className="mt-1 h-8 text-xs"
+                  />
+                </div>
+              )}
             </div>
 
             <div>
@@ -386,8 +529,24 @@ export default function AdminEmailTemplates() {
                 rows={14}
                 className="w-full rounded-xl px-3 py-2.5 text-sm font-mono outline-none resize-y"
                 style={{ background: "rgba(0,0,0,0.04)", border: "1px solid rgba(30,37,53,0.12)", color: "#1e2535", lineHeight: 1.6 }}
-                placeholder="<p>Hi {{first_name}},</p>&#10;<p>Your email content here...</p>&#10;<p><a href='{{app_url}}'>Back to NOVI →</a></p>"
+                placeholder="<p>Hi {{first_name}},</p>&#10;<p>Your email content here...</p>"
               />
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.5)" }}>
+                Live Placeholder Preview
+              </p>
+              <div className="rounded-xl px-4 py-3" style={{ background: "rgba(30,37,53,0.05)", border: "1px solid rgba(30,37,53,0.1)" }}>
+                <p className="text-xs font-bold" style={{ color: "rgba(30,37,53,0.5)" }}>SUBJECT</p>
+                <p className="text-sm font-semibold mt-0.5 break-words" style={{ color: "#1e2535" }}>{renderedSubject || "—"}</p>
+              </div>
+              <div className="rounded-xl overflow-hidden" style={{ border: "1px solid rgba(30,37,53,0.1)" }}>
+                <div className="px-4 py-2.5 text-xs font-bold uppercase tracking-widest" style={{ background: "rgba(30,37,53,0.05)", color: "rgba(30,37,53,0.5)", borderBottom: "1px solid rgba(30,37,53,0.08)" }}>
+                  BODY (Rendered With Current Placeholder Values)
+                </div>
+                <div className="p-5 max-h-64 overflow-y-auto" style={{ color: "#1e2535", lineHeight: 1.7 }} dangerouslySetInnerHTML={{ __html: renderedBody }} />
+              </div>
             </div>
 
             <div className="flex items-center gap-3">
@@ -396,7 +555,7 @@ export default function AdminEmailTemplates() {
             </div>
 
             <div className="flex gap-2 justify-end pt-2">
-              <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
+              <Button variant="outline" onClick={() => { setDialogOpen(false); setEditing(null); }}>Cancel</Button>
               <Button
                 onClick={() => saveMutation.mutate()}
                 disabled={!form.name || !form.trigger || !form.subject || !form.body_html || saveMutation.isPending}
@@ -409,7 +568,7 @@ export default function AdminEmailTemplates() {
         </DialogContent>
       </Dialog>
 
-      {/* Preview Dialog */}
+      {/* ── Preview Dialog ────────────────────────────────────────────────── */}
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
         <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
@@ -425,7 +584,79 @@ export default function AdminEmailTemplates() {
                 <div className="px-4 py-2.5 text-xs font-bold uppercase tracking-widest" style={{ background: "rgba(30,37,53,0.05)", color: "rgba(30,37,53,0.5)", borderBottom: "1px solid rgba(30,37,53,0.08)" }}>EMAIL BODY</div>
                 <div className="p-5" style={{ color: "#1e2535", lineHeight: 1.7 }} dangerouslySetInnerHTML={{ __html: previewTemplate.body_html }} />
               </div>
-              <Button variant="outline" onClick={() => setPreviewOpen(false)} className="w-full">Close Preview</Button>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => setPreviewOpen(false)} className="flex-1">Close</Button>
+                <Button
+                  onClick={() => { setPreviewOpen(false); openTest(previewTemplate); }}
+                  className="flex-1 gap-2"
+                  style={{ background: "#2D6B7F", color: "#fff" }}
+                >
+                  <FlaskConical className="w-4 h-4" /> Send Test
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Test-Send Dialog ──────────────────────────────────────────────── */}
+      <Dialog open={testOpen} onOpenChange={(v) => { if (!v) { setTestOpen(false); setTestEmail(""); } }}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle style={{ fontFamily: "'DM Serif Display', serif", fontSize: 18 }}>
+              Send Test Email
+            </DialogTitle>
+          </DialogHeader>
+          {testTemplate && (
+            <div className="space-y-4 pt-2">
+              {/* Subject line */}
+              <div className="rounded-xl px-4 py-3" style={{ background: "rgba(30,37,53,0.05)", border: "1px solid rgba(30,37,53,0.1)" }}>
+                <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.5)" }}>Subject</p>
+                <p className="text-sm font-semibold mt-0.5" style={{ color: "#1e2535" }}>{testTemplate.subject}</p>
+              </div>
+
+              {/* Rendered email preview */}
+              <div className="rounded-xl overflow-hidden" style={{ border: "1px solid rgba(30,37,53,0.1)" }}>
+                <div className="px-4 py-2.5 text-xs font-bold uppercase tracking-widest" style={{ background: "rgba(30,37,53,0.05)", color: "rgba(30,37,53,0.5)", borderBottom: "1px solid rgba(30,37,53,0.08)" }}>
+                  Email Preview
+                </div>
+                <div className="p-5" style={{ color: "#1e2535", lineHeight: 1.7 }} dangerouslySetInnerHTML={{ __html: testTemplate.body_html }} />
+              </div>
+
+              {/* Divider */}
+              <div className="flex items-center gap-3">
+                <div className="flex-1 h-px" style={{ background: "rgba(30,37,53,0.1)" }} />
+                <p className="text-xs font-semibold uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.4)" }}>Send this template as a test</p>
+                <div className="flex-1 h-px" style={{ background: "rgba(30,37,53,0.1)" }} />
+              </div>
+
+              {/* Email input */}
+              <div>
+                <Label>Send to *</Label>
+                <Input
+                  type="email"
+                  placeholder="admin@example.com"
+                  value={testEmail}
+                  onChange={e => setTestEmail(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter" && testEmail) testSendMutation.mutate({ id: testTemplate.id, to: testEmail }); }}
+                />
+                <p className="text-xs mt-1.5" style={{ color: "rgba(30,37,53,0.45)" }}>
+                  Placeholders will be replaced with sample values. The subject will be prefixed with [TEST].
+                </p>
+              </div>
+
+              <div className="flex gap-2 justify-end pt-1">
+                <Button variant="outline" onClick={() => { setTestOpen(false); setTestEmail(""); }}>Cancel</Button>
+                <Button
+                  onClick={() => testSendMutation.mutate({ id: testTemplate.id, to: testEmail })}
+                  disabled={!testEmail || testSendMutation.isPending}
+                  className="gap-2"
+                  style={{ background: "#2D6B7F", color: "#fff" }}
+                >
+                  <Send className="w-4 h-4" />
+                  {testSendMutation.isPending ? "Sending..." : "Send Test Email"}
+                </Button>
+              </div>
             </div>
           )}
         </DialogContent>
