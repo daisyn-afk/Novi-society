@@ -28,9 +28,9 @@ export const emailTemplatesApi = {
       method: "DELETE",
     }),
 
-  testSend: (id, to) =>
+  testSend: (id, to, placeholders) =>
     adminApiRequest(`/admin/email-templates/${id}/test-send`, {
       method: "POST",
-      body: JSON.stringify({ to }),
+      body: JSON.stringify({ to, placeholders }),
     }),
 };

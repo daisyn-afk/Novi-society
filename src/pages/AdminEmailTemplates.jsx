@@ -5,28 +5,28 @@ import { useToast } from "@/components/ui/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import {
-  Mail, Plus, Zap, Edit2, Trash2, CheckCircle, Send,
-  BookOpen, Award, Shield, Calendar, Eye, FlaskConical,
+  Mail, Plus, Edit2, Trash2, CheckCircle, Send,
+  BookOpen, Award, Shield, Calendar, Eye, FlaskConical, ChevronDown, ChevronUp,
 } from "lucide-react";
 import { format } from "date-fns";
 
 const TRIGGERS = [
-  { value: "enrollment_created", label: "Course Enrolled (payment pending)", icon: BookOpen, color: "#7B8EC8", desc: "Fires when a provider enrolls in a course" },
-  { value: "enrollment_paid", label: "Course Payment Received", icon: BookOpen, color: "#C8E63C", desc: "Fires when enrollment payment is confirmed" },
-  { value: "enrollment_completed", label: "Course Completed", icon: Award, color: "#C8E63C", desc: "Fires when a provider completes a course" },
-  { value: "md_subscription_created", label: "MD Membership Applied", icon: Shield, color: "#FA6F30", desc: "Fires when a provider applies for MD coverage" },
-  { value: "md_subscription_active", label: "MD Membership Activated", icon: Shield, color: "#C8E63C", desc: "Fires when MD coverage becomes active" },
-  { value: "license_verified", label: "License Verified", icon: CheckCircle, color: "#C8E63C", desc: "Fires when admin approves a provider license" },
-  { value: "license_rejected", label: "License Rejected", icon: CheckCircle, color: "#DA6A63", desc: "Fires when admin rejects a provider license" },
-  { value: "certification_approved", label: "Certification Approved", icon: Award, color: "#C8E63C", desc: "Fires when a certification is approved" },
-  { value: "appointment_confirmed", label: "Appointment Confirmed", icon: Calendar, color: "#7B8EC8", desc: "Fires when an appointment is confirmed" },
-  { value: "appointment_completed", label: "Appointment Completed", icon: Calendar, color: "#2D6B7F", desc: "Fires when an appointment is marked completed" },
-  { value: "pre_order_approved", label: "Pre-Order Approved", icon: CheckCircle, color: "#C8E63C", desc: "Fires when a pre-order application is approved" },
+  // ── Active — hardcoded emails that actually send today ──────────────────
+  { value: "enrollment_paid", label: "Course Payment Confirmed", icon: BookOpen, color: "#C8E63C", desc: "Fires when enrollment payment is completed via Stripe", active: true },
+  { value: "new_user_invite", label: "New Account Setup Invite", icon: Mail, color: "#2D6B7F", desc: "Fires when a new user account is created after payment", active: true },
+  { value: "md_service_preorder", label: "MD Service Pre-Order Welcome", icon: Shield, color: "#FA6F30", desc: "Fires when a provider secures a spot for MD services", active: true },
+  { value: "license_verified", label: "License Verified", icon: CheckCircle, color: "#C8E63C", desc: "Fires when admin approves a provider license", active: true },
+  { value: "license_rejected", label: "License Rejected", icon: CheckCircle, color: "#DA6A63", desc: "Fires when admin rejects a provider license", active: true },
+  { value: "model_booking_confirmed", label: "Model Booking Confirmed", icon: Calendar, color: "#7B8EC8", desc: "Fires when a model training booking is paid or free-checkout", active: true },
+  { value: "model_waitlist_promoted", label: "Waitlist Slot Opened", icon: Calendar, color: "#C8E63C", desc: "Fires when a waitlisted model is promoted to confirmed", active: true },
+  { value: "model_gfe_assigned", label: "Model GFE Link Sent", icon: FlaskConical, color: "#2D6B7F", desc: "Fires when a Good Faith Exam link is sent to a model", active: true },
+  { value: "model_session_reminder", label: "Model Session Reminder (Day Before)", icon: Calendar, color: "#FA6F30", desc: "Fires the day before a model training session", active: true },
+  { value: "model_post_training", label: "Model Post-Training Follow-Up", icon: Award, color: "#C8E63C", desc: "Fires after a model training session is completed", active: true },
+  { value: "model_gfe_reminder", label: "Model GFE Reminder", icon: FlaskConical, color: "#DA6A63", desc: "Fires when a model has not completed their GFE exam", active: true },
 ];
 
 const RECIPIENT_TYPES = [
@@ -38,12 +38,20 @@ const RECIPIENT_TYPES = [
 const PLACEHOLDERS = [
   { tag: "{{first_name}}", desc: "Recipient's first name" },
   { tag: "{{full_name}}", desc: "Recipient's full name" },
-  { tag: "{{email}}", desc: "Recipient's email" },
-  { tag: "{{app_url}}", desc: "App URL link" },
+  { tag: "{{email}}", desc: "Recipient's email address" },
+  { tag: "{{app_url}}", desc: "App base URL" },
   { tag: "{{course_name}}", desc: "Course title" },
-  { tag: "{{service_name}}", desc: "Service or certification name" },
-  { tag: "{{provider_name}}", desc: "Provider name" },
-  { tag: "{{patient_name}}", desc: "Patient name" },
+  { tag: "{{course_date}}", desc: "Course date (formatted)" },
+  { tag: "{{course_time}}", desc: "Course start–end time" },
+  { tag: "{{course_location}}", desc: "Course location" },
+  { tag: "{{time_slot}}", desc: "Model session time slot" },
+  { tag: "{{treatment_type}}", desc: "Treatment type label (Botox / Filler / etc.)" },
+  { tag: "{{gfe_url}}", desc: "Good Faith Exam link URL" },
+  { tag: "{{signup_link}}", desc: "Account setup / invite link" },
+  { tag: "{{service_name}}", desc: "MD service or subscription name" },
+  { tag: "{{rejection_reason}}", desc: "Reason text for license rejection" },
+  { tag: "{{provider_name}}", desc: "Provider full name" },
+  { tag: "{{patient_name}}", desc: "Patient full name" },
 ];
 
 const DEFAULT_PLACEHOLDER_VALUES = {
@@ -52,11 +60,24 @@ const DEFAULT_PLACEHOLDER_VALUES = {
   email: "test@example.com",
   app_url: "https://app.novisociety.com",
   course_name: "Sample Course",
+  course_date: "Saturday, June 14, 2026",
+  course_time: "9:00 AM - 5:00 PM",
+  course_location: "McKinney, TX",
+  time_slot: "10:00 AM",
+  treatment_type: "Botox",
+  gfe_url: "https://app.novisociety.com/gfe",
+  signup_link: "https://app.novisociety.com/setup",
   service_name: "Sample Service",
+  rejection_reason: "The uploaded license image was unclear. Please resubmit.",
   provider_name: "Test Provider",
   patient_name: "Test Patient",
 };
 
+// TODO[REMOVE_OUTDATED_SEED_TEMPLATES]: these 3 stubs were the original starter templates seeded via the UI.
+// They are outdated (wrong triggers, simplified HTML, not matching real sent emails).
+// Real templates are now seeded via supabase/migrations/20260509010000_seed_real_email_templates.sql.
+// Remove this entire commented block when confirmed no longer needed.
+/*
 const DEFAULT_TEMPLATES = [
   {
     name: "Course Enrollment Confirmation",
@@ -114,6 +135,7 @@ const DEFAULT_TEMPLATES = [
     is_active: true,
   },
 ];
+*/
 
 const CARD_STYLE = {
   background: "rgba(255,255,255,0.82)",
@@ -156,6 +178,8 @@ export default function AdminEmailTemplates() {
   const [testOpen, setTestOpen] = useState(false);
   const [testTemplate, setTestTemplate] = useState(null);
   const [testEmail, setTestEmail] = useState("");
+  const [testPlaceholders, setTestPlaceholders] = useState({ ...DEFAULT_PLACEHOLDER_VALUES });
+  const [testPlaceholdersOpen, setTestPlaceholdersOpen] = useState(false);
 
   // ── Queries ──────────────────────────────────────────────────────────────
   const { data: templates = [], isLoading, isError } = useQuery({
@@ -200,6 +224,11 @@ export default function AdminEmailTemplates() {
     },
   });
 
+  // TODO[REMOVE_OUTDATED_SEED_TEMPLATES]: seedMutation and its "Load Starter Templates" button below
+  // were used to seed the 3 outdated DEFAULT_TEMPLATES into the DB.
+  // Now replaced by supabase/migrations/20260509010000_seed_real_email_templates.sql.
+  // Remove this commented block and the button when confirmed no longer needed.
+  /*
   const seedMutation = useMutation({
     mutationFn: async () => {
       for (const t of DEFAULT_TEMPLATES) {
@@ -214,9 +243,10 @@ export default function AdminEmailTemplates() {
       toast({ title: "Seed failed", description: err.message, variant: "destructive" });
     },
   });
+  */
 
   const testSendMutation = useMutation({
-    mutationFn: ({ id, to }) => emailTemplatesApi.testSend(id, to),
+    mutationFn: ({ id, to, placeholders }) => emailTemplatesApi.testSend(id, to, placeholders),
     onSuccess: (_, { to }) => {
       toast({ title: "Test email sent", description: `Sent to ${to}` });
       setTestOpen(false);
@@ -251,6 +281,8 @@ export default function AdminEmailTemplates() {
   const openTest = (t) => {
     setTestTemplate(t);
     setTestEmail("");
+    setTestPlaceholders({ ...DEFAULT_PLACEHOLDER_VALUES });
+    setTestPlaceholdersOpen(false);
     setTestOpen(true);
   };
 
@@ -262,6 +294,20 @@ export default function AdminEmailTemplates() {
   const triggerMeta = (trigger) => TRIGGERS.find(t => t.value === trigger);
   const renderedSubject = applyPlaceholderValues(form.subject, placeholderValues);
   const renderedBody = applyPlaceholderValues(form.body_html, placeholderValues);
+
+  const detectUsedPlaceholders = (template) => {
+    if (!template) return [];
+    const text = `${template.subject || ""} ${template.body_html || ""}`;
+    const keys = new Set();
+    const re = /\{\{(\w+)\}\}/g;
+    let m;
+    while ((m = re.exec(text)) !== null) keys.add(m[1]);
+    return PLACEHOLDERS.filter(p => keys.has(tagToKey(p.tag)));
+  };
+
+  const testUsedPlaceholders = detectUsedPlaceholders(testTemplate);
+  const testRenderedSubject = applyPlaceholderValues(testTemplate?.subject, testPlaceholders);
+  const testRenderedBody = applyPlaceholderValues(testTemplate?.body_html, testPlaceholders);
 
   // Group by trigger for the overview table
   const byTrigger = {};
@@ -284,11 +330,13 @@ export default function AdminEmailTemplates() {
           </p>
         </div>
         <div className="flex gap-2 flex-shrink-0">
+          {/* TODO[REMOVE_OUTDATED_SEED_TEMPLATES]: "Load Starter Templates" button — seeded the 3 outdated stubs.
+              Uncomment seedMutation above and re-enable this button only if needed for rollback.
           {templates.length === 0 && !isLoading && (
             <Button variant="outline" onClick={() => seedMutation.mutate()} disabled={seedMutation.isPending} className="gap-2 text-sm">
               <Zap className="w-4 h-4" /> {seedMutation.isPending ? "Loading..." : "Load Starter Templates"}
             </Button>
-          )}
+          )} */}
           <Button onClick={() => openNew()} className="gap-2 font-bold" style={{ background: "#FA6F30", color: "#fff", borderRadius: 12 }}>
             <Plus className="w-4 h-4" /> New Template
           </Button>
@@ -340,7 +388,12 @@ export default function AdminEmailTemplates() {
                     <Icon className="w-4 h-4" style={{ color: trigger.color }} />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-sm" style={{ color: "#1e2535" }}>{trigger.label}</p>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="font-semibold text-sm" style={{ color: "#1e2535" }}>{trigger.label}</p>
+                      {trigger.active && (
+                        <span className="text-xs px-2 py-0.5 rounded-full font-semibold" style={{ background: "rgba(200,230,60,0.15)", color: "#4a6b10" }}>Wired</span>
+                      )}
+                    </div>
                     <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.5)" }}>{trigger.desc}</p>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0 flex-wrap justify-end">
@@ -609,18 +662,72 @@ export default function AdminEmailTemplates() {
           </DialogHeader>
           {testTemplate && (
             <div className="space-y-4 pt-2">
-              {/* Subject line */}
-              <div className="rounded-xl px-4 py-3" style={{ background: "rgba(30,37,53,0.05)", border: "1px solid rgba(30,37,53,0.1)" }}>
-                <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.5)" }}>Subject</p>
-                <p className="text-sm font-semibold mt-0.5" style={{ color: "#1e2535" }}>{testTemplate.subject}</p>
+
+              {/* Editable placeholder values */}
+              <div
+                className="rounded-xl p-3"
+                style={{ background: "rgba(123,142,200,0.08)", border: "1px solid rgba(123,142,200,0.2)", cursor: testPlaceholdersOpen ? "default" : "pointer" }}
+                onClick={() => {
+                  if (!testPlaceholdersOpen) setTestPlaceholdersOpen(true);
+                }}
+              >
+                <div
+                  className="flex items-center justify-between gap-2 mb-2.5"
+                  onClick={() => setTestPlaceholdersOpen((prev) => !prev)}
+                  style={{ cursor: "pointer" }}
+                >
+                  <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "#7B8EC8" }}>
+                    Placeholder Values — edit before sending
+                  </p>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setTestPlaceholdersOpen((prev) => !prev);
+                    }}
+                    className="inline-flex items-center gap-1.5 text-xs font-semibold"
+                    style={{ color: "#7B8EC8" }}
+                  >
+                    {testPlaceholdersOpen ? "Collapse" : "Expand"}
+                    {testPlaceholdersOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+                {testPlaceholdersOpen && (
+                  testUsedPlaceholders.length === 0 ? (
+                    <p className="text-xs" style={{ color: "rgba(30,37,53,0.5)" }}>No placeholders in this template.</p>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+                      {testUsedPlaceholders.map(p => {
+                        const key = tagToKey(p.tag);
+                        return (
+                          <div key={p.tag}>
+                            <label className="text-xs font-semibold font-mono" style={{ color: "rgba(30,37,53,0.6)" }}>{p.tag}</label>
+                            <Input
+                              value={testPlaceholders[key] ?? ""}
+                              onChange={e => setTestPlaceholders(prev => ({ ...prev, [key]: e.target.value }))}
+                              className="mt-0.5 h-8 text-xs"
+                              placeholder={p.desc}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )
+                )}
               </div>
 
-              {/* Rendered email preview */}
+              {/* Rendered subject */}
+              <div className="rounded-xl px-4 py-3" style={{ background: "rgba(30,37,53,0.05)", border: "1px solid rgba(30,37,53,0.1)" }}>
+                <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.5)" }}>Subject (rendered)</p>
+                <p className="text-sm font-semibold mt-0.5 break-words" style={{ color: "#1e2535" }}>{testRenderedSubject || "—"}</p>
+              </div>
+
+              {/* Rendered email body preview */}
               <div className="rounded-xl overflow-hidden" style={{ border: "1px solid rgba(30,37,53,0.1)" }}>
                 <div className="px-4 py-2.5 text-xs font-bold uppercase tracking-widest" style={{ background: "rgba(30,37,53,0.05)", color: "rgba(30,37,53,0.5)", borderBottom: "1px solid rgba(30,37,53,0.08)" }}>
-                  Email Preview
+                  Email Preview (rendered)
                 </div>
-                <div className="p-5" style={{ color: "#1e2535", lineHeight: 1.7 }} dangerouslySetInnerHTML={{ __html: testTemplate.body_html }} />
+                <div className="p-5 max-h-64 overflow-y-auto" style={{ color: "#1e2535", lineHeight: 1.7 }} dangerouslySetInnerHTML={{ __html: testRenderedBody }} />
               </div>
 
               {/* Divider */}
@@ -638,17 +745,20 @@ export default function AdminEmailTemplates() {
                   placeholder="admin@example.com"
                   value={testEmail}
                   onChange={e => setTestEmail(e.target.value)}
-                  onKeyDown={e => { if (e.key === "Enter" && testEmail) testSendMutation.mutate({ id: testTemplate.id, to: testEmail }); }}
+                  onKeyDown={e => {
+                    if (e.key === "Enter" && testEmail)
+                      testSendMutation.mutate({ id: testTemplate.id, to: testEmail, placeholders: testPlaceholders });
+                  }}
                 />
                 <p className="text-xs mt-1.5" style={{ color: "rgba(30,37,53,0.45)" }}>
-                  Placeholders will be replaced with sample values. The subject will be prefixed with [TEST].
+                  The above values will replace placeholders in the sent email. Subject is prefixed with [TEST].
                 </p>
               </div>
 
               <div className="flex gap-2 justify-end pt-1">
                 <Button variant="outline" onClick={() => { setTestOpen(false); setTestEmail(""); }}>Cancel</Button>
                 <Button
-                  onClick={() => testSendMutation.mutate({ id: testTemplate.id, to: testEmail })}
+                  onClick={() => testSendMutation.mutate({ id: testTemplate.id, to: testEmail, placeholders: testPlaceholders })}
                   disabled={!testEmail || testSendMutation.isPending}
                   className="gap-2"
                   style={{ background: "#2D6B7F", color: "#fff" }}

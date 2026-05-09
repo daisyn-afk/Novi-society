@@ -136,6 +136,7 @@ function resolveProviderFirstName(licenseRow) {
   return "Provider";
 }
 
+// TODO[REMOVE_HARDCODED_EMAIL]: license_verified + license_rejected — replace with DB template lookup once automation layer is wired
 function buildLicenseDecisionEmailHtml({ providerFirstName, isApproved, rejectionReason }) {
   const safeName = escapeHtml(providerFirstName || "Provider");
   const safeReason = escapeHtml(rejectionReason || "");

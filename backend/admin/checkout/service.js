@@ -541,6 +541,7 @@ export async function createServicePreOrder(payload) {
   }
 }
 
+// TODO[REMOVE_HARDCODED_EMAIL]: md_service_preorder — replace with DB template lookup once automation layer is wired
 async function sendMdServiceConfirmationEmail({ to, customerName, serviceName }) {
   if (!to) {
     // eslint-disable-next-line no-console
@@ -944,6 +945,7 @@ export async function getPreOrder({ id, sessionId }) {
   }
 }
 
+// TODO[REMOVE_HARDCODED_EMAIL]: enrollment_paid — replace with DB template lookup once automation layer is wired
 async function sendConfirmationEmail({ to, customerName, courseTitle, courseData, courseDate }) {
   if (!to) {
     // eslint-disable-next-line no-console
@@ -1114,6 +1116,7 @@ async function sendConfirmationEmail({ to, customerName, courseTitle, courseData
   }
 }
 
+// TODO[REMOVE_HARDCODED_EMAIL]: new_user_invite — replace with DB template lookup once automation layer is wired
 async function sendNewUserInviteEmail({ to, firstName, signupLink }) {
   if (!to) {
     // eslint-disable-next-line no-console

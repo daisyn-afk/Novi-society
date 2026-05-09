@@ -254,6 +254,9 @@ async function sendResendEmail({ to, subject, html }) {
   return payload;
 }
 
+// TODO[REMOVE_HARDCODED_EMAIL]: shared shell + model emails (model_booking_confirmed, model_waitlist_promoted,
+// model_gfe_assigned, model_session_reminder, model_post_training, model_gfe_reminder) —
+// replace with DB template lookup once automation layer is wired
 function withCourseEmailShell({ title, contentHtml }) {
   return `
 <!DOCTYPE html>

@@ -121,7 +121,7 @@ emailTemplatesRouter.delete("/:id", async (req, res, next) => {
   }
 });
 
-// Test-send: POST /admin/email-templates/:id/test-send  { to: "admin@example.com" }
+// Test-send: POST /admin/email-templates/:id/test-send  { to: "admin@example.com", placeholders?: {...} }
 emailTemplatesRouter.post("/:id/test-send", async (req, res, next) => {
   try {
     const to = String(req.body?.to || "").trim().toLowerCase();
@@ -132,19 +132,57 @@ emailTemplatesRouter.post("/:id/test-send", async (req, res, next) => {
     const template = await getEmailTemplate(req.params.id);
     if (!template) return res.status(404).json({ error: "Template not found." });
 
-    // Wrap body_html in the standard NOVI email shell
     const appBaseUrl = process.env.APP_BASE_URL || "https://app.novisociety.com";
-    const body = String(template.body_html || "")
-      .replace(/\{\{first_name\}\}/g, "Test User")
-      .replace(/\{\{full_name\}\}/g, "Test User")
-      .replace(/\{\{email\}\}/g, to)
-      .replace(/\{\{app_url\}\}/g, appBaseUrl)
-      .replace(/\{\{course_name\}\}/g, "Sample Course")
-      .replace(/\{\{service_name\}\}/g, "Sample Service")
-      .replace(/\{\{provider_name\}\}/g, "Test Provider")
-      .replace(/\{\{patient_name\}\}/g, "Test Patient");
+    const logoUrl = process.env.NOVI_EMAIL_LOGO_URL || "";
 
-    const html = `
+    // Client-provided placeholder values (from the test dialog form)
+    const clientPlaceholders =
+      req.body?.placeholders && typeof req.body.placeholders === "object"
+        ? req.body.placeholders
+        : {};
+
+    // Server-side defaults — used when the client does not supply a value
+    const serverDefaults = {
+      first_name: "Test",
+      full_name: "Test User",
+      app_url: appBaseUrl,
+      course_name: "Sample Aesthetics Course",
+      course_date: "Saturday, June 14, 2026",
+      course_time: "9:00 AM - 5:00 PM",
+      course_location: "McKinney, TX",
+      time_slot: "10:00 AM",
+      treatment_type: "Botox",
+      gfe_url: `${appBaseUrl}/gfe-test`,
+      signup_link: `${appBaseUrl}/setup`,
+      service_name: "Sample MD Service",
+      rejection_reason: "The uploaded license image was unclear. Please resubmit a clearer copy.",
+      provider_name: "Test Provider",
+      patient_name: "Test Patient",
+    };
+
+    // Merge: client overrides defaults, but email and logo_url are always server-controlled
+    const resolved = {
+      ...serverDefaults,
+      ...clientPlaceholders,
+      email: to,
+      logo_url: logoUrl,
+    };
+
+    const withPlaceholders = (str) =>
+      String(str || "").replace(/\{\{(\w+)\}\}/g, (full, key) =>
+        Object.prototype.hasOwnProperty.call(resolved, key) ? (resolved[key] ?? "") : full
+      );
+
+    const body = withPlaceholders(template.body_html);
+
+    // Check the raw stored body (before placeholder replacement) to detect full HTML documents.
+    // Full-HTML templates (checkout/license emails) have their own branded shell with logo.
+    // Inner-content templates (model emails) get wrapped in the standard NOVI shell below.
+    const isFullHtml = String(template.body_html || "").trimStart().toLowerCase().startsWith("<!doctype");
+
+    const html = isFullHtml
+      ? body
+      : `
 <!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"></head>
@@ -163,7 +201,7 @@ emailTemplatesRouter.post("/:id/test-send", async (req, res, next) => {
 </body>
 </html>`;
 
-    const subject = `[TEST] ${template.subject}`;
+    const subject = `[TEST] ${withPlaceholders(template.subject)}`;
     await sendResendEmail({ to, subject, html });
 
     return res.json({ ok: true, message: `Test email sent to ${to}` });
