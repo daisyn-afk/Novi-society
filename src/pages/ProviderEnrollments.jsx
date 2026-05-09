@@ -300,8 +300,8 @@ export default function ProviderEnrollments() {
                         courses={categoryCourses}
                         enrollmentStatusLoading={shouldShowEnrollmentStatusLoading}
                         isEnrolled={(courseId) => enrolledCourseIds.has(courseId)}
-                        onEnroll={(course) => navigate(createPageUrl(`CourseCheckout?course_id=${course.id}`))}
-                        onSelect={(course) => navigate(createPageUrl(`CourseCheckout?course_id=${course.id}`))}
+                        onEnroll={(course) => navigate(createPageUrl(`CourseCheckout?course_id=${course.id}&source=provider_dashboard`))}
+                        onSelect={(course) => navigate(createPageUrl(`CourseCheckout?course_id=${course.id}&source=provider_dashboard`))}
                         showControls
                       />
                     );
@@ -421,7 +421,7 @@ export default function ProviderEnrollments() {
             course={preMaterialsCourse}
             onClose={() => setPreMaterialsCourse(null)}
             onProceed={() => {
-              navigate(createPageUrl(`CourseCheckout?course_id=${preMaterialsCourse.id}`));
+              navigate(createPageUrl(`CourseCheckout?course_id=${preMaterialsCourse.id}&source=provider_dashboard`));
               setPreMaterialsCourse(null);
             }}
           />

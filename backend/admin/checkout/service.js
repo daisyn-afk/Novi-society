@@ -159,6 +159,12 @@ function normalizePaidEnrollmentStatus(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+function normalizeCheckoutSource(source) {
+  const raw = String(source || "").trim().toLowerCase();
+  if (raw === "provider_dashboard") return "provider_dashboard";
+  return "landing_page";
+}
+
 export async function createCourseCheckout(payload, options = {}) {
   if (!stripe) throw new Error("STRIPE_SECRET_KEY is not configured.");
   const frontendBaseUrl = resolveFrontendBaseUrl(options?.requestOrigin);
@@ -179,8 +185,10 @@ export async function createCourseCheckout(payload, options = {}) {
     license_image_url,
     promo_code,
     terms_confirmed,
-    refund_policy_confirmed
+    refund_policy_confirmed,
+    source
   } = payload || {};
+  const checkoutSource = normalizeCheckoutSource(source);
   const normalizedCustomerEmail = String(customer_email || "").trim().toLowerCase();
   const normalizedCustomerName = String(customer_name || fullName(first_name, last_name) || "").trim();
   const courseDateNorm = normalizeCourseDateInput(course_date);
@@ -367,11 +375,18 @@ export async function createCourseCheckout(payload, options = {}) {
     );
     const preOrderId = preOrderRes.rows[0].id;
 
+    const successUrl =
+      `${frontendBaseUrl}/PreOrderConfirmation?id=${encodeURIComponent(preOrderId)}` +
+      `&session_id={CHECKOUT_SESSION_ID}&source=${encodeURIComponent(checkoutSource)}`;
+    const cancelPath = checkoutSource === "provider_dashboard"
+      ? "/ProviderEnrollments"
+      : "/NoviLanding#offerings";
+
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
       customer_email: normalizedCustomerEmail,
-      success_url: `${frontendBaseUrl}/PreOrderConfirmation?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${frontendBaseUrl}/`,
+      success_url: successUrl,
+      cancel_url: `${frontendBaseUrl}${cancelPath}`,
       line_items: [
         {
           price_data: {
@@ -394,7 +409,8 @@ export async function createCourseCheckout(payload, options = {}) {
         course_end_time: String(course_end_time || ""),
         provider_email: String(normalizedCustomerEmail),
         provider_name: String(customer_name),
-        app_source: "novi-landing",
+        app_source: checkoutSource,
+        checkout_source: checkoutSource,
         app_base_url: frontendBaseUrl
       }
     });

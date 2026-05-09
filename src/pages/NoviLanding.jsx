@@ -254,6 +254,7 @@ export default function NoviLanding() {
       course_session_id: selectedSessionEntry?.session_id || null,
       course_start_time: selectedSessionEntry?.start_time || null,
       course_end_time: selectedSessionEntry?.end_time || null,
+      source: "landing_page",
       customer_name: fullName,
       first_name: form.first_name,
       last_name: form.last_name,

@@ -6,7 +6,6 @@ import { adminApiRequest } from "@/api/adminApiRequest";
 import { adminCoursesApi } from "@/api/adminCoursesApi";
 import { queryClientAdmincourses } from "@/lib/query-client";
 import { createPageUrl } from "@/utils";
-import { useAuth } from "@/lib/AuthContext";
 
 const normalizeLandingCourse = (course) => ({
   ...course,
@@ -16,10 +15,11 @@ const normalizeLandingCourse = (course) => ({
 export default function PreOrderConfirmation() {
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const { isAuthenticated } = useAuth();
   const params = new URLSearchParams(window.location.search);
   const orderId = params.get("id");
   const sessionId = params.get("session_id");
+  const sourceParam = params.get("source");
+  const checkoutSource = sourceParam === "provider_dashboard" ? "provider_dashboard" : "landing_page";
 
   const {
     data: order,
@@ -67,6 +67,8 @@ export default function PreOrderConfirmation() {
       void qc.prefetchQuery({ queryKey: ["landing-courses"], queryFn: landingQueryFn });
       void qc.invalidateQueries({ queryKey: ["courses"], refetchType: "all" });
       void qc.invalidateQueries({ queryKey: ["admin-courses"], refetchType: "all" });
+      void qc.invalidateQueries({ queryKey: ["my-enrollments"], refetchType: "all" });
+      void qc.invalidateQueries({ queryKey: ["provider-my-enrollments-with-dates"], refetchType: "all" });
 
       void queryClientAdmincourses.invalidateQueries({
         queryKey: ["courses", "admin-api-scheduled"],
@@ -156,9 +158,12 @@ export default function PreOrderConfirmation() {
       </div>
     );
   }
-  const returnPath = isAuthenticated
+  const returnPath = checkoutSource === "provider_dashboard"
     ? createPageUrl("ProviderEnrollments")
-    : createPageUrl("NoviLanding");
+    : `${createPageUrl("NoviLanding")}#offerings`;
+  const returnLabel = checkoutSource === "provider_dashboard"
+    ? "Return to Courses & Enrollments"
+    : "Return to NOVI Society";
   return (
     <div className="min-h-screen flex items-center justify-center px-4 py-16" style={{ fontFamily: "'DM Sans', sans-serif", background: "#f5f3ef" }}>
       <div className="w-full max-w-2xl text-center">
@@ -219,7 +224,7 @@ export default function PreOrderConfirmation() {
         </div>
 
         <button onClick={() => navigate(returnPath)} className="flex items-center gap-2 mx-auto transition-colors" style={{ color: "rgba(30,37,53,0.65)" }}>
-          <ArrowLeft className="w-4 h-4" /> Return to NOVI Society
+          <ArrowLeft className="w-4 h-4" /> {returnLabel}
         </button>
       </div>
     </div>
