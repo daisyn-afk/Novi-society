@@ -2,7 +2,14 @@ import { useRef, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import CourseBrowseCard from "./CourseBrowseCard";
 
-export default function CourseCardDeck({ courses, isEnrolled, onSelect, title, showControls = true }) {
+export default function CourseCardDeck({
+  courses,
+  isEnrolled,
+  onSelect,
+  title,
+  showControls = true,
+  enrollmentStatusLoading = false,
+}) {
   const scrollContainerRef = useRef(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(true);
@@ -76,6 +83,7 @@ export default function CourseCardDeck({ courses, isEnrolled, onSelect, title, s
             <CourseBrowseCard
               course={course}
               isEnrolled={isEnrolled(course.id)}
+              enrollmentStatusLoading={enrollmentStatusLoading}
               onSelect={onSelect}
             />
           </div>

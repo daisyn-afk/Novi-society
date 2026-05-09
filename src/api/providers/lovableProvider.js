@@ -310,26 +310,31 @@ export function createLovableProviderClient() {
           }),
           get: createNotImplementedMethod("entities.ClassSession.get"),
           delete: createNotImplementedMethod("entities.ClassSession.delete"),
-          filter: async (filters = {}) => {
-            const all = await authRequest("/admin/class-sessions", { method: "GET" });
-            const providerId = filters?.provider_id ? String(filters.provider_id) : "";
-            const providerEmail = filters?.provider_email ? String(filters.provider_email).toLowerCase() : "";
-            const courseId = filters?.course_id ? String(filters.course_id) : "";
-            const enrollmentId = filters?.enrollment_id ? String(filters.enrollment_id) : "";
-            const sessionCode = filters?.session_code ? String(filters.session_code).toUpperCase() : "";
-            const sessionDate = filters?.session_date ? String(filters.session_date) : "";
-            const hasCodeUsed = Object.prototype.hasOwnProperty.call(filters || {}, "code_used");
-            const codeUsed = hasCodeUsed ? Boolean(filters.code_used) : null;
-            return (all || []).filter((row) => {
-              if (providerId && String(row?.provider_id || "") !== providerId) return false;
-              if (providerEmail && String(row?.provider_email || "").toLowerCase() !== providerEmail) return false;
-              if (courseId && String(row?.course_id || "") !== courseId) return false;
-              if (enrollmentId && String(row?.enrollment_id || "") !== enrollmentId) return false;
-              if (sessionCode && String(row?.session_code || "").toUpperCase() !== sessionCode) return false;
-              if (sessionDate && String(row?.session_date || "") !== sessionDate) return false;
-              if (hasCodeUsed && Boolean(row?.code_used) !== codeUsed) return false;
-              return true;
-            });
+          filter: (filters = {}) => {
+            const params = new URLSearchParams();
+            if (Object.hasOwn(filters, "id") && filters.id) {
+              params.set("id", String(filters.id));
+            }
+            if (Object.hasOwn(filters, "provider_id") && filters.provider_id) {
+              params.set("provider_id", String(filters.provider_id));
+            }
+            if (Object.hasOwn(filters, "provider_email") && filters.provider_email) {
+              params.set("provider_email", String(filters.provider_email));
+            }
+            if (Object.hasOwn(filters, "course_id") && filters.course_id) {
+              params.set("course_id", String(filters.course_id));
+            }
+            if (Object.hasOwn(filters, "enrollment_id") && filters.enrollment_id) {
+              params.set("enrollment_id", String(filters.enrollment_id));
+            }
+            if (Object.hasOwn(filters, "session_code") && filters.session_code) {
+              params.set("session_code", String(filters.session_code));
+            }
+            if (Object.hasOwn(filters, "session_date") && filters.session_date) {
+              params.set("session_date", String(filters.session_date));
+            }
+            const qs = params.toString();
+            return authRequest(`/admin/class-sessions${qs ? `?${qs}` : ""}`, { method: "GET" });
           }
         };
       }
@@ -360,17 +365,22 @@ export function createLovableProviderClient() {
       if (name === "Enrollment") {
         return {
           list: () => authRequest("/admin/enrollments", { method: "GET" }),
-          filter: async (filters = {}) => {
-            const all = await authRequest("/admin/enrollments", { method: "GET" });
-            const providerId = filters?.provider_id ? String(filters.provider_id) : "";
-            const providerEmail = filters?.provider_email ? String(filters.provider_email).toLowerCase() : "";
-            const status = filters?.status ? String(filters.status) : "";
-            return (all || []).filter((row) => {
-              if (providerId && String(row?.provider_id || "") !== providerId) return false;
-              if (providerEmail && String(row?.provider_email || "").toLowerCase() !== providerEmail) return false;
-              if (status && String(row?.status || "") !== status) return false;
-              return true;
-            });
+          filter: (filters = {}) => {
+            const params = new URLSearchParams();
+            if (Object.hasOwn(filters, "provider_id") && filters.provider_id) {
+              params.set("provider_id", String(filters.provider_id));
+            }
+            if (Object.hasOwn(filters, "provider_email") && filters.provider_email) {
+              params.set("provider_email", String(filters.provider_email));
+            }
+            if (Object.hasOwn(filters, "status") && filters.status) {
+              params.set("status", String(filters.status));
+            }
+            if (Object.hasOwn(filters, "course_id") && filters.course_id) {
+              params.set("course_id", String(filters.course_id));
+            }
+            const qs = params.toString();
+            return authRequest(`/admin/enrollments${qs ? `?${qs}` : ""}`, { method: "GET" });
           },
           update: (id, payload) => authRequest(`/admin/enrollments/${encodeURIComponent(id)}`, {
             method: "PATCH",
