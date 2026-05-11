@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
+import { useNavigate } from "react-router-dom";
+import { createPageUrl } from "@/utils";
 import { Bell, X, Calendar, Award, FileText, Users, CheckCircle } from "lucide-react";
 import { format } from "date-fns";
 
@@ -9,6 +11,8 @@ const NOTIF_ICONS = {
   license_verified: FileText,
   license_rejected: FileText,
   cert_awarded: Award,
+  cert_issue_pending: Award,
+  cert_rejected: Award,
   md_relationship_approved: Users,
   md_relationship_pending: Users,
 };
@@ -18,6 +22,8 @@ const NOTIF_COLORS = {
   license_verified: "text-green-500 bg-green-50",
   license_rejected: "text-red-500 bg-red-50",
   cert_awarded: "text-amber-500 bg-amber-50",
+  cert_issue_pending: "text-amber-600 bg-amber-50",
+  cert_rejected: "text-red-500 bg-red-50",
   md_relationship_approved: "text-purple-500 bg-purple-50",
   md_relationship_pending: "text-yellow-500 bg-yellow-50",
 };
@@ -27,6 +33,8 @@ const NOTIF_ROW_STYLES = {
   license_verified: "bg-green-50/80 border-green-200",
   license_rejected: "bg-red-50/80 border-red-200",
   cert_awarded: "bg-amber-50/70 border-amber-100",
+  cert_issue_pending: "bg-amber-50/80 border-amber-200",
+  cert_rejected: "bg-red-50/80 border-red-200",
   md_relationship_approved: "bg-purple-50/70 border-purple-100",
   md_relationship_pending: "bg-yellow-50/70 border-yellow-100",
 };
@@ -34,28 +42,122 @@ const NOTIF_ROW_STYLES = {
 export default function NotificationBell() {
   const [open, setOpen] = useState(false);
   const qc = useQueryClient();
+  const navigate = useNavigate();
+  const notificationEntity =
+    base44.entities?.["Notification"] ||
+    base44.entities?.["Notifications"] ||
+    base44.entities?.["notification"] ||
+    base44.entities?.["notifications"];
 
   const { data: notifications = [] } = useQuery({
     queryKey: ["my-notifications"],
     queryFn: async () => {
       const me = await base44.auth.me();
-      return base44.entities.Notification.filter({ user_id: me.id }, "-created_date", 30);
+      if (!notificationEntity) return [];
+      const meEmail = String(me?.email || "").trim().toLowerCase();
+      const meId = String(me?.id || "").trim();
+      const fetchByFilter = async (filter) => {
+        try {
+          return await notificationEntity.filter(filter, "-created_date", 30);
+        } catch {
+          return await notificationEntity.filter(filter, "-created_at", 30);
+        }
+      };
+      const [byUserId, byUserEmail] = await Promise.all([
+        fetchByFilter({ user_id: meId }),
+        meEmail ? fetchByFilter({ user_email: meEmail }) : Promise.resolve([]),
+      ]);
+      let merged = [...(byUserId || []), ...(byUserEmail || [])];
+      if (merged.length === 0) {
+        // Base44 projects can differ in filter support/field names; fall back to list + client filter.
+        let raw = [];
+        try {
+          raw = await notificationEntity.list("-created_date", 200);
+        } catch {
+          raw = await notificationEntity.list("-created_at", 200);
+        }
+        merged = (raw || []).filter((n) => {
+          const userId = String(n?.user_id || n?.recipient_id || "").trim();
+          const userEmail = String(n?.user_email || n?.recipient_email || "").trim().toLowerCase();
+          return (meId && userId === meId) || (meEmail && userEmail === meEmail);
+        });
+      }
+      const deduped = Array.from(new Map(merged.map((item) => [item.id, item])).values());
+      deduped.sort((a, b) => {
+        const aDate = new Date(a?.created_date || a?.created_at || 0).getTime();
+        const bDate = new Date(b?.created_date || b?.created_at || 0).getTime();
+        return bDate - aDate;
+      });
+      return deduped.slice(0, 30);
     },
-    refetchInterval: 30000, // poll every 30s
+    refetchInterval: 5000, // poll every 5s for near-real-time updates
+    refetchOnWindowFocus: true,
   });
 
   const unread = notifications.filter(n => !n.read_at);
 
   const markRead = useMutation({
-    mutationFn: (id) => base44.entities.Notification.update(id, { read_at: new Date().toISOString() }),
+    mutationFn: (id) => notificationEntity?.update(id, { read_at: new Date().toISOString() }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["my-notifications"] }),
   });
 
   const markAllRead = async () => {
+    if (!notificationEntity) return;
     for (const n of unread) {
-      await base44.entities.Notification.update(n.id, { read_at: new Date().toISOString() });
+      await notificationEntity.update(n.id, { read_at: new Date().toISOString() });
     }
     qc.invalidateQueries({ queryKey: ["my-notifications"] });
+  };
+
+  const resolveNotificationHref = (linkPage) => {
+    const raw = String(linkPage || "").trim();
+    if (!raw) return null;
+    if (raw.startsWith("/")) return raw;
+    const [pageName, queryString] = raw.split("?");
+    const routePath = createPageUrl(String(pageName || "").trim() || raw);
+    return queryString ? `${routePath}?${queryString}` : routePath;
+  };
+
+  const appendQueryParams = (href, paramsToAdd) => {
+    if (!href) return href;
+    const [pathname, existingQuery = ""] = String(href).split("?");
+    const params = new URLSearchParams(existingQuery);
+    Object.entries(paramsToAdd || {}).forEach(([key, value]) => {
+      if (!params.get(key) && value) params.set(key, String(value));
+    });
+    const nextQuery = params.toString();
+    return nextQuery ? `${pathname}?${nextQuery}` : pathname;
+  };
+
+  const handleNotificationClick = (notification) => {
+    const nowIso = new Date().toISOString();
+    if (!notification?.read_at && notification?.id) {
+      qc.setQueryData(["my-notifications"], (old = []) =>
+        (Array.isArray(old) ? old : []).map((n) => (
+          n?.id === notification.id ? { ...n, read_at: nowIso } : n
+        ))
+      );
+      markRead.mutate(notification.id);
+    }
+    const type = String(notification?.type || "").toLowerCase();
+    const isAdminSubmissionNotification = type === "license_submitted" || type === "cert_submitted";
+    const isAdminCertIssueNotification = type === "cert_issue_pending";
+    let targetHref = resolveNotificationHref(notification?.link_page);
+    if (isAdminCertIssueNotification) {
+      targetHref = appendQueryParams(targetHref || createPageUrl("AdminLicenses"), {
+        tab: "certifications",
+        focus_type: "awaiting_issue",
+      });
+    } else if (isAdminSubmissionNotification) {
+      targetHref = appendQueryParams(targetHref || createPageUrl("AdminLicenses"), {
+        tab: type === "cert_submitted" ? "certifications" : "licenses",
+        focus_type: type === "cert_submitted" ? "certification" : "license",
+      });
+    }
+    if (targetHref) {
+      setOpen(false);
+      navigate(targetHref);
+    }
   };
 
   return (
@@ -108,7 +210,7 @@ export default function NotificationBell() {
                       className={`flex items-start gap-3 px-4 py-3 border-b cursor-pointer transition-colors ${
                         !n.read_at ? rowStyleClass : "border-slate-100 hover:bg-slate-50/80"
                       }`}
-                      onClick={() => !n.read_at && markRead.mutate(n.id)}
+                      onClick={() => handleNotificationClick(n)}
                     >
                       <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${colorClass}`}>
                         <Icon className="w-4 h-4" />
@@ -118,7 +220,7 @@ export default function NotificationBell() {
                           {n.message}
                         </p>
                         <p className="text-xs text-slate-600 mt-1">
-                          {n.created_date ? format(new Date(n.created_date), "MMM d, h:mm a") : ""}
+                          {(n.created_date || n.created_at) ? format(new Date(n.created_date || n.created_at), "MMM d, h:mm a") : ""}
                         </p>
                       </div>
                       {!n.read_at && (

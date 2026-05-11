@@ -28,6 +28,7 @@ const { providerOnboardingRouter } = await import("./provider-onboarding/routes.
 const { licensesRouter } = await import("./licenses/routes.js");
 const { certificationsRouter } = await import("./certifications/routes.js");
 const { classSessionsRouter } = await import("./class-sessions/routes.js");
+const { notificationsRouter } = await import("./notifications/routes.js");
 const { functionsRouter } = await import("./functions/routes.js");
 
 export function createAdminApp() {
@@ -56,9 +57,15 @@ export function createAdminApp() {
   app.use("/admin/licenses", licensesRouter);
   app.use("/admin/certifications", certificationsRouter);
   app.use("/admin/class-sessions", classSessionsRouter);
+  app.use("/admin/notifications", notificationsRouter);
   app.use("/functions", functionsRouter);
 
   app.use((error, _req, res, _next) => {
+    if (error instanceof multer.MulterError && error.code === "LIMIT_FILE_SIZE") {
+      return res.status(400).json({
+        error: "File exceeds max allowed size."
+      });
+    }
     const status = error.statusCode || 500;
     const causeCode = error?.cause?.code;
     const syscallCode = error?.code;
@@ -70,6 +77,7 @@ export function createAdminApp() {
       causeCode === "UND_ERR_SOCKET" ||
       syscallCode === "ETIMEDOUT" ||
       syscallCode === "EHOSTUNREACH" ||
+      syscallCode === "ENETUNREACH" ||
       syscallCode === "EAI_AGAIN" ||
       syscallCode === "ECONNRESET" ||
       syscallCode === "ECONNREFUSED" ||
@@ -80,11 +88,6 @@ export function createAdminApp() {
     } else if (status >= 500 && isConnectivity) {
       // eslint-disable-next-line no-console
       console.warn("[admin-api] upstream unavailable:", msg || causeCode || status);
-    }
-    if (error instanceof multer.MulterError && error.code === "LIMIT_FILE_SIZE") {
-      return res.status(400).json({
-        error: "File exceeds max allowed size."
-      });
     }
     const statusCode = error.statusCode || 500;
     return res.status(statusCode).json({
