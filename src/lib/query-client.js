@@ -4,7 +4,8 @@ const defaultOpts = {
 	queries: {
 		refetchOnWindowFocus: false,
 		retry: 1,
-		// Keep data fresh briefly so route switches reuse cached enrollment states.
+		// Cache is considered fresh for 30 s → navigating back to a page shows
+		// cached data instantly instead of always waiting for a network round-trip.
 		staleTime: 30_000,
 	},
 };

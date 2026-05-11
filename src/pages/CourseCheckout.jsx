@@ -13,6 +13,7 @@ import { courseCheckoutApi } from "@/api/courseCheckoutApi";
 export default function CourseCheckout() {
   const params = new URLSearchParams(window.location.search);
   const courseId = params.get("course_id");
+  const checkoutSource = params.get("source") || "provider_dashboard";
 
   const { data: course, isLoading: loadingCourse } = useQuery({
     queryKey: ["course", courseId],
@@ -42,6 +43,7 @@ export default function CourseCheckout() {
       const response = await courseCheckoutApi.createCheckout({
         course_id: courseId,
         course_date: selectedDate || null,
+        source: checkoutSource,
         customer_name: me?.full_name || "",
         first_name: me?.first_name || me?.full_name?.split(" ")[0] || "",
         last_name: me?.last_name || me?.full_name?.split(" ").slice(1).join(" ") || "",

@@ -254,6 +254,7 @@ export default function NoviLanding() {
       course_session_id: selectedSessionEntry?.session_id || null,
       course_start_time: selectedSessionEntry?.start_time || null,
       course_end_time: selectedSessionEntry?.end_time || null,
+      source: "landing_page",
       customer_name: fullName,
       first_name: form.first_name,
       last_name: form.last_name,
@@ -333,119 +334,122 @@ export default function NoviLanding() {
     <div className="min-h-screen" style={{ background: "#f5f3ef" }}>
 
       {/* ── HERO ── */}
-      <section style={{
-        background: "linear-gradient(135deg, #2D6B7F 0%, #7B8EC8 55%, #C8E63C 100%)",
-        minHeight: "85vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: "80px 24px",
-        position: "relative",
-      }}>
-        {isAuthenticated && dashboardPath && (
-          <Button
-            variant="outline"
-            className="rounded-full text-sm font-semibold px-5 py-2.5"
-            style={{
-              position: "absolute",
-              top: 20,
-              right: 20,
-              background: "rgba(255,255,255,0.14)",
-              border: "1.5px solid rgba(255,255,255,0.35)",
-              color: "#fff",
-            }}
-            onClick={() => { window.location.href = dashboardPath; }}
-          >
-            Go to Dashboard
-          </Button>
-        )}
-        <div className="max-w-4xl mx-auto text-center">
-          <div className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full mb-10" style={{
-            background: "rgba(255,255,255,0.12)",
-            border: "1px solid rgba(255,255,255,0.25)",
-          }}>
-            <Sparkles className="w-4 h-4" style={{ color: "#C8E63C" }} />
-            <span className="text-sm font-semibold text-white tracking-wide">Pre-Launch · Reservations Open</span>
-          </div>
-
-          <div style={{ marginBottom: "24px" }}>
+      <section
+        style={{
+          background:
+            "radial-gradient(1200px 600px at 15% 18%, rgba(255,255,255,0.2) 0%, rgba(255,255,255,0.04) 42%, rgba(255,255,255,0) 70%), linear-gradient(110deg, #6478b9 0%, #748cc6 45%, #bde43f 100%)",
+          minHeight: "84vh",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "96px 24px 84px",
+          position: "relative",
+          overflow: "hidden",
+        }}
+      >
+        <div className="max-w-3xl mx-auto text-center">
+          <div style={{ marginBottom: "18px" }}>
             <img
               src="/novi-email-logo.png"
               alt="NOVI Society"
               style={{
                 width: "100%",
-                maxWidth: "350px",
+                maxWidth: "320px",
                 height: "auto",
                 margin: "0 auto",
                 display: "block",
+                opacity: 0.95,
               }}
             />
           </div>
 
-          <p style={{
-            fontFamily: "'DM Serif Display', serif",
-            fontSize: "clamp(1.5rem, 4vw, 2.25rem)",
-            color: "rgba(255,255,255,0.9)",
-            fontStyle: "italic",
-            fontWeight: 300,
-            lineHeight: 1.3,
-            marginBottom: "24px",
-          }}>
+          <p
+            style={{
+              fontFamily: "'DM Serif Display', serif",
+              fontSize: "clamp(1.85rem, 4.2vw, 2.7rem)",
+              color: "rgba(255,255,255,0.92)",
+              fontStyle: "italic",
+              fontWeight: 400,
+              lineHeight: 1.2,
+              marginBottom: "20px",
+            }}
+          >
             A New Way to Be Seen
           </p>
 
-          <p style={{
-            fontSize: "clamp(1rem, 2.5vw, 1.2rem)",
-            color: "rgba(255,255,255,0.88)",
-            lineHeight: 1.75,
-            maxWidth: "680px",
-            margin: "0 auto 16px",
-          }}>
-            NOVI is a next-generation aesthetics ecosystem designed to elevate both providers and patients through technology, compliance infrastructure, and community.
+          <p
+            style={{
+              fontSize: "clamp(0.98rem, 2.2vw, 1.1rem)",
+              color: "rgba(255,255,255,0.84)",
+              lineHeight: 1.72,
+              maxWidth: "670px",
+              margin: "0 auto 14px",
+            }}
+          >
+            NOVI is a next-generation aesthetics ecosystem designed to elevate both
+            providers and patients through technology, compliance infrastructure, and
+            community.
           </p>
-          <p style={{
-            fontSize: "clamp(0.9rem, 2vw, 1.05rem)",
-            color: "rgba(255,255,255,0.65)",
-            lineHeight: 1.75,
-            maxWidth: "600px",
-            margin: "0 auto 48px",
-            fontStyle: "italic",
-          }}>
-            More than a platform, NOVI is a <strong style={{ color: "#C8E63C", fontWeight: 600, fontStyle: "normal" }}>Society</strong> — a trusted environment where providers build thriving practices and patients find the right care with confidence.
+          <p
+            style={{
+              fontSize: "clamp(0.88rem, 1.8vw, 0.98rem)",
+              color: "rgba(255,255,255,0.65)",
+              lineHeight: 1.75,
+              maxWidth: "620px",
+              margin: "0 auto 44px",
+              fontStyle: "italic",
+            }}
+          >
+            More than a platform, NOVI is a{" "}
+            <strong style={{ color: "#ddeea2", fontWeight: 600, fontStyle: "normal" }}>
+              Society
+            </strong>{" "}
+            - a trusted environment where providers build thriving practices and
+            patients find the right care with confidence.
           </p>
 
-          <div className="flex flex-col sm:flex-row gap-4 justify-center">
+          <div className="flex flex-col sm:flex-row gap-3 justify-center items-center">
             <Button
               size="lg"
-              className="px-10 py-6 rounded-full text-base font-bold"
-              style={{ background: "#C8E63C", color: "#1e2535", border: "none" }}
+              className="px-9 py-5 rounded-full text-sm font-bold"
+              style={{ background: "#c8e63c", color: "#1e2535", border: "none" }}
               onClick={() => document.getElementById("offerings").scrollIntoView({ behavior: "smooth" })}
             >
-              Reserve Your Spot <ArrowRight className="ml-2 w-5 h-5" />
+              Reserve Your Spot <ArrowRight className="ml-2 w-4 h-4" />
             </Button>
             <Button
               size="lg"
               variant="outline"
-              className="px-10 py-6 rounded-full text-base font-medium"
-              style={{ background: "rgba(255,255,255,0.1)", border: "1.5px solid rgba(255,255,255,0.3)", color: "#fff" }}
-              onClick={() => document.getElementById("pillars").scrollIntoView({ behavior: "smooth" })}
-            >
-              Learn More
-            </Button>
-            <Button
-              size="lg"
-              variant="outline"
-              className="px-10 py-6 rounded-full text-base font-medium"
-              style={{ background: "rgba(255,255,255,0.1)", border: "1.5px solid rgba(255,255,255,0.3)", color: "#fff" }}
+              className="px-9 py-5 rounded-full text-sm font-medium"
+              style={{
+                background: "rgba(255,255,255,0.12)",
+                border: "1px solid rgba(255,255,255,0.35)",
+                color: "rgba(255,255,255,0.95)",
+              }}
               onClick={() => {
-                if (isAuthenticated) {
-                  base44.auth.logout(`${window.location.origin}/NoviLanding`);
+                window.location.href = "tel:+18178936317";
+              }}
+            >
+              Call Now: +1 817-893-6317
+            </Button>
+            <Button
+              size="lg"
+              variant="outline"
+              className="px-9 py-5 rounded-full text-sm font-medium"
+              style={{
+                background: "rgba(255,255,255,0.12)",
+                border: "1px solid rgba(255,255,255,0.35)",
+                color: "rgba(255,255,255,0.95)",
+              }}
+              onClick={() => {
+                if (isAuthenticated && dashboardPath) {
+                  window.location.href = dashboardPath;
                   return;
                 }
                 window.location.href = "/admin";
               }}
             >
-              {isAuthenticated ? "Sign Out" : "Sign In"}
+              Sign In
             </Button>
           </div>
         </div>

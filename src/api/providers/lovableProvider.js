@@ -391,6 +391,30 @@ export function createLovableProviderClient() {
           delete: createNotImplementedMethod("entities.Enrollment.delete")
         };
       }
+      if (name === "EmailTemplate") {
+        return {
+          list: (_sort) => authRequest("/admin/email-templates", { method: "GET" }),
+          get: (id) => authRequest(`/admin/email-templates/${encodeURIComponent(id)}`, { method: "GET" }),
+          create: (payload) => authRequest("/admin/email-templates", {
+            method: "POST",
+            body: JSON.stringify(payload || {})
+          }),
+          update: (id, payload) => authRequest(`/admin/email-templates/${encodeURIComponent(id)}`, {
+            method: "PUT",
+            body: JSON.stringify(payload || {})
+          }),
+          delete: (id) => authRequest(`/admin/email-templates/${encodeURIComponent(id)}`, { method: "DELETE" }),
+          filter: async (filters = {}) => {
+            const all = await authRequest("/admin/email-templates", { method: "GET" });
+            const rows = Array.isArray(all) ? all : [];
+            const trigger = filters?.trigger ? String(filters.trigger) : "";
+            return rows.filter((row) => {
+              if (trigger && String(row?.trigger || "") !== trigger) return false;
+              return true;
+            });
+          }
+        };
+      }
       return {
         list: createNotImplementedMethod(`entities.${name}.list`),
         get: createNotImplementedMethod(`entities.${name}.get`),

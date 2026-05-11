@@ -119,9 +119,10 @@ export default function ProviderEnrollments() {
       );
     },
     retry: 3,
-    // Respect cache freshness so we can render instantly from cache.
+    // Show stale/placeholder data immediately on first visit so enrollment
+    // statuses are visible without waiting for the full refetch. Falls back
+    // to the ["my-enrollments"] slice that Layout already fetched.
     refetchOnMount: true,
-    // Use the Layout-cached enrollment snapshot immediately on first paint.
     placeholderData: (previousData) =>
       previousData ?? qc.getQueryData(["my-enrollments"]),
   });
@@ -299,8 +300,8 @@ export default function ProviderEnrollments() {
                         courses={categoryCourses}
                         enrollmentStatusLoading={shouldShowEnrollmentStatusLoading}
                         isEnrolled={(courseId) => enrolledCourseIds.has(courseId)}
-                        onEnroll={(course) => navigate(createPageUrl(`CourseCheckout?course_id=${course.id}`))}
-                        onSelect={(course) => navigate(createPageUrl(`CourseCheckout?course_id=${course.id}`))}
+                        onEnroll={(course) => navigate(createPageUrl(`CourseCheckout?course_id=${course.id}&source=provider_dashboard`))}
+                        onSelect={(course) => navigate(createPageUrl(`CourseCheckout?course_id=${course.id}&source=provider_dashboard`))}
                         showControls
                       />
                     );
@@ -420,7 +421,7 @@ export default function ProviderEnrollments() {
             course={preMaterialsCourse}
             onClose={() => setPreMaterialsCourse(null)}
             onProceed={() => {
-              navigate(createPageUrl(`CourseCheckout?course_id=${preMaterialsCourse.id}`));
+              navigate(createPageUrl(`CourseCheckout?course_id=${preMaterialsCourse.id}&source=provider_dashboard`));
               setPreMaterialsCourse(null);
             }}
           />

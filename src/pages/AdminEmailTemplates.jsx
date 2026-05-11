@@ -1,31 +1,32 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { base44 } from "@/api/base44Client";
+import { emailTemplatesApi } from "@/api/emailTemplatesApi";
+import { useToast } from "@/components/ui/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import {
-  Mail, Plus, Zap, Edit2, Trash2, CheckCircle, Send,
-  Users, BookOpen, Award, Shield, Calendar, Clock, Eye
+  Mail, Plus, Edit2, Trash2, CheckCircle, Send,
+  BookOpen, Award, Shield, Calendar, Eye, FlaskConical,
+  ChevronDown, ChevronUp,
 } from "lucide-react";
 import { format } from "date-fns";
 
 const TRIGGERS = [
-  { value: "enrollment_created", label: "Course Enrolled (payment pending)", icon: BookOpen, color: "#7B8EC8", desc: "Fires when a provider enrolls in a course" },
-  { value: "enrollment_paid", label: "Course Payment Received", icon: BookOpen, color: "#C8E63C", desc: "Fires when enrollment payment is confirmed" },
-  { value: "enrollment_completed", label: "Course Completed", icon: Award, color: "#C8E63C", desc: "Fires when a provider completes a course" },
-  { value: "md_subscription_created", label: "MD Membership Applied", icon: Shield, color: "#FA6F30", desc: "Fires when a provider applies for MD coverage" },
-  { value: "md_subscription_active", label: "MD Membership Activated", icon: Shield, color: "#C8E63C", desc: "Fires when MD coverage becomes active" },
-  { value: "license_verified", label: "License Verified", icon: CheckCircle, color: "#C8E63C", desc: "Fires when admin approves a provider license" },
-  { value: "license_rejected", label: "License Rejected", icon: CheckCircle, color: "#DA6A63", desc: "Fires when admin rejects a provider license" },
-  { value: "certification_approved", label: "Certification Approved", icon: Award, color: "#C8E63C", desc: "Fires when a certification is approved" },
-  { value: "appointment_confirmed", label: "Appointment Confirmed", icon: Calendar, color: "#7B8EC8", desc: "Fires when an appointment is confirmed" },
-  { value: "appointment_completed", label: "Appointment Completed", icon: Calendar, color: "#2D6B7F", desc: "Fires when an appointment is marked completed" },
-  { value: "pre_order_approved", label: "Pre-Order Approved", icon: CheckCircle, color: "#C8E63C", desc: "Fires when a pre-order application is approved" },
+  { value: "enrollment_paid", label: "Course Payment Confirmed", icon: BookOpen, color: "#C8E63C", desc: "Fires when enrollment payment is completed via Stripe", active: true },
+  { value: "new_user_invite", label: "New Account Setup Invite", icon: Mail, color: "#2D6B7F", desc: "Fires when a new user account is created after payment", active: true },
+  { value: "md_service_preorder", label: "MD Service Pre-Order Welcome", icon: Shield, color: "#FA6F30", desc: "Fires when a provider secures a spot for MD services", active: true },
+  { value: "license_verified", label: "License Verified", icon: CheckCircle, color: "#C8E63C", desc: "Fires when admin approves a provider license", active: true },
+  { value: "license_rejected", label: "License Rejected", icon: CheckCircle, color: "#DA6A63", desc: "Fires when admin rejects a provider license", active: true },
+  { value: "model_booking_confirmed", label: "Model Booking Confirmed", icon: Calendar, color: "#7B8EC8", desc: "Fires when a model training booking is paid or free-checkout", active: true },
+  { value: "model_waitlist_promoted", label: "Waitlist Slot Opened", icon: Calendar, color: "#C8E63C", desc: "Fires when a waitlisted model is promoted to confirmed", active: true },
+  { value: "model_gfe_assigned", label: "Model GFE Link Sent", icon: FlaskConical, color: "#2D6B7F", desc: "Fires when a Good Faith Exam link is sent to a model", active: true },
+  { value: "model_session_reminder", label: "Model Session Reminder (Day Before)", icon: Calendar, color: "#FA6F30", desc: "Fires the day before a model training session", active: true },
+  { value: "model_post_training", label: "Model Post-Training Follow-Up", icon: Award, color: "#C8E63C", desc: "Fires after a model training session is completed", active: true },
+  { value: "model_gfe_reminder", label: "Model GFE Reminder", icon: FlaskConical, color: "#DA6A63", desc: "Fires when a model has not completed their GFE exam", active: true },
 ];
 
 const RECIPIENT_TYPES = [
@@ -37,71 +38,49 @@ const RECIPIENT_TYPES = [
 const PLACEHOLDERS = [
   { tag: "{{first_name}}", desc: "Recipient's first name" },
   { tag: "{{full_name}}", desc: "Recipient's full name" },
-  { tag: "{{email}}", desc: "Recipient's email" },
-  { tag: "{{app_url}}", desc: "App URL link" },
+  { tag: "{{email}}", desc: "Recipient's email address" },
+  { tag: "{{app_url}}", desc: "App base URL" },
   { tag: "{{course_name}}", desc: "Course title" },
-  { tag: "{{service_name}}", desc: "Service or certification name" },
-  { tag: "{{provider_name}}", desc: "Provider name" },
-  { tag: "{{patient_name}}", desc: "Patient name" },
+  { tag: "{{course_date}}", desc: "Course date (formatted)" },
+  { tag: "{{course_time}}", desc: "Course start–end time" },
+  { tag: "{{course_location}}", desc: "Course location" },
+  { tag: "{{time_slot}}", desc: "Model session time slot" },
+  { tag: "{{treatment_type}}", desc: "Treatment type label (Botox / Filler / etc.)" },
+  { tag: "{{gfe_url}}", desc: "Good Faith Exam link URL" },
+  { tag: "{{signup_link}}", desc: "Account setup / invite link" },
+  { tag: "{{service_name}}", desc: "MD service or subscription name" },
+  { tag: "{{rejection_reason}}", desc: "Reason text for license rejection" },
+  { tag: "{{provider_name}}", desc: "Provider full name" },
+  { tag: "{{patient_name}}", desc: "Patient full name" },
 ];
 
-const DEFAULT_TEMPLATES = [
-  {
-    name: "Course Enrollment Confirmation",
-    trigger: "enrollment_created",
-    recipient_type: "provider",
-    subject: "You're enrolled in {{course_name}} — Here's what to do next",
-    body_html: `<p>Hi {{first_name}},</p>
-<p>You're officially enrolled in <strong>{{course_name}}</strong> on the NOVI Society platform! 🎉</p>
-<h3>Your Next Steps:</h3>
-<ol>
-  <li><strong>Complete payment</strong> — if you haven't already, finalize your enrollment to secure your spot.</li>
-  <li><strong>Review pre-course materials</strong> — log in to access study guides and prep resources.</li>
-  <li><strong>Show up ready</strong> — your instructor will give you a class code on the day of class to unlock your certification.</li>
-</ol>
-<p><a href="{{app_url}}/ProviderEnrollments" style="background:#7B8EC8;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block;margin:16px 0;">View My Enrollments →</a></p>
-<p>Questions? Just reply to this email or reach out through the NOVI platform.</p>
-<p>Welcome to NOVI Society,<br/>The NOVI Team</p>`,
-    is_active: true,
-  },
-  {
-    name: "MD Membership Activation",
-    trigger: "md_subscription_active",
-    recipient_type: "provider",
-    subject: "Your MD Board Coverage is Active for {{service_name}} ✓",
-    body_html: `<p>Hi {{first_name}},</p>
-<p>Great news — your <strong>Medical Director Board Coverage for {{service_name}}</strong> is now active!</p>
-<p>A NOVI Board Medical Director has been assigned to your account. They will sign your protocols and provide clinical oversight as required by your state.</p>
-<h3>You Can Now:</h3>
-<ul>
-  <li>Offer <strong>{{service_name}}</strong> to patients through the NOVI platform</li>
-  <li>List your profile on the Patient Marketplace</li>
-  <li>Accept appointment requests from patients</li>
-  <li>Submit treatment records for MD review</li>
-</ul>
-<p><a href="{{app_url}}/ProviderCredentialsCoverage" style="background:#C8E63C;color:#1e2535;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block;margin:16px 0;">View My Coverage →</a></p>
-<p>You're covered,<br/>The NOVI Team</p>`,
-    is_active: true,
-  },
-  {
-    name: "License Verified — Next Steps",
-    trigger: "license_verified",
-    recipient_type: "provider",
-    subject: "Your license has been verified — unlock MD coverage now",
-    body_html: `<p>Hi {{first_name}},</p>
-<p>Your professional license has been <strong>verified</strong> by the NOVI admin team. ✓</p>
-<p>You're now eligible to apply for MD Board Coverage, which lets you legally offer aesthetic services under NOVI's Board of Medical Directors.</p>
-<h3>Your Next Steps:</h3>
-<ol>
-  <li><strong>Enroll in a NOVI course</strong> or submit an external certification</li>
-  <li><strong>Apply for MD Coverage</strong> for each service you want to offer</li>
-  <li><strong>Get matched</strong> with a Board MD — NOVI handles the assignment</li>
-</ol>
-<p><a href="{{app_url}}/ProviderCredentialsCoverage" style="background:#FA6F30;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block;margin:16px 0;">Apply for Coverage →</a></p>
-<p>You're one step closer,<br/>The NOVI Team</p>`,
-    is_active: true,
-  },
-];
+const DEFAULT_PLACEHOLDER_VALUES = {
+  first_name: "Sarah",
+  full_name: "Sarah Johnson",
+  email: "sarah@example.com",
+  app_url: "https://app.novisociety.com",
+  course_name: "Botox & Dermal Filler Fundamentals",
+  course_date: "Saturday, June 14, 2026",
+  course_time: "9:00 AM – 5:00 PM",
+  course_location: "McKinney, TX",
+  time_slot: "10:00 AM",
+  treatment_type: "Botox",
+  gfe_url: "https://app.novisociety.com/gfe",
+  signup_link: "https://app.novisociety.com/setup",
+  service_name: "MD Board Coverage",
+  rejection_reason: "The uploaded license image was unclear. Please resubmit.",
+  provider_name: "Sarah Johnson",
+  patient_name: "Alex Martinez",
+  logo_url: "https://hjelcmcfqogoflxkhhpj.supabase.co/storage/v1/object/public/course-covers/admin-courses/1776410859667-3dba1a15-020c-4132-8b6b-4b0b15e72fb8.png",
+};
+
+// TODO[REMOVE_OUTDATED_SEED_TEMPLATES]: these 3 stubs were the original starter templates seeded via the UI.
+// They are outdated (wrong triggers, simplified HTML, not matching real sent emails).
+// Real templates are now seeded via supabase/migrations/20260509010000_seed_real_email_templates.sql.
+// Remove this entire commented block when confirmed no longer needed.
+/*
+const DEFAULT_TEMPLATES = [ ... ];
+*/
 
 const CARD_STYLE = {
   background: "rgba(255,255,255,0.82)",
@@ -111,81 +90,258 @@ const CARD_STYLE = {
   boxShadow: "0 2px 16px rgba(30,37,53,0.07)",
 };
 
+const EMPTY_FORM = {
+  name: "", trigger: "", recipient_type: "provider",
+  subject: "", body_text: "",
+  is_active: true, send_delay_minutes: 0,
+};
+
+const tagToKey = (tag) => tag.replace("{{", "").replace("}}", "");
+
+function applyPlaceholders(content, values) {
+  return String(content || "").replace(/\{\{(\w+)\}\}/g, (full, key) =>
+    Object.prototype.hasOwnProperty.call(values, key) ? String(values[key] ?? "") : full
+  );
+}
+
+// Converts plain text with line breaks to styled HTML paragraphs — mirrors backend.
+function plainTextToHtml(text) {
+  return String(text || "")
+    .split(/\n\n+/)
+    .map(para => {
+      const trimmed = para.trim();
+      if (!trimmed) return "";
+      return `<p style="margin:0 0 16px;font-size:15px;line-height:1.6;color:#374151;">${trimmed.replace(/\n/g, "<br>")}</p>`;
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function htmlToPlainText(html) {
+  return String(html || "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n\n")
+    .replace(/<\/div>/gi, "\n")
+    .replace(/<li[^>]*>/gi, "\n• ")
+    .replace(/<\/li>/gi, "")
+    .replace(/<\/tr>/gi, "\n")
+    .replace(/<\/td>/gi, " ")
+    .replace(/<\/th>/gi, " ")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, " ")
+    .replace(/[ \t]+/g, " ")
+    .replace(/^ /gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function forceNoviLogoCenter(html) {
+  return String(html || "").replace(
+    /(<img\b[^>]*alt=["']NOVI Society["'][^>]*style=["'])([^"']*)(["'][^>]*>)/gi,
+    (_match, start, styles, end) => {
+      let next = String(styles || "");
+      if (!/display\s*:\s*block/i.test(next)) next += `${next.trim().endsWith(";") ? "" : ";"}display:block;`;
+      if (!/margin\s*:\s*0\s*auto/i.test(next)) next += "margin:0 auto;";
+      return `${start}${next}${end}`;
+    }
+  );
+}
+
+const NOVI_LOGO_URL = "https://hjelcmcfqogoflxkhhpj.supabase.co/storage/v1/object/public/course-covers/admin-courses/1776410859667-3dba1a15-020c-4132-8b6b-4b0b15e72fb8.png";
+
+// Frontend preview wrapper — mirrors backend wrapEmailBody exactly.
+function wrapInLayout(bodyHtml, { testMode = false, testMeta = /** @type {{trigger?:string,templateName?:string}} */ ({}) } = {}) {
+  const testBanner = testMode ? `
+        <tr><td style="padding:16px 40px;text-align:center;background:#fff8ed;border-top:1px solid #fde68a;">
+          <p style="margin:0;font-size:12px;color:#92400e;font-weight:600;">⚠ TEST EMAIL — not sent to real recipients</p>
+          <p style="margin:4px 0 0;font-size:11px;color:#b45309;">Trigger: ${testMeta.trigger || ""} · Template: ${testMeta.templateName || ""}</p>
+        </td></tr>` : "";
+
+  return `<table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f3ef;padding:32px 0;font-family:'DM Sans',Helvetica,Arial,sans-serif;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;">
+        <tr><td style="background:linear-gradient(135deg,#2D6B7F 0%,#7B8EC8 55%,#C8E63C 100%);padding:36px 40px;text-align:center;border-radius:16px 16px 0 0;">
+          <img src="${NOVI_LOGO_URL}" alt="NOVI Society" style="width:160px;height:auto;display:block;margin:0 auto;" />
+        </td></tr>
+        <tr><td style="background:#fff;padding:40px;border-radius:0 0 16px 16px;">
+          ${bodyHtml}
+        </td></tr>${testBanner}
+        <tr><td style="padding:24px 40px;text-align:center;">
+          <p style="margin:0;font-size:12px;color:#9ca3af;">© 2026 NOVI Society LLC · 8109 Meadow Valley Dr, McKinney, TX 75071</p>
+          <p style="margin:4px 0 0;font-size:12px;color:#9ca3af;"><a href="mailto:support@novisociety.com" style="color:#9ca3af;">support@novisociety.com</a></p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>`;
+}
+
 export default function AdminEmailTemplates() {
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [editing, setEditing] = useState(null);
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [previewTemplate, setPreviewTemplate] = useState(null);
-  const [form, setForm] = useState({
-    name: "", trigger: "", recipient_type: "provider", subject: "", body_html: "", is_active: true, send_delay_minutes: 0
-  });
+  const { toast, dismiss } = useToast();
   const qc = useQueryClient();
 
-  const { data: templates = [], isLoading } = useQuery({
+  // ── Edit dialog state ─────────────────────────────────────────────────────
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState(EMPTY_FORM);
+  const [editOriginalBodyText, setEditOriginalBodyText] = useState("");
+  const [editPreviewPlaceholders, setEditPreviewPlaceholders] = useState({ ...DEFAULT_PLACEHOLDER_VALUES });
+  const [editPlaceholdersOpen, setEditPlaceholdersOpen] = useState(false);
+
+  // ── Preview dialog state ──────────────────────────────────────────────────
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewTemplate, setPreviewTemplate] = useState(null);
+
+  // ── Test-send dialog state ────────────────────────────────────────────────
+  const [testOpen, setTestOpen] = useState(false);
+  const [testTemplate, setTestTemplate] = useState(null);
+  const [testEmail, setTestEmail] = useState("");
+  const [testPlaceholders, setTestPlaceholders] = useState({ ...DEFAULT_PLACEHOLDER_VALUES });
+  const [testPlaceholdersOpen, setTestPlaceholdersOpen] = useState(false);
+
+  // ── Queries ──────────────────────────────────────────────────────────────
+  const { data: templates = [], isLoading, isError } = useQuery({
     queryKey: ["email-templates"],
-    queryFn: () => base44.entities.EmailTemplate.list("-created_date"),
+    queryFn: emailTemplatesApi.list,
   });
 
+  // ── Mutations ────────────────────────────────────────────────────────────
   const saveMutation = useMutation({
-    mutationFn: async () => {
-      if (editing) {
-        return base44.entities.EmailTemplate.update(editing.id, form);
-      }
-      return base44.entities.EmailTemplate.create(form);
+    mutationFn: () => {
+      if (!editing) return emailTemplatesApi.create(form);
+      return emailTemplatesApi.update(editing.id, {
+        ...form,
+        clear_body_html: false,
+        original_body_text: editOriginalBodyText,
+      });
     },
-    onSuccess: () => {
-      qc.invalidateQueries(["email-templates"]);
+    onSuccess: (saved) => {
+      // Update the cache immediately so any dialog that opens right after save
+      // already sees the new body_html — no waiting for a background refetch.
+      if (saved) {
+        qc.setQueryData(["email-templates"], (old) =>
+          Array.isArray(old)
+            ? old.map(t => t.id === saved.id ? saved : t)
+            : old
+        );
+      }
+      qc.invalidateQueries({ queryKey: ["email-templates"] });
       setDialogOpen(false);
       setEditing(null);
+      setEditOriginalBodyText("");
+      const { id } = toast({ title: editing ? "Template updated" : "Template created" });
+      setTimeout(() => dismiss(id), 5000);
     },
+    onError: (err) => toast({ title: "Save failed", description: err.message, variant: "destructive" }),
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id) => base44.entities.EmailTemplate.delete(id),
-    onSuccess: () => qc.invalidateQueries(["email-templates"]),
+    mutationFn: emailTemplatesApi.remove,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["email-templates"] });
+      toast({ title: "Template deleted" });
+    },
+    onError: (err) => toast({ title: "Delete failed", description: err.message, variant: "destructive" }),
   });
 
   const toggleMutation = useMutation({
-    mutationFn: ({ id, is_active }) => base44.entities.EmailTemplate.update(id, { is_active }),
-    onSuccess: () => qc.invalidateQueries(["email-templates"]),
+    mutationFn: ({ id, is_active }) => emailTemplatesApi.patch(id, { is_active }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["email-templates"] }),
+    onError: (err) => toast({ title: "Update failed", description: err.message, variant: "destructive" }),
   });
 
-  const seedDefaultsMutation = useMutation({
-    mutationFn: async () => {
-      for (const t of DEFAULT_TEMPLATES) {
-        await base44.entities.EmailTemplate.create(t);
-      }
+  const testSendMutation = useMutation({
+    mutationFn: ({ id, to, placeholders }) => emailTemplatesApi.testSend(id, to, placeholders),
+    onSuccess: (_, { to }) => {
+      toast({ title: "Test email sent", description: `Sent to ${to}` });
+      setTestOpen(false);
+      setTestEmail("");
     },
-    onSuccess: () => qc.invalidateQueries(["email-templates"]),
+    onError: (err) => toast({ title: "Send failed", description: err.message, variant: "destructive" }),
   });
 
-  const openNew = () => {
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  const openNew = (prefillTrigger = "") => {
     setEditing(null);
-    setForm({ name: "", trigger: "", recipient_type: "provider", subject: "", body_html: "", is_active: true, send_delay_minutes: 0 });
+    setForm({ ...EMPTY_FORM, trigger: prefillTrigger });
+    setEditOriginalBodyText("");
+    setEditPreviewPlaceholders({ ...DEFAULT_PLACEHOLDER_VALUES });
+    setEditPlaceholdersOpen(false);
     setDialogOpen(true);
   };
 
   const openEdit = (t) => {
+    const derivedBodyText = String(t.body_text || "").trim() || htmlToPlainText(t.body_html || "");
     setEditing(t);
-    setForm({ name: t.name, trigger: t.trigger, recipient_type: t.recipient_type, subject: t.subject, body_html: t.body_html, is_active: t.is_active, send_delay_minutes: t.send_delay_minutes || 0 });
+    setForm({
+      name: t.name,
+      trigger: t.trigger,
+      recipient_type: t.recipient_type,
+      subject: t.subject,
+      body_text: derivedBodyText,
+      is_active: t.is_active,
+      send_delay_minutes: t.send_delay_minutes || 0,
+    });
+    setEditOriginalBodyText(derivedBodyText);
+    setEditPreviewPlaceholders({ ...DEFAULT_PLACEHOLDER_VALUES });
+    setEditPlaceholdersOpen(false);
     setDialogOpen(true);
   };
 
+  const openTest = (t) => {
+    setTestTemplate(t);
+    setTestEmail("");
+    setTestPlaceholders({ ...DEFAULT_PLACEHOLDER_VALUES });
+    setTestPlaceholdersOpen(true);
+    setTestOpen(true);
+  };
+
   const insertPlaceholder = (tag) => {
-    setForm(f => ({ ...f, body_html: f.body_html + tag }));
+    setForm(f => ({ ...f, body_text: f.body_text + tag }));
   };
 
   const triggerMeta = (trigger) => TRIGGERS.find(t => t.value === trigger);
 
-  // Group templates by trigger
+  // ── Computed ──────────────────────────────────────────────────────────────
+  const previewBodyHtml = plainTextToHtml(applyPlaceholders(form.body_text, editPreviewPlaceholders));
+  const previewSubject = applyPlaceholders(form.subject, editPreviewPlaceholders);
+  const formIsValid = form.name && form.trigger && form.subject && form.body_text.trim();
+  // Keep preview stable while editing: show the saved rich HTML until the admin saves.
+  // After save, body_html is regenerated from body_text and this preview reflects it.
+  const editRenderedBody = editing?.body_html
+    ? forceNoviLogoCenter(applyPlaceholders(editing.body_html, editPreviewPlaceholders))
+    : wrapInLayout(previewBodyHtml);
+
   const byTrigger = {};
   templates.forEach(t => {
     byTrigger[t.trigger] = byTrigger[t.trigger] || [];
     byTrigger[t.trigger].push(t);
   });
 
+  const testUsedPlaceholders = (() => {
+    if (!testTemplate) return [];
+    const text = `${testTemplate.subject || ""} ${testTemplate.body_text || ""} ${testTemplate.body_html || ""}`;
+    const keys = new Set();
+    const re = /\{\{(\w+)\}\}/g;
+    let m;
+    while ((m = re.exec(text)) !== null) keys.add(m[1]);
+    return PLACEHOLDERS.filter(p => keys.has(tagToKey(p.tag)));
+  })();
+
+  const testRenderedSubject = applyPlaceholders(testTemplate?.subject, testPlaceholders);
+  const testRenderedBody = (() => {
+    if (!testTemplate) return "";
+    // Use rich body_html if available (full HTML already includes NOVI layout)
+    if (testTemplate.body_html) return forceNoviLogoCenter(applyPlaceholders(testTemplate.body_html, testPlaceholders));
+    return wrapInLayout(plainTextToHtml(applyPlaceholders(testTemplate.body_text || "", testPlaceholders)), { testMode: true, testMeta: { trigger: testTemplate.trigger, templateName: testTemplate.name } });
+  })();
+
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="max-w-5xl space-y-6">
+
       {/* Header */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
@@ -195,16 +351,9 @@ export default function AdminEmailTemplates() {
             Create emails that fire automatically when providers, patients, or MDs reach key milestones — course enrollment, license verification, MD activation, and more.
           </p>
         </div>
-        <div className="flex gap-2 flex-shrink-0">
-          {templates.length === 0 && (
-            <Button variant="outline" onClick={() => seedDefaultsMutation.mutate()} disabled={seedDefaultsMutation.isPending} className="gap-2 text-sm">
-              <Zap className="w-4 h-4" /> {seedDefaultsMutation.isPending ? "Loading..." : "Load Starter Templates"}
-            </Button>
-          )}
-          <Button onClick={openNew} className="gap-2 font-bold" style={{ background: "#FA6F30", color: "#fff", borderRadius: 12 }}>
-            <Plus className="w-4 h-4" /> New Template
-          </Button>
-        </div>
+        <Button onClick={() => openNew()} className="gap-2 font-bold flex-shrink-0" style={{ background: "#FA6F30", color: "#fff", borderRadius: 12 }}>
+          <Plus className="w-4 h-4" /> New Template
+        </Button>
       </div>
 
       {/* Stats */}
@@ -222,55 +371,76 @@ export default function AdminEmailTemplates() {
         ))}
       </div>
 
-      {/* Trigger overview */}
-      <div className="rounded-2xl overflow-hidden" style={CARD_STYLE}>
-        <div className="px-6 py-4 border-b" style={{ borderColor: "rgba(30,37,53,0.08)" }}>
-          <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.5)" }}>All Trigger Events</p>
-          <p className="text-sm mt-0.5" style={{ color: "rgba(30,37,53,0.6)" }}>Each trigger fires automatically when the event occurs</p>
+      {isLoading && (
+        <div className="flex items-center justify-center py-16">
+          <div className="w-6 h-6 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
         </div>
-        <div className="divide-y" style={{ borderColor: "rgba(30,37,53,0.06)" }}>
-          {TRIGGERS.map(trigger => {
-            const tpls = byTrigger[trigger.value] || [];
-            const Icon = trigger.icon;
-            return (
-              <div key={trigger.value} className="px-6 py-4 flex items-center gap-4">
-                <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: `${trigger.color}18` }}>
-                  <Icon className="w-4 h-4" style={{ color: trigger.color }} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="font-semibold text-sm" style={{ color: "#1e2535" }}>{trigger.label}</p>
-                  <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.5)" }}>{trigger.desc}</p>
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  {tpls.length === 0 ? (
-                    <span className="text-xs px-2.5 py-1 rounded-full" style={{ background: "rgba(30,37,53,0.06)", color: "rgba(30,37,53,0.4)" }}>No template</span>
-                  ) : (
-                    tpls.map(t => (
-                      <div key={t.id} className="flex items-center gap-1.5">
-                        <span className="text-xs font-semibold px-2.5 py-1 rounded-full" style={{
-                          background: t.is_active ? "rgba(200,230,60,0.15)" : "rgba(30,37,53,0.06)",
-                          color: t.is_active ? "#4a6b10" : "rgba(30,37,53,0.4)"
-                        }}>
-                          {t.is_active ? "Active" : "Off"} · {t.recipient_type}
-                        </span>
-                        <button onClick={() => openEdit(t)} className="text-xs px-2 py-1 rounded-lg hover:opacity-80 transition-opacity" style={{ background: "rgba(123,142,200,0.12)", color: "#7B8EC8" }}>
-                          <Edit2 className="w-3 h-3" />
-                        </button>
-                      </div>
-                    ))
-                  )}
-                  <button
-                    onClick={() => { setForm(f => ({ ...f, trigger: trigger.value })); openNew(); }}
-                    className="text-xs px-2.5 py-1.5 rounded-lg font-semibold transition-all hover:opacity-80"
-                    style={{ background: "rgba(250,111,48,0.1)", color: "#FA6F30", border: "1px solid rgba(250,111,48,0.25)" }}>
-                    <Plus className="w-3 h-3 inline mr-1" />Add
-                  </button>
-                </div>
-              </div>
-            );
-          })}
+      )}
+
+      {isError && !isLoading && (
+        <div className="rounded-2xl px-5 py-4 text-sm" style={{ background: "rgba(218,106,99,0.1)", border: "1px solid rgba(218,106,99,0.3)", color: "#DA6A63" }}>
+          Failed to load templates. Make sure the admin API is running and the migration is applied.
         </div>
-      </div>
+      )}
+
+      {/* Trigger list */}
+      {!isLoading && (
+        <div className="rounded-2xl overflow-hidden" style={CARD_STYLE}>
+          <div className="px-6 py-4 border-b" style={{ borderColor: "rgba(30,37,53,0.08)" }}>
+            <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.5)" }}>All Trigger Events</p>
+            <p className="text-sm mt-0.5" style={{ color: "rgba(30,37,53,0.6)" }}>Each trigger fires automatically when the event occurs</p>
+          </div>
+          <div className="divide-y" style={{ borderColor: "rgba(30,37,53,0.06)" }}>
+            {TRIGGERS.map(trigger => {
+              const tpls = byTrigger[trigger.value] || [];
+              const Icon = trigger.icon;
+              return (
+                <div key={trigger.value} className="px-6 py-4 flex items-center gap-4">
+                  <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: `${trigger.color}18` }}>
+                    <Icon className="w-4 h-4" style={{ color: trigger.color }} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="font-semibold text-sm" style={{ color: "#1e2535" }}>{trigger.label}</p>
+                      {trigger.active && (
+                        <span className="text-xs px-2 py-0.5 rounded-full font-semibold" style={{ background: "rgba(200,230,60,0.15)", color: "#4a6b10" }}>Wired</span>
+                      )}
+                    </div>
+                    <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.5)" }}>{trigger.desc}</p>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0 flex-wrap justify-end">
+                    {tpls.length === 0 ? (
+                      <span className="text-xs px-2.5 py-1 rounded-full" style={{ background: "rgba(30,37,53,0.06)", color: "rgba(30,37,53,0.4)" }}>No template</span>
+                    ) : (
+                      tpls.map(t => (
+                        <div key={t.id} className="flex items-center gap-1.5">
+                          <span className="text-xs font-semibold px-2.5 py-1 rounded-full" style={{
+                            background: t.is_active ? "rgba(200,230,60,0.15)" : "rgba(30,37,53,0.06)",
+                            color: t.is_active ? "#4a6b10" : "rgba(30,37,53,0.4)"
+                          }}>
+                            {t.is_active ? "Active" : "Off"} · {t.recipient_type}
+                          </span>
+                          <button onClick={() => openEdit(t)} className="text-xs px-2.5 py-1.5 rounded-lg font-semibold transition-all hover:opacity-80 flex items-center gap-1" style={{ background: "rgba(123,142,200,0.1)", color: "#7B8EC8", border: "1px solid rgba(123,142,200,0.25)" }}>
+                            <Edit2 className="w-3 h-3" />Edit
+                          </button>
+                        </div>
+                      ))
+                    )}
+                    {tpls.length > 0 && (
+                      <button
+                        onClick={() => openTest(tpls.find(t => t.is_active) || tpls[0])}
+                        className="text-xs px-2.5 py-1.5 rounded-lg font-semibold transition-all hover:opacity-80 flex items-center gap-1"
+                        style={{ background: "rgba(45,107,127,0.1)", color: "#2D6B7F", border: "1px solid rgba(45,107,127,0.25)" }}>
+                        <Send className="w-3 h-3" />Test
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* All templates list */}
       {templates.length > 0 && (
@@ -297,7 +467,7 @@ export default function AdminEmailTemplates() {
                     </p>
                     <p className="text-xs mt-0.5 truncate" style={{ color: "rgba(30,37,53,0.4)" }}>Subject: {t.subject}</p>
                   </div>
-                  <div className="flex items-center gap-3 flex-shrink-0">
+                  <div className="flex items-center gap-2 flex-shrink-0">
                     <Switch
                       checked={t.is_active}
                       onCheckedChange={(v) => toggleMutation.mutate({ id: t.id, is_active: v })}
@@ -305,10 +475,18 @@ export default function AdminEmailTemplates() {
                     <button onClick={() => { setPreviewTemplate(t); setPreviewOpen(true); }} className="p-1.5 rounded-lg hover:opacity-80 transition-opacity" style={{ color: "#7B8EC8" }} title="Preview">
                       <Eye className="w-4 h-4" />
                     </button>
-                    <button onClick={() => openEdit(t)} className="p-1.5 rounded-lg hover:opacity-80 transition-opacity" style={{ color: "#FA6F30" }}>
+                    <button onClick={() => openTest(t)} className="p-1.5 rounded-lg hover:opacity-80 transition-opacity" style={{ color: "#2D6B7F" }} title="Send test email">
+                      <FlaskConical className="w-4 h-4" />
+                    </button>
+                    <button onClick={() => openEdit(t)} className="p-1.5 rounded-lg hover:opacity-80 transition-opacity" style={{ color: "#FA6F30" }} title="Edit">
                       <Edit2 className="w-4 h-4" />
                     </button>
-                    <button onClick={() => { if (confirm("Delete this template?")) deleteMutation.mutate(t.id); }} className="p-1.5 rounded-lg hover:opacity-80 transition-opacity" style={{ color: "#DA6A63" }}>
+                    <button
+                      onClick={() => { if (window.confirm("Delete this template?")) deleteMutation.mutate(t.id); }}
+                      className="p-1.5 rounded-lg hover:opacity-80 transition-opacity"
+                      style={{ color: "#DA6A63" }}
+                      title="Delete"
+                    >
                       <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
@@ -319,21 +497,18 @@ export default function AdminEmailTemplates() {
         </div>
       )}
 
-      {isLoading && (
-        <div className="flex items-center justify-center py-16">
-          <div className="w-6 h-6 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
-        </div>
-      )}
-
-      {/* Edit / Create Dialog */}
-      <Dialog open={dialogOpen} onOpenChange={(v) => { if (!v) setDialogOpen(false); }}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+      {/* ── Create / Edit Dialog ─────────────────────────────────────────── */}
+      <Dialog open={dialogOpen} onOpenChange={(v) => { if (!v) { setDialogOpen(false); setEditing(null); } }}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle style={{ fontFamily: "'DM Serif Display', serif", fontSize: 20 }}>
               {editing ? "Edit Email Template" : "New Email Template"}
             </DialogTitle>
           </DialogHeader>
+
           <div className="space-y-4 pt-2">
+
+            {/* Core fields */}
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2">
                 <Label>Template Name</Label>
@@ -360,46 +535,99 @@ export default function AdminEmailTemplates() {
               </div>
               <div className="col-span-2">
                 <Label>Email Subject *</Label>
-                <Input value={form.subject} onChange={e => setForm(f => ({ ...f, subject: e.target.value }))} placeholder="e.g. Welcome to {{course_name}}!" />
+                <Input value={form.subject} onChange={e => setForm(f => ({ ...f, subject: e.target.value }))} placeholder="e.g. You're enrolled in {{course_name}}!" />
               </div>
             </div>
 
-            {/* Placeholder helper */}
+            {/* Placeholders — collapsible; click to insert, edit value for live preview */}
             <div className="rounded-xl p-3" style={{ background: "rgba(123,142,200,0.08)", border: "1px solid rgba(123,142,200,0.2)" }}>
-              <p className="text-xs font-bold uppercase tracking-widest mb-2" style={{ color: "#7B8EC8" }}>Available Placeholders — click to insert</p>
-              <div className="flex flex-wrap gap-1.5">
-                {PLACEHOLDERS.map(p => (
-                  <button key={p.tag} onClick={() => insertPlaceholder(p.tag)} title={p.desc}
-                    className="text-xs px-2.5 py-1 rounded-full font-mono transition-all hover:opacity-80"
-                    style={{ background: "rgba(123,142,200,0.15)", color: "#4a5fa8", border: "1px solid rgba(123,142,200,0.3)" }}>
-                    {p.tag}
-                  </button>
-                ))}
+              <div
+                className="flex items-center justify-between gap-2"
+                onClick={() => setEditPlaceholdersOpen(o => !o)}
+                style={{ cursor: "pointer" }}
+              >
+                <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "#7B8EC8" }}>
+                  Placeholders — click to insert · edit value for preview
+                </p>
+                <button type="button" className="inline-flex items-center gap-1 text-xs font-semibold flex-shrink-0" style={{ color: "#7B8EC8" }}>
+                  {editPlaceholdersOpen ? "Collapse" : "Expand"}
+                  {editPlaceholdersOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                </button>
               </div>
+              {editPlaceholdersOpen && (
+                <div className="grid grid-cols-2 gap-x-3 gap-y-2 mt-2.5">
+                  {PLACEHOLDERS.map(p => {
+                    const key = tagToKey(p.tag);
+                    return (
+                      <div key={p.tag} className="space-y-0.5">
+                        <button
+                          onClick={() => insertPlaceholder(p.tag)}
+                          title={`Click to insert ${p.tag} · ${p.desc}`}
+                          className="text-xs px-2.5 py-0.5 rounded-full font-mono transition-all hover:opacity-70 active:scale-95"
+                          style={{ background: "rgba(123,142,200,0.15)", color: "#4a5fa8", border: "1px solid rgba(123,142,200,0.3)" }}
+                        >
+                          {p.tag}
+                        </button>
+                        <Input
+                          value={editPreviewPlaceholders[key] ?? ""}
+                          onChange={e => setEditPreviewPlaceholders(prev => ({ ...prev, [key]: e.target.value }))}
+                          className="h-7 text-xs"
+                          placeholder={p.desc}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
+            {/* Body textarea */}
             <div>
-              <Label>Email Body (HTML or plain text) *</Label>
+              <Label>Email Body *</Label>
+              <p className="text-xs mb-2" style={{ color: "rgba(30,37,53,0.45)" }}>
+                {editing?.body_html
+                  ? "Edit the plain-text content and save. The branded design stays consistent, and preview/test reflect your latest saved version."
+                  : "Write your message in plain text. Use double line breaks for new paragraphs. The system handles all formatting, branding, and layout automatically."}
+              </p>
               <textarea
-                value={form.body_html}
-                onChange={e => setForm(f => ({ ...f, body_html: e.target.value }))}
-                rows={14}
-                className="w-full rounded-xl px-3 py-2.5 text-sm font-mono outline-none resize-y"
-                style={{ background: "rgba(0,0,0,0.04)", border: "1px solid rgba(30,37,53,0.12)", color: "#1e2535", lineHeight: 1.6 }}
-                placeholder="<p>Hi {{first_name}},</p>&#10;<p>Your email content here...</p>&#10;<p><a href='{{app_url}}'>Back to NOVI →</a></p>"
+                value={form.body_text}
+                onChange={e => setForm(f => ({ ...f, body_text: e.target.value }))}
+                rows={10}
+                className="w-full rounded-xl px-3 py-2.5 text-sm outline-none resize-y"
+                style={{ background: "rgba(0,0,0,0.03)", border: "1px solid rgba(30,37,53,0.12)", color: "#1e2535", lineHeight: 1.7, fontFamily: "inherit" }}
+                placeholder={"Hi {{first_name}},\n\nYour enrollment in {{course_name}} is confirmed!\n\nWe'll see you on {{course_date}} at {{course_location}}.\n\nWelcome to NOVI Society,\nThe NOVI Team"}
               />
             </div>
 
+            {/* Live preview */}
+            {form.body_text.trim() && (
+              <div className="space-y-2">
+                <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.4)" }}>Preview</p>
+                <div className="rounded-xl px-4 py-3" style={{ background: "rgba(30,37,53,0.04)", border: "1px solid rgba(30,37,53,0.08)" }}>
+                  <p className="text-xs font-bold mb-0.5" style={{ color: "rgba(30,37,53,0.4)" }}>SUBJECT</p>
+                  <p className="text-sm font-semibold" style={{ color: "#1e2535" }}>{previewSubject || "—"}</p>
+                </div>
+                <div className="rounded-xl overflow-hidden" style={{ border: "1px solid rgba(30,37,53,0.1)" }}>
+                  <div className="px-4 py-2 text-xs font-bold uppercase tracking-widest" style={{ background: "rgba(30,37,53,0.04)", color: "rgba(30,37,53,0.4)", borderBottom: "1px solid rgba(30,37,53,0.08)" }}>
+                    Email Preview
+                  </div>
+                  <div className="max-h-72 overflow-y-auto" dangerouslySetInnerHTML={{
+                    __html: editRenderedBody
+                  }} />
+                </div>
+              </div>
+            )}
+
             <div className="flex items-center gap-3">
               <Switch checked={form.is_active} onCheckedChange={v => setForm(f => ({ ...f, is_active: v }))} />
-              <Label>Active (emails will send automatically when trigger fires)</Label>
+              <Label>Active — fires automatically when trigger occurs</Label>
             </div>
 
-            <div className="flex gap-2 justify-end pt-2">
-              <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
+            <div className="flex gap-2 justify-end pt-1">
+              <Button variant="outline" onClick={() => { setDialogOpen(false); setEditing(null); }}>Cancel</Button>
               <Button
                 onClick={() => saveMutation.mutate()}
-                disabled={!form.name || !form.trigger || !form.subject || !form.body_html || saveMutation.isPending}
+                disabled={!formIsValid || saveMutation.isPending}
                 style={{ background: "#FA6F30", color: "#fff" }}
               >
                 {saveMutation.isPending ? "Saving..." : editing ? "Save Changes" : "Create Template"}
@@ -409,7 +637,7 @@ export default function AdminEmailTemplates() {
         </DialogContent>
       </Dialog>
 
-      {/* Preview Dialog */}
+      {/* ── Preview Dialog ────────────────────────────────────────────────── */}
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
         <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
@@ -422,10 +650,112 @@ export default function AdminEmailTemplates() {
                 <p className="text-sm font-semibold mt-0.5" style={{ color: "#1e2535" }}>{previewTemplate.subject}</p>
               </div>
               <div className="rounded-xl overflow-hidden" style={{ border: "1px solid rgba(30,37,53,0.1)" }}>
-                <div className="px-4 py-2.5 text-xs font-bold uppercase tracking-widest" style={{ background: "rgba(30,37,53,0.05)", color: "rgba(30,37,53,0.5)", borderBottom: "1px solid rgba(30,37,53,0.08)" }}>EMAIL BODY</div>
-                <div className="p-5" style={{ color: "#1e2535", lineHeight: 1.7 }} dangerouslySetInnerHTML={{ __html: previewTemplate.body_html }} />
+                <div className="px-4 py-2.5 text-xs font-bold uppercase tracking-widest" style={{ background: "rgba(30,37,53,0.05)", color: "rgba(30,37,53,0.5)", borderBottom: "1px solid rgba(30,37,53,0.08)" }}>Email Preview</div>
+                <div dangerouslySetInnerHTML={{
+                  __html: previewTemplate.body_html
+                    ? forceNoviLogoCenter(previewTemplate.body_html)
+                    : wrapInLayout(plainTextToHtml(previewTemplate.body_text || ""))
+                }} />
               </div>
-              <Button variant="outline" onClick={() => setPreviewOpen(false)} className="w-full">Close Preview</Button>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => setPreviewOpen(false)} className="flex-1">Close</Button>
+                <Button onClick={() => { setPreviewOpen(false); openTest(previewTemplate); }} className="flex-1 gap-2" style={{ background: "#2D6B7F", color: "#fff" }}>
+                  <FlaskConical className="w-4 h-4" /> Send Test
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Test-Send Dialog ──────────────────────────────────────────────── */}
+      <Dialog open={testOpen} onOpenChange={(v) => { if (!v) { setTestOpen(false); setTestEmail(""); } }}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle style={{ fontFamily: "'DM Serif Display', serif", fontSize: 18 }}>Send Test Email</DialogTitle>
+          </DialogHeader>
+          {testTemplate && (
+            <div className="space-y-4 pt-2">
+
+              {/* Placeholder values */}
+              <div className="rounded-xl p-3" style={{ background: "rgba(123,142,200,0.08)", border: "1px solid rgba(123,142,200,0.2)" }}>
+                <div
+                  className="flex items-center justify-between gap-2 mb-2.5"
+                  onClick={() => setTestPlaceholdersOpen(p => !p)}
+                  style={{ cursor: "pointer" }}
+                >
+                  <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "#7B8EC8" }}>Placeholder Values</p>
+                  <button type="button" className="inline-flex items-center gap-1 text-xs font-semibold" style={{ color: "#7B8EC8" }}>
+                    {testPlaceholdersOpen ? "Collapse" : "Expand"}
+                    {testPlaceholdersOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+                {testPlaceholdersOpen && (
+                  testUsedPlaceholders.length === 0 ? (
+                    <p className="text-xs" style={{ color: "rgba(30,37,53,0.5)" }}>No placeholders in this template.</p>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+                      {testUsedPlaceholders.map(p => {
+                        const key = tagToKey(p.tag);
+                        return (
+                          <div key={p.tag}>
+                            <label className="text-xs font-semibold font-mono" style={{ color: "rgba(30,37,53,0.6)" }}>{p.tag}</label>
+                            <Input value={testPlaceholders[key] ?? ""} onChange={e => setTestPlaceholders(prev => ({ ...prev, [key]: e.target.value }))} className="mt-0.5 h-8 text-xs" placeholder={p.desc} />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )
+                )}
+              </div>
+
+              {/* Subject preview */}
+              <div className="rounded-xl px-4 py-3" style={{ background: "rgba(30,37,53,0.05)", border: "1px solid rgba(30,37,53,0.1)" }}>
+                <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.5)" }}>Subject</p>
+                <p className="text-sm font-semibold mt-0.5 break-words" style={{ color: "#1e2535" }}>{testRenderedSubject || "—"}</p>
+              </div>
+
+              {/* Email preview */}
+              <div className="rounded-xl overflow-hidden" style={{ border: "1px solid rgba(30,37,53,0.1)" }}>
+                <div className="px-4 py-2.5 text-xs font-bold uppercase tracking-widest" style={{ background: "rgba(30,37,53,0.05)", color: "rgba(30,37,53,0.5)", borderBottom: "1px solid rgba(30,37,53,0.08)" }}>
+                  Email Preview
+                </div>
+                <div className="max-h-64 overflow-y-auto" dangerouslySetInnerHTML={{ __html: testRenderedBody }} />
+              </div>
+
+              <div className="flex items-center gap-3">
+                <div className="flex-1 h-px" style={{ background: "rgba(30,37,53,0.1)" }} />
+                <p className="text-xs font-semibold uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.4)" }}>Send</p>
+                <div className="flex-1 h-px" style={{ background: "rgba(30,37,53,0.1)" }} />
+              </div>
+
+              <div>
+                <Label>Send to *</Label>
+                <Input
+                  type="email"
+                  placeholder="admin@example.com"
+                  value={testEmail}
+                  onChange={e => setTestEmail(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === "Enter" && testEmail)
+                      testSendMutation.mutate({ id: testTemplate.id, to: testEmail, placeholders: testPlaceholders });
+                  }}
+                />
+                <p className="text-xs mt-1.5" style={{ color: "rgba(30,37,53,0.45)" }}>Subject is prefixed with [TEST] when sent.</p>
+              </div>
+
+              <div className="flex gap-2 justify-end pt-1">
+                <Button variant="outline" onClick={() => { setTestOpen(false); setTestEmail(""); }}>Cancel</Button>
+                <Button
+                  onClick={() => testSendMutation.mutate({ id: testTemplate.id, to: testEmail, placeholders: testPlaceholders })}
+                  disabled={!testEmail || testSendMutation.isPending}
+                  className="gap-2"
+                  style={{ background: "#2D6B7F", color: "#fff" }}
+                >
+                  <Send className="w-4 h-4" />
+                  {testSendMutation.isPending ? "Sending..." : "Send Test Email"}
+                </Button>
+              </div>
             </div>
           )}
         </DialogContent>

@@ -1,6 +1,7 @@
 import Stripe from "stripe";
 import { createClient } from "@supabase/supabase-js";
 import { pool, query } from "../db.js";
+import { resolveSupabaseUrl } from "../config/supabaseProject.js";
 import {
   canDecrementSessionDateSeat,
   decrementSessionDateSeatInArray,
@@ -13,6 +14,8 @@ import {
   sessionEntryCalendarKeys,
   toSessionDateKey
 } from "../lib/sessionDateSeats.js";
+import { sendResendEmail } from "../lib/sendResendEmail.js";
+import { sendTemplatedEmail } from "../lib/templatedEmailService.js";
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
 const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
@@ -36,11 +39,10 @@ const appBaseUrl = (() => {
   }
   return fallback;
 })();
-const resendApiKey = process.env.RESEND_API_KEY;
 const resendFromEmail = process.env.RESEND_FROM_EMAIL || "NOVI Society <support@novisociety.com>";
 const noviEmailLogoUrl = process.env.NOVI_EMAIL_LOGO_URL || `${appBaseUrl}/novi-email-logo.png`;
 
-const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseUrl = resolveSupabaseUrl();
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 const stripe = stripeSecretKey ? new Stripe(stripeSecretKey) : null;
@@ -158,6 +160,12 @@ function normalizePaidEnrollmentStatus(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+function normalizeCheckoutSource(source) {
+  const raw = String(source || "").trim().toLowerCase();
+  if (raw === "provider_dashboard") return "provider_dashboard";
+  return "landing_page";
+}
+
 export async function createCourseCheckout(payload, options = {}) {
   if (!stripe) throw new Error("STRIPE_SECRET_KEY is not configured.");
   const frontendBaseUrl = resolveFrontendBaseUrl(options?.requestOrigin);
@@ -178,8 +186,10 @@ export async function createCourseCheckout(payload, options = {}) {
     license_image_url,
     promo_code,
     terms_confirmed,
-    refund_policy_confirmed
+    refund_policy_confirmed,
+    source
   } = payload || {};
+  const checkoutSource = normalizeCheckoutSource(source);
   const normalizedCustomerEmail = String(customer_email || "").trim().toLowerCase();
   const normalizedCustomerName = String(customer_name || fullName(first_name, last_name) || "").trim();
   const courseDateNorm = normalizeCourseDateInput(course_date);
@@ -366,11 +376,18 @@ export async function createCourseCheckout(payload, options = {}) {
     );
     const preOrderId = preOrderRes.rows[0].id;
 
+    const successUrl =
+      `${frontendBaseUrl}/PreOrderConfirmation?id=${encodeURIComponent(preOrderId)}` +
+      `&session_id={CHECKOUT_SESSION_ID}&source=${encodeURIComponent(checkoutSource)}`;
+    const cancelPath = checkoutSource === "provider_dashboard"
+      ? "/ProviderEnrollments"
+      : "/NoviLanding#offerings";
+
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
       customer_email: normalizedCustomerEmail,
-      success_url: `${frontendBaseUrl}/PreOrderConfirmation?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${frontendBaseUrl}/`,
+      success_url: successUrl,
+      cancel_url: `${frontendBaseUrl}${cancelPath}`,
       line_items: [
         {
           price_data: {
@@ -393,7 +410,8 @@ export async function createCourseCheckout(payload, options = {}) {
         course_end_time: String(course_end_time || ""),
         provider_email: String(normalizedCustomerEmail),
         provider_name: String(customer_name),
-        app_source: "novi-landing",
+        app_source: checkoutSource,
+        checkout_source: checkoutSource,
         app_base_url: frontendBaseUrl
       }
     });
@@ -540,24 +558,94 @@ export async function createServicePreOrder(payload) {
   }
 }
 
-async function sendMdServiceConfirmationEmail({ to, customerName, serviceName }) {
-  if (!to) {
-    // eslint-disable-next-line no-console
-    console.warn("[checkout] md service confirmation skipped: missing recipient email");
-    return false;
+function getFirstName(value, fallback = "there") {
+  const first = String(value || "").trim().split(/\s+/)[0];
+  return first || fallback;
+}
+
+function formatCourseDate(value) {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("en-US", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric"
+  });
+}
+
+function formatSessionTime(startTime, endTime) {
+  const toDisplay = (raw) => {
+    if (typeof raw !== "string" || !/^\d{2}:\d{2}/.test(raw)) return "";
+    const [hourRaw, minuteRaw] = raw.slice(0, 5).split(":");
+    const hour = Number(hourRaw);
+    const minute = Number(minuteRaw);
+    if (!Number.isFinite(hour) || !Number.isFinite(minute)) return "";
+    const suffix = hour >= 12 ? "PM" : "AM";
+    return `${hour % 12 || 12}:${String(minute).padStart(2, "0")} ${suffix}`;
+  };
+  const start = toDisplay(startTime);
+  const end = toDisplay(endTime);
+  if (start && end) return `${start} - ${end}`;
+  return start || end || "";
+}
+
+function resolveCourseTemplateFields({ courseDate, courseData }) {
+  let courseDateStr = formatCourseDate(courseDate);
+  let courseTimeStr = "";
+  let courseLocation = "";
+  if (courseDate && Array.isArray(courseData?.course_session_dates)) {
+    const dateKey = toSessionDateKey(courseDate);
+    const selectedSession = dateKey
+      ? courseData.course_session_dates.find((session) => sessionEntryCalendarKeys(session).has(dateKey))
+      : null;
+    if (selectedSession) {
+      courseDateStr = formatCourseDate(selectedSession.date || courseDate);
+      courseTimeStr = formatSessionTime(selectedSession.start_time, selectedSession.end_time);
+      courseLocation = selectedSession.location || courseData.course_location || "";
+    }
   }
-  if (!resendApiKey) {
-    // eslint-disable-next-line no-console
-    console.warn("[checkout] md service confirmation skipped: RESEND_API_KEY is not configured");
-    return false;
+  if (!courseLocation && courseData?.course_location) {
+    courseLocation = courseData.course_location;
   }
-  const safeFirstName = String(customerName || "there").trim().split(/\s+/)[0] || "there";
+  return {
+    courseDateStr,
+    courseTimeStr,
+    courseLocation
+  };
+}
+
+async function sendCheckoutEmailWithFallbackSender({ to, subject, html, logPrefix }) {
+  const primaryFrom = resendFromEmail;
+  const fallbackFrom = String(process.env.RESEND_FALLBACK_FROM_EMAIL || "").trim();
+  try {
+    await sendResendEmail({ to, subject, html, from: primaryFrom });
+    return true;
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error(`[checkout] ${logPrefix} send failed (primary sender):`, error?.message || error);
+    if (!fallbackFrom || fallbackFrom === primaryFrom) return false;
+    try {
+      await sendResendEmail({ to, subject, html, from: fallbackFrom });
+      // eslint-disable-next-line no-console
+      console.warn(`[checkout] ${logPrefix} send succeeded with fallback sender: ${fallbackFrom}`);
+      return true;
+    } catch (fallbackError) {
+      // eslint-disable-next-line no-console
+      console.error(`[checkout] ${logPrefix} send failed (fallback sender):`, fallbackError?.message || fallbackError);
+      return false;
+    }
+  }
+}
+
+function buildMdServiceConfirmationFallbackHtml({ customerName, serviceName }) {
+  const safeFirstName = getFirstName(customerName, "there");
   const safeServiceName = serviceName || "NOVI MD Services";
   const logoMarkup = noviEmailLogoUrl
     ? `<img src="${noviEmailLogoUrl}" alt="NOVI Society" style="width:160px;height:auto" />`
     : `<div style="font-size:28px;font-weight:700;letter-spacing:0.04em;color:#ffffff">NOVI SOCIETY</div>`;
-
-  const emailHtml = `
+  return `
 <!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
@@ -621,35 +709,38 @@ async function sendMdServiceConfirmationEmail({ to, customerName, serviceName })
   </table>
 </body>
 </html>`;
+}
 
-  try {
-    const result = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${resendApiKey}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        from: resendFromEmail,
-        to: [to],
-        subject: "You're In — Welcome to NOVI MD Services",
-        html: emailHtml
-      })
-    });
-    if (!result.ok) {
-      const bodyText = await result.text().catch(() => "");
-      // eslint-disable-next-line no-console
-      console.error("[checkout] md service confirmation send failed:", result.status, bodyText);
-    } else {
-      // eslint-disable-next-line no-console
-      console.log(`[checkout] md service confirmation sent to ${to}`);
-    }
-    return result.ok;
-  } catch (error) {
-    // eslint-disable-next-line no-consolee
-    console.error("[checkout] md service confirmation request failed:", error);
+async function sendMdServiceConfirmationEmailFallback({ to, customerName, serviceName }) {
+  const html = buildMdServiceConfirmationFallbackHtml({ customerName, serviceName });
+  return sendCheckoutEmailWithFallbackSender({
+    to,
+    subject: "You're In — Welcome to NOVI MD Services",
+    html,
+    logPrefix: "md service confirmation"
+  });
+}
+
+// TODO[REMOVE_HARDCODED_EMAIL]: md_service_preorder — fallback remains temporary for template outages.
+async function sendMdServiceConfirmationEmail({ to, customerName, serviceName }) {
+  if (!to) {
+    // eslint-disable-next-line no-console
+    console.warn("[checkout] md service confirmation skipped: missing recipient email");
     return false;
   }
+  const placeholders = {
+    first_name: getFirstName(customerName, "there"),
+    service_name: serviceName || "NOVI MD Services",
+    logo_url: noviEmailLogoUrl
+  };
+  return sendTemplatedEmail({
+    trigger: "md_service_preorder",
+    to,
+    placeholders,
+    allowFallback: false,
+    logLabel: "checkout",
+    fallbackSend: async () => sendMdServiceConfirmationEmailFallback({ to, customerName, serviceName })
+  });
 }
 
 export async function validateCoursePromoCode({ courseId, promoCode }) {
@@ -943,76 +1034,25 @@ export async function getPreOrder({ id, sessionId }) {
   }
 }
 
-async function sendConfirmationEmail({ to, customerName, courseTitle, courseData, courseDate }) {
-  if (!to) {
-    // eslint-disable-next-line no-console
-    console.warn("[checkout] course confirmation skipped: missing recipient email");
-    return false;
-  }
-  if (!resendApiKey) {
-    // eslint-disable-next-line no-console
-    console.warn("[checkout] course confirmation skipped: RESEND_API_KEY is not configured");
-    return false;
-  }
+function buildCourseConfirmationFallbackHtml({
+  customerName,
+  courseTitle,
+  courseDateStr,
+  courseTimeStr,
+  courseLocation,
+}) {
   const safeFirstName = customerName || "there";
   const safeCourseName = courseTitle || "your course";
-  const formatCourseDate = (value) => {
-    if (!value) return "";
-    const d = new Date(value);
-    if (Number.isNaN(d.getTime())) return "";
-    return d.toLocaleDateString("en-US", {
-      weekday: "long",
-      year: "numeric",
-      month: "long",
-      day: "numeric"
-    });
-  };
-  const formatSessionTime = (startTime, endTime) => {
-    const toDisplay = (raw) => {
-      if (typeof raw !== "string" || !/^\d{2}:\d{2}/.test(raw)) return "";
-      const [hourRaw, minuteRaw] = raw.slice(0, 5).split(":");
-      const hour = Number(hourRaw);
-      const minute = Number(minuteRaw);
-      if (!Number.isFinite(hour) || !Number.isFinite(minute)) return "";
-      const suffix = hour >= 12 ? "PM" : "AM";
-      return `${hour % 12 || 12}:${String(minute).padStart(2, "0")} ${suffix}`;
-    };
-    const start = toDisplay(startTime);
-    const end = toDisplay(endTime);
-    if (start && end) return `${start} - ${end}`;
-    return start || end || "";
-  };
-  let courseDateStr = formatCourseDate(courseDate);
-  let courseTimeStr = "";
-  let courseLocation = "";
-
-  if (courseDate && courseData?.course_session_dates && Array.isArray(courseData.course_session_dates)) {
-    const dateKey = toSessionDateKey(courseDate);
-    const selectedSession = dateKey
-      ? courseData.course_session_dates.find((session) => sessionEntryCalendarKeys(session).has(dateKey))
-      : null;
-    if (selectedSession) {
-      courseDateStr = formatCourseDate(selectedSession.date || courseDate);
-      courseTimeStr = formatSessionTime(selectedSession.start_time, selectedSession.end_time);
-      courseLocation = selectedSession.location || courseData.course_location || "";
-    }
-  }
-  if (!courseLocation && courseData?.course_location) {
-    courseLocation = courseData.course_location;
-  }
-
   const courseDetailsRows = [
     `<tr><td style="padding:6px 0;color:#6b7280;font-size:14px;width:100px"><strong>Course</strong></td><td style="padding:6px 0;font-size:14px;color:#111827">${safeCourseName}</td></tr>`,
     courseDateStr ? `<tr><td style="padding:6px 0;color:#6b7280;font-size:14px"><strong>Date</strong></td><td style="padding:6px 0;font-size:14px;color:#111827">${courseDateStr}</td></tr>` : "",
     courseTimeStr ? `<tr><td style="padding:6px 0;color:#6b7280;font-size:14px"><strong>Time</strong></td><td style="padding:6px 0;font-size:14px;color:#111827">${courseTimeStr}</td></tr>` : "",
     courseLocation ? `<tr><td style="padding:6px 0;color:#6b7280;font-size:14px"><strong>Location</strong></td><td style="padding:6px 0;font-size:14px;color:#111827">${courseLocation}</td></tr>` : ""
   ].filter(Boolean).join("");
-
   const logoMarkup = noviEmailLogoUrl
     ? `<img src="${noviEmailLogoUrl}" alt="NOVI Society" style="width:160px;height:auto" />`
     : `<div style="font-size:28px;font-weight:700;letter-spacing:0.04em;color:#ffffff">NOVI SOCIETY</div>`;
-
-  const html = `
+  return `
 <!DOCTYPE html>
 <html>
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
@@ -1027,34 +1067,28 @@ async function sendConfirmationEmail({ to, customerName, courseTitle, courseData
           <p style="margin:0 0 24px;font-size:16px;color:#374151;line-height:1.6">Hi ${safeFirstName},</p>
           <p style="margin:0 0 24px;font-size:16px;color:#374151;line-height:1.6">Welcome to NOVI Society - we're excited to have you with us.</p>
           <p style="margin:0 0 24px;font-size:16px;color:#374151;line-height:1.6">Your enrollment for <strong>${safeCourseName}</strong> has been successfully confirmed.</p>
-
           <div style="background:#f9f8f6;border-radius:12px;padding:24px;margin-bottom:32px;border:1px solid rgba(0,0,0,0.07)">
             <p style="margin:0 0 12px;font-size:13px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#2D6B7F">Course Details</p>
             <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
               ${courseDetailsRows}
             </table>
           </div>
-
           <p style="margin:0 0 12px;font-size:15px;color:#374151;line-height:1.6">This immersive training is designed to take you from foundational knowledge to confident, hands-on application. You'll receive in-depth education on anatomy, product selection, injection techniques, and patient safety - along with live model experience to ensure you leave fully prepared.</p>
           <p style="margin:0 0 24px;font-size:15px;color:#374151;line-height:1.6">As part of NOVI, this course is more than just training. It's your entry point into a fully supported system that includes:</p>
-
           <ul style="margin:0 0 32px;padding-left:20px;color:#374151;font-size:15px;line-height:1.9">
             <li>Ongoing mentorship and guidance</li>
             <li>Medical director oversight</li>
             <li>Compliance and scope-of-practice support</li>
             <li>Tools to help you launch and grow your aesthetic practice</li>
           </ul>
-
           <p style="margin:0 0 12px;font-size:15px;font-weight:600;color:#111827">What to Expect Next</p>
           <ul style="margin:0 0 32px;padding-left:20px;color:#374151;font-size:15px;line-height:1.9">
             <li>Additional course details and preparation instructions will be sent prior to your training date</li>
             <li>Any required forms or documentation will be provided for completion</li>
             <li>Our team will be available for any questions leading up to your course</li>
           </ul>
-
           <p style="margin:0 0 16px;font-size:15px;color:#374151;line-height:1.6">To further access your course details set up your account, follow the steps in "Set up your NOVI Society account" email or if you already have an account login to the account.</p>
           <p style="margin:0 0 32px;font-size:15px;color:#374151;line-height:1.6">If you have any questions in the meantime, feel free to reach out - we're here to support you every step of the way.</p>
-
           <div style="border-top:1px solid #e5e7eb;padding-top:28px;margin-top:8px">
             <p style="margin:0 0 4px;font-size:15px;color:#374151">We look forward to seeing you soon.</p>
             <p style="margin:0 0 4px;font-family:Georgia,serif;font-size:17px;color:#1e2535;font-style:italic">Welcome to NOVI.</p>
@@ -1071,66 +1105,54 @@ async function sendConfirmationEmail({ to, customerName, courseTitle, courseData
   </table>
 </body>
 </html>`;
-
-  try {
-    const primaryFrom = resendFromEmail;
-    const fallbackFrom = String(process.env.RESEND_FALLBACK_FROM_EMAIL || "").trim();
-    const sendWithFrom = async (fromAddress) => fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${resendApiKey}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        from: fromAddress,
-        to: [to],
-        subject: "Your NOVI course enrollment is confirmed",
-        html
-      })
-    });
-    let res = await sendWithFrom(primaryFrom);
-    if (!res.ok) {
-      const bodyText = await res.text().catch(() => "");
-      // eslint-disable-next-line no-console
-      console.error("[checkout] resend send failed (primary sender):", res.status, bodyText);
-      if (fallbackFrom && fallbackFrom !== primaryFrom) {
-        res = await sendWithFrom(fallbackFrom);
-        if (!res.ok) {
-          const fallbackBody = await res.text().catch(() => "");
-          // eslint-disable-next-line no-console
-          console.error("[checkout] resend send failed (fallback sender):", res.status, fallbackBody);
-        } else {
-          // eslint-disable-next-line no-console
-          console.warn(`[checkout] resend send succeeded with fallback sender: ${fallbackFrom}`);
-        }
-      }
-    }
-    return res.ok;
-  } catch (error) {
-    // eslint-disable-next-line no-console
-    console.error("[checkout] resend request failed:", error);
-    return false;
-  }
 }
 
-async function sendNewUserInviteEmail({ to, firstName, signupLink }) {
+async function sendConfirmationEmailFallback({ to, customerName, courseTitle, courseData, courseDate }) {
+  const { courseDateStr, courseTimeStr, courseLocation } = resolveCourseTemplateFields({ courseDate, courseData });
+  const html = buildCourseConfirmationFallbackHtml({
+    customerName,
+    courseTitle,
+    courseDateStr,
+    courseTimeStr,
+    courseLocation
+  });
+  return sendCheckoutEmailWithFallbackSender({
+    to,
+    subject: "Your NOVI course enrollment is confirmed",
+    html,
+    logPrefix: "course confirmation"
+  });
+}
+
+// TODO[REMOVE_HARDCODED_EMAIL]: enrollment_paid — fallback remains temporary for template outages.
+async function sendConfirmationEmail({ to, customerName, courseTitle, courseData, courseDate }) {
   if (!to) {
     // eslint-disable-next-line no-console
-    console.warn("[checkout] account setup email skipped: missing recipient email");
+    console.warn("[checkout] course confirmation skipped: missing recipient email");
     return false;
   }
-  if (!signupLink) {
-    // eslint-disable-next-line no-console
-    console.warn("[checkout] account setup email skipped: missing signup link");
-    return false;
-  }
-  if (!resendApiKey) {
-    // eslint-disable-next-line no-console
-    console.warn("[checkout] account setup email skipped: RESEND_API_KEY is not configured");
-    return false;
-  }
+  const { courseDateStr, courseTimeStr, courseLocation } = resolveCourseTemplateFields({ courseDate, courseData });
+  const placeholders = {
+    first_name: customerName || "there",
+    course_name: courseTitle || "your course",
+    course_date: courseDateStr,
+    course_time: courseTimeStr,
+    course_location: courseLocation,
+    logo_url: noviEmailLogoUrl
+  };
+  return sendTemplatedEmail({
+    trigger: "enrollment_paid",
+    to,
+    placeholders,
+    allowFallback: false,
+    logLabel: "checkout",
+    fallbackSend: async () => sendConfirmationEmailFallback({ to, customerName, courseTitle, courseData, courseDate })
+  });
+}
+
+function buildNewUserInviteFallbackHtml({ firstName, signupLink }) {
   const greetingName = firstName || "there";
-  const html = `
+  return `
 <!DOCTYPE html>
 <html>
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
@@ -1155,45 +1177,42 @@ async function sendNewUserInviteEmail({ to, firstName, signupLink }) {
   </table>
 </body>
 </html>`;
-  try {
-    const primaryFrom = resendFromEmail;
-    const fallbackFrom = String(process.env.RESEND_FALLBACK_FROM_EMAIL || "").trim();
-    const sendWithFrom = async (fromAddress) => fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${resendApiKey}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        from: fromAddress,
-        to: [to],
-        subject: "Set up your NOVI Society account",
-        html
-      })
-    });
-    let res = await sendWithFrom(primaryFrom);
-    if (!res.ok) {
-      const bodyText = await res.text().catch(() => "");
-      // eslint-disable-next-line no-console
-      console.error("[checkout] invite resend failed (primary sender):", res.status, bodyText);
-      if (fallbackFrom && fallbackFrom !== primaryFrom) {
-        res = await sendWithFrom(fallbackFrom);
-        if (!res.ok) {
-          const fallbackBody = await res.text().catch(() => "");
-          // eslint-disable-next-line no-console
-          console.error("[checkout] invite resend failed (fallback sender):", res.status, fallbackBody);
-        } else {
-          // eslint-disable-next-line no-console
-          console.warn(`[checkout] invite resend succeeded with fallback sender: ${fallbackFrom}`);
-        }
-      }
-    }
-    return res.ok;
-  } catch (error) {
+}
+
+async function sendNewUserInviteEmailFallback({ to, firstName, signupLink }) {
+  const html = buildNewUserInviteFallbackHtml({ firstName, signupLink });
+  return sendCheckoutEmailWithFallbackSender({
+    to,
+    subject: "Set up your NOVI Society account",
+    html,
+    logPrefix: "account setup"
+  });
+}
+
+// TODO[REMOVE_HARDCODED_EMAIL]: new_user_invite — fallback remains temporary for template outages.
+async function sendNewUserInviteEmail({ to, firstName, signupLink }) {
+  if (!to) {
     // eslint-disable-next-line no-console
-    console.error("[checkout] invite resend request failed:", error);
+    console.warn("[checkout] account setup email skipped: missing recipient email");
     return false;
   }
+  if (!signupLink) {
+    // eslint-disable-next-line no-console
+    console.warn("[checkout] account setup email skipped: missing signup link");
+    return false;
+  }
+  return sendTemplatedEmail({
+    trigger: "new_user_invite",
+    to,
+    placeholders: {
+      first_name: firstName || "there",
+      signup_link: signupLink,
+      logo_url: noviEmailLogoUrl
+    },
+    allowFallback: false,
+    logLabel: "checkout",
+    fallbackSend: async () => sendNewUserInviteEmailFallback({ to, firstName, signupLink })
+  });
 }
 
 async function upsertProviderUserRow(client, {

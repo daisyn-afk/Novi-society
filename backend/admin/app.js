@@ -29,6 +29,7 @@ const { licensesRouter } = await import("./licenses/routes.js");
 const { certificationsRouter } = await import("./certifications/routes.js");
 const { classSessionsRouter } = await import("./class-sessions/routes.js");
 const { functionsRouter } = await import("./functions/routes.js");
+const { emailTemplatesRouter } = await import("./email-templates/routes.js");
 
 export function createAdminApp() {
   const app = express();
@@ -57,6 +58,7 @@ export function createAdminApp() {
   app.use("/admin/certifications", certificationsRouter);
   app.use("/admin/class-sessions", classSessionsRouter);
   app.use("/functions", functionsRouter);
+  app.use("/admin/email-templates", emailTemplatesRouter);
 
   app.use((error, _req, res, _next) => {
     const status = error.statusCode || 500;

@@ -23,16 +23,19 @@ VITE_BASE44_APP_BASE_URL=your_backend_url
 VITE_BASE44_FUNCTIONS_VERSION=prod
 VITE_APP_API_PROVIDER=base44
 VITE_APP_API_BASE_URL=http://localhost:8787
-
-e.g.
-VITE_BASE44_APP_ID=cbef744a8545c389ef439ea6
-VITE_BASE44_APP_BASE_URL=https://my-to-do-list-81bfaad7.base44.app
+NEXT_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
+SUPABASE_URL=https://your-project-ref.supabase.co
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your_supabase_publishable_key
+SUPABASE_PUBLISHABLE_KEY=your_supabase_publishable_key
+SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
+SUPABASE_DB_PASSWORD=your_supabase_db_password
 ```
 
 Run the app: `npm run dev`
 
 When `VITE_APP_API_PROVIDER=base44`, the app runs against Base44.
 When `VITE_APP_API_PROVIDER=lovable`, it uses the Lovable migration provider.
+All environment variables above are required — copy `.env.example` to `.env` and fill in your values.
 
 **Publish your changes**
 

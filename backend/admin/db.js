@@ -1,4 +1,5 @@
 import pg from "pg";
+import { resolveSupabaseUrl } from "./config/supabaseProject.js";
 
 const { Pool } = pg;
 function withLibpqCompatIfNeeded(rawConnectionString) {
@@ -22,7 +23,7 @@ function withLibpqCompatIfNeeded(rawConnectionString) {
 }
 
 function buildSupabaseDbUrlFromEnv() {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
+  const supabaseUrl = resolveSupabaseUrl();
   const dbPassword = process.env.SUPABASE_DB_PASSWORD;
   const dbUser = process.env.SUPABASE_DB_USER || "postgres";
   const dbName = process.env.SUPABASE_DB_NAME || "postgres";
