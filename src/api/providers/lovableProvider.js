@@ -279,8 +279,19 @@ export function createLovableProviderClient() {
             const providerEmail = filters?.provider_email ? String(filters.provider_email).toLowerCase() : "";
             const status = filters?.status ? String(filters.status).toLowerCase() : "";
             return (all || []).filter((row) => {
-              if (providerId && String(row?.provider_id || "") !== providerId) return false;
-              if (providerEmail && String(row?.provider_email || "").toLowerCase() !== providerEmail) return false;
+              if (providerId || providerEmail) {
+                const rowProviderId = String(row?.provider_id || "");
+                const rowProviderEmail = String(row?.provider_email || "").toLowerCase();
+                const idMatch = providerId && rowProviderId === providerId;
+                const emailMatch = providerEmail && rowProviderEmail === providerEmail;
+                if (providerId && providerEmail) {
+                  if (!idMatch && !emailMatch) return false;
+                } else if (providerId && !idMatch) {
+                  return false;
+                } else if (providerEmail && !emailMatch) {
+                  return false;
+                }
+              }
               if (status && String(row?.status || "").toLowerCase() !== status) return false;
               return true;
             });
@@ -389,6 +400,34 @@ export function createLovableProviderClient() {
           get: createNotImplementedMethod("entities.Enrollment.get"),
           create: createNotImplementedMethod("entities.Enrollment.create"),
           delete: createNotImplementedMethod("entities.Enrollment.delete")
+        };
+      }
+      if (name === "Notification" || name === "Notifications" || name === "notification" || name === "notifications") {
+        return {
+          list: (_sort = "", limit = 30) =>
+            authRequest(`/admin/notifications?limit=${encodeURIComponent(String(limit || 30))}`, { method: "GET" }),
+          filter: (filters = {}, _sort = "", limit = 30) => {
+            const params = new URLSearchParams();
+            if (Object.hasOwn(filters, "user_id") && filters.user_id) {
+              params.set("user_id", String(filters.user_id));
+            }
+            if (Object.hasOwn(filters, "user_email") && filters.user_email) {
+              params.set("user_email", String(filters.user_email));
+            }
+            params.set("limit", String(limit || 30));
+            const qs = params.toString();
+            return authRequest(`/admin/notifications${qs ? `?${qs}` : ""}`, { method: "GET" });
+          },
+          get: (id) => authRequest(`/admin/notifications/${encodeURIComponent(id)}`, { method: "GET" }),
+          create: (payload) => authRequest("/admin/notifications", {
+            method: "POST",
+            body: JSON.stringify(payload || {})
+          }),
+          update: (id, payload) => authRequest(`/admin/notifications/${encodeURIComponent(id)}`, {
+            method: "PATCH",
+            body: JSON.stringify(payload || {})
+          }),
+          delete: createNotImplementedMethod(`entities.${name}.delete`)
         };
       }
       return {
