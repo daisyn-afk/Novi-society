@@ -211,13 +211,22 @@ export default function AdminEmailTemplates() {
   const saveMutation = useMutation({
     mutationFn: () => {
       if (!editing) return emailTemplatesApi.create(form);
-      const bodyChanged = String(form.body_text || "") !== String(editOriginalBodyText || "");
       return emailTemplatesApi.update(editing.id, {
         ...form,
-        clear_body_html: bodyChanged,
+        clear_body_html: false,
+        original_body_text: editOriginalBodyText,
       });
     },
-    onSuccess: () => {
+    onSuccess: (saved) => {
+      // Update the cache immediately so any dialog that opens right after save
+      // already sees the new body_html — no waiting for a background refetch.
+      if (saved) {
+        qc.setQueryData(["email-templates"], (old) =>
+          Array.isArray(old)
+            ? old.map(t => t.id === saved.id ? saved : t)
+            : old
+        );
+      }
       qc.invalidateQueries({ queryKey: ["email-templates"] });
       setDialogOpen(false);
       setEditing(null);
@@ -296,11 +305,12 @@ export default function AdminEmailTemplates() {
   const triggerMeta = (trigger) => TRIGGERS.find(t => t.value === trigger);
 
   // ── Computed ──────────────────────────────────────────────────────────────
-  const bodyTextChanged = String(form.body_text || "") !== String(editOriginalBodyText || "");
   const previewBodyHtml = plainTextToHtml(applyPlaceholders(form.body_text, editPreviewPlaceholders));
   const previewSubject = applyPlaceholders(form.subject, editPreviewPlaceholders);
   const formIsValid = form.name && form.trigger && form.subject && form.body_text.trim();
-  const editRenderedBody = editing?.body_html && !bodyTextChanged
+  // Keep preview stable while editing: show the saved rich HTML until the admin saves.
+  // After save, body_html is regenerated from body_text and this preview reflects it.
+  const editRenderedBody = editing?.body_html
     ? forceNoviLogoCenter(applyPlaceholders(editing.body_html, editPreviewPlaceholders))
     : wrapInLayout(previewBodyHtml);
 
@@ -575,7 +585,9 @@ export default function AdminEmailTemplates() {
             <div>
               <Label>Email Body *</Label>
               <p className="text-xs mb-2" style={{ color: "rgba(30,37,53,0.45)" }}>
-                Write your message in plain text. Use double line breaks for new paragraphs. The system handles all formatting, branding, and layout automatically.
+                {editing?.body_html
+                  ? "Edit the plain-text content and save. The branded design stays consistent, and preview/test reflect your latest saved version."
+                  : "Write your message in plain text. Use double line breaks for new paragraphs. The system handles all formatting, branding, and layout automatically."}
               </p>
               <textarea
                 value={form.body_text}

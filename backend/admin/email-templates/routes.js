@@ -8,6 +8,7 @@ import {
 } from "./repository.js";
 import {
   invalidateTemplateCache,
+  plainTextToHtml,
   renderTemplateRow,
   wrapEmailBody,
 } from "../lib/templatedEmailService.js";
@@ -34,6 +35,89 @@ function validateTemplateInput(payload, { isUpdate = false } = {}) {
     err.statusCode = 400;
     throw err;
   }
+}
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function toStyledParagraphHtml(paragraphText) {
+  return `<p style="margin:0 0 16px;font-size:15px;line-height:1.6;color:#374151;">${escapeHtml(paragraphText).replace(/\n/g, "<br>")}</p>`;
+}
+
+function splitParagraphs(text) {
+  return String(text || "")
+    .split(/\n\n+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function replaceFirst(source, target, replacement) {
+  const idx = source.indexOf(target);
+  if (idx === -1) return source;
+  return `${source.slice(0, idx)}${replacement}${source.slice(idx + target.length)}`;
+}
+
+function syncRichHtmlWithBodyText(existingBodyHtml, oldBodyText, newBodyText) {
+  let updated = String(existingBodyHtml || "");
+  if (!updated) return updated;
+
+  const oldParagraphs = splitParagraphs(oldBodyText);
+  const newParagraphs = splitParagraphs(newBodyText);
+  if (oldParagraphs.length === 0 || newParagraphs.length === 0) return updated;
+
+  const pairCount = Math.min(oldParagraphs.length, newParagraphs.length);
+  for (let i = 0; i < pairCount; i += 1) {
+    const from = oldParagraphs[i];
+    const to = newParagraphs[i];
+    if (!from || from === to) continue;
+
+    const escapedFrom = escapeHtml(from).replace(/\n/g, "<br>");
+    const escapedTo = escapeHtml(to).replace(/\n/g, "<br>");
+    const next = replaceFirst(updated, escapedFrom, escapedTo);
+    if (next !== updated) {
+      updated = next;
+      continue;
+    }
+
+    // Some seeded rows contain unescaped apostrophes/quotes; fallback to raw text replacement.
+    updated = replaceFirst(updated, from, to);
+  }
+
+  return updated;
+}
+
+function withSyncedBodyHtml(payload, existing) {
+  const next = { ...(payload || {}) };
+  if (next.clear_body_html) return next;
+  const incomingBodyText = String(next.body_text || "").trim();
+  // Prefer editor-provided snapshot (derived from rich HTML when body_text is empty).
+  // This gives us a reliable baseline for text replacement while preserving structure.
+  const existingBodyText = String(next.original_body_text || existing?.body_text || "").trim();
+  const hasExistingRichHtml = Boolean(String(existing?.body_html || "").trim());
+  const bodyChanged = incomingBodyText !== existingBodyText;
+  if (!incomingBodyText || !bodyChanged) return next;
+
+  if (hasExistingRichHtml) {
+    next.new_body_html = syncRichHtmlWithBodyText(
+      existing.body_html,
+      existingBodyText,
+      incomingBodyText
+    );
+    return next;
+  }
+
+  // Plain-text-only templates still get wrapped in the branded NOVI layout.
+  next.new_body_html = wrapEmailBody({
+    templateName: String(next.name || existing?.name || ""),
+    bodyHtml: plainTextToHtml(incomingBodyText),
+  });
+  return next;
 }
 
 export const emailTemplatesRouter = Router();
@@ -71,7 +155,9 @@ emailTemplatesRouter.put("/:id", async (req, res, next) => {
   try {
     validateTemplateInput(req.body || {}, { isUpdate: true });
     const existing = await getEmailTemplate(req.params.id);
-    const updated = await updateEmailTemplate(req.params.id, req.body || {});
+    if (!existing) return res.status(404).json({ error: "Template not found." });
+    const payload = withSyncedBodyHtml(req.body || {}, existing);
+    const updated = await updateEmailTemplate(req.params.id, payload);
     if (!updated) return res.status(404).json({ error: "Template not found." });
     if (existing?.trigger && existing.trigger !== updated.trigger) {
       invalidateTemplateCache(existing.trigger);
@@ -87,7 +173,7 @@ emailTemplatesRouter.patch("/:id", async (req, res, next) => {
   try {
     const existing = await getEmailTemplate(req.params.id);
     if (!existing) return res.status(404).json({ error: "Template not found." });
-    const merged = { ...existing, ...req.body };
+    const merged = withSyncedBodyHtml({ ...existing, ...req.body }, existing);
     const updated = await updateEmailTemplate(req.params.id, merged);
     if (existing?.trigger && existing.trigger !== updated?.trigger) {
       invalidateTemplateCache(existing.trigger);

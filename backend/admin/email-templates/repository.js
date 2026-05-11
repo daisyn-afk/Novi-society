@@ -74,7 +74,11 @@ export async function createEmailTemplate(payload) {
 
 export async function updateEmailTemplate(id, payload) {
   const d = normalizePayload(payload);
+  // If the caller supplies an explicit new body_html (admin edited body_text), use it.
+  // If clear_body_html is true, set to null (plain-text fallback mode).
+  // Otherwise keep the existing body_html untouched.
   const clearBodyHtml = Boolean(payload?.clear_body_html);
+  const newBodyHtml = (payload?.new_body_html && String(payload.new_body_html).trim()) || null;
   const { rows } = await query(
     `update public.email_templates
      set name               = $2,
@@ -82,12 +86,16 @@ export async function updateEmailTemplate(id, payload) {
          recipient_type     = $4,
          subject            = $5,
          body_text          = $6,
-         body_html          = case when $9 then null else body_html end,
+         body_html          = case
+                                when $9::boolean then null
+                                when $10::text is not null then $10::text
+                                else body_html
+                              end,
          is_active          = $7,
          send_delay_minutes = $8
      where id = $1
      returning ${SELECT_COLUMNS}`,
-    [id, d.name, d.trigger, d.recipient_type, d.subject, d.body_text, d.is_active, d.send_delay_minutes, clearBodyHtml]
+    [id, d.name, d.trigger, d.recipient_type, d.subject, d.body_text, d.is_active, d.send_delay_minutes, clearBodyHtml, newBodyHtml]
   );
   return rows[0] || null;
 }
