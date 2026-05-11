@@ -10,12 +10,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Switch } from "@/components/ui/switch";
 import {
   Mail, Plus, Edit2, Trash2, CheckCircle, Send,
-  BookOpen, Award, Shield, Calendar, Eye, FlaskConical, ChevronDown, ChevronUp,
+  BookOpen, Award, Shield, Calendar, Eye, FlaskConical,
+  ChevronDown, ChevronUp,
 } from "lucide-react";
 import { format } from "date-fns";
 
 const TRIGGERS = [
-  // ── Active — hardcoded emails that actually send today ──────────────────
   { value: "enrollment_paid", label: "Course Payment Confirmed", icon: BookOpen, color: "#C8E63C", desc: "Fires when enrollment payment is completed via Stripe", active: true },
   { value: "new_user_invite", label: "New Account Setup Invite", icon: Mail, color: "#2D6B7F", desc: "Fires when a new user account is created after payment", active: true },
   { value: "md_service_preorder", label: "MD Service Pre-Order Welcome", icon: Shield, color: "#FA6F30", desc: "Fires when a provider secures a spot for MD services", active: true },
@@ -55,22 +55,23 @@ const PLACEHOLDERS = [
 ];
 
 const DEFAULT_PLACEHOLDER_VALUES = {
-  first_name: "Test",
-  full_name: "Test User",
-  email: "test@example.com",
+  first_name: "Sarah",
+  full_name: "Sarah Johnson",
+  email: "sarah@example.com",
   app_url: "https://app.novisociety.com",
-  course_name: "Sample Course",
+  course_name: "Botox & Dermal Filler Fundamentals",
   course_date: "Saturday, June 14, 2026",
-  course_time: "9:00 AM - 5:00 PM",
+  course_time: "9:00 AM – 5:00 PM",
   course_location: "McKinney, TX",
   time_slot: "10:00 AM",
   treatment_type: "Botox",
   gfe_url: "https://app.novisociety.com/gfe",
   signup_link: "https://app.novisociety.com/setup",
-  service_name: "Sample Service",
+  service_name: "MD Board Coverage",
   rejection_reason: "The uploaded license image was unclear. Please resubmit.",
-  provider_name: "Test Provider",
-  patient_name: "Test Patient",
+  provider_name: "Sarah Johnson",
+  patient_name: "Alex Martinez",
+  logo_url: "https://hjelcmcfqogoflxkhhpj.supabase.co/storage/v1/object/public/course-covers/admin-courses/1776410859667-3dba1a15-020c-4132-8b6b-4b0b15e72fb8.png",
 };
 
 // TODO[REMOVE_OUTDATED_SEED_TEMPLATES]: these 3 stubs were the original starter templates seeded via the UI.
@@ -78,63 +79,7 @@ const DEFAULT_PLACEHOLDER_VALUES = {
 // Real templates are now seeded via supabase/migrations/20260509010000_seed_real_email_templates.sql.
 // Remove this entire commented block when confirmed no longer needed.
 /*
-const DEFAULT_TEMPLATES = [
-  {
-    name: "Course Enrollment Confirmation",
-    trigger: "enrollment_created",
-    recipient_type: "provider",
-    subject: "You're enrolled in {{course_name}} — Here's what to do next",
-    body_html: `<p>Hi {{first_name}},</p>
-<p>You're officially enrolled in <strong>{{course_name}}</strong> on the NOVI Society platform! 🎉</p>
-<h3>Your Next Steps:</h3>
-<ol>
-  <li><strong>Complete payment</strong> — if you haven't already, finalize your enrollment to secure your spot.</li>
-  <li><strong>Review pre-course materials</strong> — log in to access study guides and prep resources.</li>
-  <li><strong>Show up ready</strong> — your instructor will give you a class code on the day of class to unlock your certification.</li>
-</ol>
-<p><a href="{{app_url}}/ProviderEnrollments" style="background:#7B8EC8;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block;margin:16px 0;">View My Enrollments →</a></p>
-<p>Questions? Just reply to this email or reach out through the NOVI platform.</p>
-<p>Welcome to NOVI Society,<br/>The NOVI Team</p>`,
-    is_active: true,
-  },
-  {
-    name: "MD Membership Activation",
-    trigger: "md_subscription_active",
-    recipient_type: "provider",
-    subject: "Your MD Board Coverage is Active for {{service_name}} ✓",
-    body_html: `<p>Hi {{first_name}},</p>
-<p>Great news — your <strong>Medical Director Board Coverage for {{service_name}}</strong> is now active!</p>
-<p>A NOVI Board Medical Director has been assigned to your account. They will sign your protocols and provide clinical oversight as required by your state.</p>
-<h3>You Can Now:</h3>
-<ul>
-  <li>Offer <strong>{{service_name}}</strong> to patients through the NOVI platform</li>
-  <li>List your profile on the Patient Marketplace</li>
-  <li>Accept appointment requests from patients</li>
-  <li>Submit treatment records for MD review</li>
-</ul>
-<p><a href="{{app_url}}/ProviderCredentialsCoverage" style="background:#C8E63C;color:#1e2535;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block;margin:16px 0;">View My Coverage →</a></p>
-<p>You're covered,<br/>The NOVI Team</p>`,
-    is_active: true,
-  },
-  {
-    name: "License Verified — Next Steps",
-    trigger: "license_verified",
-    recipient_type: "provider",
-    subject: "Your license has been verified — unlock MD coverage now",
-    body_html: `<p>Hi {{first_name}},</p>
-<p>Your professional license has been <strong>verified</strong> by the NOVI admin team. ✓</p>
-<p>You're now eligible to apply for MD Board Coverage, which lets you legally offer aesthetic services under NOVI's Board of Medical Directors.</p>
-<h3>Your Next Steps:</h3>
-<ol>
-  <li><strong>Enroll in a NOVI course</strong> or submit an external certification</li>
-  <li><strong>Apply for MD Coverage</strong> for each service you want to offer</li>
-  <li><strong>Get matched</strong> with a Board MD — NOVI handles the assignment</li>
-</ol>
-<p><a href="{{app_url}}/ProviderCredentialsCoverage" style="background:#FA6F30;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block;margin:16px 0;">Apply for Coverage →</a></p>
-<p>You're one step closer,<br/>The NOVI Team</p>`,
-    is_active: true,
-  },
-];
+const DEFAULT_TEMPLATES = [ ... ];
 */
 
 const CARD_STYLE = {
@@ -147,34 +92,109 @@ const CARD_STYLE = {
 
 const EMPTY_FORM = {
   name: "", trigger: "", recipient_type: "provider",
-  subject: "", body_html: "", is_active: true, send_delay_minutes: 0
+  subject: "", body_text: "",
+  is_active: true, send_delay_minutes: 0,
 };
 
 const tagToKey = (tag) => tag.replace("{{", "").replace("}}", "");
 
-function applyPlaceholderValues(content, values) {
-  return String(content || "").replace(/\{\{(\w+)\}\}/g, (full, key) => {
-    if (!Object.prototype.hasOwnProperty.call(values, key)) return full;
-    return values[key] ?? "";
-  });
+function applyPlaceholders(content, values) {
+  return String(content || "").replace(/\{\{(\w+)\}\}/g, (full, key) =>
+    Object.prototype.hasOwnProperty.call(values, key) ? String(values[key] ?? "") : full
+  );
+}
+
+// Converts plain text with line breaks to styled HTML paragraphs — mirrors backend.
+function plainTextToHtml(text) {
+  return String(text || "")
+    .split(/\n\n+/)
+    .map(para => {
+      const trimmed = para.trim();
+      if (!trimmed) return "";
+      return `<p style="margin:0 0 16px;font-size:15px;line-height:1.6;color:#374151;">${trimmed.replace(/\n/g, "<br>")}</p>`;
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function htmlToPlainText(html) {
+  return String(html || "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n\n")
+    .replace(/<\/div>/gi, "\n")
+    .replace(/<li[^>]*>/gi, "\n• ")
+    .replace(/<\/li>/gi, "")
+    .replace(/<\/tr>/gi, "\n")
+    .replace(/<\/td>/gi, " ")
+    .replace(/<\/th>/gi, " ")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, " ")
+    .replace(/[ \t]+/g, " ")
+    .replace(/^ /gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function forceNoviLogoCenter(html) {
+  return String(html || "").replace(
+    /(<img\b[^>]*alt=["']NOVI Society["'][^>]*style=["'])([^"']*)(["'][^>]*>)/gi,
+    (_match, start, styles, end) => {
+      let next = String(styles || "");
+      if (!/display\s*:\s*block/i.test(next)) next += `${next.trim().endsWith(";") ? "" : ";"}display:block;`;
+      if (!/margin\s*:\s*0\s*auto/i.test(next)) next += "margin:0 auto;";
+      return `${start}${next}${end}`;
+    }
+  );
+}
+
+const NOVI_LOGO_URL = "https://hjelcmcfqogoflxkhhpj.supabase.co/storage/v1/object/public/course-covers/admin-courses/1776410859667-3dba1a15-020c-4132-8b6b-4b0b15e72fb8.png";
+
+// Frontend preview wrapper — mirrors backend wrapEmailBody exactly.
+function wrapInLayout(bodyHtml, { testMode = false, testMeta = /** @type {{trigger?:string,templateName?:string}} */ ({}) } = {}) {
+  const testBanner = testMode ? `
+        <tr><td style="padding:16px 40px;text-align:center;background:#fff8ed;border-top:1px solid #fde68a;">
+          <p style="margin:0;font-size:12px;color:#92400e;font-weight:600;">⚠ TEST EMAIL — not sent to real recipients</p>
+          <p style="margin:4px 0 0;font-size:11px;color:#b45309;">Trigger: ${testMeta.trigger || ""} · Template: ${testMeta.templateName || ""}</p>
+        </td></tr>` : "";
+
+  return `<table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f3ef;padding:32px 0;font-family:'DM Sans',Helvetica,Arial,sans-serif;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;">
+        <tr><td style="background:linear-gradient(135deg,#2D6B7F 0%,#7B8EC8 55%,#C8E63C 100%);padding:36px 40px;text-align:center;border-radius:16px 16px 0 0;">
+          <img src="${NOVI_LOGO_URL}" alt="NOVI Society" style="width:160px;height:auto;display:block;margin:0 auto;" />
+        </td></tr>
+        <tr><td style="background:#fff;padding:40px;border-radius:0 0 16px 16px;">
+          ${bodyHtml}
+        </td></tr>${testBanner}
+        <tr><td style="padding:24px 40px;text-align:center;">
+          <p style="margin:0;font-size:12px;color:#9ca3af;">© 2026 NOVI Society LLC · 8109 Meadow Valley Dr, McKinney, TX 75071</p>
+          <p style="margin:4px 0 0;font-size:12px;color:#9ca3af;"><a href="mailto:support@novisociety.com" style="color:#9ca3af;">support@novisociety.com</a></p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>`;
 }
 
 export default function AdminEmailTemplates() {
   const { toast, dismiss } = useToast();
   const qc = useQueryClient();
 
-  // Dialog state
+  // ── Edit dialog state ─────────────────────────────────────────────────────
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
-  const [placeholderValues, setPlaceholderValues] = useState(DEFAULT_PLACEHOLDER_VALUES);
-  const [activePlaceholderTag, setActivePlaceholderTag] = useState(null);
+  const [editOriginalBodyText, setEditOriginalBodyText] = useState("");
+  const [editPreviewPlaceholders, setEditPreviewPlaceholders] = useState({ ...DEFAULT_PLACEHOLDER_VALUES });
+  const [editPlaceholdersOpen, setEditPlaceholdersOpen] = useState(false);
 
-  // Preview dialog
+  // ── Preview dialog state ──────────────────────────────────────────────────
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewTemplate, setPreviewTemplate] = useState(null);
 
-  // Test-send dialog
+  // ── Test-send dialog state ────────────────────────────────────────────────
   const [testOpen, setTestOpen] = useState(false);
   const [testTemplate, setTestTemplate] = useState(null);
   const [testEmail, setTestEmail] = useState("");
@@ -189,20 +209,23 @@ export default function AdminEmailTemplates() {
 
   // ── Mutations ────────────────────────────────────────────────────────────
   const saveMutation = useMutation({
-    mutationFn: async () => {
-      if (editing) return emailTemplatesApi.update(editing.id, form);
-      return emailTemplatesApi.create(form);
+    mutationFn: () => {
+      if (!editing) return emailTemplatesApi.create(form);
+      const bodyChanged = String(form.body_text || "") !== String(editOriginalBodyText || "");
+      return emailTemplatesApi.update(editing.id, {
+        ...form,
+        clear_body_html: bodyChanged,
+      });
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["email-templates"] });
       setDialogOpen(false);
       setEditing(null);
+      setEditOriginalBodyText("");
       const { id } = toast({ title: editing ? "Template updated" : "Template created" });
       setTimeout(() => dismiss(id), 5000);
     },
-    onError: (err) => {
-      toast({ title: "Save failed", description: err.message, variant: "destructive" });
-    },
+    onError: (err) => toast({ title: "Save failed", description: err.message, variant: "destructive" }),
   });
 
   const deleteMutation = useMutation({
@@ -211,39 +234,14 @@ export default function AdminEmailTemplates() {
       qc.invalidateQueries({ queryKey: ["email-templates"] });
       toast({ title: "Template deleted" });
     },
-    onError: (err) => {
-      toast({ title: "Delete failed", description: err.message, variant: "destructive" });
-    },
+    onError: (err) => toast({ title: "Delete failed", description: err.message, variant: "destructive" }),
   });
 
   const toggleMutation = useMutation({
     mutationFn: ({ id, is_active }) => emailTemplatesApi.patch(id, { is_active }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["email-templates"] }),
-    onError: (err) => {
-      toast({ title: "Update failed", description: err.message, variant: "destructive" });
-    },
+    onError: (err) => toast({ title: "Update failed", description: err.message, variant: "destructive" }),
   });
-
-  // TODO[REMOVE_OUTDATED_SEED_TEMPLATES]: seedMutation and its "Load Starter Templates" button below
-  // were used to seed the 3 outdated DEFAULT_TEMPLATES into the DB.
-  // Now replaced by supabase/migrations/20260509010000_seed_real_email_templates.sql.
-  // Remove this commented block and the button when confirmed no longer needed.
-  /*
-  const seedMutation = useMutation({
-    mutationFn: async () => {
-      for (const t of DEFAULT_TEMPLATES) {
-        await emailTemplatesApi.create(t);
-      }
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["email-templates"] });
-      toast({ title: "Starter templates loaded" });
-    },
-    onError: (err) => {
-      toast({ title: "Seed failed", description: err.message, variant: "destructive" });
-    },
-  });
-  */
 
   const testSendMutation = useMutation({
     mutationFn: ({ id, to, placeholders }) => emailTemplatesApi.testSend(id, to, placeholders),
@@ -252,29 +250,34 @@ export default function AdminEmailTemplates() {
       setTestOpen(false);
       setTestEmail("");
     },
-    onError: (err) => {
-      toast({ title: "Send failed", description: err.message, variant: "destructive" });
-    },
+    onError: (err) => toast({ title: "Send failed", description: err.message, variant: "destructive" }),
   });
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   const openNew = (prefillTrigger = "") => {
     setEditing(null);
     setForm({ ...EMPTY_FORM, trigger: prefillTrigger });
-    setPlaceholderValues({ ...DEFAULT_PLACEHOLDER_VALUES });
-    setActivePlaceholderTag(null);
+    setEditOriginalBodyText("");
+    setEditPreviewPlaceholders({ ...DEFAULT_PLACEHOLDER_VALUES });
+    setEditPlaceholdersOpen(false);
     setDialogOpen(true);
   };
 
   const openEdit = (t) => {
+    const derivedBodyText = String(t.body_text || "").trim() || htmlToPlainText(t.body_html || "");
     setEditing(t);
     setForm({
-      name: t.name, trigger: t.trigger, recipient_type: t.recipient_type,
-      subject: t.subject, body_html: t.body_html, is_active: t.is_active,
-      send_delay_minutes: t.send_delay_minutes || 0
+      name: t.name,
+      trigger: t.trigger,
+      recipient_type: t.recipient_type,
+      subject: t.subject,
+      body_text: derivedBodyText,
+      is_active: t.is_active,
+      send_delay_minutes: t.send_delay_minutes || 0,
     });
-    setPlaceholderValues({ ...DEFAULT_PLACEHOLDER_VALUES });
-    setActivePlaceholderTag(null);
+    setEditOriginalBodyText(derivedBodyText);
+    setEditPreviewPlaceholders({ ...DEFAULT_PLACEHOLDER_VALUES });
+    setEditPlaceholdersOpen(false);
     setDialogOpen(true);
   };
 
@@ -282,39 +285,48 @@ export default function AdminEmailTemplates() {
     setTestTemplate(t);
     setTestEmail("");
     setTestPlaceholders({ ...DEFAULT_PLACEHOLDER_VALUES });
-    setTestPlaceholdersOpen(false);
+    setTestPlaceholdersOpen(true);
     setTestOpen(true);
   };
 
   const insertPlaceholder = (tag) => {
-    setForm(f => ({ ...f, body_html: f.body_html + tag }));
-    setActivePlaceholderTag(tag);
+    setForm(f => ({ ...f, body_text: f.body_text + tag }));
   };
 
   const triggerMeta = (trigger) => TRIGGERS.find(t => t.value === trigger);
-  const renderedSubject = applyPlaceholderValues(form.subject, placeholderValues);
-  const renderedBody = applyPlaceholderValues(form.body_html, placeholderValues);
 
-  const detectUsedPlaceholders = (template) => {
-    if (!template) return [];
-    const text = `${template.subject || ""} ${template.body_html || ""}`;
-    const keys = new Set();
-    const re = /\{\{(\w+)\}\}/g;
-    let m;
-    while ((m = re.exec(text)) !== null) keys.add(m[1]);
-    return PLACEHOLDERS.filter(p => keys.has(tagToKey(p.tag)));
-  };
+  // ── Computed ──────────────────────────────────────────────────────────────
+  const bodyTextChanged = String(form.body_text || "") !== String(editOriginalBodyText || "");
+  const previewBodyHtml = plainTextToHtml(applyPlaceholders(form.body_text, editPreviewPlaceholders));
+  const previewSubject = applyPlaceholders(form.subject, editPreviewPlaceholders);
+  const formIsValid = form.name && form.trigger && form.subject && form.body_text.trim();
+  const editRenderedBody = editing?.body_html && !bodyTextChanged
+    ? forceNoviLogoCenter(applyPlaceholders(editing.body_html, editPreviewPlaceholders))
+    : wrapInLayout(previewBodyHtml);
 
-  const testUsedPlaceholders = detectUsedPlaceholders(testTemplate);
-  const testRenderedSubject = applyPlaceholderValues(testTemplate?.subject, testPlaceholders);
-  const testRenderedBody = applyPlaceholderValues(testTemplate?.body_html, testPlaceholders);
-
-  // Group by trigger for the overview table
   const byTrigger = {};
   templates.forEach(t => {
     byTrigger[t.trigger] = byTrigger[t.trigger] || [];
     byTrigger[t.trigger].push(t);
   });
+
+  const testUsedPlaceholders = (() => {
+    if (!testTemplate) return [];
+    const text = `${testTemplate.subject || ""} ${testTemplate.body_text || ""} ${testTemplate.body_html || ""}`;
+    const keys = new Set();
+    const re = /\{\{(\w+)\}\}/g;
+    let m;
+    while ((m = re.exec(text)) !== null) keys.add(m[1]);
+    return PLACEHOLDERS.filter(p => keys.has(tagToKey(p.tag)));
+  })();
+
+  const testRenderedSubject = applyPlaceholders(testTemplate?.subject, testPlaceholders);
+  const testRenderedBody = (() => {
+    if (!testTemplate) return "";
+    // Use rich body_html if available (full HTML already includes NOVI layout)
+    if (testTemplate.body_html) return forceNoviLogoCenter(applyPlaceholders(testTemplate.body_html, testPlaceholders));
+    return wrapInLayout(plainTextToHtml(applyPlaceholders(testTemplate.body_text || "", testPlaceholders)), { testMode: true, testMeta: { trigger: testTemplate.trigger, templateName: testTemplate.name } });
+  })();
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -329,18 +341,9 @@ export default function AdminEmailTemplates() {
             Create emails that fire automatically when providers, patients, or MDs reach key milestones — course enrollment, license verification, MD activation, and more.
           </p>
         </div>
-        <div className="flex gap-2 flex-shrink-0">
-          {/* TODO[REMOVE_OUTDATED_SEED_TEMPLATES]: "Load Starter Templates" button — seeded the 3 outdated stubs.
-              Uncomment seedMutation above and re-enable this button only if needed for rollback.
-          {templates.length === 0 && !isLoading && (
-            <Button variant="outline" onClick={() => seedMutation.mutate()} disabled={seedMutation.isPending} className="gap-2 text-sm">
-              <Zap className="w-4 h-4" /> {seedMutation.isPending ? "Loading..." : "Load Starter Templates"}
-            </Button>
-          )} */}
-          <Button onClick={() => openNew()} className="gap-2 font-bold" style={{ background: "#FA6F30", color: "#fff", borderRadius: 12 }}>
-            <Plus className="w-4 h-4" /> New Template
-          </Button>
-        </div>
+        <Button onClick={() => openNew()} className="gap-2 font-bold flex-shrink-0" style={{ background: "#FA6F30", color: "#fff", borderRadius: 12 }}>
+          <Plus className="w-4 h-4" /> New Template
+        </Button>
       </div>
 
       {/* Stats */}
@@ -358,7 +361,6 @@ export default function AdminEmailTemplates() {
         ))}
       </div>
 
-      {/* Loading / error states */}
       {isLoading && (
         <div className="flex items-center justify-center py-16">
           <div className="w-6 h-6 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
@@ -371,7 +373,7 @@ export default function AdminEmailTemplates() {
         </div>
       )}
 
-      {/* Trigger overview */}
+      {/* Trigger list */}
       {!isLoading && (
         <div className="rounded-2xl overflow-hidden" style={CARD_STYLE}>
           <div className="px-6 py-4 border-b" style={{ borderColor: "rgba(30,37,53,0.08)" }}>
@@ -414,12 +416,6 @@ export default function AdminEmailTemplates() {
                         </div>
                       ))
                     )}
-                    <button
-                      onClick={() => openNew(trigger.value)}
-                      className="text-xs px-2.5 py-1.5 rounded-lg font-semibold transition-all hover:opacity-80"
-                      style={{ background: "rgba(250,111,48,0.1)", color: "#FA6F30", border: "1px solid rgba(250,111,48,0.25)" }}>
-                      <Plus className="w-3 h-3 inline mr-1" />Add
-                    </button>
                     {tpls.length > 0 && (
                       <button
                         onClick={() => openTest(tpls.find(t => t.is_active) || tpls[0])}
@@ -491,15 +487,18 @@ export default function AdminEmailTemplates() {
         </div>
       )}
 
-      {/* ── Edit / Create Dialog ─────────────────────────────────────────── */}
-      <Dialog open={dialogOpen} onOpenChange={(v) => { if (!v) { setDialogOpen(false); setEditing(null); setActivePlaceholderTag(null); } }}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+      {/* ── Create / Edit Dialog ─────────────────────────────────────────── */}
+      <Dialog open={dialogOpen} onOpenChange={(v) => { if (!v) { setDialogOpen(false); setEditing(null); } }}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle style={{ fontFamily: "'DM Serif Display', serif", fontSize: 20 }}>
               {editing ? "Edit Email Template" : "New Email Template"}
             </DialogTitle>
           </DialogHeader>
+
           <div className="space-y-4 pt-2">
+
+            {/* Core fields */}
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2">
                 <Label>Template Name</Label>
@@ -526,92 +525,97 @@ export default function AdminEmailTemplates() {
               </div>
               <div className="col-span-2">
                 <Label>Email Subject *</Label>
-                <Input value={form.subject} onChange={e => setForm(f => ({ ...f, subject: e.target.value }))} placeholder="e.g. Welcome to {{course_name}}!" />
+                <Input value={form.subject} onChange={e => setForm(f => ({ ...f, subject: e.target.value }))} placeholder="e.g. You're enrolled in {{course_name}}!" />
               </div>
             </div>
 
-            {/* Placeholder helper */}
+            {/* Placeholders — collapsible; click to insert, edit value for live preview */}
             <div className="rounded-xl p-3" style={{ background: "rgba(123,142,200,0.08)", border: "1px solid rgba(123,142,200,0.2)" }}>
-              <p className="text-xs font-bold uppercase tracking-widest mb-2" style={{ color: "#7B8EC8" }}>Available Placeholders — click to insert</p>
-              <div className="flex flex-wrap gap-1.5">
-                {PLACEHOLDERS.map(p => (
-                  <button key={p.tag} onClick={() => insertPlaceholder(p.tag)} title={p.desc}
-                    className="text-xs px-2.5 py-1 rounded-full font-mono transition-all hover:opacity-80"
-                    style={{
-                      background: activePlaceholderTag === p.tag ? "rgba(123,142,200,0.24)" : "rgba(123,142,200,0.15)",
-                      color: "#4a5fa8",
-                      border: activePlaceholderTag === p.tag ? "1px solid rgba(74,95,168,0.55)" : "1px solid rgba(123,142,200,0.3)"
-                    }}>
-                    {p.tag}
-                  </button>
-                ))}
+              <div
+                className="flex items-center justify-between gap-2"
+                onClick={() => setEditPlaceholdersOpen(o => !o)}
+                style={{ cursor: "pointer" }}
+              >
+                <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "#7B8EC8" }}>
+                  Placeholders — click to insert · edit value for preview
+                </p>
+                <button type="button" className="inline-flex items-center gap-1 text-xs font-semibold flex-shrink-0" style={{ color: "#7B8EC8" }}>
+                  {editPlaceholdersOpen ? "Collapse" : "Expand"}
+                  {editPlaceholdersOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                </button>
               </div>
-              {activePlaceholderTag && (
-                <div className="mt-3 rounded-lg p-3" style={{ background: "rgba(255,255,255,0.7)", border: "1px solid rgba(123,142,200,0.28)" }}>
-                  <div className="flex items-center justify-between gap-2">
-                    <Label className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>
-                      Value for {activePlaceholderTag}
-                    </Label>
-                    <button
-                      type="button"
-                      onClick={() => setActivePlaceholderTag(null)}
-                      className="text-xs font-semibold"
-                      style={{ color: "#7B8EC8" }}
-                    >
-                      Hide
-                    </button>
-                  </div>
-                  <Input
-                    value={placeholderValues[tagToKey(activePlaceholderTag)] || ""}
-                    onChange={(e) => setPlaceholderValues((prev) => ({
-                      ...prev,
-                      [tagToKey(activePlaceholderTag)]: e.target.value
-                    }))}
-                    placeholder={PLACEHOLDERS.find((p) => p.tag === activePlaceholderTag)?.desc}
-                    className="mt-1 h-8 text-xs"
-                  />
+              {editPlaceholdersOpen && (
+                <div className="grid grid-cols-2 gap-x-3 gap-y-2 mt-2.5">
+                  {PLACEHOLDERS.map(p => {
+                    const key = tagToKey(p.tag);
+                    return (
+                      <div key={p.tag} className="space-y-0.5">
+                        <button
+                          onClick={() => insertPlaceholder(p.tag)}
+                          title={`Click to insert ${p.tag} · ${p.desc}`}
+                          className="text-xs px-2.5 py-0.5 rounded-full font-mono transition-all hover:opacity-70 active:scale-95"
+                          style={{ background: "rgba(123,142,200,0.15)", color: "#4a5fa8", border: "1px solid rgba(123,142,200,0.3)" }}
+                        >
+                          {p.tag}
+                        </button>
+                        <Input
+                          value={editPreviewPlaceholders[key] ?? ""}
+                          onChange={e => setEditPreviewPlaceholders(prev => ({ ...prev, [key]: e.target.value }))}
+                          className="h-7 text-xs"
+                          placeholder={p.desc}
+                        />
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
 
+            {/* Body textarea */}
             <div>
-              <Label>Email Body (HTML or plain text) *</Label>
+              <Label>Email Body *</Label>
+              <p className="text-xs mb-2" style={{ color: "rgba(30,37,53,0.45)" }}>
+                Write your message in plain text. Use double line breaks for new paragraphs. The system handles all formatting, branding, and layout automatically.
+              </p>
               <textarea
-                value={form.body_html}
-                onChange={e => setForm(f => ({ ...f, body_html: e.target.value }))}
-                rows={14}
-                className="w-full rounded-xl px-3 py-2.5 text-sm font-mono outline-none resize-y"
-                style={{ background: "rgba(0,0,0,0.04)", border: "1px solid rgba(30,37,53,0.12)", color: "#1e2535", lineHeight: 1.6 }}
-                placeholder="<p>Hi {{first_name}},</p>&#10;<p>Your email content here...</p>"
+                value={form.body_text}
+                onChange={e => setForm(f => ({ ...f, body_text: e.target.value }))}
+                rows={10}
+                className="w-full rounded-xl px-3 py-2.5 text-sm outline-none resize-y"
+                style={{ background: "rgba(0,0,0,0.03)", border: "1px solid rgba(30,37,53,0.12)", color: "#1e2535", lineHeight: 1.7, fontFamily: "inherit" }}
+                placeholder={"Hi {{first_name}},\n\nYour enrollment in {{course_name}} is confirmed!\n\nWe'll see you on {{course_date}} at {{course_location}}.\n\nWelcome to NOVI Society,\nThe NOVI Team"}
               />
             </div>
 
-            <div className="space-y-2">
-              <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.5)" }}>
-                Live Placeholder Preview
-              </p>
-              <div className="rounded-xl px-4 py-3" style={{ background: "rgba(30,37,53,0.05)", border: "1px solid rgba(30,37,53,0.1)" }}>
-                <p className="text-xs font-bold" style={{ color: "rgba(30,37,53,0.5)" }}>SUBJECT</p>
-                <p className="text-sm font-semibold mt-0.5 break-words" style={{ color: "#1e2535" }}>{renderedSubject || "—"}</p>
-              </div>
-              <div className="rounded-xl overflow-hidden" style={{ border: "1px solid rgba(30,37,53,0.1)" }}>
-                <div className="px-4 py-2.5 text-xs font-bold uppercase tracking-widest" style={{ background: "rgba(30,37,53,0.05)", color: "rgba(30,37,53,0.5)", borderBottom: "1px solid rgba(30,37,53,0.08)" }}>
-                  BODY (Rendered With Current Placeholder Values)
+            {/* Live preview */}
+            {form.body_text.trim() && (
+              <div className="space-y-2">
+                <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.4)" }}>Preview</p>
+                <div className="rounded-xl px-4 py-3" style={{ background: "rgba(30,37,53,0.04)", border: "1px solid rgba(30,37,53,0.08)" }}>
+                  <p className="text-xs font-bold mb-0.5" style={{ color: "rgba(30,37,53,0.4)" }}>SUBJECT</p>
+                  <p className="text-sm font-semibold" style={{ color: "#1e2535" }}>{previewSubject || "—"}</p>
                 </div>
-                <div className="p-5 max-h-64 overflow-y-auto" style={{ color: "#1e2535", lineHeight: 1.7 }} dangerouslySetInnerHTML={{ __html: renderedBody }} />
+                <div className="rounded-xl overflow-hidden" style={{ border: "1px solid rgba(30,37,53,0.1)" }}>
+                  <div className="px-4 py-2 text-xs font-bold uppercase tracking-widest" style={{ background: "rgba(30,37,53,0.04)", color: "rgba(30,37,53,0.4)", borderBottom: "1px solid rgba(30,37,53,0.08)" }}>
+                    Email Preview
+                  </div>
+                  <div className="max-h-72 overflow-y-auto" dangerouslySetInnerHTML={{
+                    __html: editRenderedBody
+                  }} />
+                </div>
               </div>
-            </div>
+            )}
 
             <div className="flex items-center gap-3">
               <Switch checked={form.is_active} onCheckedChange={v => setForm(f => ({ ...f, is_active: v }))} />
-              <Label>Active (emails will send automatically when trigger fires)</Label>
+              <Label>Active — fires automatically when trigger occurs</Label>
             </div>
 
-            <div className="flex gap-2 justify-end pt-2">
+            <div className="flex gap-2 justify-end pt-1">
               <Button variant="outline" onClick={() => { setDialogOpen(false); setEditing(null); }}>Cancel</Button>
               <Button
                 onClick={() => saveMutation.mutate()}
-                disabled={!form.name || !form.trigger || !form.subject || !form.body_html || saveMutation.isPending}
+                disabled={!formIsValid || saveMutation.isPending}
                 style={{ background: "#FA6F30", color: "#fff" }}
               >
                 {saveMutation.isPending ? "Saving..." : editing ? "Save Changes" : "Create Template"}
@@ -634,16 +638,16 @@ export default function AdminEmailTemplates() {
                 <p className="text-sm font-semibold mt-0.5" style={{ color: "#1e2535" }}>{previewTemplate.subject}</p>
               </div>
               <div className="rounded-xl overflow-hidden" style={{ border: "1px solid rgba(30,37,53,0.1)" }}>
-                <div className="px-4 py-2.5 text-xs font-bold uppercase tracking-widest" style={{ background: "rgba(30,37,53,0.05)", color: "rgba(30,37,53,0.5)", borderBottom: "1px solid rgba(30,37,53,0.08)" }}>EMAIL BODY</div>
-                <div className="p-5" style={{ color: "#1e2535", lineHeight: 1.7 }} dangerouslySetInnerHTML={{ __html: previewTemplate.body_html }} />
+                <div className="px-4 py-2.5 text-xs font-bold uppercase tracking-widest" style={{ background: "rgba(30,37,53,0.05)", color: "rgba(30,37,53,0.5)", borderBottom: "1px solid rgba(30,37,53,0.08)" }}>Email Preview</div>
+                <div dangerouslySetInnerHTML={{
+                  __html: previewTemplate.body_html
+                    ? forceNoviLogoCenter(previewTemplate.body_html)
+                    : wrapInLayout(plainTextToHtml(previewTemplate.body_text || ""))
+                }} />
               </div>
               <div className="flex gap-2">
                 <Button variant="outline" onClick={() => setPreviewOpen(false)} className="flex-1">Close</Button>
-                <Button
-                  onClick={() => { setPreviewOpen(false); openTest(previewTemplate); }}
-                  className="flex-1 gap-2"
-                  style={{ background: "#2D6B7F", color: "#fff" }}
-                >
+                <Button onClick={() => { setPreviewOpen(false); openTest(previewTemplate); }} className="flex-1 gap-2" style={{ background: "#2D6B7F", color: "#fff" }}>
                   <FlaskConical className="w-4 h-4" /> Send Test
                 </Button>
               </div>
@@ -656,38 +660,20 @@ export default function AdminEmailTemplates() {
       <Dialog open={testOpen} onOpenChange={(v) => { if (!v) { setTestOpen(false); setTestEmail(""); } }}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle style={{ fontFamily: "'DM Serif Display', serif", fontSize: 18 }}>
-              Send Test Email
-            </DialogTitle>
+            <DialogTitle style={{ fontFamily: "'DM Serif Display', serif", fontSize: 18 }}>Send Test Email</DialogTitle>
           </DialogHeader>
           {testTemplate && (
             <div className="space-y-4 pt-2">
 
-              {/* Editable placeholder values */}
-              <div
-                className="rounded-xl p-3"
-                style={{ background: "rgba(123,142,200,0.08)", border: "1px solid rgba(123,142,200,0.2)", cursor: testPlaceholdersOpen ? "default" : "pointer" }}
-                onClick={() => {
-                  if (!testPlaceholdersOpen) setTestPlaceholdersOpen(true);
-                }}
-              >
+              {/* Placeholder values */}
+              <div className="rounded-xl p-3" style={{ background: "rgba(123,142,200,0.08)", border: "1px solid rgba(123,142,200,0.2)" }}>
                 <div
                   className="flex items-center justify-between gap-2 mb-2.5"
-                  onClick={() => setTestPlaceholdersOpen((prev) => !prev)}
+                  onClick={() => setTestPlaceholdersOpen(p => !p)}
                   style={{ cursor: "pointer" }}
                 >
-                  <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "#7B8EC8" }}>
-                    Placeholder Values — edit before sending
-                  </p>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setTestPlaceholdersOpen((prev) => !prev);
-                    }}
-                    className="inline-flex items-center gap-1.5 text-xs font-semibold"
-                    style={{ color: "#7B8EC8" }}
-                  >
+                  <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "#7B8EC8" }}>Placeholder Values</p>
+                  <button type="button" className="inline-flex items-center gap-1 text-xs font-semibold" style={{ color: "#7B8EC8" }}>
                     {testPlaceholdersOpen ? "Collapse" : "Expand"}
                     {testPlaceholdersOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                   </button>
@@ -702,12 +688,7 @@ export default function AdminEmailTemplates() {
                         return (
                           <div key={p.tag}>
                             <label className="text-xs font-semibold font-mono" style={{ color: "rgba(30,37,53,0.6)" }}>{p.tag}</label>
-                            <Input
-                              value={testPlaceholders[key] ?? ""}
-                              onChange={e => setTestPlaceholders(prev => ({ ...prev, [key]: e.target.value }))}
-                              className="mt-0.5 h-8 text-xs"
-                              placeholder={p.desc}
-                            />
+                            <Input value={testPlaceholders[key] ?? ""} onChange={e => setTestPlaceholders(prev => ({ ...prev, [key]: e.target.value }))} className="mt-0.5 h-8 text-xs" placeholder={p.desc} />
                           </div>
                         );
                       })}
@@ -716,28 +697,26 @@ export default function AdminEmailTemplates() {
                 )}
               </div>
 
-              {/* Rendered subject */}
+              {/* Subject preview */}
               <div className="rounded-xl px-4 py-3" style={{ background: "rgba(30,37,53,0.05)", border: "1px solid rgba(30,37,53,0.1)" }}>
-                <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.5)" }}>Subject (rendered)</p>
+                <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.5)" }}>Subject</p>
                 <p className="text-sm font-semibold mt-0.5 break-words" style={{ color: "#1e2535" }}>{testRenderedSubject || "—"}</p>
               </div>
 
-              {/* Rendered email body preview */}
+              {/* Email preview */}
               <div className="rounded-xl overflow-hidden" style={{ border: "1px solid rgba(30,37,53,0.1)" }}>
                 <div className="px-4 py-2.5 text-xs font-bold uppercase tracking-widest" style={{ background: "rgba(30,37,53,0.05)", color: "rgba(30,37,53,0.5)", borderBottom: "1px solid rgba(30,37,53,0.08)" }}>
-                  Email Preview (rendered)
+                  Email Preview
                 </div>
-                <div className="p-5 max-h-64 overflow-y-auto" style={{ color: "#1e2535", lineHeight: 1.7 }} dangerouslySetInnerHTML={{ __html: testRenderedBody }} />
+                <div className="max-h-64 overflow-y-auto" dangerouslySetInnerHTML={{ __html: testRenderedBody }} />
               </div>
 
-              {/* Divider */}
               <div className="flex items-center gap-3">
                 <div className="flex-1 h-px" style={{ background: "rgba(30,37,53,0.1)" }} />
-                <p className="text-xs font-semibold uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.4)" }}>Send this template as a test</p>
+                <p className="text-xs font-semibold uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.4)" }}>Send</p>
                 <div className="flex-1 h-px" style={{ background: "rgba(30,37,53,0.1)" }} />
               </div>
 
-              {/* Email input */}
               <div>
                 <Label>Send to *</Label>
                 <Input
@@ -750,9 +729,7 @@ export default function AdminEmailTemplates() {
                       testSendMutation.mutate({ id: testTemplate.id, to: testEmail, placeholders: testPlaceholders });
                   }}
                 />
-                <p className="text-xs mt-1.5" style={{ color: "rgba(30,37,53,0.45)" }}>
-                  The above values will replace placeholders in the sent email. Subject is prefixed with [TEST].
-                </p>
+                <p className="text-xs mt-1.5" style={{ color: "rgba(30,37,53,0.45)" }}>Subject is prefixed with [TEST] when sent.</p>
               </div>
 
               <div className="flex gap-2 justify-end pt-1">

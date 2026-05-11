@@ -3,9 +3,10 @@ import { createClient } from "@supabase/supabase-js";
 import { pool } from "../db.js";
 import { getMeFromAccessToken } from "../auth/service.js";
 import { resolveSupabaseUrl } from "../config/supabaseProject.js";
+import { sendResendEmail } from "../lib/sendResendEmail.js";
+import { sendTemplatedEmail } from "../lib/templatedEmailService.js";
 
 export const licensesRouter = Router();
-const resendApiKey = process.env.RESEND_API_KEY;
 const resendFromEmail = process.env.RESEND_FROM_EMAIL || "NOVI Society <support@novisociety.com>";
 const appBaseUrl = process.env.APP_BASE_URL || "http://localhost:5173";
 const noviEmailLogoUrl = process.env.NOVI_EMAIL_LOGO_URL || `${appBaseUrl}/novi-email-logo.png`;
@@ -136,7 +137,7 @@ function resolveProviderFirstName(licenseRow) {
   return "Provider";
 }
 
-// TODO[REMOVE_HARDCODED_EMAIL]: license_verified + license_rejected — replace with DB template lookup once automation layer is wired
+// TODO[REMOVE_HARDCODED_EMAIL]: license_verified + license_rejected — fallback remains temporary for template outages.
 function buildLicenseDecisionEmailHtml({ providerFirstName, isApproved, rejectionReason }) {
   const safeName = escapeHtml(providerFirstName || "Provider");
   const safeReason = escapeHtml(rejectionReason || "");
@@ -204,44 +205,43 @@ function buildLicenseDecisionEmailHtml({ providerFirstName, isApproved, rejectio
 
 async function sendLicenseDecisionEmail({ providerEmail, providerFirstName, isApproved, rejectionReason }) {
   if (!providerEmail) return false;
-  if (!resendApiKey) {
-    // eslint-disable-next-line no-console
-    console.warn("[licenses] license decision email skipped: RESEND_API_KEY missing");
-    return false;
-  }
-
-  const subject = isApproved
-    ? "Your license has been verified — unlock MD coverage now"
-    : "Your license submission was rejected";
-  const html = buildLicenseDecisionEmailHtml({
-    providerFirstName,
-    isApproved,
-    rejectionReason
-  });
-
+  const trigger = isApproved ? "license_verified" : "license_rejected";
+  const base = String(appBaseUrl || "").replace(/\/+$/, "");
   try {
-    const response = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${resendApiKey}`,
-        "Content-Type": "application/json"
+    return await sendTemplatedEmail({
+      trigger,
+      to: providerEmail,
+      placeholders: {
+        first_name: providerFirstName || "Provider",
+        rejection_reason: rejectionReason || "",
+        app_url: base,
+        logo_url: noviEmailLogoUrl
       },
-      body: JSON.stringify({
-        from: resendFromEmail,
-        to: [providerEmail],
-        subject,
-        html
-      })
+      from: resendFromEmail,
+      allowFallback: false,
+      logLabel: "licenses",
+      fallbackSend: async () => {
+        const subject = isApproved
+          ? "Your license has been verified — unlock MD coverage now"
+          : "Your license submission was rejected";
+        const html = buildLicenseDecisionEmailHtml({
+          providerFirstName,
+          isApproved,
+          rejectionReason
+        });
+        try {
+          await sendResendEmail({ to: providerEmail, subject, html, from: resendFromEmail });
+          return true;
+        } catch (error) {
+          // eslint-disable-next-line no-console
+          console.error("[licenses] decision email fallback failed:", error?.message || error);
+          return false;
+        }
+      }
     });
-    if (!response.ok) {
-      const bodyText = await response.text().catch(() => "");
-      // eslint-disable-next-line no-console
-      console.error("[licenses] decision email send failed:", response.status, bodyText);
-    }
-    return response.ok;
   } catch (error) {
     // eslint-disable-next-line no-console
-    console.error("[licenses] decision email request failed:", error);
+    console.error("[licenses] decision email request failed:", error?.message || error);
     return false;
   }
 }

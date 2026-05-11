@@ -2,13 +2,14 @@ import { Router } from "express";
 import { query } from "../db.js";
 import { getMeFromAccessToken } from "../auth/service.js";
 import Stripe from "stripe";
+import { sendResendEmail } from "../lib/sendResendEmail.js";
+import { sendTemplatedEmail } from "../lib/templatedEmailService.js";
 
 export const functionsRouter = Router();
 let certificationColumnsPromise = null;
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || "";
 const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET || "";
 const appBaseUrl = process.env.APP_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || "";
-const resendApiKey = process.env.RESEND_API_KEY || "";
 const resendFromEmail = process.env.RESEND_FROM_EMAIL || "NOVI Society Training <hello@novisociety.com>";
 const QUALIPHY_API_URL = "https://api.qualiphy.me/api/exam_invite";
 const stripe = stripeSecretKey ? new Stripe(stripeSecretKey) : null;
@@ -220,43 +221,58 @@ async function resolveTeleStateForCourse({ courseId }) {
   return null;
 }
 
-function treatmentLabel(treatmentType) {
-  if (treatmentType === "tox") return "Botox (TOX)";
-  if (treatmentType === "filler") return "Dermal Filler";
-  return "Botox + Filler";
+function firstName(value) {
+  const first = String(value || "").trim().split(/\s+/)[0];
+  return first || "there";
 }
 
-async function sendResendEmail({ to, subject, html }) {
-  if (!resendApiKey) {
-    const err = new Error("RESEND_API_KEY is not configured.");
-    err.statusCode = 500;
-    throw err;
-  }
-  const result = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${resendApiKey}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      from: resendFromEmail,
-      to: [to],
-      subject,
-      html
-    })
+function treatmentCopy(treatmentType) {
+  if (treatmentType === "tox") return { label: "Botox (TOX)", postTrainingLabel: "Botox", included: "20 Units of Botox" };
+  if (treatmentType === "filler") return { label: "Dermal Filler", postTrainingLabel: "Dermal Fillers", included: "1 Syringe of Filler" };
+  return {
+    label: "Botox + Filler",
+    postTrainingLabel: "Botox & Fillers",
+    included: "20 units of Botox or 1 syringe of Filler"
+  };
+}
+
+async function sendModelTemplatedEmail({
+  trigger,
+  to,
+  placeholders,
+  fallbackSubject,
+  fallbackTitle,
+  fallbackContentHtml,
+}) {
+  const ok = await sendTemplatedEmail({
+    trigger,
+    to,
+    placeholders,
+    from: resendFromEmail,
+    allowFallback: false,
+    logLabel: "functions",
+    fallbackSend: async () => {
+      await sendResendEmail({
+        to,
+        from: resendFromEmail,
+        subject: fallbackSubject,
+        html: withCourseEmailShell({
+          title: fallbackTitle,
+          contentHtml: fallbackContentHtml,
+        })
+      });
+      return true;
+    }
   });
-  const payload = await result.json().catch(() => ({}));
-  if (!result.ok) {
-    const err = new Error(payload?.message || "Email send failed");
+  if (!ok) {
+    const err = new Error(`Failed to send email for trigger "${trigger}".`);
     err.statusCode = 500;
     throw err;
   }
-  return payload;
+  return true;
 }
 
-// TODO[REMOVE_HARDCODED_EMAIL]: shared shell + model emails (model_booking_confirmed, model_waitlist_promoted,
-// model_gfe_assigned, model_session_reminder, model_post_training, model_gfe_reminder) —
-// replace with DB template lookup once automation layer is wired
+// TODO[REMOVE_HARDCODED_EMAIL]: model flows now use DB templates; shell remains as temporary fallback renderer.
 function withCourseEmailShell({ title, contentHtml }) {
   return `
 <!DOCTYPE html>
@@ -314,23 +330,33 @@ export async function processModelCheckoutCompletedSession(session) {
   );
 
   try {
-    const htmlBody = withCourseEmailShell({
-      title: "You're Booked!",
-      contentHtml: `<p style="color:#1e2535;font-size:15px;margin:0 0 16px;">Hi <strong>${row.customer_name || "there"}</strong>,</p><p style="color:rgba(30,37,53,0.7);font-size:14px;line-height:1.7;margin:0;">Your model training booking has been confirmed for ${fmtDateLocal(row.course_date)}${row.model_time_slot ? ` at ${fmtTimeLabel(row.model_time_slot)}` : ""}.</p>`
-    });
-    await sendResendEmail({
+    const formattedDate = fmtDateLocal(row.course_date);
+    const formattedTime = fmtTimeLabel(row.model_time_slot);
+    const treatment = treatmentCopy(row.treatment_type);
+    const sent = await sendModelTemplatedEmail({
+      trigger: "model_booking_confirmed",
       to: row.customer_email,
-      subject: `Your Model Training Booking is Confirmed - ${fmtDateLocal(row.course_date)}`,
-      html: htmlBody
+      placeholders: {
+        first_name: firstName(row.customer_name),
+        course_name: row.course_title || "NOVI Training Course",
+        course_date: formattedDate,
+        time_slot: formattedTime,
+        treatment_type: treatment.label,
+      },
+      fallbackSubject: `Your Model Training Booking is Confirmed - ${formattedDate}`,
+      fallbackTitle: "You're Booked!",
+      fallbackContentHtml: `<p style="color:#1e2535;font-size:15px;margin:0 0 16px;">Hi <strong>${row.customer_name || "there"}</strong>,</p><p style="color:rgba(30,37,53,0.7);font-size:14px;line-height:1.7;margin:0;">Your model training booking has been confirmed for ${formattedDate}${row.model_time_slot ? ` at ${formattedTime}` : ""}.</p>`
     });
-    await query(
-      `update public.pre_orders
-       set confirmation_email_sent = true,
-           confirmation_email_sent_at = now(),
-           updated_at = now()
-       where id = $1`,
-      [row.id]
-    );
+    if (sent) {
+      await query(
+        `update public.pre_orders
+         set confirmation_email_sent = true,
+             confirmation_email_sent_at = now(),
+             updated_at = now()
+         where id = $1`,
+        [row.id]
+      );
+    }
   } catch {
     // best effort
   }
@@ -915,13 +941,22 @@ functionsRouter.post("/createModelCheckout", async (req, res, next) => {
          where id = $1`,
         [preOrderId, 0]
       );
-      await sendResendEmail({
+      const formattedDate = fmtDateLocal(courseDate);
+      const formattedTime = fmtTimeLabel(timeSlot);
+      const treatment = treatmentCopy(treatmentType);
+      await sendModelTemplatedEmail({
+        trigger: "model_booking_confirmed",
         to: customerEmail,
-        subject: `Your Model Training Booking is Confirmed - ${fmtDateLocal(courseDate)}`,
-        html: withCourseEmailShell({
-          title: "You're Booked!",
-          contentHtml: `<p style="color:#1e2535;font-size:15px;margin:0 0 24px;">Hi <strong>${customerName}</strong>,</p><p style="color:rgba(30,37,53,0.7);font-size:14px;line-height:1.7;margin:0;">Your model training booking has been confirmed.</p>`
-        })
+        placeholders: {
+          first_name: firstName(customerName),
+          course_name: course.title || "NOVI Training Course",
+          course_date: formattedDate,
+          time_slot: formattedTime,
+          treatment_type: treatment.label,
+        },
+        fallbackSubject: `Your Model Training Booking is Confirmed - ${formattedDate}`,
+        fallbackTitle: "You're Booked!",
+        fallbackContentHtml: `<p style="color:#1e2535;font-size:15px;margin:0 0 24px;">Hi <strong>${customerName}</strong>,</p><p style="color:rgba(30,37,53,0.7);font-size:14px;line-height:1.7;margin:0;">Your model training booking has been confirmed.</p>`
       });
       return res.status(201).json({ free: true, pre_order_id: preOrderId, waitlist_auto: isWaitlist });
     }
@@ -989,32 +1024,43 @@ functionsRouter.post("/sendModelConfirmationEmail", async (req, res, next) => {
     const { customer_email, customer_name, course_date, time_slot, treatment_type, course_title } = req.body || {};
     if (!customer_email || !customer_name || !course_date) return res.status(400).json({ error: "Missing required fields" });
     const formattedDate = fmtDateLocal(course_date);
-    const subject = `Your Model Training Booking is Confirmed - ${formattedDate}`;
-    const htmlBody = withCourseEmailShell({
-      title: "You're Booked!",
-      contentHtml: `
+    const formattedTime = fmtTimeLabel(time_slot);
+    const treatment = treatmentCopy(treatment_type);
+    const fallbackContentHtml = `
       <p style="color:#1e2535;font-size:15px;margin:0 0 24px;">Hi <strong>${customer_name}</strong>,</p>
       <p style="color:rgba(30,37,53,0.7);font-size:14px;line-height:1.7;margin:0 0 24px;">Your model training booking has been confirmed! Here's a summary of your session:</p>
       <div style="background:#f9f8f6;border-radius:12px;padding:20px;margin-bottom:24px;">
         <table style="width:100%;border-collapse:collapse;">
           <tr><td style="padding:8px 0;color:rgba(30,37,53,0.55);font-size:13px;width:40%;">Course</td><td style="padding:8px 0;color:#1e2535;font-size:13px;font-weight:600;">${course_title || "NOVI Training Course"}</td></tr>
           <tr><td style="padding:8px 0;color:rgba(30,37,53,0.55);font-size:13px;">Date</td><td style="padding:8px 0;color:#1e2535;font-size:13px;font-weight:600;">${formattedDate}</td></tr>
-          <tr><td style="padding:8px 0;color:rgba(30,37,53,0.55);font-size:13px;">Time</td><td style="padding:8px 0;color:#1e2535;font-size:13px;font-weight:600;">${fmtTimeLabel(time_slot)}</td></tr>
-          <tr><td style="padding:8px 0;color:rgba(30,37,53,0.55);font-size:13px;">Treatment</td><td style="padding:8px 0;color:#1e2535;font-size:13px;font-weight:600;">${treatmentLabel(treatment_type)}</td></tr>
+          <tr><td style="padding:8px 0;color:rgba(30,37,53,0.55);font-size:13px;">Time</td><td style="padding:8px 0;color:#1e2535;font-size:13px;font-weight:600;">${formattedTime}</td></tr>
+          <tr><td style="padding:8px 0;color:rgba(30,37,53,0.55);font-size:13px;">Treatment</td><td style="padding:8px 0;color:#1e2535;font-size:13px;font-weight:600;">${treatment.label}</td></tr>
         </table>
       </div>
       <div style="background:rgba(200,230,60,0.1);border:1px solid rgba(200,230,60,0.3);border-radius:12px;padding:16px;margin-bottom:24px;">
         <p style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:#5a7a20;margin:0 0 8px;">What's Included</p>
         <ul style="margin:0;padding-left:18px;color:rgba(30,37,53,0.7);font-size:13px;line-height:1.8;">
           <li>Good Faith Exam (link sent separately)</li>
-          <li>${treatment_type === "tox" ? "20 Units of Botox" : treatment_type === "filler" ? "1 Syringe of Filler" : "20 units of Botox or 1 syringe of Filler"}</li>
+          <li>${treatment.included}</li>
           <li>Supervised by a licensed Medical Director</li>
         </ul>
       </div>
       <p style="color:rgba(30,37,53,0.6);font-size:13px;line-height:1.7;margin:0 0 24px;"><strong>Important:</strong> You'll receive your Good Faith Exam (GFE) link via a separate email. Please complete it before your session date.</p>
-      <p style="color:rgba(30,37,53,0.5);font-size:12px;margin:0;">Questions? Email us at <a href="mailto:hello@novisociety.com" style="color:#2D6B7F;">hello@novisociety.com</a></p>`
+      <p style="color:rgba(30,37,53,0.5);font-size:12px;margin:0;">Questions? Email us at <a href="mailto:hello@novisociety.com" style="color:#2D6B7F;">hello@novisociety.com</a></p>`;
+    await sendModelTemplatedEmail({
+      trigger: "model_booking_confirmed",
+      to: customer_email,
+      placeholders: {
+        first_name: firstName(customer_name),
+        course_name: course_title || "NOVI Training Course",
+        course_date: formattedDate,
+        time_slot: formattedTime,
+        treatment_type: treatment.label,
+      },
+      fallbackSubject: `Your Model Training Booking is Confirmed - ${formattedDate}`,
+      fallbackTitle: "You're Booked!",
+      fallbackContentHtml
     });
-    await sendResendEmail({ to: customer_email, subject, html: htmlBody });
     await query(`update public.pre_orders set confirmation_email_sent = true, confirmation_email_sent_at = now(), updated_at = now() where lower(customer_email) = lower($1) and course_date::date = $2::date and order_type = 'model'`, [customer_email, String(course_date).slice(0, 10)]);
     return res.json({ success: true });
   } catch (error) {
@@ -1026,11 +1072,9 @@ functionsRouter.post("/sendModelGFEEmail", async (req, res, next) => {
   try {
     const { customer_email, customer_name, gfe_url } = req.body || {};
     if (!customer_email || !gfe_url) return res.status(400).json({ error: "customer_email and gfe_url required" });
-    const firstName = String(customer_name || "there").split(" ")[0];
-    const htmlBody = withCourseEmailShell({
-      title: "Complete Your GFE",
-      contentHtml: `
-      <p style="color:#1e2535;font-size:15px;margin:0 0 16px;">Hi <strong>${firstName}</strong>,</p>
+    const first = firstName(customer_name);
+    const fallbackContentHtml = `
+      <p style="color:#1e2535;font-size:15px;margin:0 0 16px;">Hi <strong>${first}</strong>,</p>
       <p style="color:rgba(30,37,53,0.7);font-size:14px;line-height:1.7;margin:0 0 24px;">You're almost set! Before your training session, you need to complete a <strong>Good Faith Exam (GFE)</strong> - a quick virtual screening with a licensed medical provider. It takes about 5-10 minutes.</p>
       <div style="text-align:center;margin:0 0 24px;"><a href="${gfe_url}" style="display:inline-block;background:#C8E63C;color:#1a2540;font-weight:700;font-size:15px;padding:14px 32px;border-radius:50px;text-decoration:none;">Complete My GFE -></a></div>
       <div style="background:rgba(45,107,127,0.06);border:1px solid rgba(45,107,127,0.15);border-radius:12px;padding:16px;margin-bottom:24px;">
@@ -1039,9 +1083,18 @@ functionsRouter.post("/sendModelGFEEmail", async (req, res, next) => {
           <li>Brief video call with a licensed provider</li><li>Review of your health history</li><li>Medical clearance for your treatment</li><li>Takes approximately 5-10 minutes</li>
         </ul>
       </div>
-      <p style="color:rgba(30,37,53,0.6);font-size:13px;line-height:1.7;margin:0 0 16px;"><strong>Please complete this before your session date.</strong> If you have any questions, reply to this email or contact us at <a href="mailto:hello@novisociety.com" style="color:#2D6B7F;">hello@novisociety.com</a>.</p>`
+      <p style="color:rgba(30,37,53,0.6);font-size:13px;line-height:1.7;margin:0 0 16px;"><strong>Please complete this before your session date.</strong> If you have any questions, reply to this email or contact us at <a href="mailto:hello@novisociety.com" style="color:#2D6B7F;">hello@novisociety.com</a>.</p>`;
+    await sendModelTemplatedEmail({
+      trigger: "model_gfe_assigned",
+      to: customer_email,
+      placeholders: {
+        first_name: first,
+        gfe_url,
+      },
+      fallbackSubject: "Complete Your Good Faith Exam - NOVI Society",
+      fallbackTitle: "Complete Your GFE",
+      fallbackContentHtml
     });
-    await sendResendEmail({ to: customer_email, subject: "Complete Your Good Faith Exam - NOVI Society", html: htmlBody });
     return res.json({ success: true });
   } catch (error) {
     return next(error);
@@ -1053,21 +1106,32 @@ functionsRouter.post("/sendModelReminderEmail", async (req, res, next) => {
     const { customer_email, customer_name, course_date, time_slot, treatment_type } = req.body || {};
     if (!customer_email || !customer_name || !course_date || !time_slot) return res.status(400).json({ error: "Missing required fields" });
     const formattedDate = fmtDateLocal(course_date);
-    const html = withCourseEmailShell({
-      title: "Session Reminder",
-      contentHtml: `
+    const formattedTime = fmtTimeLabel(time_slot);
+    const treatment = treatmentCopy(treatment_type);
+    const fallbackContentHtml = `
       <p style="color:#1e2535;font-size:15px;margin:0 0 16px;">Hello <strong>${customer_name}</strong>,</p>
       <p style="color:rgba(30,37,53,0.7);font-size:14px;line-height:1.7;margin:0 0 20px;">Just a friendly reminder that your model training session is tomorrow.</p>
       <div style="background:#f9f8f6;border-radius:12px;padding:16px;margin-bottom:20px;">
         <p style="margin:0 0 8px;font-size:13px;color:#1e2535;"><strong>Date:</strong> ${formattedDate}</p>
-        <p style="margin:0 0 8px;font-size:13px;color:#1e2535;"><strong>Time:</strong> ${fmtTimeLabel(time_slot)}</p>
-        <p style="margin:0;font-size:13px;color:#1e2535;"><strong>Treatment:</strong> ${treatmentLabel(treatment_type)}</p>
+        <p style="margin:0 0 8px;font-size:13px;color:#1e2535;"><strong>Time:</strong> ${formattedTime}</p>
+        <p style="margin:0;font-size:13px;color:#1e2535;"><strong>Treatment:</strong> ${treatment.label}</p>
       </div>
       <p style="color:rgba(30,37,53,0.7);font-size:13px;line-height:1.8;margin:0 0 16px;"><strong>Pre-Training Instructions:</strong><br>Arrive 15 minutes early<br>Wear comfortable clothing for treatment areas<br>Avoid alcohol and blood thinners 24 hours before session<br>Bring a valid photo ID<br>Keep your booking confirmation email handy</p>
       <p style="color:rgba(30,37,53,0.7);font-size:13px;line-height:1.8;margin:0 0 16px;"><strong>What to Bring:</strong><br>Phone or camera (optional)<br>Water bottle and snacks</p>
-      <p style="color:rgba(30,37,53,0.6);font-size:13px;line-height:1.7;margin:0;">Questions or need to reschedule? Contact <a href="mailto:hello@novisociety.com" style="color:#2D6B7F;">hello@novisociety.com</a>.</p>`
+      <p style="color:rgba(30,37,53,0.6);font-size:13px;line-height:1.7;margin:0;">Questions or need to reschedule? Contact <a href="mailto:hello@novisociety.com" style="color:#2D6B7F;">hello@novisociety.com</a>.</p>`;
+    await sendModelTemplatedEmail({
+      trigger: "model_session_reminder",
+      to: customer_email,
+      placeholders: {
+        first_name: firstName(customer_name),
+        course_date: formattedDate,
+        time_slot: formattedTime,
+        treatment_type: treatment.label,
+      },
+      fallbackSubject: `Reminder: Your Model Training Session is Tomorrow at ${formattedTime}`,
+      fallbackTitle: "Session Reminder",
+      fallbackContentHtml
     });
-    await sendResendEmail({ to: customer_email, subject: `Reminder: Your Model Training Session is Tomorrow at ${fmtTimeLabel(time_slot)}`, html });
     await query(`update public.pre_orders set reminder_email_sent_at = now(), updated_at = now() where lower(customer_email) = lower($1) and course_date::date = $2::date and order_type='model'`, [customer_email, String(course_date).slice(0, 10)]);
     return res.json({ success: true });
   } catch (error) {
@@ -1079,18 +1143,26 @@ functionsRouter.post("/sendModelPostTrainingEmail", async (req, res, next) => {
   try {
     const { customer_email, customer_name, treatment_type, course_title, pre_order_id } = req.body || {};
     if (!customer_email || !customer_name) return res.status(400).json({ error: "Missing required fields" });
-    const treatmentName = treatment_type === "tox" ? "Botox" : treatment_type === "filler" ? "Dermal Fillers" : "Botox & Fillers";
-    const html = withCourseEmailShell({
-      title: "Continue Your Journey",
-      contentHtml: `
+    const treatment = treatmentCopy(treatment_type);
+    const fallbackContentHtml = `
       <p style="color:#1e2535;font-size:15px;margin:0 0 16px;">Hello <strong>${customer_name}</strong>,</p>
       <p style="color:rgba(30,37,53,0.7);font-size:14px;line-height:1.7;margin:0 0 16px;">Thank you for being part of the ${course_title || "NOVI Training Course"}! We hope you had an amazing experience.</p>
       <p style="color:rgba(30,37,53,0.7);font-size:14px;line-height:1.7;margin:0 0 16px;">Now it's your turn to experience professional aesthetic treatments as a patient.</p>
-      <p style="color:rgba(30,37,53,0.7);font-size:13px;line-height:1.8;margin:0 0 16px;"><strong>Next Steps:</strong><br>1) Sign up at <a href="https://www.novisociety.com/patient-signup" style="color:#2D6B7F;">novisociety.com/patient-signup</a><br>2) Build your aesthetic profile<br>3) Book your first ${treatmentName} treatment</p>
+      <p style="color:rgba(30,37,53,0.7);font-size:13px;line-height:1.8;margin:0 0 16px;"><strong>Next Steps:</strong><br>1) Sign up at <a href="https://www.novisociety.com/patient-signup" style="color:#2D6B7F;">novisociety.com/patient-signup</a><br>2) Build your aesthetic profile<br>3) Book your first ${treatment.postTrainingLabel} treatment</p>
       <p style="color:rgba(30,37,53,0.7);font-size:13px;line-height:1.8;margin:0 0 16px;"><strong>Special Perks for Training Models:</strong><br>15% off first treatment (code <strong>NOVIMODEL15</strong>)<br>Priority booking with instructors<br>Premium recovery tracking for 30 days</p>
-      <p style="color:rgba(30,37,53,0.6);font-size:13px;line-height:1.7;margin:0;">Have questions? Reply to this email or contact <a href="mailto:hello@novisociety.com" style="color:#2D6B7F;">hello@novisociety.com</a>.</p>`
+      <p style="color:rgba(30,37,53,0.6);font-size:13px;line-height:1.7;margin:0;">Have questions? Reply to this email or contact <a href="mailto:hello@novisociety.com" style="color:#2D6B7F;">hello@novisociety.com</a>.</p>`;
+    await sendModelTemplatedEmail({
+      trigger: "model_post_training",
+      to: customer_email,
+      placeholders: {
+        first_name: firstName(customer_name),
+        course_name: course_title || "NOVI Training Course",
+        treatment_type: treatment.postTrainingLabel,
+      },
+      fallbackSubject: "Become a Real Patient: Continue Your Journey with NOVI Society",
+      fallbackTitle: "Continue Your Journey",
+      fallbackContentHtml
     });
-    await sendResendEmail({ to: customer_email, subject: "Become a Real Patient: Continue Your Journey with NOVI Society", html });
     if (pre_order_id) {
       await query(`update public.pre_orders set post_training_email_sent = true, updated_at = now() where id = $1`, [pre_order_id]);
     }
@@ -1119,11 +1191,23 @@ functionsRouter.post("/sendModelReminderBatch", async (_req, res, next) => {
     let sent = 0;
     for (const row of rows) {
       try {
-        await sendResendEmail({
+        const formattedDate = fmtDateLocal(row.course_date);
+        const formattedTime = fmtTimeLabel(row.model_time_slot);
+        const treatment = treatmentCopy(row.treatment_type);
+        const didSend = await sendModelTemplatedEmail({
+          trigger: "model_session_reminder",
           to: row.customer_email,
-          subject: `Reminder: Your Model Training Session is Tomorrow at ${fmtTimeLabel(row.model_time_slot)}`,
-          html: withCourseEmailShell({ title: "Session Reminder", contentHtml: `<p style="color:#1e2535;font-size:14px;">Hi <strong>${row.customer_name}</strong>, your session is tomorrow (${fmtDateLocal(row.course_date)} at ${fmtTimeLabel(row.model_time_slot)}).</p>` })
+          placeholders: {
+            first_name: firstName(row.customer_name),
+            course_date: formattedDate,
+            time_slot: formattedTime,
+            treatment_type: treatment.label,
+          },
+          fallbackSubject: `Reminder: Your Model Training Session is Tomorrow at ${formattedTime}`,
+          fallbackTitle: "Session Reminder",
+          fallbackContentHtml: `<p style="color:#1e2535;font-size:14px;">Hi <strong>${row.customer_name}</strong>, your session is tomorrow (${formattedDate} at ${formattedTime}).</p>`
         });
+        if (!didSend) continue;
         await query(`update public.pre_orders set reminder_email_sent_at = now(), updated_at = now() where id = $1`, [row.id]);
         sent += 1;
       } catch {
@@ -1160,15 +1244,18 @@ functionsRouter.post("/sendModelGFEReminderBatch", async (_req, res, next) => {
     let sent = 0;
     for (const row of rows) {
       try {
-        const html = withCourseEmailShell({
-          title: "GFE Reminder",
-          contentHtml: `<p style="color:#1e2535;font-size:15px;margin:0 0 12px;">Hi <strong>${row.customer_name || "there"}</strong>,</p><p style="color:rgba(30,37,53,0.7);font-size:14px;line-height:1.7;margin:0 0 18px;">Friendly reminder to complete your Good Faith Exam before class.</p><p style="margin:0;"><a href="${row.gfe_meeting_url}" style="display:inline-block;background:#C8E63C;color:#1a2540;font-weight:700;font-size:14px;padding:12px 24px;border-radius:999px;text-decoration:none;">Complete GFE</a></p>`
-        });
-        await sendResendEmail({
+        const didSend = await sendModelTemplatedEmail({
+          trigger: "model_gfe_reminder",
           to: row.customer_email,
-          subject: "Reminder: Complete Your Good Faith Exam - NOVI Society",
-          html
+          placeholders: {
+            first_name: firstName(row.customer_name),
+            gfe_url: row.gfe_meeting_url,
+          },
+          fallbackSubject: "Reminder: Complete Your Good Faith Exam - NOVI Society",
+          fallbackTitle: "GFE Reminder",
+          fallbackContentHtml: `<p style="color:#1e2535;font-size:15px;margin:0 0 12px;">Hi <strong>${row.customer_name || "there"}</strong>,</p><p style="color:rgba(30,37,53,0.7);font-size:14px;line-height:1.7;margin:0 0 18px;">Friendly reminder to complete your Good Faith Exam before class.</p><p style="margin:0;"><a href="${row.gfe_meeting_url}" style="display:inline-block;background:#C8E63C;color:#1a2540;font-weight:700;font-size:14px;padding:12px 24px;border-radius:999px;text-decoration:none;">Complete GFE</a></p>`
         });
+        if (!didSend) continue;
         await query(`update public.pre_orders set gfe_reminder_sent_at = now(), updated_at = now() where id = $1`, [row.id]);
         sent += 1;
       } catch {
@@ -1194,11 +1281,20 @@ functionsRouter.post("/sendModelPostTrainingBatch", async (_req, res, next) => {
     let sent = 0;
     for (const row of rows) {
       try {
-        await sendResendEmail({
+        const treatment = treatmentCopy(row.treatment_type);
+        const didSend = await sendModelTemplatedEmail({
+          trigger: "model_post_training",
           to: row.customer_email,
-          subject: "Become a Real Patient: Continue Your Journey with NOVI Society",
-          html: withCourseEmailShell({ title: "Continue Your Journey", contentHtml: `<p style="color:#1e2535;font-size:14px;">Hi <strong>${row.customer_name}</strong>, thanks for being part of ${row.course_title || "NOVI Training Course"}.</p>` })
+          placeholders: {
+            first_name: firstName(row.customer_name),
+            course_name: row.course_title || "NOVI Training Course",
+            treatment_type: treatment.postTrainingLabel,
+          },
+          fallbackSubject: "Become a Real Patient: Continue Your Journey with NOVI Society",
+          fallbackTitle: "Continue Your Journey",
+          fallbackContentHtml: `<p style="color:#1e2535;font-size:14px;">Hi <strong>${row.customer_name}</strong>, thanks for being part of ${row.course_title || "NOVI Training Course"}.</p>`
         });
+        if (!didSend) continue;
         await query(`update public.pre_orders set post_training_email_sent = true, updated_at = now() where id = $1`, [row.id]);
         sent += 1;
       } catch {
@@ -1482,35 +1578,44 @@ functionsRouter.post("/promoteFromWaitlist", async (req, res, next) => {
     const booking = rows[0];
     try {
       const formattedDate = fmtDateLocal(booking.course_date);
-      const htmlBody = withCourseEmailShell({
-        title: "You're Booked!",
-        contentHtml: `
+      const formattedTime = fmtTimeLabel(booking.model_time_slot);
+      const treatment = treatmentCopy(booking.treatment_type);
+      const sent = await sendModelTemplatedEmail({
+        trigger: "model_waitlist_promoted",
+        to: booking.customer_email,
+        placeholders: {
+          first_name: firstName(booking.customer_name),
+          course_name: booking.course_title || "NOVI Training Course",
+          course_date: formattedDate,
+          time_slot: formattedTime,
+          treatment_type: treatment.label,
+        },
+        fallbackSubject: `Your Model Training Booking is Confirmed - ${formattedDate}`,
+        fallbackTitle: "You're Booked!",
+        fallbackContentHtml: `
         <p style="color:#1e2535;font-size:15px;margin:0 0 24px;">Hi <strong>${booking.customer_name || "there"}</strong>,</p>
         <p style="color:rgba(30,37,53,0.7);font-size:14px;line-height:1.7;margin:0 0 20px;">
           Great news - a slot opened up and your waitlist booking is now confirmed.
         </p>
         <div style="background:#f9f8f6;border-radius:12px;padding:16px;margin-bottom:20px;">
           <p style="margin:0 0 8px;font-size:13px;color:#1e2535;"><strong>Date:</strong> ${formattedDate}</p>
-          <p style="margin:0 0 8px;font-size:13px;color:#1e2535;"><strong>Time:</strong> ${fmtTimeLabel(booking.model_time_slot)}</p>
-          <p style="margin:0;font-size:13px;color:#1e2535;"><strong>Treatment:</strong> ${treatmentLabel(booking.treatment_type)}</p>
+          <p style="margin:0 0 8px;font-size:13px;color:#1e2535;"><strong>Time:</strong> ${formattedTime}</p>
+          <p style="margin:0;font-size:13px;color:#1e2535;"><strong>Treatment:</strong> ${treatment.label}</p>
         </div>
         <p style="color:rgba(30,37,53,0.6);font-size:13px;line-height:1.7;margin:0;">
           Please complete your Good Faith Exam before the session if you have not done so.
         </p>`
       });
-      await sendResendEmail({
-        to: booking.customer_email,
-        subject: `Your Model Training Booking is Confirmed - ${formattedDate}`,
-        html: htmlBody
-      });
-      await query(
-        `update public.pre_orders
-         set confirmation_email_sent = true,
-             confirmation_email_sent_at = now(),
-             updated_at = now()
-         where id = $1`,
-        [booking.id]
-      );
+      if (sent) {
+        await query(
+          `update public.pre_orders
+           set confirmation_email_sent = true,
+               confirmation_email_sent_at = now(),
+               updated_at = now()
+           where id = $1`,
+          [booking.id]
+        );
+      }
     } catch {
       // best effort: promotion should still succeed even if email delivery fails
     }
