@@ -289,9 +289,9 @@ function renderCourseDetailsBox(rows) {
 
 function renderBulletList(items) {
   const lis = items
-    .map((item) => `<li>${escapeInline(item)}</li>`)
+    .map((item) => `<li style="display:list-item;list-style-type:disc">${escapeInline(item)}</li>`)
     .join("\n            ");
-  return `<ul style="margin:0 0 32px;padding-left:20px;color:#374151;font-size:15px;line-height:1.9">
+  return `<ul style="margin:0 0 32px;padding-left:20px;color:#374151;font-size:15px;line-height:1.9;list-style-type:disc">
             ${lis}
           </ul>`;
 }
