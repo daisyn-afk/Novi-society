@@ -7,6 +7,16 @@ import { sendResendEmail } from "./sendResendEmail.js";
 const CACHE_TTL_MS = Math.max(0, Number(process.env.EMAIL_TEMPLATE_CACHE_TTL_MS || 60000));
 const templateCache = new Map();
 const GLOBAL_FALLBACK_ENABLED = String(process.env.EMAIL_TEMPLATE_ALLOW_FALLBACK || "").trim().toLowerCase() === "true";
+const runtimeVercelUrl =
+  process.env.VERCEL_PROJECT_PRODUCTION_URL ||
+  process.env.VERCEL_URL ||
+  "";
+
+function resolveAppBaseUrl() {
+  const configured = String(process.env.APP_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || "").trim();
+  const fallback = configured || (runtimeVercelUrl ? `https://${runtimeVercelUrl}` : "http://localhost:5173");
+  return fallback.replace(/\/+$/, "");
+}
 
 export function renderTemplateString(source, placeholders = {}) {
   return String(source || "").replace(/\{\{(\w+)\}\}/g, (full, key) => (
@@ -112,10 +122,17 @@ export async function sendTemplatedEmail({
   let resolvedTemplateId = null;
   const fallbackEnabled = allowFallback ?? GLOBAL_FALLBACK_ENABLED;
   try {
+    const resolvedAppUrl = resolveAppBaseUrl();
+    const mergedPlaceholders = {
+      app_url: resolvedAppUrl,
+      signup_link: `${resolvedAppUrl}/setup`,
+      gfe_url: `${resolvedAppUrl}/gfe`,
+      ...placeholders,
+    };
     const template = await loadTemplateByTrigger(trigger);
     if (!template) throw new Error(`No active email template found for trigger "${trigger}".`);
     resolvedTemplateId = template.id;
-    const rendered = renderTemplateRow(template, placeholders);
+    const rendered = renderTemplateRow(template, mergedPlaceholders);
     // Full HTML templates (body_html) are already complete — use as-is.
     // Plain-text templates (body_text only) get wrapped in the branded layout.
     const html = rendered.isFullHtml

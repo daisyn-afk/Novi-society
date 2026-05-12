@@ -37,6 +37,33 @@ function validateTemplateInput(payload, { isUpdate = false } = {}) {
   }
 }
 
+function resolveRequestBaseUrl(req, fallbackBaseUrl = "https://app.novisociety.com") {
+  const fallback = String(fallbackBaseUrl || "").trim() || "https://app.novisociety.com";
+  const proto = String(req?.get?.("x-forwarded-proto") || req?.protocol || "https")
+    .split(",")[0]
+    .trim();
+  const host = String(req?.get?.("x-forwarded-host") || req?.get?.("host") || "")
+    .split(",")[0]
+    .trim();
+  const candidates = [
+    req?.get?.("origin"),
+    req?.get?.("referer"),
+    host ? `${proto}://${host}` : "",
+  ];
+  for (const candidate of candidates) {
+    const raw = String(candidate || "").trim();
+    if (!raw) continue;
+    try {
+      const parsed = new URL(raw);
+      if (!/^https?:$/i.test(parsed.protocol)) continue;
+      return `${parsed.protocol}//${parsed.host}`;
+    } catch {
+      // continue to next candidate
+    }
+  }
+  return fallback.replace(/\/+$/, "");
+}
+
 function escapeHtml(value) {
   return String(value || "")
     .replace(/&/g, "&amp;")
@@ -266,7 +293,7 @@ emailTemplatesRouter.post("/:id/test-send", async (req, res, next) => {
     const template = await getEmailTemplate(req.params.id);
     if (!template) return res.status(404).json({ error: "Template not found." });
 
-    const appBaseUrl = process.env.APP_BASE_URL || "https://app.novisociety.com";
+    const appBaseUrl = resolveRequestBaseUrl(req, process.env.APP_BASE_URL || "https://app.novisociety.com");
     const logoUrl = process.env.NOVI_EMAIL_LOGO_URL || "";
 
     // Client-provided placeholder values (from the test dialog form)

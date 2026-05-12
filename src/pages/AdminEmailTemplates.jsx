@@ -54,25 +54,34 @@ const PLACEHOLDERS = [
   { tag: "{{patient_name}}", desc: "Patient full name" },
 ];
 
-const DEFAULT_PLACEHOLDER_VALUES = {
-  first_name: "Sarah",
-  full_name: "Sarah Johnson",
-  email: "sarah@example.com",
-  app_url: "https://app.novisociety.com",
-  course_name: "Botox & Dermal Filler Fundamentals",
-  course_date: "Saturday, June 14, 2026",
-  course_time: "9:00 AM – 5:00 PM",
-  course_location: "McKinney, TX",
-  time_slot: "10:00 AM",
-  treatment_type: "Botox",
-  gfe_url: "https://app.novisociety.com/gfe",
-  signup_link: "https://app.novisociety.com/setup",
-  service_name: "MD Board Coverage",
-  rejection_reason: "The uploaded license image was unclear. Please resubmit.",
-  provider_name: "Sarah Johnson",
-  patient_name: "Alex Martinez",
-  logo_url: "https://hjelcmcfqogoflxkhhpj.supabase.co/storage/v1/object/public/course-covers/admin-courses/1776410859667-3dba1a15-020c-4132-8b6b-4b0b15e72fb8.png",
-};
+function resolveRuntimeAppBaseUrl() {
+  if (typeof window === "undefined") return "https://app.novisociety.com";
+  const origin = String(window.location?.origin || "").trim();
+  return origin || "https://app.novisociety.com";
+}
+
+function createDefaultPlaceholderValues() {
+  const appBaseUrl = resolveRuntimeAppBaseUrl();
+  return {
+    first_name: "Sarah",
+    full_name: "Sarah Johnson",
+    email: "sarah@example.com",
+    app_url: appBaseUrl,
+    course_name: "Botox & Dermal Filler Fundamentals",
+    course_date: "Saturday, June 14, 2026",
+    course_time: "9:00 AM – 5:00 PM",
+    course_location: "McKinney, TX",
+    time_slot: "10:00 AM",
+    treatment_type: "Botox",
+    gfe_url: `${appBaseUrl}/gfe`,
+    signup_link: `${appBaseUrl}/setup`,
+    service_name: "MD Board Coverage",
+    rejection_reason: "The uploaded license image was unclear. Please resubmit.",
+    provider_name: "Sarah Johnson",
+    patient_name: "Alex Martinez",
+    logo_url: "https://hjelcmcfqogoflxkhhpj.supabase.co/storage/v1/object/public/course-covers/admin-courses/1776410859667-3dba1a15-020c-4132-8b6b-4b0b15e72fb8.png",
+  };
+}
 
 // TODO[REMOVE_OUTDATED_SEED_TEMPLATES]: these 3 stubs were the original starter templates seeded via the UI.
 // They are outdated (wrong triggers, simplified HTML, not matching real sent emails).
@@ -97,6 +106,18 @@ const EMPTY_FORM = {
 };
 
 const tagToKey = (tag) => tag.replace("{{", "").replace("}}", "");
+
+function extractPlaceholderKeys(...sources) {
+  const keys = new Set();
+  const re = /\{\{(\w+)\}\}/g;
+  sources.forEach((source) => {
+    const text = String(source || "");
+    if (!text) return;
+    let m;
+    while ((m = re.exec(text)) !== null) keys.add(m[1]);
+  });
+  return keys;
+}
 
 function escapeHtml(value) {
   return String(value || "")
@@ -136,6 +157,11 @@ function htmlToPlainText(html) {
     .replace(/<\/tr>/gi, "\n")
     .replace(/<\/td>/gi, " ")
     .replace(/<\/th>/gi, " ")
+    // Preserve <a href="...">text</a> as [text](href) so CTA buttons survive the round-trip
+    .replace(/<a\b[^>]*\bhref=["']([^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi, (_, href, inner) => {
+      const text = inner.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
+      return text ? `[${text}](${href.trim()})` : "";
+    })
     .replace(/<[^>]*>/g, "")
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
@@ -304,6 +330,12 @@ function renderParagraph(text) {
   return `<p style="margin:0 0 24px;font-size:15px;color:#374151;line-height:1.6">${escapeInline(text)}</p>`;
 }
 
+function renderCtaButton(text, url) {
+  return `<p style="margin:0 0 28px">
+            <a href="${url}" style="display:inline-block;background:#2D6B7F;color:#fff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:600;font-size:14px">${escapeInline(text)}</a>
+          </p>`;
+}
+
 function renderSignatureBlock(lines) {
   const parts = [];
   const isClosing = (line) => /^We look forward to seeing you soon/i.test(line.trim());
@@ -395,6 +427,14 @@ function bodyTextToRichBody(text) {
       }
     }
 
+    // CTA button: [button text](url-or-placeholder)
+    const btnMatch = trimmed.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+    if (btnMatch) {
+      parts.push(renderCtaButton(btnMatch[1], btnMatch[2]));
+      i += 1;
+      continue;
+    }
+
     // Section header
     if (/^What to Expect Next$/i.test(trimmed)) {
       parts.push(renderSectionHeader(trimmed));
@@ -475,7 +515,7 @@ export default function AdminEmailTemplates() {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [editOriginalBodyText, setEditOriginalBodyText] = useState("");
-  const [editPreviewPlaceholders, setEditPreviewPlaceholders] = useState({ ...DEFAULT_PLACEHOLDER_VALUES });
+  const [editPreviewPlaceholders, setEditPreviewPlaceholders] = useState(() => createDefaultPlaceholderValues());
   const [editPlaceholdersOpen, setEditPlaceholdersOpen] = useState(false);
 
   // ── Preview dialog state ──────────────────────────────────────────────────
@@ -486,7 +526,7 @@ export default function AdminEmailTemplates() {
   const [testOpen, setTestOpen] = useState(false);
   const [testTemplate, setTestTemplate] = useState(null);
   const [testEmail, setTestEmail] = useState("");
-  const [testPlaceholders, setTestPlaceholders] = useState({ ...DEFAULT_PLACEHOLDER_VALUES });
+  const [testPlaceholders, setTestPlaceholders] = useState(() => createDefaultPlaceholderValues());
   const [testPlaceholdersOpen, setTestPlaceholdersOpen] = useState(false);
 
   // ── Queries ──────────────────────────────────────────────────────────────
@@ -563,7 +603,7 @@ export default function AdminEmailTemplates() {
     setEditing(null);
     setForm({ ...EMPTY_FORM, trigger: prefillTrigger });
     setEditOriginalBodyText("");
-    setEditPreviewPlaceholders({ ...DEFAULT_PLACEHOLDER_VALUES });
+    setEditPreviewPlaceholders(createDefaultPlaceholderValues());
     setEditPlaceholdersOpen(false);
     setDialogOpen(true);
   };
@@ -586,7 +626,7 @@ export default function AdminEmailTemplates() {
       send_delay_minutes: t.send_delay_minutes || 0,
     });
     setEditOriginalBodyText(derivedBodyText);
-    setEditPreviewPlaceholders({ ...DEFAULT_PLACEHOLDER_VALUES });
+    setEditPreviewPlaceholders(createDefaultPlaceholderValues());
     setEditPlaceholdersOpen(false);
     setDialogOpen(true);
   };
@@ -594,7 +634,7 @@ export default function AdminEmailTemplates() {
   const openTest = (t) => {
     setTestTemplate(t);
     setTestEmail("");
-    setTestPlaceholders({ ...DEFAULT_PLACEHOLDER_VALUES });
+    setTestPlaceholders(createDefaultPlaceholderValues());
     setTestPlaceholdersOpen(true);
     setTestOpen(true);
   };
@@ -623,13 +663,21 @@ export default function AdminEmailTemplates() {
     byTrigger[t.trigger].push(t);
   });
 
+  const editUsedPlaceholders = (() => {
+    if (!form.trigger) return [];
+    const sameTriggerTemplates = byTrigger[form.trigger] || [];
+    const keys = extractPlaceholderKeys(
+      form.subject,
+      form.body_text,
+      editing?.body_html,
+      ...sameTriggerTemplates.flatMap((t) => [t.subject, t.body_text, t.body_html])
+    );
+    return PLACEHOLDERS.filter((p) => keys.has(tagToKey(p.tag)));
+  })();
+
   const testUsedPlaceholders = (() => {
     if (!testTemplate) return [];
-    const text = `${testTemplate.subject || ""} ${testTemplate.body_text || ""} ${testTemplate.body_html || ""}`;
-    const keys = new Set();
-    const re = /\{\{(\w+)\}\}/g;
-    let m;
-    while ((m = re.exec(text)) !== null) keys.add(m[1]);
+    const keys = extractPlaceholderKeys(testTemplate.subject, testTemplate.body_text, testTemplate.body_html);
     return PLACEHOLDERS.filter(p => keys.has(tagToKey(p.tag)));
   })();
 
@@ -852,7 +900,7 @@ export default function AdminEmailTemplates() {
                 style={{ cursor: "pointer" }}
               >
                 <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "#7B8EC8" }}>
-                  Placeholders — click to insert · edit value for preview
+                  Relevant placeholders — click to insert · edit value for preview
                 </p>
                 <button type="button" className="inline-flex items-center gap-1 text-xs font-semibold flex-shrink-0" style={{ color: "#7B8EC8" }}>
                   {editPlaceholdersOpen ? "Collapse" : "Expand"}
@@ -860,29 +908,37 @@ export default function AdminEmailTemplates() {
                 </button>
               </div>
               {editPlaceholdersOpen && (
-                <div className="grid grid-cols-2 gap-x-3 gap-y-2 mt-2.5">
-                  {PLACEHOLDERS.map(p => {
-                    const key = tagToKey(p.tag);
-                    return (
-                      <div key={p.tag} className="space-y-0.5">
-                        <button
-                          onClick={() => insertPlaceholder(p.tag)}
-                          title={`Click to insert ${p.tag} · ${p.desc}`}
-                          className="text-xs px-2.5 py-0.5 rounded-full font-mono transition-all hover:opacity-70 active:scale-95"
-                          style={{ background: "rgba(123,142,200,0.15)", color: "#4a5fa8", border: "1px solid rgba(123,142,200,0.3)" }}
-                        >
-                          {p.tag}
-                        </button>
-                        <Input
-                          value={editPreviewPlaceholders[key] ?? ""}
-                          onChange={e => setEditPreviewPlaceholders(prev => ({ ...prev, [key]: e.target.value }))}
-                          className="h-7 text-xs"
-                          placeholder={p.desc}
-                        />
-                      </div>
-                    );
-                  })}
-                </div>
+                editUsedPlaceholders.length === 0 ? (
+                  <p className="text-xs mt-2.5" style={{ color: "rgba(30,37,53,0.5)" }}>
+                    {form.trigger
+                      ? "No placeholders detected for this trigger yet. Add one in subject/body to surface it here."
+                      : "Select a trigger to see relevant placeholders."}
+                  </p>
+                ) : (
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-2 mt-2.5">
+                    {editUsedPlaceholders.map(p => {
+                      const key = tagToKey(p.tag);
+                      return (
+                        <div key={p.tag} className="space-y-0.5">
+                          <button
+                            onClick={() => insertPlaceholder(p.tag)}
+                            title={`Click to insert ${p.tag} · ${p.desc}`}
+                            className="text-xs px-2.5 py-0.5 rounded-full font-mono transition-all hover:opacity-70 active:scale-95"
+                            style={{ background: "rgba(123,142,200,0.15)", color: "#4a5fa8", border: "1px solid rgba(123,142,200,0.3)" }}
+                          >
+                            {p.tag}
+                          </button>
+                          <Input
+                            value={editPreviewPlaceholders[key] ?? ""}
+                            onChange={e => setEditPreviewPlaceholders(prev => ({ ...prev, [key]: e.target.value }))}
+                            className="h-7 text-xs"
+                            placeholder={p.desc}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                )
               )}
             </div>
 

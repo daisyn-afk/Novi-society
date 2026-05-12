@@ -24,13 +24,13 @@ function injectUniquenessToken(html, recipient) {
   const source = String(html || "");
   if (!source) return source;
   const token = buildUniquenessToken(recipient);
-  const hidden = `<div aria-hidden="true" style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:transparent;opacity:0;">${token}</div>`;
-  const bodyOpenMatch = source.match(/<body\b[^>]*>/i);
-  if (bodyOpenMatch) {
-    const idx = bodyOpenMatch.index + bodyOpenMatch[0].length;
-    return `${source.slice(0, idx)}${hidden}${source.slice(idx)}`;
-  }
-  return `${hidden}${source}`;
+  // Keep each email payload unique without adding visible/previewable text.
+  // Some inbox clients surfaced hidden text in the snippet line.
+  const metaTag = `<meta name="x-novi-email-uid" content="${token}">`;
+  const htmlComment = `<!-- novi-email-uid:${token} -->`;
+  if (/<\/head>/i.test(source)) return source.replace(/<\/head>/i, `${metaTag}</head>`);
+  if (/<\/body>/i.test(source)) return source.replace(/<\/body>/i, `${htmlComment}</body>`);
+  return `${source}${htmlComment}`;
 }
 
 export async function sendResendEmail({ to, subject, html, from }) {

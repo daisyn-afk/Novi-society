@@ -18,6 +18,33 @@ const supabaseAdmin = supabaseUrl && supabaseServiceRoleKey
     })
   : null;
 
+function resolveRequestBaseUrl(req, fallbackBaseUrl = appBaseUrl) {
+  const fallback = String(fallbackBaseUrl || "").trim() || "http://localhost:5173";
+  const proto = String(req?.get?.("x-forwarded-proto") || req?.protocol || "https")
+    .split(",")[0]
+    .trim();
+  const host = String(req?.get?.("x-forwarded-host") || req?.get?.("host") || "")
+    .split(",")[0]
+    .trim();
+  const candidates = [
+    req?.get?.("origin"),
+    req?.get?.("referer"),
+    host ? `${proto}://${host}` : "",
+  ];
+  for (const candidate of candidates) {
+    const raw = String(candidate || "").trim();
+    if (!raw) continue;
+    try {
+      const parsed = new URL(raw);
+      if (!/^https?:$/i.test(parsed.protocol)) continue;
+      return `${parsed.protocol}//${parsed.host}`;
+    } catch {
+      // continue
+    }
+  }
+  return fallback.replace(/\/+$/, "");
+}
+
 function hasAdminAccess(role) {
   const normalized = String(role || "").trim().toLowerCase();
   return normalized === "admin" || normalized === "super_admin" || normalized === "owner";
@@ -138,10 +165,16 @@ function resolveProviderFirstName(licenseRow) {
 }
 
 // TODO[REMOVE_HARDCODED_EMAIL]: license_verified + license_rejected — fallback remains temporary for template outages.
-function buildLicenseDecisionEmailHtml({ providerFirstName, isApproved, rejectionReason }) {
+function buildLicenseDecisionEmailHtml({
+  providerFirstName,
+  isApproved,
+  rejectionReason,
+  appUrl = appBaseUrl,
+  logoUrl = noviEmailLogoUrl
+}) {
   const safeName = escapeHtml(providerFirstName || "Provider");
   const safeReason = escapeHtml(rejectionReason || "");
-  const base = String(appBaseUrl || "").replace(/\/+$/, "");
+  const base = String(appUrl || "").replace(/\/+$/, "");
   const ctaUrl = `${base}/login?next=${encodeURIComponent("/ProviderCredentialsCoverage")}`;
   const ctaMarkup = isApproved
     ? `<p style="margin:0 0 32px">
@@ -183,7 +216,7 @@ function buildLicenseDecisionEmailHtml({ providerFirstName, isApproved, rejectio
     <tr><td align="center">
       <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
         <tr><td style="background:linear-gradient(135deg,#2D6B7F 0%,#7B8EC8 55%,#C8E63C 100%);padding:36px 40px;text-align:center;border-radius:16px 16px 0 0">
-          <img src="${noviEmailLogoUrl}" alt="NOVI Society" style="width:160px;height:auto" />
+          <img src="${logoUrl}" alt="NOVI Society" style="width:160px;height:auto" />
         </td></tr>
         <tr><td style="background:#fff;padding:48px 40px;border-radius:0 0 16px 16px">
           <p style="margin:0 0 24px;font-size:16px;color:#374151;line-height:1.6">Hi ${safeName},</p>
@@ -203,10 +236,17 @@ function buildLicenseDecisionEmailHtml({ providerFirstName, isApproved, rejectio
 </html>`;
 }
 
-async function sendLicenseDecisionEmail({ providerEmail, providerFirstName, isApproved, rejectionReason }) {
+async function sendLicenseDecisionEmail({
+  providerEmail,
+  providerFirstName,
+  isApproved,
+  rejectionReason,
+  appUrl = appBaseUrl,
+  logoUrl = noviEmailLogoUrl
+}) {
   if (!providerEmail) return false;
   const trigger = isApproved ? "license_verified" : "license_rejected";
-  const base = String(appBaseUrl || "").replace(/\/+$/, "");
+  const base = String(appUrl || "").replace(/\/+$/, "");
   try {
     return await sendTemplatedEmail({
       trigger,
@@ -215,7 +255,7 @@ async function sendLicenseDecisionEmail({ providerEmail, providerFirstName, isAp
         first_name: providerFirstName || "Provider",
         rejection_reason: rejectionReason || "",
         app_url: base,
-        logo_url: noviEmailLogoUrl
+        logo_url: logoUrl
       },
       from: resendFromEmail,
       allowFallback: false,
@@ -227,7 +267,9 @@ async function sendLicenseDecisionEmail({ providerEmail, providerFirstName, isAp
         const html = buildLicenseDecisionEmailHtml({
           providerFirstName,
           isApproved,
-          rejectionReason
+          rejectionReason,
+          appUrl: base,
+          logoUrl
         });
         try {
           await sendResendEmail({ to: providerEmail, subject, html, from: resendFromEmail });
@@ -494,6 +536,8 @@ licensesRouter.patch("/:id", async (req, res, next) => {
       const isApproved = updated.status === "verified";
       const isRejected = updated.status === "rejected";
       if (statusChangedByAdmin && (isApproved || isRejected)) {
+        const requestBaseUrl = resolveRequestBaseUrl(req, appBaseUrl);
+        const resolvedLogoUrl = process.env.NOVI_EMAIL_LOGO_URL || `${requestBaseUrl}/novi-email-logo.png`;
         const providerResult = await client.query(
           `select first_name, full_name, email
            from public.users
@@ -513,7 +557,9 @@ licensesRouter.patch("/:id", async (req, res, next) => {
             provider_name: providerRow.full_name
           }),
           isApproved,
-          rejectionReason: isRejected ? (updated.rejection_reason || requestedRejectionReason) : ""
+          rejectionReason: isRejected ? (updated.rejection_reason || requestedRejectionReason) : "",
+          appUrl: requestBaseUrl,
+          logoUrl: resolvedLogoUrl
         });
       }
       return res.json(mapLicenseRow(updated));
