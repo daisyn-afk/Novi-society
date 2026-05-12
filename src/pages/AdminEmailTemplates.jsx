@@ -98,6 +98,15 @@ const EMPTY_FORM = {
 
 const tagToKey = (tag) => tag.replace("{{", "").replace("}}", "");
 
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function applyPlaceholders(content, values) {
   return String(content || "").replace(/\{\{(\w+)\}\}/g, (full, key) =>
     Object.prototype.hasOwnProperty.call(values, key) ? String(values[key] ?? "") : full
@@ -111,7 +120,7 @@ function plainTextToHtml(text) {
     .map(para => {
       const trimmed = para.trim();
       if (!trimmed) return "";
-      return `<p style="margin:0 0 16px;font-size:15px;line-height:1.6;color:#374151;">${trimmed.replace(/\n/g, "<br>")}</p>`;
+      return `<p style="margin:0 0 16px;font-size:15px;line-height:1.6;color:#374151;">${escapeHtml(trimmed).replace(/\n/g, "<br>")}</p>`;
     })
     .filter(Boolean)
     .join("\n");
@@ -132,10 +141,38 @@ function htmlToPlainText(html) {
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&nbsp;/g, " ")
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"')
     .replace(/[ \t]+/g, " ")
     .replace(/^ /gm, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+// Extracts only the inner HTML of the main white content cell.
+// This is the editable region — header (logo) and footer (©, support) are excluded.
+function extractMainBodyContentHtml(html) {
+  const source = String(html || "");
+  if (!source) return "";
+  const openCellRe = /<tr>\s*<td[^>]*style=['"][^'"]*background:\s*#fff[^'"]*['"][^>]*>/i;
+  const openMatch = openCellRe.exec(source);
+  if (!openMatch) return source;
+  const contentStart = openMatch.index + openMatch[0].length;
+  const afterContent = source.slice(contentStart);
+  const beforeFooterRe = /<\/td>\s*<\/tr>\s*<tr>\s*<td[^>]*style=['"][^'"]*padding:\s*24px[^'"]*['"][^>]*>/i;
+  const beforeFooterMatch = beforeFooterRe.exec(afterContent);
+  if (beforeFooterMatch) {
+    return afterContent.slice(0, beforeFooterMatch.index);
+  }
+  const closeCellIdx = afterContent.search(/<\/td>\s*<\/tr>/i);
+  return closeCellIdx === -1 ? afterContent : afterContent.slice(0, closeCellIdx);
+}
+
+// Derive editable plain text for the textarea from the rich body_html.
+// Guarantees the textarea content's paragraphs map 1:1 to paragraphs in body_html,
+// so paragraph-pair replacement keeps the preview in sync with the user's edits.
+function htmlToEditableText(html) {
+  return htmlToPlainText(extractMainBodyContentHtml(html));
 }
 
 function forceNoviLogoCenter(html) {
@@ -150,7 +187,258 @@ function forceNoviLogoCenter(html) {
   );
 }
 
+function splitParagraphs(text) {
+  return String(text || "")
+    .split(/\n\n+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function replaceFirst(source, target, replacement) {
+  const idx = source.indexOf(target);
+  if (idx === -1) return source;
+  return `${source.slice(0, idx)}${replacement}${source.slice(idx + target.length)}`;
+}
+
+function insertIntoMainBodyCell(fullHtml, appendHtml) {
+  const source = String(fullHtml || "");
+  const extra = String(appendHtml || "");
+  if (!source || !extra) return source;
+
+  const openCellRe = /<tr>\s*<td[^>]*style=['"][^'"]*background:\s*#fff[^'"]*['"][^>]*>/i;
+  const openMatch = openCellRe.exec(source);
+  if (!openMatch) return source;
+
+  const contentStart = openMatch.index + openMatch[0].length;
+  const afterContent = source.slice(contentStart);
+  const beforeFooterRe = /<\/td><\/tr>\s*<tr><td[^>]*style=['"][^'"]*padding:\s*24px[^'"]*['"][^>]*>/i;
+  const beforeFooterMatch = beforeFooterRe.exec(afterContent);
+  const contentEnd = beforeFooterMatch
+    ? contentStart + beforeFooterMatch.index
+    : source.toLowerCase().lastIndexOf("</body>");
+  if (contentEnd === -1) return source;
+
+  return `${source.slice(0, contentEnd)}${extra}${source.slice(contentEnd)}`;
+}
+
+function normalizeFullHtmlTail(html) {
+  const source = String(html || "");
+  if (!source) return source;
+  const closeHtmlIdx = source.toLowerCase().lastIndexOf("</html>");
+  if (closeHtmlIdx === -1) return source;
+
+  const docEnd = closeHtmlIdx + "</html>".length;
+  const doc = source.slice(0, docEnd);
+  const tail = source.slice(docEnd).trim();
+  if (!tail) return doc;
+
+  const merged = insertIntoMainBodyCell(doc, tail);
+  if (merged !== doc) return merged;
+  if (/<\/body>/i.test(doc)) return doc.replace(/<\/body>/i, `${tail}</body>`);
+  return `${doc}${tail}`;
+}
+
+function appendToMainBodyCell(existingBodyHtml, extraHtml) {
+  const fullHtml = normalizeFullHtmlTail(existingBodyHtml);
+  const appendHtml = String(extraHtml || "");
+  if (!appendHtml) return fullHtml;
+
+  const inMainCell = insertIntoMainBodyCell(fullHtml, appendHtml);
+  if (inMainCell !== fullHtml) return inMainCell;
+  if (/<\/body>/i.test(fullHtml)) return fullHtml.replace(/<\/body>/i, `${appendHtml}</body>`);
+  return `${fullHtml}${appendHtml}`;
+}
+
 const NOVI_LOGO_URL = "https://hjelcmcfqogoflxkhhpj.supabase.co/storage/v1/object/public/course-covers/admin-courses/1776410859667-3dba1a15-020c-4132-8b6b-4b0b15e72fb8.png";
+
+// ── Smart layout generator ──────────────────────────────────────────────────
+// Converts admin-edited plain text into styled NOVI HTML, preserving the
+// branded layout for well-known sections while keeping body_text the
+// single source of truth. Sections detected:
+//   • "Course Details" header + key/value lines → branded gray box w/ table
+//   • Lines starting with "• " inside a paragraph → bulleted list
+//   • "What to Expect Next" header → bold section header
+//   • Trailing closing block (We look forward… / Best, / Team name) → signature card
+function escapeInline(text) {
+  return escapeHtml(String(text || "")).replace(/\n/g, "<br>");
+}
+
+function isCourseDetailsKeyValue(line) {
+  return /^(Course|Date|Time|Location)\s+\S/i.test(line.trim());
+}
+
+function parseCourseDetailsKeyValue(line) {
+  const m = line.trim().match(/^(Course|Date|Time|Location)\s+(.+)$/i);
+  if (!m) return null;
+  const [, key, value] = m;
+  const label = key.charAt(0).toUpperCase() + key.slice(1).toLowerCase();
+  return { label, value };
+}
+
+function renderCourseDetailsBox(rows) {
+  const tableRows = rows
+    .map((row) => `<tr><td style="padding:6px 0;color:#6b7280;font-size:14px;width:100px"><strong>${escapeInline(row.label)}</strong></td><td style="padding:6px 0;font-size:14px;color:#111827">${escapeInline(row.value)}</td></tr>`)
+    .join("\n              ");
+  return `<div style="background:#f9f8f6;border-radius:12px;padding:24px;margin-bottom:32px;border:1px solid rgba(0,0,0,0.07)">
+            <p style="margin:0 0 12px;font-size:13px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#2D6B7F">Course Details</p>
+            <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+              ${tableRows}
+            </table>
+          </div>`;
+}
+
+function renderBulletList(items) {
+  const lis = items
+    .map((item) => `<li>${escapeInline(item)}</li>`)
+    .join("\n            ");
+  return `<ul style="margin:0 0 32px;padding-left:20px;color:#374151;font-size:15px;line-height:1.9">
+            ${lis}
+          </ul>`;
+}
+
+function renderSectionHeader(text) {
+  return `<p style="margin:0 0 12px;font-size:15px;font-weight:600;color:#111827">${escapeInline(text)}</p>`;
+}
+
+function renderParagraph(text) {
+  return `<p style="margin:0 0 24px;font-size:15px;color:#374151;line-height:1.6">${escapeInline(text)}</p>`;
+}
+
+function renderSignatureBlock(lines) {
+  const parts = [];
+  const isClosing = (line) => /^We look forward to seeing you soon/i.test(line.trim());
+  const isItalicTagline = (line) => /^A New Way to Be Seen/i.test(line.trim());
+  const isWelcomeNovi = (line) => /^Welcome to NOVI\.?$/i.test(line.trim());
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    if (isClosing(line)) {
+      parts.push(`<p style="margin:0 0 4px;font-size:15px;color:#374151">${escapeInline(line)}</p>`);
+    } else if (isWelcomeNovi(line)) {
+      parts.push(`<p style="margin:0 0 4px;font-family:Georgia,serif;font-size:17px;color:#1e2535;font-style:italic">${escapeInline(line)}</p>`);
+    } else if (isItalicTagline(line)) {
+      parts.push(`<p style="margin:0 0 20px;font-size:14px;color:#6b7280;font-style:italic">${escapeInline(line)}</p>`);
+    } else if (/^Best,?$/i.test(line) && i + 1 < lines.length) {
+      // Combine "Best," + team line into one signoff paragraph
+      const teamLine = lines[i + 1].trim();
+      parts.push(`<p style="margin:0;font-size:15px;color:#374151">${escapeInline(line)}<br><strong>${escapeInline(teamLine)}</strong></p>`);
+      i += 1;
+    } else {
+      parts.push(`<p style="margin:0 0 4px;font-size:15px;color:#374151">${escapeInline(line)}</p>`);
+    }
+  }
+
+  return `<div style="border-top:1px solid #e5e7eb;padding-top:28px;margin-top:8px">
+            ${parts.join("\n            ")}
+          </div>`;
+}
+
+function findSignatureStartIndex(paragraphs) {
+  return paragraphs.findIndex((p) => /^We look forward to seeing you soon/i.test(String(p).trim().split("\n")[0]));
+}
+
+function bodyTextToRichBody(text) {
+  const paragraphs = splitParagraphs(text);
+  if (paragraphs.length === 0) return "";
+
+  const sigStart = findSignatureStartIndex(paragraphs);
+  const mainParas = sigStart === -1 ? paragraphs : paragraphs.slice(0, sigStart);
+  const sigParas = sigStart === -1 ? [] : paragraphs.slice(sigStart);
+
+  const parts = [];
+  let i = 0;
+  while (i < mainParas.length) {
+    const para = mainParas[i];
+    const trimmed = para.trim();
+
+    // Course Details box: header followed by 2+ key/value paragraphs
+    if (/^Course Details$/i.test(trimmed)) {
+      const rows = [];
+      let j = i + 1;
+      while (j < mainParas.length && isCourseDetailsKeyValue(mainParas[j])) {
+        const kv = parseCourseDetailsKeyValue(mainParas[j]);
+        if (kv) rows.push(kv);
+        j += 1;
+      }
+      if (rows.length >= 2) {
+        parts.push(renderCourseDetailsBox(rows));
+        i = j;
+        continue;
+      }
+    }
+
+    // Bullet block (single paragraph with multiple "• " lines)
+    const lines = para.split("\n").map((l) => l.trim()).filter(Boolean);
+    if (lines.length >= 2 && lines.every((l) => l.startsWith("•"))) {
+      const items = lines.map((l) => l.replace(/^•\s*/, "").trim());
+      parts.push(renderBulletList(items));
+      i += 1;
+      continue;
+    }
+    // Single-line bullet: treat as 1-item list when surrounded by similar siblings is unusual; fall through to paragraph
+    if (lines.length === 1 && lines[0].startsWith("•")) {
+      // Collect consecutive single-line bullet paragraphs into one list
+      const items = [lines[0].replace(/^•\s*/, "").trim()];
+      let j = i + 1;
+      while (j < mainParas.length) {
+        const nextLines = mainParas[j].split("\n").map((l) => l.trim()).filter(Boolean);
+        if (nextLines.length === 1 && nextLines[0].startsWith("•")) {
+          items.push(nextLines[0].replace(/^•\s*/, "").trim());
+          j += 1;
+        } else break;
+      }
+      if (items.length >= 2) {
+        parts.push(renderBulletList(items));
+        i = j;
+        continue;
+      }
+    }
+
+    // Section header
+    if (/^What to Expect Next$/i.test(trimmed)) {
+      parts.push(renderSectionHeader(trimmed));
+      i += 1;
+      continue;
+    }
+
+    parts.push(renderParagraph(trimmed));
+    i += 1;
+  }
+
+  if (sigParas.length > 0) {
+    const sigLines = sigParas.flatMap((p) => p.split("\n").map((l) => l.trim()).filter(Boolean));
+    parts.push(renderSignatureBlock(sigLines));
+  }
+
+  return parts.join("\n          ");
+}
+
+function renderBrandedEmailHtml(bodyText, { logoUrl = NOVI_LOGO_URL } = {}) {
+  const innerHtml = bodyTextToRichBody(bodyText);
+  return `<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+<body style="margin:0;padding:0;background:#f5f3ef;font-family:'DM Sans',Helvetica,Arial,sans-serif">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f3ef;padding:40px 0">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
+        <tr><td style="background:linear-gradient(135deg,#2D6B7F 0%,#7B8EC8 55%,#C8E63C 100%);padding:36px 40px;text-align:center;border-radius:16px 16px 0 0">
+          <img src="${logoUrl}" alt="NOVI Society" style="width:160px;height:auto;display:block;margin:0 auto" />
+        </td></tr>
+        <tr><td style="background:#fff;padding:48px 40px;border-radius:0 0 16px 16px">
+          ${innerHtml}
+        </td></tr>
+        <tr><td style="padding:24px 40px;text-align:center">
+          <p style="margin:0;font-size:12px;color:#9ca3af">© 2026 NOVI Society LLC · 8109 Meadow Valley Dr, McKinney, TX 75071</p>
+          <p style="margin:4px 0 0;font-size:12px;color:#9ca3af"><a href="mailto:support@novisociety.com" style="color:#9ca3af">support@novisociety.com</a></p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+}
 
 // Frontend preview wrapper — mirrors backend wrapEmailBody exactly.
 function wrapInLayout(bodyHtml, { testMode = false, testMeta = /** @type {{trigger?:string,templateName?:string}} */ ({}) } = {}) {
@@ -211,10 +499,18 @@ export default function AdminEmailTemplates() {
   const saveMutation = useMutation({
     mutationFn: () => {
       if (!editing) return emailTemplatesApi.create(form);
+      // Deterministically regenerate the rich HTML from the edited body_text so
+      // saved body_html always matches the textarea content exactly. Backend
+      // trusts new_body_html when provided and stores it as-is.
+      const hasRichTemplate = Boolean(String(editing.body_html || "").trim());
+      const regeneratedHtml = hasRichTemplate
+        ? renderBrandedEmailHtml(form.body_text)
+        : "";
       return emailTemplatesApi.update(editing.id, {
         ...form,
         clear_body_html: false,
         original_body_text: editOriginalBodyText,
+        ...(regeneratedHtml ? { new_body_html: regeneratedHtml } : {}),
       });
     },
     onSuccess: (saved) => {
@@ -273,7 +569,12 @@ export default function AdminEmailTemplates() {
   };
 
   const openEdit = (t) => {
-    const derivedBodyText = String(t.body_text || "").trim() || htmlToPlainText(t.body_html || "");
+    // body_text is the source of truth. body_html is deterministically
+    // regenerated from body_text on save so they cannot drift. If body_text
+    // is missing, derive a clean version from the rich HTML so the admin
+    // never sees an empty editor.
+    const storedBodyText = String(t.body_text || "").trim();
+    const derivedBodyText = storedBodyText || htmlToEditableText(t.body_html || "");
     setEditing(t);
     setForm({
       name: t.name,
@@ -308,10 +609,12 @@ export default function AdminEmailTemplates() {
   const previewBodyHtml = plainTextToHtml(applyPlaceholders(form.body_text, editPreviewPlaceholders));
   const previewSubject = applyPlaceholders(form.subject, editPreviewPlaceholders);
   const formIsValid = form.name && form.trigger && form.subject && form.body_text.trim();
-  // Keep preview stable while editing: show the saved rich HTML until the admin saves.
-  // After save, body_html is regenerated from body_text and this preview reflects it.
-  const editRenderedBody = editing?.body_html
-    ? forceNoviLogoCenter(applyPlaceholders(editing.body_html, editPreviewPlaceholders))
+  // Live preview is deterministically rebuilt from the textarea content so the
+  // admin sees exactly what will be saved. The smart generator preserves the
+  // branded NOVI styling (Course Details box, bullet lists, signature block).
+  const hasRichTemplate = Boolean(String(editing?.body_html || "").trim());
+  const editRenderedBody = hasRichTemplate
+    ? forceNoviLogoCenter(applyPlaceholders(renderBrandedEmailHtml(form.body_text), editPreviewPlaceholders))
     : wrapInLayout(previewBodyHtml);
 
   const byTrigger = {};
@@ -334,7 +637,9 @@ export default function AdminEmailTemplates() {
   const testRenderedBody = (() => {
     if (!testTemplate) return "";
     // Use rich body_html if available (full HTML already includes NOVI layout)
-    if (testTemplate.body_html) return forceNoviLogoCenter(applyPlaceholders(testTemplate.body_html, testPlaceholders));
+    if (testTemplate.body_html) {
+      return forceNoviLogoCenter(applyPlaceholders(normalizeFullHtmlTail(testTemplate.body_html), testPlaceholders));
+    }
     return wrapInLayout(plainTextToHtml(applyPlaceholders(testTemplate.body_text || "", testPlaceholders)), { testMode: true, testMeta: { trigger: testTemplate.trigger, templateName: testTemplate.name } });
   })();
 
@@ -653,7 +958,7 @@ export default function AdminEmailTemplates() {
                 <div className="px-4 py-2.5 text-xs font-bold uppercase tracking-widest" style={{ background: "rgba(30,37,53,0.05)", color: "rgba(30,37,53,0.5)", borderBottom: "1px solid rgba(30,37,53,0.08)" }}>Email Preview</div>
                 <div dangerouslySetInnerHTML={{
                   __html: previewTemplate.body_html
-                    ? forceNoviLogoCenter(previewTemplate.body_html)
+                    ? forceNoviLogoCenter(normalizeFullHtmlTail(previewTemplate.body_html))
                     : wrapInLayout(plainTextToHtml(previewTemplate.body_text || ""))
                 }} />
               </div>

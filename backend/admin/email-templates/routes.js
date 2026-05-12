@@ -63,13 +63,63 @@ function replaceFirst(source, target, replacement) {
   return `${source.slice(0, idx)}${replacement}${source.slice(idx + target.length)}`;
 }
 
+function insertIntoMainBodyCell(fullHtml, appendHtml) {
+  const source = String(fullHtml || "");
+  const extra = String(appendHtml || "");
+  if (!source || !extra) return source;
+
+  const openCellRe = /<tr>\s*<td[^>]*style=['"][^'"]*background:\s*#fff[^'"]*['"][^>]*>/i;
+  const openMatch = openCellRe.exec(source);
+  if (!openMatch) return source;
+
+  const contentStart = openMatch.index + openMatch[0].length;
+  const afterContent = source.slice(contentStart);
+  const beforeFooterRe = /<\/td><\/tr>\s*<tr><td[^>]*style=['"][^'"]*padding:\s*24px[^'"]*['"][^>]*>/i;
+  const beforeFooterMatch = beforeFooterRe.exec(afterContent);
+  const contentEnd = beforeFooterMatch
+    ? contentStart + beforeFooterMatch.index
+    : source.toLowerCase().lastIndexOf("</body>");
+  if (contentEnd === -1) return source;
+
+  return `${source.slice(0, contentEnd)}${extra}${source.slice(contentEnd)}`;
+}
+
+function normalizeFullHtmlTail(html) {
+  const source = String(html || "");
+  if (!source) return source;
+  const closeHtmlIdx = source.toLowerCase().lastIndexOf("</html>");
+  if (closeHtmlIdx === -1) return source;
+
+  const docEnd = closeHtmlIdx + "</html>".length;
+  const doc = source.slice(0, docEnd);
+  const tail = source.slice(docEnd).trim();
+  if (!tail) return doc;
+
+  const merged = insertIntoMainBodyCell(doc, tail);
+  if (merged !== doc) return merged;
+  if (/<\/body>/i.test(doc)) return doc.replace(/<\/body>/i, `${tail}</body>`);
+  return `${doc}${tail}`;
+}
+
+function appendToMainBodyCell(existingBodyHtml, extraHtml) {
+  const fullHtml = normalizeFullHtmlTail(existingBodyHtml);
+  const appendHtml = String(extraHtml || "");
+  if (!appendHtml) return fullHtml;
+
+  const inMainCell = insertIntoMainBodyCell(fullHtml, appendHtml);
+  if (inMainCell !== fullHtml) return inMainCell;
+  if (/<\/body>/i.test(fullHtml)) return fullHtml.replace(/<\/body>/i, `${appendHtml}</body>`);
+  return `${fullHtml}${appendHtml}`;
+}
+
 function syncRichHtmlWithBodyText(existingBodyHtml, oldBodyText, newBodyText) {
-  let updated = String(existingBodyHtml || "");
+  let updated = normalizeFullHtmlTail(existingBodyHtml);
   if (!updated) return updated;
 
   const oldParagraphs = splitParagraphs(oldBodyText);
   const newParagraphs = splitParagraphs(newBodyText);
-  if (oldParagraphs.length === 0 || newParagraphs.length === 0) return updated;
+  if (newParagraphs.length === 0) return updated;
+  if (oldParagraphs.length === 0) return appendToMainBodyCell(updated, plainTextToHtml(newBodyText));
 
   const pairCount = Math.min(oldParagraphs.length, newParagraphs.length);
   for (let i = 0; i < pairCount; i += 1) {
@@ -95,17 +145,25 @@ function syncRichHtmlWithBodyText(existingBodyHtml, oldBodyText, newBodyText) {
 function withSyncedBodyHtml(payload, existing) {
   const next = { ...(payload || {}) };
   if (next.clear_body_html) return next;
+  // If caller explicitly provides new rich HTML, trust it.
+  if (String(next.new_body_html || "").trim()) {
+    next.new_body_html = normalizeFullHtmlTail(next.new_body_html);
+    return next;
+  }
   const incomingBodyText = String(next.body_text || "").trim();
   // Prefer editor-provided snapshot (derived from rich HTML when body_text is empty).
   // This gives us a reliable baseline for text replacement while preserving structure.
   const existingBodyText = String(next.original_body_text || existing?.body_text || "").trim();
-  const hasExistingRichHtml = Boolean(String(existing?.body_html || "").trim());
+  const normalizedExistingHtml = normalizeFullHtmlTail(existing?.body_html || "");
+  const hasExistingRichHtml = Boolean(String(normalizedExistingHtml || "").trim());
   const bodyChanged = incomingBodyText !== existingBodyText;
-  if (!incomingBodyText || !bodyChanged) return next;
+  const needsTailNormalization = hasExistingRichHtml
+    && normalizedExistingHtml !== String(existing?.body_html || "");
+  if (!incomingBodyText || (!bodyChanged && !needsTailNormalization)) return next;
 
   if (hasExistingRichHtml) {
     next.new_body_html = syncRichHtmlWithBodyText(
-      existing.body_html,
+      normalizedExistingHtml,
       existingBodyText,
       incomingBodyText
     );
