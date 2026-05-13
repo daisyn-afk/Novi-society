@@ -1,14 +1,33 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
+import { adminApiRequest } from "@/api/adminApiRequest";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Award, Search, Plus, ExternalLink, CheckCircle } from "lucide-react";
 import { format } from "date-fns";
+import { issueCourseCertification } from "@/lib/issueCourseCertification";
+import {
+  CERTIFICATE_EXPIRATION_DATE,
+  CERTIFICATE_EXPIRATION_NEVER,
+  validateCertificateIssueForm,
+} from "@/lib/certificateIssueForm";
+import CertificateSignaturePad from "@/components/admin/CertificateSignaturePad";
+import { hasCertificateDocument, openCertificateDocument } from "@/lib/certificateDocument";
+import {
+  getCertificationDateMeta,
+  isExternalSubmittedCert,
+  isExternalUploadedCert,
+  isNoviIssuedCert,
+  minExpirationDateInputValue,
+  resolveCertificationDocumentUrl,
+} from "@/lib/certificationBuckets";
 
 const statusColor = { active: "bg-green-100 text-green-700", expired: "bg-slate-100 text-slate-500", revoked: "bg-red-100 text-red-700", pending: "bg-yellow-100 text-yellow-700" };
 const extractDocumentUrl = (cert) => {
@@ -25,16 +44,30 @@ export default function AdminCertifications() {
   const [search, setSearch] = useState("");
   const [issueDialog, setIssueDialog] = useState(null); // enrollment to certify
   const [form, setForm] = useState({});
+  const [hasIssuerSignature, setHasIssuerSignature] = useState(false);
+  const [issueError, setIssueError] = useState("");
+  const signaturePadRef = useRef(null);
+  const [rejectDialog, setRejectDialog] = useState(null);
+  const [rejectReason, setRejectReason] = useState("");
   const qc = useQueryClient();
 
-  const { data: certs = [], isLoading } = useQuery({
+  const { data: certs = [], isLoading: certsLoading } = useQuery({
     queryKey: ["certifications"],
     queryFn: () => base44.entities.Certification.list("-created_date"),
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+    refetchInterval: 3000,
   });
 
-  const { data: enrollments = [] } = useQuery({
+  const { data: enrollments = [], isLoading: enrollmentsLoading } = useQuery({
     queryKey: ["enrollments"],
-    queryFn: () => base44.entities.Enrollment.filter({ status: "completed" }),
+    queryFn: async () => {
+      const rows = await base44.entities.Enrollment.list("-created_date");
+      return rows.filter((row) => ["attended", "completed"].includes(String(row?.status || "").toLowerCase()));
+    },
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+    refetchInterval: 3000,
   });
 
   const { data: courses = [] } = useQuery({
@@ -50,6 +83,13 @@ export default function AdminCertifications() {
   const { data: users = [] } = useQuery({
     queryKey: ["users-for-certifications"],
     queryFn: () => base44.entities.User.list(),
+  });
+
+  const { data: issueIssuer } = useQuery({
+    queryKey: ["admin-cert-issue-issuer"],
+    queryFn: () => base44.auth.me(),
+    enabled: !!issueDialog,
+    staleTime: 60_000,
   });
 
   const usersById = new Map(
@@ -68,7 +108,9 @@ export default function AdminCertifications() {
       .filter(([email]) => !!email)
   );
 
-  const normalizedCerts = certs.map((c) => ({
+  const normalizedCerts = certs.map((c) => {
+    const dateMeta = getCertificationDateMeta(c);
+    return {
     ...c,
     status: c?.status || "pending",
     certification_name: c?.certification_name || c?.cert_name || "Certification",
@@ -122,38 +164,65 @@ export default function AdminCertifications() {
       )?.email ||
       null,
     document_url: extractDocumentUrl(c),
-  }));
-  // Pending external certs submitted from another school
-  const pendingExternalCerts = normalizedCerts.filter((c) => {
-    const status = String(c?.status || "").toLowerCase();
-    const isExternal = Boolean(c?.certificate_url || c?.service_type_id || c?.issued_by);
-    return status === "pending" && isExternal;
+    issued_display_label: dateMeta.label,
+    issued_display_at: dateMeta.displayAt,
+    is_novi_issued: isNoviIssuedCert(c),
+    is_external_submission: isExternalSubmittedCert(c),
+    is_external_upload: isExternalUploadedCert(c),
+  };
   });
+  const pendingExternalCerts = normalizedCerts.filter((c) => c.is_external_submission);
 
-  const certifiedEnrollmentIds = new Set(normalizedCerts.map(c => c.enrollment_id));
+  const certifiedEnrollmentIds = new Set(
+    normalizedCerts
+      .filter((c) => String(c?.status || "").toLowerCase() === "active" && c?.enrollment_id)
+      .map((c) => c.enrollment_id)
+  );
   const pendingCertification = enrollments.filter(e => !certifiedEnrollmentIds.has(e.id));
+  const canShowAwaitingCertifications = !certsLoading && !enrollmentsLoading && pendingCertification.length > 0;
   const courseMap = Object.fromEntries(courses.map(c => [c.id, c]));
 
   const issue = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (payload) => {
       const me = await base44.auth.me();
-      return base44.entities.Certification.create({
-        provider_id: issueDialog.provider_id,
-        provider_email: issueDialog.provider_email,
-        provider_name: issueDialog.provider_name,
-        course_id: issueDialog.course_id,
-        enrollment_id: issueDialog.id,
-        certification_name: form.certification_name || courseMap[issueDialog.course_id]?.certification_name,
-        category: courseMap[issueDialog.course_id]?.category,
-        issued_by: me.full_name,
-        issued_by_email: me.email,
-        issued_at: new Date().toISOString(),
-        expires_at: form.expires_at,
-        certificate_number: `NOVI-${Date.now()}`,
-        status: "active",
+      return issueCourseCertification({
+        enrollment: payload.enrollment,
+        course: payload.course,
+        issueForm: payload.issueForm,
+        issuerName: me.full_name || "NOVI Society",
+        issuerEmail: me.email || null,
       });
     },
-    onSuccess: () => { qc.invalidateQueries(["certifications"]); setIssueDialog(null); setForm({}); },
+    onMutate: async (payload) => {
+      await qc.cancelQueries({ queryKey: ["certifications"] });
+      const previousCerts = qc.getQueryData(["certifications"]);
+      qc.setQueryData(["certifications"], (old = []) => [{
+        id: `optimistic-cert-${Date.now()}`,
+        enrollment_id: payload.enrollment.id,
+        provider_name: payload.enrollment.provider_name,
+        provider_email: payload.enrollment.provider_email,
+        certification_name: payload.course?.title || payload.course?.certification_name || "Course Certification",
+        certificate_number: `NOVI-${Date.now()}`,
+        status: "active",
+        issued_at: new Date().toISOString(),
+      }, ...(Array.isArray(old) ? old : [])]);
+      setIssueDialog(null);
+      setForm({});
+      setHasIssuerSignature(false);
+      setIssueError("");
+      return { previousCerts };
+    },
+    onError: (error, payload, context) => {
+      if (context?.previousCerts) qc.setQueryData(["certifications"], context.previousCerts);
+      if (payload?.enrollment) setIssueDialog(payload.enrollment);
+      if (payload?.issueForm) setForm(payload.issueForm);
+      setHasIssuerSignature(Boolean(payload?.issueForm?.issuer_signature_data));
+      setIssueError(error?.message || "Unable to issue certificate.");
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ["certifications"] });
+      qc.invalidateQueries({ queryKey: ["enrollments"] });
+    },
   });
 
   const revoke = useMutation({
@@ -162,32 +231,72 @@ export default function AdminCertifications() {
   });
 
   const approveExternalCert = useMutation({
+    onMutate: async (cert) => {
+      await qc.cancelQueries({ queryKey: ["certifications"] });
+      const previous = qc.getQueryData(["certifications"]);
+      qc.setQueryData(["certifications"], (old = []) =>
+        (Array.isArray(old) ? old : []).map((row) =>
+          row?.id === cert?.id
+            ? {
+              ...row,
+              status: "active",
+              issued_at: new Date().toISOString(),
+              certificate_number: row.certificate_number || `NOVI-EXT-${Date.now()}`,
+            }
+            : row
+        )
+      );
+      return { previous };
+    },
+    onError: (_err, _cert, context) => {
+      if (context?.previous) qc.setQueryData(["certifications"], context.previous);
+    },
     mutationFn: async (cert) => {
       const me = await base44.auth.me();
-      await base44.entities.Certification.update(cert.id, {
-        status: "active",
-        issued_at: new Date().toISOString(),
-        issued_by_email: me.email,
-        certificate_number: cert.certificate_number || `NOVI-EXT-${Date.now()}`,
-      });
-      // Notify provider to complete MD coverage for this service
-      await base44.entities.Notification.create({
-        user_id: cert.provider_id,
-        user_email: cert.provider_email,
-        type: "cert_awarded",
-        message: `Your ${cert.certification_name} certification has been approved! Complete your MD coverage application for ${cert.service_type_name || "this service"} to start offering it.`,
-        link_page: `ProviderCredentialsCoverage?prompt_service=${cert.service_type_id}`,
+      await adminApiRequest(`/admin/certifications/${cert.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          status: "active",
+          issued_at: new Date().toISOString(),
+          issued_by_email: me.email,
+          certificate_number: cert.certificate_number || `NOVI-EXT-${Date.now()}`,
+        }),
       });
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["certifications"] }),
   });
 
   const rejectExternalCert = useMutation({
-    mutationFn: (id) => base44.entities.Certification.update(id, { status: "revoked" }),
+    onMutate: async ({ cert }) => {
+      setRejectDialog(null);
+      setRejectReason("");
+      await qc.cancelQueries({ queryKey: ["certifications"] });
+      const previous = qc.getQueryData(["certifications"]);
+      qc.setQueryData(["certifications"], (old = []) =>
+        (Array.isArray(old) ? old : []).map((row) =>
+          row?.id === cert?.id
+            ? { ...row, status: "revoked" }
+            : row
+        )
+      );
+      return { previous };
+    },
+    onError: (_err, _cert, context) => {
+      if (context?.previous) qc.setQueryData(["certifications"], context.previous);
+    },
+    mutationFn: async ({ cert, reason }) => {
+      await adminApiRequest(`/admin/certifications/${cert.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "revoked", rejection_reason: String(reason || "").trim() || null }),
+      });
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["certifications"] }),
   });
 
   const filtered = normalizedCerts.filter(c => !search || c.provider_name?.toLowerCase().includes(search.toLowerCase()) || c.provider_email?.toLowerCase().includes(search.toLowerCase()));
+  const noviIssuedCerts = filtered.filter((c) => c.is_novi_issued);
+  const externalCerts = filtered.filter((c) => c.is_external_upload);
+  const otherCerts = filtered.filter((c) => !c.is_novi_issued && !c.is_external_upload);
 
   return (
     <div className="space-y-6">
@@ -196,7 +305,7 @@ export default function AdminCertifications() {
         <p className="text-slate-500 text-sm mt-1">{certs.length} certifications issued</p>
       </div>
 
-      {pendingCertification.length > 0 && (
+      {canShowAwaitingCertifications && (
         <Card className="border-amber-200 bg-amber-50">
           <CardContent className="pt-4 pb-4">
             <p className="font-semibold text-amber-800 mb-3">Awaiting Certification ({pendingCertification.length})</p>
@@ -208,7 +317,12 @@ export default function AdminCertifications() {
                     <p className="text-xs text-slate-500">{courseMap[e.course_id]?.title}</p>
                   </div>
                   <Button size="sm" style={{ background: "var(--novi-gold)", color: "#1A1A2E" }}
-                    onClick={() => { setIssueDialog(e); setForm({ certification_name: courseMap[e.course_id]?.certification_name || "" }); }}>
+                    onClick={() => {
+                      setIssueDialog(e);
+                      setForm({ expiration_type: "", expires_at: "", issuer_signature_data: "" });
+                      setHasIssuerSignature(false);
+                      setIssueError("");
+                    }}>
                     <Award className="w-3.5 h-3.5 mr-1" /> Issue Certificate
                   </Button>
                 </div>
@@ -264,7 +378,7 @@ export default function AdminCertifications() {
                         <CheckCircle className="w-3 h-3" /> Approve
                       </Button>
                       <Button size="sm" variant="outline" className="gap-1 h-7 text-xs text-red-500 border-red-200"
-                        onClick={() => rejectExternalCert.mutate(c.id)} disabled={rejectExternalCert.isPending}>
+                        onClick={() => { setRejectDialog(c); setRejectReason(""); }} disabled={rejectExternalCert.isPending}>
                         Reject
                       </Button>
                     </div>
@@ -281,12 +395,19 @@ export default function AdminCertifications() {
         <Input className="pl-9" placeholder="Search certifications..." value={search} onChange={e => setSearch(e.target.value)} />
       </div>
 
-      {isLoading ? (
+      {certsLoading ? (
         <div className="space-y-3">{[1,2,3].map(i => <Card key={i} className="h-20 animate-pulse bg-slate-100" />)}</div>
       ) : (
         <div className="space-y-3">
-          {filtered.map(c => {
-            const certificateDocUrl = c.document_url || extractDocumentUrl(c);
+          {[
+            { title: "NOVI Issued Certificates", rows: noviIssuedCerts },
+            { title: "External Uploaded Certifications", rows: externalCerts },
+            { title: "Other Certifications", rows: otherCerts },
+          ].filter((section) => section.rows.length > 0).map((section) => (
+            <div key={section.title} className="space-y-3">
+              <p className="text-sm font-semibold text-slate-700">{section.title} ({section.rows.length})</p>
+              {section.rows.map((c) => {
+            const canViewCertificate = hasCertificateDocument(c);
             return (
             <Card key={c.id}>
               <CardContent className="pt-4 pb-4">
@@ -301,19 +422,19 @@ export default function AdminCertifications() {
                       <p className="text-sm text-slate-500">{c.provider_name || c.provider_email}</p>
                       <div className="flex gap-3 text-xs text-slate-400 mt-1">
                         <span>#{c.certificate_number}</span>
-                        {c.issued_at && <span>Issued {format(new Date(c.issued_at), "MMM d, yyyy")}</span>}
+                        {c.issued_display_at && (
+                          <span>{c.issued_display_label} {format(new Date(c.issued_display_at), "MMM d, yyyy")}</span>
+                        )}
                         {c.expires_at && <span>Expires {format(new Date(c.expires_at), "MMM d, yyyy")}</span>}
                       </div>
                     </div>
                   </div>
                   {String(c.status || "").toLowerCase() === "pending" && (
                     <div className="flex items-center gap-2">
-                      {certificateDocUrl && (
-                        <a href={certificateDocUrl} target="_blank" rel="noreferrer">
-                          <Button size="sm" variant="outline" className="gap-1 h-7 text-xs">
-                            <ExternalLink className="w-3 h-3" /> View
-                          </Button>
-                        </a>
+                      {canViewCertificate && (
+                        <Button size="sm" variant="outline" className="gap-1 h-7 text-xs" onClick={() => openCertificateDocument(c)}>
+                          <ExternalLink className="w-3 h-3" /> View
+                        </Button>
                       )}
                       <Button
                         size="sm"
@@ -327,29 +448,30 @@ export default function AdminCertifications() {
                         size="sm"
                         variant="outline"
                         className="gap-1 h-7 text-xs text-red-500 border-red-200"
-                        onClick={() => rejectExternalCert.mutate(c.id)}
+                        onClick={() => { setRejectDialog(c); setRejectReason(""); }}
                         disabled={rejectExternalCert.isPending}
                       >
                         Reject
                       </Button>
                     </div>
                   )}
-                  {String(c.status || "").toLowerCase() !== "pending" && certificateDocUrl && (
-                    <a href={certificateDocUrl} target="_blank" rel="noreferrer">
-                      <Button size="sm" variant="outline" className="gap-1 h-7 text-xs">
-                        <ExternalLink className="w-3 h-3" /> View
-                      </Button>
-                    </a>
+                  {String(c.status || "").toLowerCase() !== "pending" && canViewCertificate && (
+                    <Button size="sm" variant="outline" className="gap-1 h-7 text-xs" onClick={() => openCertificateDocument(c)}>
+                      <ExternalLink className="w-3 h-3" /> View
+                    </Button>
                   )}
                 </div>
               </CardContent>
             </Card>
-          )})}
+          );
+              })}
+            </div>
+          ))}
           {filtered.length === 0 && <p className="text-center text-slate-400 py-10">No certifications found</p>}
         </div>
       )}
 
-      <Dialog open={!!issueDialog} onOpenChange={() => setIssueDialog(null)}>
+      <Dialog open={!!issueDialog} onOpenChange={() => { setIssueDialog(null); setIssueError(""); setHasIssuerSignature(false); }}>
         <DialogContent>
           <DialogHeader><DialogTitle>Issue Certification</DialogTitle></DialogHeader>
           {issueDialog && (
@@ -359,21 +481,101 @@ export default function AdminCertifications() {
                 <p className="text-slate-500">{courseMap[issueDialog.course_id]?.title}</p>
               </div>
               <div>
-                <Label>Certificate Name</Label>
-                <Input value={form.certification_name || ""} onChange={e => setForm({ ...form, certification_name: e.target.value })} />
+                <Label>Expiration</Label>
+                <Select
+                  value={form.expiration_type || ""}
+                  onValueChange={(value) => setForm({
+                    ...form,
+                    expiration_type: value,
+                    expires_at: value === CERTIFICATE_EXPIRATION_NEVER ? "" : form.expires_at,
+                  })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select expiration" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={CERTIFICATE_EXPIRATION_DATE}>Expires on a date</SelectItem>
+                    <SelectItem value={CERTIFICATE_EXPIRATION_NEVER}>Never expires</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
-              <div>
-                <Label>Expiration Date (optional)</Label>
-                <Input type="date" value={form.expires_at || ""} onChange={e => setForm({ ...form, expires_at: e.target.value })} />
-              </div>
+              {form.expiration_type === CERTIFICATE_EXPIRATION_DATE && (
+                <div>
+                  <Label>Expiration Date</Label>
+                  <Input
+                    type="date"
+                    min={minExpirationDateInputValue()}
+                    value={form.expires_at || ""}
+                    onChange={(e) => setForm({ ...form, expires_at: e.target.value })}
+                  />
+                </div>
+              )}
+              <CertificateSignaturePad
+                ref={signaturePadRef}
+                key={issueDialog.id}
+                signerName={issueIssuer?.full_name || "NOVI Society"}
+                onChange={({ hasSignature, signatureDataUrl }) => {
+                  setHasIssuerSignature(hasSignature);
+                  setForm((previous) => ({ ...previous, issuer_signature_data: signatureDataUrl }));
+                }}
+              />
+              {issueError && (
+                <p className="text-sm text-red-600">{issueError}</p>
+              )}
               <div className="flex gap-2 justify-end">
-                <Button variant="outline" onClick={() => setIssueDialog(null)}>Cancel</Button>
-                <Button style={{ background: "var(--novi-gold)", color: "#1A1A2E" }} onClick={() => issue.mutate()} disabled={issue.isPending}>
-                  Issue Certificate
+                <Button variant="outline" onClick={() => { setIssueDialog(null); setIssueError(""); }}>Cancel</Button>
+                <Button
+                  style={{ background: "var(--novi-gold)", color: "#1A1A2E" }}
+                  onClick={() => {
+                    const signature = signaturePadRef.current?.captureSignature?.() || {
+                      hasSignature: hasIssuerSignature,
+                      signatureDataUrl: form.issuer_signature_data,
+                    };
+                    const nextForm = { ...form, issuer_signature_data: signature.signatureDataUrl };
+                    const validationError = validateCertificateIssueForm(nextForm, { hasSignature: signature.hasSignature });
+                    if (validationError) {
+                      setIssueError(validationError);
+                      return;
+                    }
+                    setIssueError("");
+                    issue.mutate({
+                      enrollment: issueDialog,
+                      course: courseMap[issueDialog.course_id],
+                      issueForm: nextForm,
+                    });
+                  }}
+                  disabled={issue.isPending}
+                >
+                  {issue.isPending ? "Issuing..." : "Issue Certificate"}
                 </Button>
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!rejectDialog} onOpenChange={() => setRejectDialog(null)}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Reject Certification</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <Label>Reason for rejection</Label>
+            <Textarea
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              placeholder="Explain why this certification was rejected..."
+              rows={3}
+            />
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" onClick={() => setRejectDialog(null)}>Cancel</Button>
+              <Button
+                className="bg-red-600 hover:bg-red-700 text-white"
+                onClick={() => rejectExternalCert.mutate({ cert: rejectDialog, reason: rejectReason })}
+                disabled={!String(rejectReason || "").trim() || rejectExternalCert.isPending}
+              >
+                Reject Certification
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

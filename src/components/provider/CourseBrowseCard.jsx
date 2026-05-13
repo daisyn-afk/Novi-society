@@ -13,17 +13,19 @@ const categoryMeta = {
   other: { color: "#1e2535", image: "https://images.unsplash.com/photo-1487412947147-5cebf100ffc2?w=1000&q=80" },
 };
 
-export default function CourseBrowseCard({ course, isEnrolled, onSelect }) {
+export default function CourseBrowseCard({ course, isEnrolled, onSelect, enrollmentStatusLoading = false }) {
   const meta = categoryMeta[course?.category] || categoryMeta.other;
   const heroImage = course.cover_image_url || meta.image;
   const nextDate = course.session_dates?.find(d => d.date)?.date;
   const seatsLabel = formatMinAvailableSeatsLabel(course);
   const isFull = isCourseFullySoldOut(course);
 
+  const isActionPending = enrollmentStatusLoading && !isEnrolled;
+
   return (
     <div
-      onClick={() => !isEnrolled && !isFull && onSelect(course)}
-      className={`group overflow-hidden rounded-2xl transition-all hover:shadow-xl ${isEnrolled || isFull ? "cursor-not-allowed" : "cursor-pointer"}`}
+      onClick={() => !isEnrolled && !isFull && !isActionPending && onSelect(course)}
+      className={`group overflow-hidden rounded-2xl transition-all hover:shadow-xl ${isEnrolled || isFull || isActionPending ? "cursor-not-allowed" : "cursor-pointer"}`}
       style={{
         background: "white",
         border: "none",
@@ -122,6 +124,14 @@ export default function CourseBrowseCard({ course, isEnrolled, onSelect }) {
         {isEnrolled ? (
           <button className="w-full py-2.5 rounded-lg text-xs font-bold text-white" style={{ background: "#4a6b10" }}>
             ✓ Enrolled
+          </button>
+        ) : isActionPending ? (
+          <button
+            disabled
+            className="w-full py-2.5 rounded-lg font-bold text-sm text-white opacity-80 cursor-wait"
+            style={{ background: "rgba(123,142,200,0.8)" }}
+          >
+            Checking status...
           </button>
         ) : isFull ? (
           <button

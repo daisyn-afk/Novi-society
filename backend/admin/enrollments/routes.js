@@ -5,8 +5,33 @@ import { backfillPaidEnrollments } from "./repository.js";
 export const enrollmentsRouter = Router();
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-enrollmentsRouter.get("/", async (_req, res, next) => {
+enrollmentsRouter.get("/", async (req, res, next) => {
   try {
+    const providerId = String(req.query?.provider_id || "").trim();
+    const providerEmail = String(req.query?.provider_email || "").trim().toLowerCase();
+    const status = String(req.query?.status || "").trim();
+    const courseId = String(req.query?.course_id || "").trim();
+
+    const whereClauses = [];
+    const params = [];
+    if (providerId) {
+      params.push(providerId);
+      whereClauses.push(`provider_id::text = $${params.length}`);
+    }
+    if (providerEmail) {
+      params.push(providerEmail);
+      whereClauses.push(`lower(provider_email) = $${params.length}`);
+    }
+    if (status) {
+      params.push(status);
+      whereClauses.push(`status = $${params.length}`);
+    }
+    if (courseId) {
+      params.push(courseId);
+      whereClauses.push(`course_id::text = $${params.length}`);
+    }
+    const whereSql = whereClauses.length ? `where ${whereClauses.join(" and ")}` : "";
+
     const { rows } = await query(
       `select
          id,
@@ -23,7 +48,9 @@ enrollmentsRouter.get("/", async (_req, res, next) => {
          amount_paid,
          paid_at
        from public.enrollments
-       order by created_at desc`
+       ${whereSql}
+       order by created_at desc`,
+      params
     );
     return res.json(rows);
   } catch (error) {
