@@ -87,12 +87,14 @@ export function wrapEmailBody({ templateName, bodyHtml, testMode = false, testMe
   return buildEmailHtml({ bodyHtml, testMode, testMeta: { ...testMeta, templateName: testMeta.templateName || templateName } });
 }
 
-async function loadTemplateByTrigger(trigger) {
+async function loadTemplateByTrigger(trigger, { bypassCache = false } = {}) {
   const key = String(trigger || "").trim();
   if (!key) return null;
   const now = Date.now();
-  const cached = templateCache.get(key);
-  if (cached && cached.expiresAt > now) return cached.value;
+  if (!bypassCache) {
+    const cached = templateCache.get(key);
+    if (cached && cached.expiresAt > now) return cached.value;
+  }
   const row = await getActiveEmailTemplateByTrigger(key);
   templateCache.set(key, { value: row, expiresAt: now + CACHE_TTL_MS });
   return row;
@@ -118,6 +120,8 @@ export async function sendTemplatedEmail({
   logLabel = "email",
   testMode = false,
   testSubjectPrefix = "",
+  bypassTemplateCache = false,
+  preferBodyText = false,
 }) {
   let resolvedTemplateId = null;
   const fallbackEnabled = allowFallback ?? GLOBAL_FALLBACK_ENABLED;
@@ -129,10 +133,15 @@ export async function sendTemplatedEmail({
       gfe_url: `${resolvedAppUrl}/gfe`,
       ...placeholders,
     };
-    const template = await loadTemplateByTrigger(trigger);
+    const template = await loadTemplateByTrigger(trigger, { bypassCache: bypassTemplateCache });
     if (!template) throw new Error(`No active email template found for trigger "${trigger}".`);
     resolvedTemplateId = template.id;
-    const rendered = renderTemplateRow(template, mergedPlaceholders);
+    // For flows where admin edits are body_text-first, we can force rendering
+    // from body_text to avoid any stale body_html drift.
+    const templateForRender = preferBodyText
+      ? { ...template, body_html: null }
+      : template;
+    const rendered = renderTemplateRow(templateForRender, mergedPlaceholders);
     // Full HTML templates (body_html) are already complete — use as-is.
     // Plain-text templates (body_text only) get wrapped in the branded layout.
     const html = rendered.isFullHtml
@@ -145,6 +154,15 @@ export async function sendTemplatedEmail({
         });
     const subject = `${String(testSubjectPrefix || "")}${rendered.subject}`;
     await sendResendEmail({ to, subject, html, from });
+    // eslint-disable-next-line no-console
+    console.log(`[${logLabel}] templated email sent`, {
+      trigger,
+      to,
+      template_id: template.id,
+      subject_preview: String(subject || "").slice(0, 120),
+      body_preview: String(rendered.bodyHtml || "").replace(/\s+/g, " ").slice(0, 180),
+      used_body_text_path: Boolean(preferBodyText),
+    });
     if (!testMode) await incrementTemplateSentCount(template.id);
     return true;
   } catch (error) {

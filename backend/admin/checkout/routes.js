@@ -10,6 +10,12 @@ export const checkoutRouter = Router();
 
 checkoutRouter.post("/course", async (req, res, next) => {
   try {
+    // eslint-disable-next-line no-console
+    console.log("[checkout-route] /admin/checkout/course hit", {
+      source: req.body?.source || null,
+      course_id: req.body?.course_id || null,
+      customer_email: req.body?.customer_email || null,
+    });
     const requestOrigin =
       req.get("origin") ||
       req.get("referer") ||

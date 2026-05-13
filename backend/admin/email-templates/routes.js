@@ -5,6 +5,7 @@ import {
   createEmailTemplate,
   updateEmailTemplate,
   deleteEmailTemplate,
+  deactivateOtherActiveTemplatesForTrigger,
 } from "./repository.js";
 import {
   invalidateTemplateCache,
@@ -229,6 +230,9 @@ emailTemplatesRouter.post("/", async (req, res, next) => {
   try {
     validateTemplateInput(req.body || {});
     const created = await createEmailTemplate(req.body || {});
+    if (created?.is_active && created?.trigger) {
+      await deactivateOtherActiveTemplatesForTrigger(created.trigger, created.id);
+    }
     invalidateTemplateCache(created?.trigger);
     res.status(201).json(created);
   } catch (error) {
@@ -244,6 +248,9 @@ emailTemplatesRouter.put("/:id", async (req, res, next) => {
     const payload = withSyncedBodyHtml(req.body || {}, existing);
     const updated = await updateEmailTemplate(req.params.id, payload);
     if (!updated) return res.status(404).json({ error: "Template not found." });
+    if (updated.is_active && updated.trigger) {
+      await deactivateOtherActiveTemplatesForTrigger(updated.trigger, updated.id);
+    }
     if (existing?.trigger && existing.trigger !== updated.trigger) {
       invalidateTemplateCache(existing.trigger);
     }
@@ -260,6 +267,10 @@ emailTemplatesRouter.patch("/:id", async (req, res, next) => {
     if (!existing) return res.status(404).json({ error: "Template not found." });
     const merged = withSyncedBodyHtml({ ...existing, ...req.body }, existing);
     const updated = await updateEmailTemplate(req.params.id, merged);
+    if (!updated) return res.status(404).json({ error: "Template not found." });
+    if (updated.is_active && updated.trigger) {
+      await deactivateOtherActiveTemplatesForTrigger(updated.trigger, updated.id);
+    }
     if (existing?.trigger && existing.trigger !== updated?.trigger) {
       invalidateTemplateCache(existing.trigger);
     }

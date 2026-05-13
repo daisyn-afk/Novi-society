@@ -1146,6 +1146,8 @@ async function sendConfirmationEmail({ to, customerName, courseTitle, courseData
     placeholders,
     allowFallback: false,
     logLabel: "checkout",
+    bypassTemplateCache: true,
+    preferBodyText: true,
     fallbackSend: async () => sendConfirmationEmailFallback({ to, customerName, courseTitle, courseData, courseDate })
   });
 }
@@ -1460,6 +1462,13 @@ export function verifyStripeWebhook(rawBodyBuffer, signatureHeader) {
 export async function processCompletedCheckoutSession(session) {
   const stripeSessionId = session?.id;
   if (!stripeSessionId) return;
+  // eslint-disable-next-line no-console
+  console.log("[checkout] processCompletedCheckoutSession start", {
+    stripe_session_id: stripeSessionId,
+    checkout_type: String(session?.metadata?.checkout_type || "course"),
+    pre_order_id: session?.metadata?.pre_order_id || null,
+    provider_email: session?.metadata?.provider_email || null,
+  });
 
   const client = await pool.connect();
   let postCommitEmail = null;
@@ -1490,6 +1499,13 @@ export async function processCompletedCheckoutSession(session) {
     const existingPaymentRow = existingPaymentRes.rows[0] ?? null;
     const existingPaymentId = existingPaymentRow?.id ?? null;
     const existingPaymentConfirmationSent = Boolean(existingPaymentRow?.confirmation_email_sent);
+    if (existingPaymentConfirmationSent) {
+      // eslint-disable-next-line no-console
+      console.log("[checkout] confirmation already marked sent before local send step", {
+        pre_order_id: preOrder.id,
+        existing_payment_id: existingPaymentId,
+      });
+    }
     const existingPaymentSeatApplied =
       existingPaymentRow?.stripe_metadata &&
       typeof existingPaymentRow.stripe_metadata === "object" &&
@@ -1825,6 +1841,7 @@ export async function processCompletedCheckoutSession(session) {
 
     if (!existingPaymentConfirmationSent) {
       postCommitEmail = {
+        preOrderId: preOrder.id,
         to: preOrder.customer_email,
         customerName: preOrder.customer_name,
         courseTitle: preOrder.course_title,
@@ -1834,6 +1851,19 @@ export async function processCompletedCheckoutSession(session) {
         },
         courseDate: enrollmentSessionDate
       };
+    }
+
+    // Historical bug: webhook path updated course_payments but not pre_orders, so getPreOrder
+    // kept retrying confirmation email. Heal the flag when payment already recorded sent.
+    if (existingPaymentConfirmationSent && !preOrder.confirmation_email_sent) {
+      await client.query(
+        `update public.pre_orders
+         set confirmation_email_sent = true,
+             confirmation_email_sent_at = coalesce(confirmation_email_sent_at, now()),
+             updated_at = now()
+         where id = $1`,
+        [preOrder.id]
+      );
     }
 
     await client.query("commit");
@@ -1855,6 +1885,16 @@ export async function processCompletedCheckoutSession(session) {
            set confirmation_email_sent = $1, updated_at = now()
            where id = $2`,
           [Boolean(emailSent), postCommitPaymentId]
+        );
+      }
+      if (emailSent && postCommitEmail.preOrderId) {
+        await query(
+          `update public.pre_orders
+           set confirmation_email_sent = true,
+               confirmation_email_sent_at = now(),
+               updated_at = now()
+           where id = $1`,
+          [postCommitEmail.preOrderId]
         );
       }
     } catch (emailErr) {

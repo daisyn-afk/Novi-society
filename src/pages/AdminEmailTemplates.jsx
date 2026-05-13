@@ -54,6 +54,21 @@ const PLACEHOLDERS = [
   { tag: "{{patient_name}}", desc: "Patient full name" },
 ];
 
+/** Same template row the backend sends for a trigger (active, then updated_at desc, created_at desc). */
+function resolveLiveTemplateForTrigger(templatesForSameTrigger) {
+  const list = templatesForSameTrigger || [];
+  const active = list.filter((t) => t.is_active);
+  if (active.length === 0) return list[0] || null;
+  return [...active].sort((a, b) => {
+    const ua = new Date(a.updated_at || 0).getTime();
+    const ub = new Date(b.updated_at || 0).getTime();
+    if (ub !== ua) return ub - ua;
+    const ca = new Date(a.created_at || 0).getTime();
+    const cb = new Date(b.created_at || 0).getTime();
+    return cb - ca;
+  })[0];
+}
+
 function resolveRuntimeAppBaseUrl() {
   if (typeof window === "undefined") return "https://app.novisociety.com";
   const origin = String(window.location?.origin || "").trim();
@@ -741,11 +756,14 @@ export default function AdminEmailTemplates() {
         <div className="rounded-2xl overflow-hidden" style={CARD_STYLE}>
           <div className="px-6 py-4 border-b" style={{ borderColor: "rgba(30,37,53,0.08)" }}>
             <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.5)" }}>All Trigger Events</p>
-            <p className="text-sm mt-0.5" style={{ color: "rgba(30,37,53,0.6)" }}>Each trigger fires automatically when the event occurs</p>
+            <p className="text-sm mt-0.5" style={{ color: "rgba(30,37,53,0.6)" }}>
+              Each trigger fires automatically when the event occurs. Only one template can be active per trigger; that is the copy automations send. For paid course enrollments, edit <strong>Course Payment Confirmed</strong>.
+            </p>
           </div>
           <div className="divide-y" style={{ borderColor: "rgba(30,37,53,0.06)" }}>
             {TRIGGERS.map(trigger => {
               const tpls = byTrigger[trigger.value] || [];
+              const activeCount = tpls.filter((t) => t.is_active).length;
               const Icon = trigger.icon;
               return (
                 <div key={trigger.value} className="px-6 py-4 flex items-center gap-4">
@@ -760,6 +778,11 @@ export default function AdminEmailTemplates() {
                       )}
                     </div>
                     <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.5)" }}>{trigger.desc}</p>
+                    {activeCount > 1 && (
+                      <p className="text-xs mt-1 font-semibold" style={{ color: "#b45309" }}>
+                        Multiple active templates — only the most recently updated is sent. Save any active template or toggle one on to keep a single active copy.
+                      </p>
+                    )}
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0 flex-wrap justify-end">
                     {tpls.length === 0 ? (
@@ -781,9 +804,15 @@ export default function AdminEmailTemplates() {
                     )}
                     {tpls.length > 0 && (
                       <button
-                        onClick={() => openTest(tpls.find(t => t.is_active) || tpls[0])}
+                        type="button"
+                        onClick={() => {
+                          const live = resolveLiveTemplateForTrigger(tpls);
+                          if (live) openTest(live);
+                        }}
                         className="text-xs px-2.5 py-1.5 rounded-lg font-semibold transition-all hover:opacity-80 flex items-center gap-1"
-                        style={{ background: "rgba(45,107,127,0.1)", color: "#2D6B7F", border: "1px solid rgba(45,107,127,0.25)" }}>
+                        style={{ background: "rgba(45,107,127,0.1)", color: "#2D6B7F", border: "1px solid rgba(45,107,127,0.25)" }}
+                        title="Sends a test using the same active template checkout would use"
+                      >
                         <Send className="w-3 h-3" />Test
                       </button>
                     )}

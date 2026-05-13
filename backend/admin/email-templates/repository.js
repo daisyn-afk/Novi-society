@@ -60,6 +60,21 @@ export async function getActiveEmailTemplateByTrigger(trigger) {
   return rows[0] || null;
 }
 
+/** Keeps at most one active row per trigger (matches checkout / sendTemplatedEmail behavior). */
+export async function deactivateOtherActiveTemplatesForTrigger(trigger, exceptId) {
+  const trig = String(trigger || "").trim();
+  const id = String(exceptId || "").trim();
+  if (!trig || !id) return;
+  await query(
+    `update public.email_templates
+     set is_active = false
+     where trigger = $1
+       and id <> $2::uuid
+       and is_active = true`,
+    [trig, id]
+  );
+}
+
 export async function createEmailTemplate(payload) {
   const d = normalizePayload(payload);
   const { rows } = await query(
