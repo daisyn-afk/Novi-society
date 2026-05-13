@@ -13,6 +13,8 @@ import {
   sessionEntryCalendarKeys,
   toSessionDateKey
 } from "../lib/sessionDateSeats.js";
+import { getMeFromAccessToken } from "../auth/service.js";
+import { ensureProviderOnboardingTable } from "../provider-onboarding/service.js";
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
 const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
@@ -151,6 +153,34 @@ export async function createCourseCheckout(payload, options = {}) {
     // Fail fast on row locks / long queries in serverless environments.
     await client.query("set local lock_timeout = '8s'");
     await client.query("set local statement_timeout = '20s'");
+
+    const authHeader = String(options?.authorization || "").trim();
+    const bearer =
+      authHeader.length > 6 && authHeader.toLowerCase().startsWith("bearer ")
+        ? authHeader.slice(7).trim()
+        : "";
+    if (bearer && normalizedCustomerEmail) {
+      try {
+        await ensureProviderOnboardingTable();
+        const me = await getMeFromAccessToken(bearer);
+        const meEmail = String(me?.email || "").trim().toLowerCase();
+        if (normalizeRole(me?.role) === "provider" && meEmail && meEmail === normalizedCustomerEmail) {
+          const obRes = await client.query(
+            `select 1 from public.provider_basic_onboarding where auth_user_id = $1 limit 1`,
+            [me.id]
+          );
+          if (!obRes.rows?.length) {
+            const err = new Error(
+              "Complete your provider profile and license upload before purchasing a course. You can finish this from your dashboard (Onboarding pending), or log out to pay as a guest with a different email."
+            );
+            err.statusCode = 403;
+            throw err;
+          }
+        }
+      } catch (e) {
+        if (e?.statusCode === 403) throw e;
+      }
+    }
 
     const courseRes = await client.query(
       `select id, title, price, available_seats, is_active, session_dates

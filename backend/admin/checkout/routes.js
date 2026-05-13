@@ -14,7 +14,8 @@ checkoutRouter.post("/course", async (req, res, next) => {
       req.get("origin") ||
       req.get("referer") ||
       `${req.get("x-forwarded-proto") || req.protocol}://${req.get("x-forwarded-host") || req.get("host")}`;
-    const result = await createCourseCheckout(req.body || {}, { requestOrigin });
+    const authorization = req.headers.authorization || "";
+    const result = await createCourseCheckout(req.body || {}, { requestOrigin, authorization });
     res.status(201).json(result);
   } catch (error) {
     next(error);

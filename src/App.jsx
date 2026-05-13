@@ -10,6 +10,7 @@ import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
 import NoviLanding from './pages/NoviLanding';
+import LandingPage from './pages/LandingPage';
 import Onboarding from './pages/Onboarding';
 import ProviderBasicOnboarding from './pages/ProviderBasicOnboarding';
 import PreOrderCheckout from './pages/PreOrderCheckout';
@@ -99,6 +100,7 @@ const AuthenticatedApp = () => {
   const publicPaths = new Set([
     "/",
     "/NoviLanding",
+    "/LandingPage",
     "/Onboarding",
     "/PreOrderCheckout",
     "/PreOrderConfirmation",
@@ -166,10 +168,15 @@ const AuthenticatedApp = () => {
               <MainPage />
             </LayoutWrapper>
           ) : (
-            <Navigate to="/NoviLanding" replace />
+            <Navigate to="/LandingPage" replace />
           )
         }
       />
+      <Route path="/LandingPage" element={
+        <LayoutWrapper currentPageName="LandingPage">
+          <LandingPage />
+        </LayoutWrapper>
+      } />
       <Route path="/NoviLanding" element={
         <LayoutWrapper currentPageName="NoviLanding">
           <NoviLanding />

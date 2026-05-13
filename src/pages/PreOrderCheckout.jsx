@@ -55,7 +55,7 @@ function ApprovedPaymentCheckout({ preOrderId }) {
         <p className="text-base mb-6" style={{ color: "rgba(30,37,53,0.6)" }}>
           Your enrollment for <strong>{preOrder.course_title || preOrder.service_name}</strong> is confirmed.
         </p>
-        <button onClick={() => navigate(createPageUrl("NoviLanding"))} className="px-8 py-3 rounded-full font-bold text-sm" style={{ background: "#C8E63C", color: "#1a2540" }}>
+        <button onClick={() => navigate(createPageUrl("LandingPage"))} className="px-8 py-3 rounded-full font-bold text-sm" style={{ background: "#C8E63C", color: "#1a2540" }}>
           Back to Home
         </button>
       </div>
@@ -309,7 +309,7 @@ export default function PreOrderCheckout() {
       <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&display=swap');`}</style>
       <div className="max-w-5xl mx-auto">
         <button
-          onClick={() => navigate(createPageUrl("NoviLanding"))}
+          onClick={() => navigate(createPageUrl("LandingPage"))}
           className="flex items-center gap-2 mb-8 px-4 py-2 rounded-xl transition-all hover:translate-x-[-4px]"
           style={{ color: "rgba(30,37,53,0.6)" }}
         >

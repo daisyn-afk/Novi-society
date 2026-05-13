@@ -1,7 +1,10 @@
-import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { createPageUrl } from "@/utils";
+import { useAuth } from "@/lib/AuthContext";
+import { readSkipExploreFlag, clearSkipExploreFlag } from "@/lib/providerSignupIntent";
 
 const ROLE_OPTIONS = [
   { value: "provider", label: "Provider" },
@@ -9,8 +12,19 @@ const ROLE_OPTIONS = [
   { value: "medical_director", label: "Medical Director" }
 ];
 
+function readSafeNextParam(searchParams) {
+  const raw = String(searchParams.get("next") || "").trim();
+  if (!raw.startsWith("/") || raw.startsWith("//")) return null;
+  return raw;
+}
+
 export default function Signup() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const qc = useQueryClient();
+  const { setAuthenticatedSession } = useAuth();
+  const intentProvider = searchParams.get("intent") === "provider";
+
   const [form, setForm] = useState({
     first_name: "",
     last_name: "",
@@ -19,6 +33,12 @@ export default function Signup() {
     confirm_password: "",
     role: "provider"
   });
+
+  useEffect(() => {
+    if (intentProvider) {
+      setForm((prev) => ({ ...prev, role: "provider" }));
+    }
+  }, [intentProvider]);
   const [fieldErrors, setFieldErrors] = useState({});
   const [formError, setFormError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -26,7 +46,7 @@ export default function Signup() {
   const getPostSignupPath = (role) => {
     if (role === "provider") return createPageUrl("ProviderBasicOnboarding");
     if (role === "patient") return createPageUrl("PatientOnboarding");
-    return createPageUrl("NoviLanding");
+    return createPageUrl("LandingPage");
   };
 
   const onSubmit = async (event) => {
@@ -64,6 +84,18 @@ export default function Signup() {
       const createdUser = await base44.auth.me();
       if (!createdUser?.id) {
         throw new Error("Account was not created. Please try again.");
+      }
+      setAuthenticatedSession(createdUser);
+      qc.invalidateQueries({ queryKey: ["me"] });
+      const safeNext = readSafeNextParam(searchParams);
+      if (readSkipExploreFlag()) {
+        clearSkipExploreFlag();
+        navigate(createPageUrl("ProviderDashboard"), { replace: true });
+        return;
+      }
+      if (safeNext) {
+        navigate(safeNext, { replace: true });
+        return;
       }
       navigate(getPostSignupPath(form.role), { replace: true });
     } catch (e) {
@@ -162,16 +194,25 @@ export default function Signup() {
             <p style={{ margin: "6px 0 0", color: "#dc2626", fontSize: 12 }}>{fieldErrors.confirm_password}</p>
           ) : null}
 
-          <label style={{ display: "block", marginTop: 14, marginBottom: 8, fontSize: 13, color: "#475569", fontWeight: 600 }}>Role</label>
-          <select
-            value={form.role}
-            onChange={(e) => setForm((prev) => ({ ...prev, role: e.target.value }))}
-            style={{ width: "100%", height: 44, borderRadius: 12, border: "1px solid rgba(15,23,42,0.14)", padding: "0 12px", outline: "none", background: "#fff" }}
-          >
-            {ROLE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
+          {!intentProvider && (
+            <>
+              <label style={{ display: "block", marginTop: 14, marginBottom: 8, fontSize: 13, color: "#475569", fontWeight: 600 }}>Role</label>
+              <select
+                value={form.role}
+                onChange={(e) => setForm((prev) => ({ ...prev, role: e.target.value }))}
+                style={{ width: "100%", height: 44, borderRadius: 12, border: "1px solid rgba(15,23,42,0.14)", padding: "0 12px", outline: "none", background: "#fff" }}
+              >
+                {ROLE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </>
+          )}
+          {intentProvider && (
+            <p style={{ marginTop: 14, fontSize: 13, color: "#475569" }}>
+              You&apos;re creating a <strong>provider</strong> account. After signup you can explore the app; complete your profile and license before purchasing a course.
+            </p>
+          )}
 
           {formError ? (
             <p style={{ margin: "10px 0 0", color: "#dc2626", fontSize: 13 }}>{formError}</p>

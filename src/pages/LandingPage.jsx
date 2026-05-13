@@ -1,10 +1,14 @@
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
-import { ArrowRight, Star } from "lucide-react";
+import { ArrowRight, Star, BookOpen, Shield, MapPin, ChevronRight } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
+import NoviOfferingsPortal from "@/components/landing/NoviOfferingsPortal";
+import { DEFAULT_COURSE_IMAGE_URL } from "@/lib/courseDisplay";
 
 // Brand palette from the Novi moodboard
+const NOVI_LOGO_SRC = "/novi-email-logo.png";
+
 const BRAND = {
   periwinkle: "#DBE4D8",   // soft blue-grey
   periwinkleDeep: "#7B8EC8", // richer periwinkle
@@ -21,6 +25,12 @@ const MEMBERS = [
   { initial: "S", name: "Dr. Sarah L.", role: "Medical Director", quote: "Supervising my providers has never been this seamless. Novi is in a category of its own." },
   { initial: "A", name: "Amanda T.", role: "Patient", quote: "I knew the moment I found Novi this was different. Every provider felt curated." },
 ];
+
+function formatCoursePrice(value) {
+  const num = Number(value);
+  if (Number.isNaN(num)) return "";
+  return `$${num.toLocaleString()}`;
+}
 
 const PILLARS = [
   { number: "01", label: "Certify", desc: "Train with Novi's industry-exclusive courses and earn credentials that actually move the needle." },
@@ -61,14 +71,6 @@ export default function LandingPage() {
         }
         .card-lift:hover {
           transform: translateY(-6px);
-        }
-
-        .novi-logo-text {
-          font-family: 'DM Serif Display', serif;
-          font-style: italic;
-          font-weight: 400;
-          color: #C8E63C;
-          letter-spacing: -0.02em;
         }
 
         .btn-dark {
@@ -139,14 +141,22 @@ export default function LandingPage() {
 
       {/* ── NAV ── */}
       <nav style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 100, background: "rgba(245,243,239,0.9)", backdropFilter: "blur(20px)", borderBottom: "1px solid rgba(30,37,53,0.07)" }}>
-        <div style={{ maxWidth: 1200, margin: "0 auto", padding: "0 32px", height: 62, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          {/* Logo */}
-          <div style={{ display: "flex", alignItems: "baseline", gap: 4 }}>
-            <span className="novi-serif" style={{ fontSize: 28, color: BRAND.dark, letterSpacing: "-0.01em" }}>
-              novi
-            </span>
-            <span className="novi-sans" style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.22em", textTransform: "uppercase", color: BRAND.teal, paddingBottom: 2 }}>Society</span>
-          </div>
+        <div style={{ maxWidth: 1200, margin: "0 auto", padding: "0 32px", minHeight: 70, height: 70, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <Link
+            to={createPageUrl("LandingPage")}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              textDecoration: "none",
+              background: BRAND.dark,
+              padding: "10px 18px",
+              borderRadius: 14,
+              boxShadow: "0 2px 14px rgba(30,37,53,0.18)",
+            }}
+            aria-label="NOVI Society home"
+          >
+            <img src={NOVI_LOGO_SRC} alt="" width={180} height={52} style={{ height: 40, width: "auto", display: "block" }} />
+          </Link>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <button
               type="button"
@@ -168,7 +178,7 @@ export default function LandingPage() {
       </nav>
 
       {/* ── HERO ── */}
-      <section style={{ paddingTop: 62, minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+      <section style={{ paddingTop: 70, minHeight: "100vh", display: "flex", flexDirection: "column" }}>
 
         {/* Top hero band — full bleed image-like with color wash */}
         <div style={{
@@ -193,17 +203,20 @@ export default function LandingPage() {
             A new way to be seen
           </p>
 
-          {/* Big logo mark */}
-          <h1 className="novi-serif" style={{ fontSize: "clamp(72px, 15vw, 160px)", lineHeight: 1, fontStyle: "italic", color: "#C8E63C", margin: 0, position: "relative", zIndex: 2, textShadow: "0 4px 40px rgba(200,230,60,0.25)" }}>
-            novi
+          <h1 style={{ margin: 0, position: "relative", zIndex: 2, maxWidth: "min(92vw, 440px)", width: "100%" }} aria-label="NOVI Society">
+            <img
+              src={NOVI_LOGO_SRC}
+              alt=""
+              width={440}
+              height={120}
+              style={{
+                width: "100%",
+                height: "auto",
+                display: "block",
+                filter: "drop-shadow(0 8px 32px rgba(0,0,0,0.2))",
+              }}
+            />
           </h1>
-
-          {/* Society vertical label — top right, like moodboard */}
-          <div style={{ position: "absolute", top: 32, right: 32, display: "flex", flexDirection: "column", alignItems: "center", gap: 3, zIndex: 3 }}>
-            {"SOCIETY".split("").map((c, i) => (
-              <span key={i} className="novi-sans" style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", color: "rgba(255,255,255,0.6)" }}>{c}</span>
-            ))}
-          </div>
         </div>
 
 
@@ -311,9 +324,9 @@ export default function LandingPage() {
                 </li>
               ))}
             </ul>
-            <Link to={createPageUrl("Onboarding")} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "12px 28px", background: "#C8E63C", color: BRAND.dark, fontWeight: 700, fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase", borderRadius: 100, textDecoration: "none", fontFamily: "'DM Sans', sans-serif" }}>
-              Join as Provider <ArrowRight style={{ width: 13, height: 13 }} />
-            </Link>
+              <Link to={`${createPageUrl("Onboarding")}?from=provider`} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "12px 28px", background: "#C8E63C", color: BRAND.dark, fontWeight: 700, fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase", borderRadius: 100, textDecoration: "none", fontFamily: "'DM Sans', sans-serif" }}>
+                Join as Provider <ArrowRight style={{ width: 13, height: 13 }} />
+              </Link>
           </div>
 
           {/* Right — cream */}
@@ -338,6 +351,170 @@ export default function LandingPage() {
               Find a Provider <ArrowRight style={{ width: 13, height: 13 }} />
             </Link>
           </div>
+        </div>
+      </section>
+
+      {/* ── CERTIFICATION COURSES & MD SERVICES (same flows as NoviLanding) ── */}
+      <section style={{ background: "#f5f3ef", padding: "100px 32px" }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 20, marginBottom: 64 }}>
+            <div>
+              <span className="pill-tag" style={{ marginBottom: 16, display: "inline-flex" }}>Become a Provider</span>
+              <h2 className="novi-serif" style={{ fontSize: "clamp(30px, 4vw, 52px)", fontWeight: 400, fontStyle: "italic", color: BRAND.dark, lineHeight: 1.1, margin: 0 }}>
+                Start your Novi journey.
+              </h2>
+            </div>
+            <p className="novi-sans" style={{ fontSize: 14, color: "rgba(30,37,53,0.5)", lineHeight: 1.7, maxWidth: 380, fontWeight: 300 }}>
+              Pick a certification course or choose a service to offer — we&apos;ll get you credentialed, covered, and connected.
+            </p>
+          </div>
+
+          <NoviOfferingsPortal>
+            {({ courses, serviceTypes, isLoadingCourses, openCourseModal, openServiceModal, isCourseFullySoldOut }) => (
+              <>
+                <div style={{ marginBottom: 64 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 24 }}>
+                    <BookOpen style={{ width: 16, height: 16, color: BRAND.periwinkleDeep }} />
+                    <h3 className="novi-sans" style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: "rgba(30,37,53,0.45)", margin: 0 }}>Certification Courses</h3>
+                  </div>
+                  {isLoadingCourses && (
+                    <div className="novi-sans" style={{ textAlign: "center", padding: 56, borderRadius: 20, background: "rgba(0,0,0,0.02)", border: "1px solid rgba(0,0,0,0.06)", color: "rgba(30,37,53,0.45)", fontSize: 14 }}>
+                      Loading courses…
+                    </div>
+                  )}
+                  {!isLoadingCourses && courses.length === 0 && (
+                    <div className="novi-sans" style={{ textAlign: "center", padding: 56, borderRadius: 20, background: "rgba(0,0,0,0.02)", border: "1px dashed rgba(0,0,0,0.1)", color: "rgba(30,37,53,0.45)", fontSize: 14 }}>
+                      Courses coming soon.
+                    </div>
+                  )}
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 20 }}>
+                    {courses.map((course) => {
+                      const soldOut = isCourseFullySoldOut(course);
+                      const img = course.cover_image_url || DEFAULT_COURSE_IMAGE_URL;
+                      const level = (course.category || "beginner").replace(/_/g, " ");
+                      return (
+                        <div
+                          key={course.id}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => !soldOut && openCourseModal(course)}
+                          onKeyDown={(e) => {
+                            if (!soldOut && (e.key === "Enter" || e.key === " ")) {
+                              e.preventDefault();
+                              openCourseModal(course);
+                            }
+                          }}
+                          className="card-lift"
+                          style={{
+                            background: "white",
+                            borderRadius: 20,
+                            overflow: "hidden",
+                            boxShadow: "0 4px 24px rgba(30,37,53,0.06)",
+                            cursor: soldOut ? "not-allowed" : "pointer",
+                            opacity: soldOut ? 0.72 : 1,
+                            border: "1px solid rgba(0,0,0,0.06)",
+                          }}
+                        >
+                          <div style={{ height: 180, overflow: "hidden", background: "#f0f0f0", position: "relative" }}>
+                            <img src={img} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                            {soldOut && (
+                              <span style={{ position: "absolute", top: 12, right: 12, background: "#DA6A63", color: "white", fontSize: 10, fontWeight: 700, textTransform: "uppercase", padding: "6px 10px", borderRadius: 8 }}>
+                                Sold out
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ padding: "24px 24px 20px" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+                              <span className="novi-sans" style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: BRAND.periwinkleDeep, background: "rgba(123,142,200,0.1)", padding: "4px 10px", borderRadius: 100 }}>
+                                {level}
+                              </span>
+                              {course.price != null && course.price !== "" && (
+                                <span className="novi-serif" style={{ fontSize: 20, color: BRAND.dark, fontStyle: "italic" }}>{formatCoursePrice(course.price)}</span>
+                              )}
+                            </div>
+                            <h4 className="novi-serif" style={{ fontSize: 20, color: BRAND.dark, margin: "8px 0 8px", fontWeight: 400, fontStyle: "italic", lineHeight: 1.2 }}>{course.title}</h4>
+                            {course.description && (
+                              <p className="novi-sans" style={{ fontSize: 13, color: "rgba(30,37,53,0.5)", lineHeight: 1.65, fontWeight: 300, marginBottom: 16, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                                {course.description}
+                              </p>
+                            )}
+                            {course.location && (
+                              <p className="novi-sans" style={{ fontSize: 11, color: "rgba(30,37,53,0.35)", marginBottom: 16, display: "flex", alignItems: "center", gap: 6 }}>
+                                <MapPin style={{ width: 14, height: 14, flexShrink: 0 }} />
+                                {course.location}
+                              </p>
+                            )}
+                            <span className="novi-sans" style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "10px 20px", background: BRAND.dark, color: "white", borderRadius: 100, fontSize: 12, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+                              {soldOut ? "Unavailable" : "Enroll now"} <ChevronRight style={{ width: 13, height: 13 }} />
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 24 }}>
+                    <Shield style={{ width: 16, height: 16, color: BRAND.limeVibrant }} />
+                    <h3 className="novi-sans" style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: "rgba(30,37,53,0.45)", margin: 0 }}>MD Services</h3>
+                  </div>
+                  {serviceTypes.length === 0 && (
+                    <div className="novi-sans" style={{ textAlign: "center", padding: 56, borderRadius: 20, background: "rgba(0,0,0,0.02)", border: "1px dashed rgba(0,0,0,0.1)", color: "rgba(30,37,53,0.45)", fontSize: 14 }}>
+                      MD services coming soon.
+                    </div>
+                  )}
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 16 }}>
+                    {serviceTypes.map((service) => (
+                      <div
+                        key={service.id}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => openServiceModal(service)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            openServiceModal(service);
+                          }
+                        }}
+                        className="card-lift"
+                        style={{
+                          background: BRAND.dark,
+                          borderRadius: 20,
+                          padding: 28,
+                          cursor: "pointer",
+                          position: "relative",
+                          overflow: "hidden",
+                          border: "1px solid rgba(255,255,255,0.06)",
+                        }}
+                      >
+                        <div style={{ position: "absolute", bottom: "-20%", right: "-10%", width: "60%", height: "80%", borderRadius: "50%", background: "rgba(200,230,60,0.05)", pointerEvents: "none" }} />
+                        <span className="novi-sans" style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: "rgba(200,230,60,0.7)", background: "rgba(200,230,60,0.1)", padding: "4px 10px", borderRadius: 100, display: "inline-block", marginBottom: 14, position: "relative" }}>
+                          {(service.category || "service").replace(/_/g, " ")}
+                        </span>
+                        <h4 className="novi-serif" style={{ fontSize: 20, color: "white", fontWeight: 400, fontStyle: "italic", lineHeight: 1.2, marginBottom: 8, position: "relative" }}>{service.name}</h4>
+                        {service.description && (
+                          <p className="novi-sans" style={{ fontSize: 12, color: "rgba(255,255,255,0.45)", lineHeight: 1.65, fontWeight: 300, marginBottom: 20, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", position: "relative" }}>
+                            {service.description}
+                          </p>
+                        )}
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, position: "relative" }}>
+                          {service.monthly_fee != null && service.monthly_fee !== "" && (
+                            <span className="novi-sans" style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", fontWeight: 600 }}>
+                              {formatCoursePrice(service.monthly_fee)}<span style={{ fontWeight: 300, fontSize: 11 }}>/mo</span>
+                            </span>
+                          )}
+                          <span className="novi-sans" style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 18px", background: BRAND.limeVibrant, color: BRAND.dark, borderRadius: 100, fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+                            Apply <ChevronRight style={{ width: 12, height: 12 }} />
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+          </NoviOfferingsPortal>
         </div>
       </section>
 
@@ -392,7 +569,7 @@ export default function LandingPage() {
             The aesthetic medicine industry has never seen anything like this. You're early. That's the point.
           </p>
           <div className="cta-buttons" style={{ display: "flex", gap: 12, justifyContent: "center" }}>
-            <Link to={createPageUrl("Onboarding")} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "14px 36px", background: "white", color: BRAND.dark, fontWeight: 700, fontSize: 13, letterSpacing: "0.08em", textTransform: "uppercase", borderRadius: 100, textDecoration: "none", fontFamily: "'DM Sans', sans-serif" }}>
+            <Link to={`${createPageUrl("Onboarding")}?from=provider`} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "14px 36px", background: "white", color: BRAND.dark, fontWeight: 700, fontSize: 13, letterSpacing: "0.08em", textTransform: "uppercase", borderRadius: 100, textDecoration: "none", fontFamily: "'DM Sans', sans-serif" }}>
               Join as Provider <ArrowRight style={{ width: 14, height: 14 }} />
             </Link>
             <Link to={createPageUrl("Onboarding")} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "14px 36px", background: "transparent", color: "white", fontWeight: 600, fontSize: 13, letterSpacing: "0.08em", textTransform: "uppercase", borderRadius: 100, border: "1.5px solid rgba(255,255,255,0.4)", textDecoration: "none", fontFamily: "'DM Sans', sans-serif" }}>
@@ -405,10 +582,9 @@ export default function LandingPage() {
       {/* ── FOOTER ── */}
       <footer style={{ background: BRAND.dark, borderTop: "none", padding: "44px 32px" }}>
         <div style={{ maxWidth: 1100, margin: "0 auto", display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 20 }}>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 5 }}>
-            <span className="novi-serif" style={{ fontSize: 22, color: "white", fontStyle: "italic" }}>novi</span>
-            <span className="novi-sans" style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,230,60,0.55)" }}>Society</span>
-          </div>
+          <Link to={createPageUrl("LandingPage")} style={{ display: "flex", alignItems: "center", textDecoration: "none" }} aria-label="NOVI Society home">
+            <img src={NOVI_LOGO_SRC} alt="" width={200} height={58} style={{ height: 44, width: "auto", display: "block" }} />
+          </Link>
           <p className="novi-sans" style={{ fontSize: 12, color: "rgba(255,255,255,0.2)", letterSpacing: "0.04em" }}>© 2026 Novi. All rights reserved.</p>
           <div style={{ display: "flex", gap: 28 }}>
             {["Privacy", "Terms", "Contact"].map(l => (

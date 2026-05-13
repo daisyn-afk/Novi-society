@@ -9,6 +9,7 @@ import {
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { useProviderAccess } from "@/components/useProviderAccess";
+import { providerOnboardingApi } from "@/api/providerOnboardingApi";
 import { isToday, isTomorrow, format, isWithinInterval, startOfMonth, endOfMonth } from "date-fns";
 
 const GLASS = {
@@ -60,6 +61,19 @@ function ActionCard({ icon: Icon, color, title, sub, badge, badgeColor, to, urge
 export default function ProviderDashboard() {
   const { status: accessStatus } = useProviderAccess();
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => base44.auth.me() });
+
+  const { data: basicOnboarding } = useQuery({
+    queryKey: ["provider-basic-onboarding"],
+    queryFn: async () => {
+      try {
+        return await providerOnboardingApi.getMe();
+      } catch {
+        return null;
+      }
+    },
+    enabled: me?.role === "provider",
+    retry: false,
+  });
 
   const { data: myEnrollments = [] } = useQuery({
     queryKey: ["my-enrollments"],
@@ -215,6 +229,29 @@ export default function ProviderDashboard() {
 
   const dashboardContent = (
     <div className="max-w-5xl space-y-7 w-full overflow-x-hidden">
+      {basicOnboarding?.has_completed_basic === false && (
+        <div
+          className="rounded-2xl px-5 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"
+          style={{ background: "rgba(250,111,48,0.12)", border: "1px solid rgba(250,111,48,0.35)" }}
+        >
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" style={{ color: "#c2410c" }} />
+            <div>
+              <p className="text-sm font-bold" style={{ color: "#9a3412" }}>Onboarding pending</p>
+              <p className="text-xs mt-1" style={{ color: "rgba(30,37,53,0.65)" }}>
+                Explore the app anytime — complete your profile and license upload before you purchase a course or activate paid coverage.
+              </p>
+            </div>
+          </div>
+          <Link
+            to={createPageUrl("ProviderBasicOnboarding")}
+            className="text-xs font-bold uppercase tracking-wide px-4 py-2.5 rounded-xl whitespace-nowrap text-center"
+            style={{ background: "#1e2535", color: "white" }}
+          >
+            Complete onboarding
+          </Link>
+        </div>
+      )}
 
       {/* ── Header ── */}
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
