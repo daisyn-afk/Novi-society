@@ -10,6 +10,7 @@ import {
   Menu, X, LogOut, User, Lock, Stethoscope, Sparkles, Clock, AlertTriangle, ShoppingBag, Mail, Rocket, TicketPercent
 } from "lucide-react";
 import { useProviderAccess } from "@/components/useProviderAccess";
+import { providerOnboardingApi } from "@/api/providerOnboardingApi";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import NotificationBell from "@/components/NotificationBell";
 import {
@@ -83,6 +84,19 @@ export default function Layout({ children, currentPageName }) {
   const { data: user, isSuccess } = useQuery({
     queryKey: ["me"],
     queryFn: () => base44.auth.me(),
+    retry: false,
+  });
+
+  const { data: providerBasicOnboarding } = useQuery({
+    queryKey: ["provider-basic-onboarding"],
+    queryFn: async () => {
+      try {
+        return await providerOnboardingApi.getMe();
+      } catch {
+        return null;
+      }
+    },
+    enabled: isSuccess && normalizeRole(user?.role || "") === "provider",
     retry: false,
   });
 
@@ -315,6 +329,16 @@ export default function Layout({ children, currentPageName }) {
         {/* Role pill */}
         <div className="relative z-10 px-5 pt-4 pb-2">
           <span className="novi-role-pill">{roleLabel}</span>
+          {providerBasicOnboarding?.has_completed_basic === false && (
+            <div className="mt-2">
+              <span
+                className="text-[8px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-full inline-block"
+                style={{ background: "rgba(250,111,48,0.15)", color: "#b45309", border: "1px solid rgba(250,111,48,0.35)" }}
+              >
+                Onboarding pending
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Nav */}

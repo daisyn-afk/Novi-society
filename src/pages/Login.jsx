@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { base44 } from "@/api/base44Client";
 import { getDashboardPathForRole } from "@/lib/routeAccessPolicy";
 import { useAuth } from "@/lib/AuthContext";
+import { readSkipExploreFlag, clearSkipExploreFlag } from "@/lib/providerSignupIntent";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -18,6 +19,17 @@ export default function Login() {
     if (next.startsWith("/")) return next;
     return null;
   };
+
+  const signupHref = (() => {
+    const next = getNextPath();
+    const params = new URLSearchParams();
+    if (next) {
+      params.set("next", next);
+      if (next.includes("ProviderDashboard")) params.set("intent", "provider");
+    }
+    const qs = params.toString();
+    return qs ? `/signup?${qs}` : "/signup";
+  })();
 
   useEffect(() => {
     const redirectAuthenticatedUser = async () => {
@@ -56,6 +68,14 @@ export default function Login() {
       });
       const currentUser = await base44.auth.me();
       setAuthenticatedSession(currentUser);
+      if (readSkipExploreFlag()) {
+        try {
+          await base44.auth.updateMe({ role: "provider" });
+        } catch {
+          /* ignore */
+        }
+        clearSkipExploreFlag();
+      }
       const next = getNextPath();
       navigate(next || getDashboardPathForRole(currentUser?.role), { replace: true });
     } catch (e) {
@@ -126,6 +146,12 @@ export default function Login() {
             {submitting ? "Logging in..." : "Login"}
           </button>
 
+          <p style={{ margin: "18px 0 0", fontSize: 14, color: "#64748b", textAlign: "center" }}>
+            Don&apos;t have an account?{" "}
+            <Link to={signupHref} style={{ color: "#2D6B7F", fontWeight: 700, textDecoration: "none" }}>
+              Sign up
+            </Link>
+          </p>
         </form>
       </div>
     </div>

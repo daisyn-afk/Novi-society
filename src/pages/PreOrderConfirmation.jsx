@@ -118,7 +118,7 @@ export default function PreOrderConfirmation() {
             {error?.message || "Please refresh this page in a moment."}
           </p>
           <button
-            onClick={() => navigate(createPageUrl("NoviLanding"))}
+            onClick={() => navigate(createPageUrl("LandingPage"))}
             className="px-5 py-2 rounded-xl"
             style={{ background: "#1e2535", color: "#fff" }}
           >
