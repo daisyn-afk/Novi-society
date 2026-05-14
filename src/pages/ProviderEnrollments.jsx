@@ -17,6 +17,7 @@ import CertificationPathway from "@/components/provider/CertificationPathway";
 import { isNowWithinSessionRedeemWindow } from "@/lib/classCodeWindow";
 import CourseCardDeck from "@/components/provider/CourseCardDeck";
 import { adminCoursesApi } from "@/api/adminCoursesApi";
+import { useAttendanceContext } from "@/components/provider/useAttendanceContext";
 
 const categoryMeta = {
   injectables:  { label: "Injectables",          color: "#FA6F30" },
@@ -33,6 +34,7 @@ const categoryMeta = {
 
 export default function ProviderEnrollments() {
   const { status: accessStatus } = useProviderAccess();
+  const attendance = useAttendanceContext();
   const qc = useQueryClient();
   const navigate = useNavigate();
   const enrollmentCacheSnapshot = qc.getQueryData(["my-enrollments"]);
@@ -406,6 +408,11 @@ export default function ProviderEnrollments() {
                     onCancel={() => { if (window.confirm("Cancel this enrollment?")) cancelEnrollment.mutate({ id: e.id }); }}
                     showClassWizardCta={showWizard}
                     onOpenClassWizard={() => setOnboardingEnrollment(e)}
+                    attendanceWindow={attendance.getWindowByEnrollment(e)}
+                    isSubmittingAttendance={attendance.isSubmitting}
+                    onSubmitAttendance={({ code, windowEntry }) =>
+                      attendance.submitAttendance({ code, windowEntry })
+                    }
                   />
                     );
                   })()

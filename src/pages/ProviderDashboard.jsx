@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
+import { useState } from "react";
 import {
   Award, BookOpen, Calendar, ShieldCheck, AlertTriangle, CheckCircle,
   ArrowRight, Clock, Zap, Users, FileText, Star, ChevronRight,
@@ -11,6 +12,8 @@ import { createPageUrl } from "@/utils";
 import { useProviderAccess } from "@/components/useProviderAccess";
 import { providerOnboardingApi } from "@/api/providerOnboardingApi";
 import { isToday, isTomorrow, format, isWithinInterval, startOfMonth, endOfMonth } from "date-fns";
+import { useAttendanceContext } from "@/components/provider/useAttendanceContext";
+import { Input } from "@/components/ui/input";
 
 const GLASS = {
   background: "rgba(255,255,255,0.45)",
@@ -60,6 +63,10 @@ function ActionCard({ icon: Icon, color, title, sub, badge, badgeColor, to, urge
 
 export default function ProviderDashboard() {
   const { status: accessStatus } = useProviderAccess();
+  const attendance = useAttendanceContext();
+  const [selectedAttendanceKey, setSelectedAttendanceKey] = useState("");
+  const [attendanceCode, setAttendanceCode] = useState("");
+  const [attendanceMessage, setAttendanceMessage] = useState("");
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => base44.auth.me() });
 
   const { data: basicOnboarding } = useQuery({
@@ -131,6 +138,11 @@ export default function ProviderDashboard() {
   });
 
   const today = new Date();
+  const attendanceActiveWindows = attendance.activeWindows || [];
+  const selectedAttendanceWindow =
+    attendanceActiveWindows.find((entry) => entry.key === selectedAttendanceKey) ||
+    attendanceActiveWindows[0] ||
+    null;
 
   // ── Credentials
   const pendingLicenses = myLicenses.filter(l => l.status === "pending_review");
@@ -250,6 +262,86 @@ export default function ProviderDashboard() {
           >
             Complete onboarding
           </Link>
+        </div>
+      )}
+
+      {attendanceActiveWindows.length > 0 && (
+        <div
+          className="rounded-2xl px-5 py-4 space-y-3"
+          style={{ background: "rgba(250,111,48,0.12)", border: "1px solid rgba(250,111,48,0.35)" }}
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "#b84f20" }}>
+                Attendance Open Now
+              </p>
+              <p className="text-sm font-semibold mt-1" style={{ color: "#1e2535" }}>
+                Submit your class code during the live session window.
+              </p>
+            </div>
+            {attendanceActiveWindows.length > 1 && (
+              <select
+                className="rounded-xl text-sm px-3 py-2"
+                style={{ border: "1px solid rgba(30,37,53,0.15)", background: "rgba(255,255,255,0.9)" }}
+                value={selectedAttendanceWindow?.key || ""}
+                onChange={(e) => {
+                  setSelectedAttendanceKey(e.target.value);
+                  setAttendanceMessage("");
+                }}
+              >
+                {attendanceActiveWindows.map((entry) => (
+                  <option key={entry.key} value={entry.key}>
+                    {(entry.course?.title || entry.enrollment?.course_title || "Course")} - {String(entry.enrollment?.session_date || "").slice(0, 10)}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          {selectedAttendanceWindow && (
+            <p className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>
+              Active session: {(selectedAttendanceWindow.course?.title || selectedAttendanceWindow.enrollment?.course_title || "Course")} ({String(selectedAttendanceWindow.enrollment?.session_date || "").slice(0, 10)})
+            </p>
+          )}
+
+          <div className="flex gap-2">
+            <Input
+              placeholder="Enter 6-character class code"
+              value={attendanceCode}
+              onChange={(e) => {
+                setAttendanceCode(e.target.value.toUpperCase());
+                if (attendanceMessage) setAttendanceMessage("");
+              }}
+              maxLength={6}
+              className="font-mono tracking-widest uppercase bg-white/90"
+            />
+            <button
+              className="px-4 py-2 rounded-xl text-sm font-semibold"
+              style={{ background: "#FA6F30", color: "#fff" }}
+              disabled={!selectedAttendanceWindow || attendanceCode.trim().length !== 6 || attendance.isSubmitting}
+              onClick={async () => {
+                if (!selectedAttendanceWindow) return;
+                const result = await attendance.submitAttendance({
+                  code: attendanceCode,
+                  windowEntry: selectedAttendanceWindow,
+                });
+                if (result.ok) {
+                  setAttendanceCode("");
+                  setAttendanceMessage("Attendance submitted successfully.");
+                } else {
+                  setAttendanceMessage(result.error || "Attendance submission failed.");
+                }
+              }}
+            >
+              Submit
+            </button>
+          </div>
+
+          {attendanceMessage && (
+            <p className="text-xs font-semibold" style={{ color: attendanceMessage.includes("success") ? "#4a6b10" : "#b84f20" }}>
+              {attendanceMessage}
+            </p>
+          )}
         </div>
       )}
 

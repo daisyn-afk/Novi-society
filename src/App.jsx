@@ -35,6 +35,7 @@ import ModelSignup from './pages/ModelSignup';
 import ModelBookingLookup from './pages/ModelBookingLookup';
 import ThankYou from './pages/ThankYou';
 import RequestInformation from './pages/RequestInformation';
+import ProviderDashboardLockedPreview from './pages/ProviderDashboardLockedPreview';
 import { base44 } from "@/api/base44Client";
 import { getDashboardPathForRole, normalizeRole, isPageAllowedForRole } from "@/lib/routeAccessPolicy";
 import RouteErrorBoundary from "@/components/RouteErrorBoundary";
@@ -299,6 +300,16 @@ const AuthenticatedApp = () => {
       />
       <Route path="/admin/courses" element={<RequireRoleRoute pageKey="admincourses"><Navigate to="/admincourses" replace /></RequireRoleRoute>} />
       <Route path="/admin/users" element={<RequireRoleRoute pageKey="AdminProviders"><Navigate to="/AdminProviders" replace /></RequireRoleRoute>} />
+      <Route
+        path="/ProviderDashboardLockedPreview"
+        element={
+          <RequireRoleRoute pageKey="ProviderDashboardLockedPreview">
+            <LayoutWrapper currentPageName="ProviderDashboardLockedPreview">
+              <ProviderDashboardLockedPreview />
+            </LayoutWrapper>
+          </RequireRoleRoute>
+        }
+      />
       {Object.entries(Pages).map(([path, Page]) => (
         <Route
           key={path}
