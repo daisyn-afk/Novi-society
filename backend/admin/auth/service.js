@@ -38,6 +38,7 @@ const adminClient = supabaseUrl && supabaseServiceRoleKey
  */
 let authJsFetchConsoleMuteDepth = 0;
 let savedConsoleErrorRef = console.error.bind(console);
+let patientProfilesTableEnsured = false;
 
 function muteAuthJsNetworkFetchConsoleError() {
   if (authJsFetchConsoleMuteDepth === 0) {
@@ -94,6 +95,32 @@ function normalizeRole(role) {
 
 function fullName(firstName, lastName) {
   return [firstName, lastName].filter(Boolean).join(" ").trim() || null;
+}
+
+function normalizeNullableText(value) {
+  if (value === null || value === undefined) return null;
+  const normalized = String(value).trim();
+  return normalized || null;
+}
+
+// Extracts YYYY-MM-DD from any date/datetime value, discarding time and timezone.
+// Handles JS Date objects (returned by pg driver), ISO strings with timezone
+// offsets like "2000-05-13T00:00:00.000+06:00", and plain "YYYY-MM-DD" strings.
+function normalizeDateOnly(value) {
+  if (value === null || value === undefined) return null;
+  // pg driver returns date columns as JS Date objects
+  if (value instanceof Date) {
+    if (isNaN(value.getTime())) return null;
+    const y = value.getUTCFullYear();
+    const m = String(value.getUTCMonth() + 1).padStart(2, "0");
+    const d = String(value.getUTCDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+  const str = String(value).trim();
+  if (!str) return null;
+  // Matches YYYY-MM-DD at the start of ISO strings
+  const match = str.match(/^(\d{4}-\d{2}-\d{2})/);
+  return match ? match[1] : null;
 }
 
 function readNameFromMetadata(metadata = {}) {
@@ -215,6 +242,165 @@ async function getProviderProfileByUserId(userId) {
   }
 }
 
+let _patientProfilesTableEnsurePromise = null;
+async function ensurePatientProfilesTable() {
+  if (patientProfilesTableEnsured) return;
+  // Singleton promise prevents concurrent initializations (race condition)
+  if (!_patientProfilesTableEnsurePromise) {
+    _patientProfilesTableEnsurePromise = (async () => {
+      const client = await pool.connect();
+      try {
+        await client.query(`
+          create table if not exists public.patient_profiles (
+            id uuid primary key default gen_random_uuid(),
+            user_id uuid not null unique references public.users(id) on delete cascade,
+            phone text,
+            city text,
+            state text,
+            date_of_birth date,
+            gender text,
+            allergies text,
+            current_medications text,
+            medical_conditions text,
+            health_notes text,
+            emergency_contact_name text,
+            emergency_contact_phone text,
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now()
+          );
+        `);
+        await client.query(`
+          create index if not exists idx_patient_profiles_user_id
+          on public.patient_profiles(user_id);
+        `);
+        await client.query(`
+          create or replace function public.set_patient_profiles_updated_at()
+          returns trigger as $$
+          begin
+            new.updated_at = now();
+            return new;
+          end;
+          $$ language plpgsql;
+        `);
+        // Use a single DO block so drop+create are atomic and idempotent
+        await client.query(`
+          do $$
+          begin
+            if not exists (
+              select 1 from pg_trigger
+              where tgname = 'trg_patient_profiles_updated_at'
+                and tgrelid = 'public.patient_profiles'::regclass
+            ) then
+              create trigger trg_patient_profiles_updated_at
+              before update on public.patient_profiles
+              for each row execute function public.set_patient_profiles_updated_at();
+            end if;
+          end $$;
+        `);
+        patientProfilesTableEnsured = true;
+      } finally {
+        client.release();
+      }
+    })();
+  }
+  await _patientProfilesTableEnsurePromise;
+}
+
+async function getPatientProfileByUserId(userId) {
+  if (!userId) return null;
+  await ensurePatientProfilesTable();
+  const client = await pool.connect();
+  try {
+    const { rows } = await client.query(
+      `select user_id, phone, city, state, date_of_birth, gender, allergies, current_medications, medical_conditions,
+              health_notes, emergency_contact_name, emergency_contact_phone, created_at, updated_at
+       from public.patient_profiles
+       where user_id = $1
+       limit 1`,
+      [userId]
+    );
+    return rows[0] ?? null;
+  } finally {
+    client.release();
+  }
+}
+
+async function upsertPatientProfile({ userId, updates }) {
+  if (!userId) return null;
+  await ensurePatientProfilesTable();
+
+  const allowedFields = [
+    "phone",
+    "city",
+    "state",
+    "date_of_birth",
+    "gender",
+    "allergies",
+    "current_medications",
+    "medical_conditions",
+    "health_notes",
+    "emergency_contact_name",
+    "emergency_contact_phone"
+  ];
+  const hasPatientUpdates = allowedFields.some((key) => Object.prototype.hasOwnProperty.call(updates || {}, key));
+  if (!hasPatientUpdates) return null;
+
+  const hasDateOfBirth = Object.prototype.hasOwnProperty.call(updates || {}, "date_of_birth");
+
+  const client = await pool.connect();
+  try {
+    const { rows } = await client.query(
+      `insert into public.patient_profiles (
+         user_id, phone, city, state, date_of_birth, gender, allergies, current_medications,
+         medical_conditions, health_notes, emergency_contact_name, emergency_contact_phone
+       ) values (
+         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+       )
+       on conflict (user_id)
+       do update set
+         phone = coalesce(excluded.phone, public.patient_profiles.phone),
+         city = coalesce(excluded.city, public.patient_profiles.city),
+         state = coalesce(excluded.state, public.patient_profiles.state),
+         date_of_birth = case when $13 then excluded.date_of_birth else public.patient_profiles.date_of_birth end,
+         gender = case when $14 then excluded.gender else public.patient_profiles.gender end,
+         allergies = case when $15 then excluded.allergies else public.patient_profiles.allergies end,
+         current_medications = case when $16 then excluded.current_medications else public.patient_profiles.current_medications end,
+         medical_conditions = case when $17 then excluded.medical_conditions else public.patient_profiles.medical_conditions end,
+         health_notes = case when $18 then excluded.health_notes else public.patient_profiles.health_notes end,
+         emergency_contact_name = case when $19 then excluded.emergency_contact_name else public.patient_profiles.emergency_contact_name end,
+         emergency_contact_phone = case when $20 then excluded.emergency_contact_phone else public.patient_profiles.emergency_contact_phone end,
+         updated_at = now()
+       returning user_id, phone, city, state, date_of_birth, gender, allergies, current_medications,
+                 medical_conditions, health_notes, emergency_contact_name, emergency_contact_phone, created_at, updated_at`,
+      [
+        userId,
+        Object.prototype.hasOwnProperty.call(updates || {}, "phone") ? normalizeNullableText(updates.phone) : null,
+        Object.prototype.hasOwnProperty.call(updates || {}, "city") ? normalizeNullableText(updates.city) : null,
+        Object.prototype.hasOwnProperty.call(updates || {}, "state") ? normalizeNullableText(updates.state) : null,
+        hasDateOfBirth ? normalizeDateOnly(updates.date_of_birth) : null,
+        Object.prototype.hasOwnProperty.call(updates || {}, "gender") ? normalizeNullableText(updates.gender) : null,
+        Object.prototype.hasOwnProperty.call(updates || {}, "allergies") ? normalizeNullableText(updates.allergies) : null,
+        Object.prototype.hasOwnProperty.call(updates || {}, "current_medications") ? normalizeNullableText(updates.current_medications) : null,
+        Object.prototype.hasOwnProperty.call(updates || {}, "medical_conditions") ? normalizeNullableText(updates.medical_conditions) : null,
+        Object.prototype.hasOwnProperty.call(updates || {}, "health_notes") ? normalizeNullableText(updates.health_notes) : null,
+        Object.prototype.hasOwnProperty.call(updates || {}, "emergency_contact_name") ? normalizeNullableText(updates.emergency_contact_name) : null,
+        Object.prototype.hasOwnProperty.call(updates || {}, "emergency_contact_phone") ? normalizeNullableText(updates.emergency_contact_phone) : null,
+        hasDateOfBirth,
+        Object.prototype.hasOwnProperty.call(updates || {}, "gender"),
+        Object.prototype.hasOwnProperty.call(updates || {}, "allergies"),
+        Object.prototype.hasOwnProperty.call(updates || {}, "current_medications"),
+        Object.prototype.hasOwnProperty.call(updates || {}, "medical_conditions"),
+        Object.prototype.hasOwnProperty.call(updates || {}, "health_notes"),
+        Object.prototype.hasOwnProperty.call(updates || {}, "emergency_contact_name"),
+        Object.prototype.hasOwnProperty.call(updates || {}, "emergency_contact_phone")
+      ]
+    );
+    return rows[0] ?? null;
+  } finally {
+    client.release();
+  }
+}
+
 async function upsertProviderProfile({ userId, updates }) {
   if (!userId) return null;
   const hasDob = Object.prototype.hasOwnProperty.call(updates || {}, "dob");
@@ -224,8 +410,23 @@ async function upsertProviderProfile({ userId, updates }) {
   const hasState = Object.prototype.hasOwnProperty.call(updates || {}, "state");
   const hasZip = Object.prototype.hasOwnProperty.call(updates || {}, "zip");
   const hasOnboardingCompleted = Object.prototype.hasOwnProperty.call(updates || {}, "onboarding_completed");
+  const metadataFieldKeys = ["bio", "phone", "specialty", "avatar_url", "website_url", "instagram_handle"];
+  const metadataUpdates = {};
+  for (const key of metadataFieldKeys) {
+    if (Object.prototype.hasOwnProperty.call(updates || {}, key)) {
+      metadataUpdates[key] = normalizeNullableText(updates[key]);
+    }
+  }
+  const hasMetadataUpdates = Object.keys(metadataUpdates).length > 0;
   const hasProviderProfileUpdates =
-    hasDob || hasAddressLine1 || hasAddressLine2 || hasCity || hasState || hasZip || hasOnboardingCompleted;
+    hasDob ||
+    hasAddressLine1 ||
+    hasAddressLine2 ||
+    hasCity ||
+    hasState ||
+    hasZip ||
+    hasOnboardingCompleted ||
+    hasMetadataUpdates;
 
   if (!hasProviderProfileUpdates) return null;
 
@@ -233,30 +434,36 @@ async function upsertProviderProfile({ userId, updates }) {
   try {
     const { rows } = await client.query(
       `insert into public.provider_profiles (
-         user_id, dob, address_line1, address_line2, city, state, zip, onboarding_completed
-       ) values ($1, $2, $3, $4, $5, $6, $7, $8)
+         user_id, dob, address_line1, address_line2, city, state, zip, onboarding_completed, metadata
+       ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        on conflict (user_id)
        do update set
          dob = coalesce(excluded.dob, public.provider_profiles.dob),
          address_line1 = coalesce(excluded.address_line1, public.provider_profiles.address_line1),
-         address_line2 = case when $9 then excluded.address_line2 else public.provider_profiles.address_line2 end,
+         address_line2 = case when $10 then excluded.address_line2 else public.provider_profiles.address_line2 end,
          city = coalesce(excluded.city, public.provider_profiles.city),
          state = coalesce(excluded.state, public.provider_profiles.state),
          zip = coalesce(excluded.zip, public.provider_profiles.zip),
-         onboarding_completed = case when $10 then excluded.onboarding_completed else public.provider_profiles.onboarding_completed end,
+         onboarding_completed = case when $11 then excluded.onboarding_completed else public.provider_profiles.onboarding_completed end,
+         metadata = case
+           when $12 then coalesce(public.provider_profiles.metadata, '{}'::jsonb) || excluded.metadata
+           else public.provider_profiles.metadata
+         end,
          updated_at = now()
        returning user_id, dob, address_line1, address_line2, city, state, zip, onboarding_completed, metadata, created_at, updated_at`,
       [
         userId,
-        hasDob ? (updates.dob || null) : null,
+        hasDob ? normalizeDateOnly(updates.dob) : null,
         hasAddressLine1 ? (updates.address_line1 || null) : null,
         hasAddressLine2 ? (updates.address_line2 || null) : null,
         hasCity ? (updates.city || null) : null,
         hasState ? (updates.state || null) : null,
         hasZip ? (updates.zip || null) : null,
         hasOnboardingCompleted ? Boolean(updates.onboarding_completed) : false,
+        hasMetadataUpdates ? metadataUpdates : {},
         hasAddressLine2,
-        hasOnboardingCompleted
+        hasOnboardingCompleted,
+        hasMetadataUpdates
       ]
     );
     return rows[0] ?? null;
@@ -419,24 +626,47 @@ export async function getMeFromAccessToken(accessToken) {
     }
 
     const profile = await getUserRowByAuthUserId(data.user.id);
+    const resolvedRole = profile?.role || data.user.user_metadata?.role || "provider";
     const metaName = readNameFromAuthUser(data.user || {});
-    const providerProfile = profile?.role === "provider"
+    const providerProfile = resolvedRole === "provider"
       ? await getProviderProfileByUserId(profile?.id)
       : null;
+    const patientProfile = resolvedRole === "patient"
+      ? await getPatientProfileByUserId(profile?.id)
+      : null;
+    const providerMetadata = providerProfile?.metadata && typeof providerProfile.metadata === "object"
+      ? providerProfile.metadata
+      : {};
     return {
       id: data.user.id,
       email: data.user.email,
-      role: profile?.role || data.user.user_metadata?.role || "provider",
+      role: resolvedRole,
       first_name: profile?.first_name || metaName.firstName || null,
       last_name: profile?.last_name || metaName.lastName || null,
       full_name: profile?.full_name || metaName.fullName || null,
-      dob: providerProfile?.dob || null,
+      dob: normalizeDateOnly(providerProfile?.dob),
       address_line1: providerProfile?.address_line1 || null,
       address_line2: providerProfile?.address_line2 || null,
-      city: providerProfile?.city || null,
-      state: providerProfile?.state || null,
+      city: resolvedRole === "patient" ? (patientProfile?.city || null) : (providerProfile?.city || null),
+      state: resolvedRole === "patient" ? (patientProfile?.state || null) : (providerProfile?.state || null),
       zip: providerProfile?.zip || null,
-      onboarding_completed: providerProfile?.onboarding_completed || false
+      onboarding_completed: providerProfile?.onboarding_completed || false,
+      bio: normalizeNullableText(providerMetadata.bio),
+      phone: resolvedRole === "patient"
+        ? normalizeNullableText(patientProfile?.phone)
+        : normalizeNullableText(providerMetadata.phone),
+      specialty: normalizeNullableText(providerMetadata.specialty),
+      avatar_url: normalizeNullableText(providerMetadata.avatar_url),
+      website_url: normalizeNullableText(providerMetadata.website_url),
+      instagram_handle: normalizeNullableText(providerMetadata.instagram_handle),
+      date_of_birth: normalizeDateOnly(patientProfile?.date_of_birth),
+      gender: normalizeNullableText(patientProfile?.gender),
+      allergies: normalizeNullableText(patientProfile?.allergies),
+      current_medications: normalizeNullableText(patientProfile?.current_medications),
+      medical_conditions: normalizeNullableText(patientProfile?.medical_conditions),
+      health_notes: normalizeNullableText(patientProfile?.health_notes),
+      emergency_contact_name: normalizeNullableText(patientProfile?.emergency_contact_name),
+      emergency_contact_phone: normalizeNullableText(patientProfile?.emergency_contact_phone)
     };
   } catch (e) {
     if (e?.isOperational && e.statusCode === 503) throw e;
@@ -565,7 +795,7 @@ export async function setPasswordWithAccessToken({ accessToken, refreshToken, pa
 export async function updateMe({ accessToken, updates }) {
   ensureAuthClients();
   const me = await getMeFromAccessToken(accessToken);
-  const userRow = await getUserRowByAuthUserId(me.id);
+  let userRow = await getUserRowByAuthUserId(me.id);
   const role = updates?.role ? normalizeRole(updates.role) : null;
   const firstName = Object.prototype.hasOwnProperty.call(updates || {}, "first_name")
     ? String(updates.first_name || "").trim() || null
@@ -589,13 +819,15 @@ export async function updateMe({ accessToken, updates }) {
       [me.id, firstName, lastName, fullName(firstName, lastName), nextRole]
     );
     if (!rows[0]) {
-      await upsertUserRow({
+      userRow = await upsertUserRow({
         authUserId: me.id,
         email: me.email,
         firstName,
         lastName,
         role: nextRole
       });
+    } else {
+      userRow = rows[0];
     }
   } finally {
     client.release();
@@ -603,6 +835,9 @@ export async function updateMe({ accessToken, updates }) {
 
   if (nextRole === "provider" && userRow?.id) {
     await upsertProviderProfile({ userId: userRow.id, updates });
+  }
+  if (nextRole === "patient" && userRow?.id) {
+    await upsertPatientProfile({ userId: userRow.id, updates });
   }
 
   return getMeFromAccessToken(accessToken);
