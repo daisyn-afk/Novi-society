@@ -6,7 +6,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { useToast } from "@/components/ui/use-toast";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Pencil, Trash2, ChevronDown, ChevronUp, ShieldCheck, Upload, FileText, X, Sparkles, Video, Award, Users, CreditCard, Stethoscope, ChevronRight, Info } from "lucide-react";
 
@@ -91,10 +92,12 @@ const EMPTY_TIER = {
 
 export default function AdminServiceTypes() {
   const queryClient = useQueryClient();
+  const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(EMPTY_SERVICE);
   const [expandedId, setExpandedId] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
   const [newArea, setNewArea] = useState("");
   const [newRule, setNewRule] = useState({ rule_name: "", rule_value: "", unit: "", description: "" });
   const [uploadingContract, setUploadingContract] = useState(false);
@@ -122,7 +125,14 @@ export default function AdminServiceTypes() {
 
   const deleteMutation = useMutation({
     mutationFn: (id) => base44.entities.ServiceType.delete(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["service-types"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["service-types"] });
+      setDeleteTarget(null);
+      toast({ title: "Service type deleted" });
+    },
+    onError: (err) => {
+      toast({ title: "Delete failed", description: err?.message || "Try again.", variant: "destructive" });
+    },
   });
 
   const openNew = () => { setEditing(null); setForm(EMPTY_SERVICE); setActiveTab("basics"); setEditingTier(null); setOpen(true); };
@@ -277,7 +287,7 @@ export default function AdminServiceTypes() {
                   <Button variant="ghost" size="icon" onClick={e => { e.stopPropagation(); openEdit(s); }}>
                     <Pencil className="w-4 h-4 text-slate-500" />
                   </Button>
-                  <Button variant="ghost" size="icon" onClick={e => { e.stopPropagation(); deleteMutation.mutate(s.id); }}>
+                  <Button variant="ghost" size="icon" onClick={e => { e.stopPropagation(); setDeleteTarget(s); }}>
                     <Trash2 className="w-4 h-4 text-red-400" />
                   </Button>
                   {expandedId === s.id ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
@@ -812,6 +822,30 @@ export default function AdminServiceTypes() {
               </Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(deleteTarget)} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete service type?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-slate-600">
+            This will permanently remove <strong>{deleteTarget?.name}</strong>. This action cannot be undone.
+          </p>
+          {deleteMutation.error ? (
+            <p className="text-sm text-red-600">{deleteMutation.error?.message || "Delete failed."}</p>
+          ) : null}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              disabled={deleteMutation.isPending}
+              onClick={() => deleteMutation.mutate(deleteTarget.id)}
+            >
+              {deleteMutation.isPending ? "Deleting…" : "Delete"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
