@@ -6,6 +6,8 @@ import PracticeLaunchTab from "@/components/practice/PracticeLaunchTab";
 import ROICalculator from "@/components/launchpad/ROICalculator";
 import CreativeStudio from "@/components/launchpad/CreativeStudio";
 import BrainstormChat from "@/components/launchpad/BrainstormChat";
+import ProviderSalesLock from "@/components/ProviderSalesLock";
+import { useProviderAccess } from "@/components/useProviderAccess";
 import { Rocket, DollarSign, Sparkles, Brain } from "lucide-react";
 
 const TABS = [
@@ -23,6 +25,7 @@ export default function ProviderLaunchPad() {
   const [suggestedPrice, setSuggestedPrice] = useState(null);
 
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => base44.auth.me() });
+  const { status: accessStatus } = useProviderAccess();
 
   const handleUsePrice = (price) => {
     setSuggestedPrice(price);
@@ -50,7 +53,7 @@ export default function ProviderLaunchPad() {
     enabled: !!me,
   });
 
-  return (
+  const launchPadContent = (
     <div className="max-w-4xl mx-auto">
 
       {/* Page header */}
@@ -93,5 +96,15 @@ export default function ProviderLaunchPad() {
       {activeTab === "creative" && <CreativeStudio me={me} />}
       {activeTab === "brainstorm" && <BrainstormChat me={me} />}
     </div>
+  );
+
+  return (
+    <ProviderSalesLock
+      feature="growth_studio"
+      applicationStatus={accessStatus}
+      requiredTier="md_eligible"
+    >
+      {launchPadContent}
+    </ProviderSalesLock>
   );
 }

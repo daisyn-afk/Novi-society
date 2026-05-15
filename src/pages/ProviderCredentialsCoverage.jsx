@@ -2365,7 +2365,7 @@ export default function ProviderCredentialsCoverage() {
   );
 
   return (
-    <ProviderSalesLock feature="credentials" applicationStatus={accessStatus} requiredTier="courses_only">
+    <ProviderSalesLock feature="credentials" applicationStatus={accessStatus} requiredTier="none">
       {pageContent}
     </ProviderSalesLock>
   );

@@ -930,7 +930,7 @@ export default function ProviderMarketplace() {
   );
 
   return (
-    <ProviderSalesLock feature="marketplace" applicationStatus={accessStatus} requiredTier="full">
+    <ProviderSalesLock feature="marketplace" applicationStatus={accessStatus} requiredTier="md_eligible">
       {pageContent}
     </ProviderSalesLock>
   );

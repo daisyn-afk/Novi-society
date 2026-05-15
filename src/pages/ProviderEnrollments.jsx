@@ -240,7 +240,7 @@ export default function ProviderEnrollments() {
   });
 
   return (
-    <ProviderSalesLock feature="enrollments" applicationStatus={accessStatus} requiredTier="courses_only">
+    <ProviderSalesLock feature="enrollments" applicationStatus={accessStatus} requiredTier="none">
     <ProviderLockGate feature="enrollments" bypass>
       <div className="space-y-6">
         <div className="flex items-center justify-between">

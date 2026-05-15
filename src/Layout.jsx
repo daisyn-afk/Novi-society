@@ -10,6 +10,7 @@ import {
   Menu, X, LogOut, User, Lock, Stethoscope, Sparkles, Clock, AlertTriangle, ShoppingBag, Mail, Rocket, TicketPercent
 } from "lucide-react";
 import { useProviderAccess } from "@/components/useProviderAccess";
+import { isSectionLockedForStatus } from "@/lib/providerLockedSections";
 import { providerOnboardingApi } from "@/api/providerOnboardingApi";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import NotificationBell from "@/components/NotificationBell";
@@ -74,7 +75,6 @@ const navByRole = {
 };
 
 const BARE_PAGES = ["Onboarding", "ProviderGettingStarted", "LandingPage", "ProviderApplication", "NoviLanding", "ModelSignup", "ModelBookingLookup"];
-const PROVIDER_FREE_PAGES = ["ProviderDashboard", "CourseCatalog", "ProviderProfile", "ProviderGettingStarted"];
 
 export default function Layout({ children, currentPageName }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -162,8 +162,6 @@ export default function Layout({ children, currentPageName }) {
     },
     enabled: isProviderUserReady,
   });
-
-  const isProviderUnlocked = true;
 
   const handleLogout = async () => {
     try {
@@ -345,18 +343,21 @@ export default function Layout({ children, currentPageName }) {
         {/* Nav */}
         <nav className="relative z-10 flex-1 px-3 py-1 overflow-y-auto space-y-0.5">
           {navItems.map(({ label, icon: Icon, page }) => {
-            const isLocked = !isProviderUnlocked && !PROVIDER_FREE_PAGES.includes(page);
+            // Sidebar links remain clickable for ALL items — locked pages still
+            // render their route, the overlay handles the gating UX.
+            const isLocked = role === "provider" && isSectionLockedForStatus(page, providerAccessStatus);
             const active = isActive(page);
             return (
               <Link
                 key={page}
                 to={createPageUrl(page)}
                 onClick={() => setSidebarOpen(false)}
-                className={`novi-nav-item${active ? " active" : ""}${isLocked ? " locked" : ""}`}
+                className={`novi-nav-item${active ? " active" : ""}`}
+                title={isLocked ? "Preview available — unlock with certification" : undefined}
               >
                 <Icon className="w-[15px] h-[15px] flex-shrink-0" style={{ opacity: active ? 0.9 : 0.6 }} />
                 <span className="flex-1">{label}</span>
-                {isLocked && <Lock className="w-3 h-3 opacity-30 flex-shrink-0" />}
+                {isLocked && <Lock className="w-3 h-3 opacity-50 flex-shrink-0" style={{ color: "#7B8EC8" }} />}
               </Link>
             );
           })}
