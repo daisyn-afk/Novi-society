@@ -4,6 +4,13 @@ import { getMeFromAccessToken } from "../auth/service.js";
 import { notifyAdminsOfPendingCourseCertIssuance } from "../certificationNotifications.js";
 import { withCourseEmailShell } from "../courseEmailShell.js";
 import Stripe from "stripe";
+import {
+  recordCheckoutInitiated,
+  enrichPaymentTransaction,
+  markAttemptFailed,
+  recordStripeWebhookEvent,
+  PAYMENT_FLOW
+} from "../payments/service.js";
 
 export const functionsRouter = Router();
 let certificationColumnsPromise = null;
@@ -291,6 +298,27 @@ export async function processModelCheckoutCompletedSession(session) {
          updated_at = now()
      where id = $1`,
     [row.id, paidAmount, stripeSessionId || null, stripePaymentIntentId || null, nowIso]
+  );
+
+  await enrichPaymentTransaction(
+    {
+      stripe_session_id: stripeSessionId || null,
+      stripe_payment_intent_id: stripePaymentIntentId || null,
+      pre_order_id: row.id
+    },
+    {
+      payment_status: "succeeded",
+      amount_paid: paidAmount,
+      amount_total: paidAmount,
+      stripe_payment_intent_id: stripePaymentIntentId || null,
+      stripe_customer_id: session?.customer ? String(session.customer) : null,
+      stripe_checkout_status: session?.status || null,
+      stripe_payment_status: session?.payment_status || null,
+      billing_name: session?.customer_details?.name || null,
+      billing_email: session?.customer_details?.email || row.customer_email,
+      billing_phone: session?.customer_details?.phone || null,
+      billing_address: session?.customer_details?.address || null
+    }
   );
 
   try {
@@ -784,22 +812,71 @@ functionsRouter.post("/validateModelPromo", async (req, res, next) => {
 });
 
 functionsRouter.post("/createModelCheckout", async (req, res, next) => {
+  const body = req.body || {};
+  const serverReceivedAt = new Date().toISOString();
+  const clientTimestamp =
+    req.get("x-novi-client-timestamp") ||
+    body.client_timestamp ||
+    null;
+  const trackingSourceOrigin = req.get("origin") || req.get("referer") || null;
+  const trackingRequestIp = (() => {
+    const forwarded = req.get("x-forwarded-for");
+    if (forwarded) return String(forwarded).split(",")[0].trim();
+    return req.ip || req.socket?.remoteAddress || null;
+  })();
+  const trackingUserAgent = req.get("user-agent") || null;
+  const trackingSourceContext =
+    req.get("x-novi-source-context") || body.source_context || "model_signup";
+
+  const customerEmail = String(body.customer_email || "").trim().toLowerCase();
+  const customerName = String(body.customer_name || "").trim();
+  const phone = String(body.phone || "").trim();
+  const courseId = String(body.course_id || "").trim();
+  const courseDate = String(body.course_date || "").slice(0, 10);
+  const timeSlot = String(body.time_slot || "").trim();
+  let isWaitlist = Boolean(body.is_waitlist);
+  const treatmentType = String(body.treatment_type || "").trim();
+
+  // STEP 1 — Always log the attempt with the exact payload, before any
+  // validation. This guarantees a row exists in payment_transactions even if
+  // the request is rejected due to bad input, sold-out slots, etc.
+  const attemptId = await recordCheckoutInitiated({
+    payment_flow: PAYMENT_FLOW.MODEL,
+    payment_type: "model",
+    selected_item_id: body.course_id != null ? String(body.course_id) : null,
+    customer_email: customerEmail || (body.customer_email ? String(body.customer_email) : null),
+    customer_name: customerName || null,
+    customer_phone: phone || null,
+    source_context: trackingSourceContext,
+    source_origin: trackingSourceOrigin,
+    request_ip: trackingRequestIp,
+    user_agent: trackingUserAgent,
+    client_timestamp: clientTimestamp,
+    server_received_timestamp: serverReceivedAt,
+    request_payload_snapshot: body,
+    metadata: {
+      treatment_type: treatmentType || null,
+      time_slot: timeSlot || null,
+      course_date: courseDate || null,
+      is_waitlist: isWaitlist
+    }
+  });
+
   try {
-    if (!stripe) return res.status(500).json({ error: "Stripe is not configured." });
-    const body = req.body || {};
-    const customerEmail = String(body.customer_email || "").trim().toLowerCase();
-    const customerName = String(body.customer_name || "").trim();
-    const phone = String(body.phone || "").trim();
-    const courseId = String(body.course_id || "").trim();
-    const courseDate = String(body.course_date || "").slice(0, 10);
-    const timeSlot = String(body.time_slot || "").trim();
-    let isWaitlist = Boolean(body.is_waitlist);
-    const treatmentType = String(body.treatment_type || "").trim();
+    if (!stripe) {
+      const e = new Error("Stripe is not configured.");
+      e.statusCode = 500;
+      throw e;
+    }
     if (!customerEmail || !customerName || !phone || !courseId || !courseDate || !treatmentType) {
-      return res.status(400).json({ error: "Missing required fields." });
+      const e = new Error("Missing required fields.");
+      e.statusCode = 400;
+      throw e;
     }
     if (!isWaitlist && !timeSlot) {
-      return res.status(400).json({ error: "time_slot is required unless waitlisted." });
+      const e = new Error("time_slot is required unless waitlisted.");
+      e.statusCode = 400;
+      throw e;
     }
 
     const { rows: courseRows } = await query(
@@ -810,7 +887,11 @@ functionsRouter.post("/createModelCheckout", async (req, res, next) => {
       [courseId]
     );
     const course = courseRows[0];
-    if (!course || course.is_active === false) return res.status(404).json({ error: "Course not found." });
+    if (!course || course.is_active === false) {
+      const e = new Error("Course not found.");
+      e.statusCode = 404;
+      throw e;
+    }
 
     if (!isWaitlist) {
       const { rows: capRows } = await query(
@@ -914,6 +995,20 @@ functionsRouter.post("/createModelCheckout", async (req, res, next) => {
          where id = $1`,
         [preOrderId, 0]
       );
+      await enrichPaymentTransaction(
+        { id: attemptId },
+        {
+          pre_order_id: preOrderId,
+          course_id: courseId,
+          item_id: courseId,
+          item_name: `${course.title || "NOVI Training Course"} - Model Signup`,
+          amount_subtotal: 50,
+          amount_discount: 50,
+          amount_total: 0,
+          amount_paid: 0,
+          payment_status: "succeeded"
+        }
+      );
       await sendResendEmail({
         to: customerEmail,
         subject: `Your Model Training Booking is Confirmed - ${fmtDateLocal(courseDate)}`,
@@ -927,6 +1022,18 @@ functionsRouter.post("/createModelCheckout", async (req, res, next) => {
 
     const successUrl = `${appBaseUrl || "http://localhost:5173"}/ModelSignup?success=true&pre_order_id=${encodeURIComponent(preOrderId)}&course_id=${encodeURIComponent(courseId)}&customer_email=${encodeURIComponent(customerEmail)}&customer_name=${encodeURIComponent(customerName)}&phone=${encodeURIComponent(phone)}&date_of_birth=${encodeURIComponent(body.date_of_birth ? String(body.date_of_birth).slice(0, 10) : "")}&treatment_type=${encodeURIComponent(treatmentType)}`;
     const cancelUrl = `${appBaseUrl || "http://localhost:5173"}/ModelSignup?cancelled=true`;
+    const checkoutMetadata = {
+      checkout_type: "model",
+      pre_order_id: String(preOrderId || ""),
+      course_id: courseId,
+      course_date: courseDate,
+      customer_email: customerEmail,
+      customer_name: customerName,
+      phone,
+      time_slot: timeSlot || "",
+      treatment_type: treatmentType,
+      is_waitlist: String(isWaitlist)
+    };
     const checkoutSession = await stripe.checkout.sessions.create({
       mode: "payment",
       payment_method_types: ["card"],
@@ -944,33 +1051,100 @@ functionsRouter.post("/createModelCheckout", async (req, res, next) => {
           }
         }
       }],
-      metadata: {
-        checkout_type: "model",
-        pre_order_id: String(preOrderId || ""),
-        course_id: courseId,
-        course_date: courseDate,
-        customer_email: customerEmail,
-        customer_name: customerName,
-        phone,
-        time_slot: timeSlot || "",
-        treatment_type: treatmentType,
-        is_waitlist: String(isWaitlist)
+      metadata: checkoutMetadata,
+      // Mirror metadata to the PaymentIntent so payment_intent.* and charge.*
+      // webhook events carry enough context to be correlated.
+      payment_intent_data: {
+        metadata: checkoutMetadata
       }
     });
     await query(`update public.pre_orders set stripe_session_id = $2, updated_at = now() where id = $1`, [preOrderId, checkoutSession.id]);
+
+    await enrichPaymentTransaction(
+      { id: attemptId },
+      {
+        pre_order_id: preOrderId,
+        course_id: courseId,
+        item_id: courseId,
+        item_name: `${course.title || "NOVI Training Course"} - Model Signup`,
+        amount_subtotal: 50,
+        amount_discount: (50 - finalCents / 100),
+        amount_total: finalCents / 100,
+        stripe_session_id: checkoutSession.id,
+        stripe_payment_intent_id: checkoutSession.payment_intent ? String(checkoutSession.payment_intent) : null,
+        stripe_checkout_url: checkoutSession.url,
+        receipt_email: customerEmail,
+        stripe_metadata: checkoutMetadata
+      }
+    );
+
     return res.status(201).json({ url: checkoutSession.url, pre_order_id: preOrderId, waitlist_auto: isWaitlist });
   } catch (error) {
+    await markAttemptFailed(attemptId, {
+      failure_reason: error?.code || error?.statusCode ? String(error.code || error.statusCode) : "validation_or_processing_error",
+      failure_message: error?.message || null,
+      failure_code: error?.code || null,
+      http_status_code: error?.statusCode || null
+    });
     return next(error);
   }
 });
 
+const MODEL_WEBHOOK_TRACKED_EVENTS = new Set([
+  "checkout.session.created",
+  "checkout.session.completed",
+  "checkout.session.expired",
+  "checkout.session.async_payment_succeeded",
+  "checkout.session.async_payment_failed",
+  "payment_intent.created",
+  "payment_intent.succeeded",
+  "payment_intent.payment_failed",
+  "payment_intent.canceled",
+  "payment_intent.processing",
+  "payment_intent.requires_action",
+  "charge.succeeded",
+  "charge.failed",
+  "charge.refunded",
+  "charge.captured",
+  "charge.dispute.created"
+]);
+
 functionsRouter.post("/modelCheckoutWebhook", async (req, res, next) => {
   try {
-    if (!stripe || !stripeWebhookSecret) return res.status(500).json({ error: "Stripe webhook is not configured." });
+    if (!stripe || !stripeWebhookSecret) {
+      // eslint-disable-next-line no-console
+      console.error("[webhook/modelCheckoutWebhook] rejected: STRIPE_SECRET_KEY or STRIPE_WEBHOOK_SECRET not set");
+      return res.status(500).json({ error: "Stripe webhook is not configured." });
+    }
     const signatureHeader = req.headers["stripe-signature"];
     const signature = Array.isArray(signatureHeader) ? signatureHeader[0] : signatureHeader;
-    if (!signature) return res.status(400).json({ error: "Missing stripe-signature." });
-    const event = stripe.webhooks.constructEvent(req.body, signature, stripeWebhookSecret);
+    if (!signature) {
+      // eslint-disable-next-line no-console
+      console.warn("[webhook/modelCheckoutWebhook] rejected: missing stripe-signature header");
+      return res.status(400).json({ error: "Missing stripe-signature." });
+    }
+    if (!Buffer.isBuffer(req.body)) {
+      // eslint-disable-next-line no-console
+      console.error(
+        "[webhook/modelCheckoutWebhook] rejected: req.body is not a Buffer (got %s). " +
+          "Ensure express.raw() is mounted on this path BEFORE express.json(), and on Vercel that `api.bodyParser = false`.",
+        typeof req.body
+      );
+      return res.status(400).json({ error: "Webhook body was pre-parsed; raw bytes required for signature verification." });
+    }
+    let event;
+    try {
+      event = stripe.webhooks.constructEvent(req.body, signature, stripeWebhookSecret);
+    } catch (verifyError) {
+      // eslint-disable-next-line no-console
+      console.error("[webhook/modelCheckoutWebhook] signature verification FAILED:", verifyError?.message || verifyError);
+      return res.status(400).json({ error: `Signature verification failed: ${verifyError?.message || "unknown"}` });
+    }
+    if (MODEL_WEBHOOK_TRACKED_EVENTS.has(event.type)) {
+      await recordStripeWebhookEvent(event);
+    }
+    // eslint-disable-next-line no-console
+    console.log("[webhook/modelCheckoutWebhook] processed", event.type, event.id);
     if (event.type === "checkout.session.completed") {
       const session = event.data?.object || {};
       if (String(session?.metadata?.checkout_type || "") === "model") {
@@ -979,6 +1153,8 @@ functionsRouter.post("/modelCheckoutWebhook", async (req, res, next) => {
     }
     return res.json({ received: true });
   } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error("[webhook/modelCheckoutWebhook] handler threw:", error?.message || error);
     return next(error);
   }
 });

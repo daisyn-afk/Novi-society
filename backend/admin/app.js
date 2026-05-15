@@ -35,8 +35,11 @@ export function createAdminApp() {
   const app = express();
   app.use(cors());
 
-  // Stripe signature verification requires the exact raw body.
+  // Stripe webhook endpoints — signature verification requires the EXACT raw
+  // body bytes. These middlewares MUST run before express.json() so the
+  // bodies arrive as Buffer (not parsed JSON). Mount one per webhook URL.
   app.use("/webhooks/stripe", express.raw({ type: "application/json" }));
+  app.use("/functions/modelCheckoutWebhook", express.raw({ type: "application/json" }));
   app.use("/webhooks", webhooksRouter);
 
   app.use(express.json({ limit: "2mb" }));

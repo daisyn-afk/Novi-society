@@ -8,6 +8,29 @@ import {
 
 export const checkoutRouter = Router();
 
+function getRequestIp(req) {
+  const forwarded = req.get("x-forwarded-for");
+  if (forwarded) return String(forwarded).split(",")[0].trim();
+  return req.ip || req.socket?.remoteAddress || null;
+}
+
+function buildTrackingContext(req, defaultSourceContext) {
+  return {
+    source_context: req.get("x-novi-source-context") || req.body?.source_context || defaultSourceContext || null,
+    source_origin: req.get("origin") || req.get("referer") || null,
+    request_ip: getRequestIp(req),
+    user_agent: req.get("user-agent") || null,
+    // Optional ISO timestamp the frontend captured at the moment the user
+    // clicked "Pay". Lets us detect stale frontend state by comparing it to
+    // server_received_timestamp (set on arrival).
+    client_timestamp:
+      req.get("x-novi-client-timestamp") ||
+      (typeof req.body?.client_timestamp === "string" ? req.body.client_timestamp : null) ||
+      null,
+    server_received_timestamp: new Date().toISOString()
+  };
+}
+
 checkoutRouter.post("/course", async (req, res, next) => {
   try {
     const requestOrigin =
@@ -15,7 +38,12 @@ checkoutRouter.post("/course", async (req, res, next) => {
       req.get("referer") ||
       `${req.get("x-forwarded-proto") || req.protocol}://${req.get("x-forwarded-host") || req.get("host")}`;
     const authorization = req.headers.authorization || "";
-    const result = await createCourseCheckout(req.body || {}, { requestOrigin, authorization });
+    const trackingContext = buildTrackingContext(req, "course_checkout");
+    const result = await createCourseCheckout(req.body || {}, {
+      requestOrigin,
+      authorization,
+      trackingContext
+    });
     res.status(201).json(result);
   } catch (error) {
     next(error);
@@ -24,7 +52,8 @@ checkoutRouter.post("/course", async (req, res, next) => {
 
 checkoutRouter.post("/service", async (req, res, next) => {
   try {
-    const result = await createServicePreOrder(req.body || {});
+    const trackingContext = buildTrackingContext(req, "md_service_signup");
+    const result = await createServicePreOrder(req.body || {}, { trackingContext });
     res.status(201).json(result);
   } catch (error) {
     next(error);

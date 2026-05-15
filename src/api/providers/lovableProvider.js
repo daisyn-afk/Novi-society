@@ -520,6 +520,23 @@ export function createLovableProviderClient() {
     },
     functions: {
       invoke: async (functionName, payload) => {
+        // Payment-creating endpoints get a fresh client_timestamp at the
+        // moment of invocation so the backend can compare it to
+        // server_received_timestamp and detect stale frontend state.
+        const PAYMENT_FUNCTIONS = new Set([
+          "createPreOrderCheckout",
+          "createModelCheckout",
+          "createCheckoutSession"
+        ]);
+        const isPaymentFn = PAYMENT_FUNCTIONS.has(functionName);
+        const clientTimestamp = isPaymentFn ? new Date().toISOString() : null;
+        const stampedPayload = isPaymentFn
+          ? { ...(payload || {}), client_timestamp: clientTimestamp }
+          : (payload || {});
+        const paymentHeaders = isPaymentFn
+          ? { "x-novi-client-timestamp": clientTimestamp }
+          : undefined;
+
         if (functionName === "createPreOrderCheckout") {
           if (payload?.pre_order_id) {
             throw new Error("[lovable-provider] createPreOrderCheckout with pre_order_id is not implemented yet.");
@@ -527,7 +544,8 @@ export function createLovableProviderClient() {
           return {
             data: await requestJson("/admin/checkout/service", {
               method: "POST",
-              body: JSON.stringify(payload || {})
+              body: JSON.stringify(stampedPayload),
+              headers: paymentHeaders
             })
           };
         }
@@ -542,7 +560,8 @@ export function createLovableProviderClient() {
         return {
           data: await authRequest(`/functions/${functionName}`, {
             method: "POST",
-            body: JSON.stringify(payload || {})
+            body: JSON.stringify(stampedPayload),
+            headers: paymentHeaders
           })
         };
       }
