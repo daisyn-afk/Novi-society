@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
+import { listProviderPatients } from "@/api/providerPatientsApi.js";
 import ProviderSalesLock from "@/components/ProviderSalesLock";
 import { useProviderAccess } from "@/components/useProviderAccess";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
@@ -135,18 +136,42 @@ export default function ProviderPractice() {
     enabled: !!me,
   });
 
+  const { data: importedPatients = [] } = useQuery({
+    queryKey: ["provider-patients"],
+    queryFn: listProviderPatients,
+    enabled: !!me,
+  });
+
   const flaggedRecords = treatmentRecords.filter(r => r.status === "flagged" || r.status === "changes_requested");
 
-  const patients = Object.values(
-    appointments.reduce((acc, a) => {
-      const key = a.patient_id || a.patient_email;
-      if (!acc[key]) {
-        acc[key] = { id: a.patient_id, name: a.patient_name, email: a.patient_email, appointments: [] };
-      }
-      acc[key].appointments.push(a);
-      return acc;
-    }, {})
-  );
+  // Build patient list from appointments (base44 layer)
+  const appointmentPatientMap = appointments.reduce((acc, a) => {
+    const key = (a.patient_email || "").toLowerCase().trim() || a.patient_id;
+    if (!key) return acc;
+    if (!acc[key]) {
+      acc[key] = { id: a.patient_id, name: a.patient_name, email: a.patient_email, appointments: [] };
+    }
+    acc[key].appointments.push(a);
+    return acc;
+  }, {});
+
+  // Merge imported patients (SQL layer) — imported-only patients get an empty appointments array
+  for (const ip of importedPatients) {
+    const key = (ip.email || "").toLowerCase().trim();
+    if (!key) continue;
+    if (!appointmentPatientMap[key]) {
+      appointmentPatientMap[key] = {
+        id: ip.patient_user_id || null,
+        name: ip.full_name || [ip.first_name, ip.last_name].filter(Boolean).join(" ") || null,
+        email: ip.email,
+        appointments: [],
+        importedAt: ip.created_at,
+        source: "csv_import"
+      };
+    }
+  }
+
+  const patients = Object.values(appointmentPatientMap);
 
   const NAV_ITEMS = [
     { value: "profile", label: "Profile", icon: Sparkles, desc: "Your public page" },

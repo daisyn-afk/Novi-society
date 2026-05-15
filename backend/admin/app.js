@@ -30,6 +30,7 @@ const { certificationsRouter } = await import("./certifications/routes.js");
 const { classSessionsRouter } = await import("./class-sessions/routes.js");
 const { notificationsRouter } = await import("./notifications/routes.js");
 const { functionsRouter } = await import("./functions/routes.js");
+const { providerPatientsRouter } = await import("./provider-patients/routes.js");
 
 export function createAdminApp() {
   const app = express();
@@ -58,6 +59,7 @@ export function createAdminApp() {
   app.use("/admin/certifications", certificationsRouter);
   app.use("/admin/class-sessions", classSessionsRouter);
   app.use("/admin/notifications", notificationsRouter);
+  app.use("/admin/provider-patients", providerPatientsRouter);
   app.use("/functions", functionsRouter);
 
   app.use((error, _req, res, _next) => {

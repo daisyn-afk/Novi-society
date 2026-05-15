@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
-import { Users, Search, Sparkles, Heart, ChevronRight } from "lucide-react";
+import { Users, Search, Sparkles, Heart, ChevronRight, Upload } from "lucide-react";
 import PatientDetailModal from "@/components/practice/PatientDetailModal.jsx";
+import CSVImportWizard from "@/components/practice/CSVImportWizard.jsx";
 
 const GlassCard = ({ children, onClick }) => (
   <div onClick={onClick} className="rounded-2xl overflow-hidden cursor-pointer transition-all hover:scale-[1.01] hover:shadow-lg"
@@ -14,6 +15,7 @@ const GlassCard = ({ children, onClick }) => (
 export default function PracticePatientsTab({ patients, appointments }) {
   const [search, setSearch] = useState("");
   const [selectedPatient, setSelectedPatient] = useState(null);
+  const [wizardOpen, setWizardOpen] = useState(false);
 
   const { data: treatmentRecords = [] } = useQuery({
     queryKey: ["treatment-records"],
@@ -56,23 +58,45 @@ export default function PracticePatientsTab({ patients, appointments }) {
         </div>
       </div>
 
-      {/* Search */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: "rgba(30,37,53,0.35)" }} />
-        <input
-          placeholder="Search patients..."
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          className="w-full pl-9 pr-4 py-2.5 rounded-xl text-sm outline-none"
-          style={{ background: "rgba(255,255,255,0.45)", backdropFilter: "blur(20px)", border: "1px solid rgba(255,255,255,0.85)", color: "#1e2535" }}
-        />
+      {/* Search + Import CSV */}
+      <div className="flex items-center gap-2">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: "rgba(30,37,53,0.35)" }} />
+          <input
+            placeholder="Search patients..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="w-full pl-9 pr-4 py-2.5 rounded-xl text-sm outline-none"
+            style={{ background: "rgba(255,255,255,0.45)", backdropFilter: "blur(20px)", border: "1px solid rgba(255,255,255,0.85)", color: "#1e2535" }}
+          />
+        </div>
+        <button
+          onClick={() => setWizardOpen(true)}
+          className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-xs font-semibold flex-shrink-0 transition-all hover:opacity-80"
+          style={{ background: "rgba(250,111,48,0.1)", color: "#FA6F30", border: "1px solid rgba(250,111,48,0.25)" }}
+        >
+          <Upload className="w-3.5 h-3.5" />
+          Import CSV
+        </button>
       </div>
 
       {filtered.length === 0 ? (
         <div className="text-center py-16">
           <Users className="w-10 h-10 mx-auto mb-3" style={{ color: "rgba(30,37,53,0.2)" }} />
           <p className="text-sm font-medium" style={{ color: "#1e2535" }}>No patients yet</p>
-          <p className="text-xs mt-1" style={{ color: "rgba(30,37,53,0.45)" }}>Patients will appear here once they book with you.</p>
+          <p className="text-xs mt-1" style={{ color: "rgba(30,37,53,0.45)" }}>
+            {search ? "No patients match your search." : "Patients appear here after booking, or import your existing list via CSV."}
+          </p>
+          {!search && (
+            <button
+              onClick={() => setWizardOpen(true)}
+              className="mt-4 flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold mx-auto transition-all hover:opacity-80"
+              style={{ background: "rgba(250,111,48,0.1)", color: "#FA6F30", border: "1px solid rgba(250,111,48,0.25)" }}
+            >
+              <Upload className="w-3.5 h-3.5" />
+              Import patients from CSV
+            </button>
+          )}
         </div>
       ) : (
         <div className="space-y-2">
@@ -81,7 +105,7 @@ export default function PracticePatientsTab({ patients, appointments }) {
             const journey = patientJourneys.find(j => j.patient_id === p.id);
             const isPremium = journey?.tier === "premium" && journey?.subscription_status === "active";
             const patientRecords = treatmentRecords.filter(r => r.patient_id === p.id);
-            const completedAppts = p.appointments.filter(a => a.status === "completed");
+            const completedAppts = (p.appointments || []).filter(a => a.status === "completed");
 
             return (
               <GlassCard key={key} onClick={() => setSelectedPatient(p)}>
@@ -135,6 +159,9 @@ export default function PracticePatientsTab({ patients, appointments }) {
           onClose={() => setSelectedPatient(null)}
         />
       )}
+
+      {/* CSV Import Wizard */}
+      <CSVImportWizard open={wizardOpen} onClose={() => setWizardOpen(false)} />
     </div>
   );
 }
