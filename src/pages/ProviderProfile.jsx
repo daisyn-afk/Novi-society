@@ -190,7 +190,7 @@ export default function ProviderProfile() {
 
           {/* Save button */}
           <Button
-            className="w-full h-11 font-bold text-sm rounded-xl"
+            className="w-full h-12 font-bold text-base rounded-2xl"
             style={{
               background: save.isSuccess ? "#16a34a" : "#FA6F30",
               color: "#fff",
@@ -200,10 +200,10 @@ export default function ProviderProfile() {
             disabled={save.isPending || uploading}
           >
             {save.isPending
-              ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2 inline-block" />Saving...</>
+              ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2 inline-block" /> Saving...</>
               : save.isSuccess
-                ? <><CheckCircle className="w-4 h-4 mr-2 inline" />Saved!</>
-                : <><Save className="w-4 h-4 mr-2 inline" />Save Profile</>}
+                ? <><CheckCircle className="w-4 h-4 mr-2 inline" /> Saved!</>
+                : <><Save className="w-4 h-4 mr-2 inline" /> Save Profile</>}
           </Button>
 
         </CardContent>
