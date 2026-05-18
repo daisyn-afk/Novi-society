@@ -250,11 +250,11 @@ export default function PracticeProfileTab({ form, setForm, me, onSave, saving, 
         <div className="px-6 py-5 grid sm:grid-cols-2 gap-4">
           <div>
             <FieldLabel><Globe className="w-3.5 h-3.5" /> Website</FieldLabel>
-            <GlassInput placeholder="https://yourwebsite.com" value={form.website} onChange={e => f("website", e.target.value)} />
+            <GlassInput placeholder="https://yourwebsite.com" value={form.website_url || ""} onChange={e => f("website_url", e.target.value)} />
           </div>
           <div>
             <FieldLabel><Instagram className="w-3.5 h-3.5" /> Instagram</FieldLabel>
-            <GlassInput placeholder="@yourhandle" value={form.instagram} onChange={e => f("instagram", e.target.value)} />
+            <GlassInput placeholder="@yourhandle" value={form.instagram_handle || ""} onChange={e => f("instagram_handle", e.target.value)} />
           </div>
           <div>
             <FieldLabel><Facebook className="w-3.5 h-3.5" /> Facebook</FieldLabel>
@@ -611,10 +611,10 @@ export default function PracticeProfileTab({ form, setForm, me, onSave, saving, 
             )}
 
             {/* Social */}
-            {(form.website || form.instagram) && (
+            {(form.website_url || form.instagram_handle) && (
               <div className="flex flex-wrap gap-2 pt-1">
-                {form.website && <a href={form.website} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full" style={{ background: "#f9f8f6", color: "rgba(30,37,53,0.6)", border: "1px solid rgba(30,37,53,0.08)" }}><Globe className="w-3 h-3" /> Website</a>}
-                {form.instagram && <span className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full" style={{ background: "#f9f8f6", color: "rgba(30,37,53,0.6)", border: "1px solid rgba(30,37,53,0.08)" }}><Instagram className="w-3 h-3" /> {form.instagram}</span>}
+                {form.website_url && <a href={form.website_url} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full" style={{ background: "#f9f8f6", color: "rgba(30,37,53,0.6)", border: "1px solid rgba(30,37,53,0.08)" }}><Globe className="w-3 h-3" /> Website</a>}
+                {form.instagram_handle && <span className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full" style={{ background: "#f9f8f6", color: "rgba(30,37,53,0.6)", border: "1px solid rgba(30,37,53,0.08)" }}><Instagram className="w-3 h-3" /> {form.instagram_handle}</span>}
               </div>
             )}
           </div>
