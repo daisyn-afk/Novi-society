@@ -430,6 +430,62 @@ export function createLovableProviderClient() {
           delete: createNotImplementedMethod(`entities.${name}.delete`)
         };
       }
+      if (name === "User") {
+        return {
+          list: async () => {
+            const out = [];
+            for (let page = 1; page <= 20; page += 1) {
+              const raw = await authRequest(`/admin/users?page=${page}&page_size=100`, { method: "GET" });
+              const batch = Array.isArray(raw?.data) ? raw.data : [];
+              out.push(...batch);
+              if (batch.length < 100) break;
+            }
+            return out.map((row) => ({
+              ...row,
+              id: String(row?.auth_user_id || row?.id || "").trim() || row.id
+            }));
+          },
+          get: createNotImplementedMethod("entities.User.get"),
+          filter: createNotImplementedMethod("entities.User.filter"),
+          create: createNotImplementedMethod("entities.User.create"),
+          update: createNotImplementedMethod("entities.User.update"),
+          delete: createNotImplementedMethod("entities.User.delete")
+        };
+      }
+      if (name === "MDSubscription") {
+        return {
+          list: () => authRequest("/admin/md-subscriptions", { method: "GET" }),
+          filter: async (filters = {}) => {
+            const pid = String(filters?.provider_id || "").trim();
+            const qs = pid ? `?provider_id=${encodeURIComponent(pid)}` : "";
+            return authRequest(`/admin/md-subscriptions${qs}`, { method: "GET" });
+          },
+          create: (payload) =>
+            authRequest("/admin/md-subscriptions", { method: "POST", body: JSON.stringify(payload || {}) }),
+          get: createNotImplementedMethod("entities.MDSubscription.get"),
+          update: createNotImplementedMethod("entities.MDSubscription.update"),
+          delete: createNotImplementedMethod("entities.MDSubscription.delete")
+        };
+      }
+      if (name === "MedicalDirectorRelationship") {
+        return {
+          list: () => authRequest("/admin/md-relationships", { method: "GET" }),
+          filter: async (filters = {}) => {
+            const pid = String(filters?.provider_id || "").trim();
+            const qs = pid ? `?provider_id=${encodeURIComponent(pid)}` : "";
+            return authRequest(`/admin/md-relationships${qs}`, { method: "GET" });
+          },
+          create: (payload) =>
+            authRequest("/admin/md-relationships", { method: "POST", body: JSON.stringify(payload || {}) }),
+          get: createNotImplementedMethod("entities.MedicalDirectorRelationship.get"),
+          update: (id, payload) =>
+            authRequest(`/admin/md-relationships/${encodeURIComponent(id)}`, {
+              method: "PATCH",
+              body: JSON.stringify(payload || {}),
+            }),
+          delete: createNotImplementedMethod("entities.MedicalDirectorRelationship.delete")
+        };
+      }
       return {
         list: createNotImplementedMethod(`entities.${name}.list`),
         get: createNotImplementedMethod(`entities.${name}.get`),

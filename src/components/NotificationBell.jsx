@@ -15,6 +15,7 @@ const NOTIF_ICONS = {
   cert_rejected: Award,
   md_relationship_approved: Users,
   md_relationship_pending: Users,
+  md_coverage_pending: Users,
 };
 
 const NOTIF_COLORS = {
@@ -26,6 +27,7 @@ const NOTIF_COLORS = {
   cert_rejected: "text-red-500 bg-red-50",
   md_relationship_approved: "text-purple-500 bg-purple-50",
   md_relationship_pending: "text-yellow-500 bg-yellow-50",
+  md_coverage_pending: "text-teal-700 bg-teal-50",
 };
 
 const NOTIF_ROW_STYLES = {
@@ -37,6 +39,7 @@ const NOTIF_ROW_STYLES = {
   cert_rejected: "bg-red-50/80 border-red-200",
   md_relationship_approved: "bg-purple-50/70 border-purple-100",
   md_relationship_pending: "bg-yellow-50/70 border-yellow-100",
+  md_coverage_pending: "bg-teal-50/80 border-teal-200",
 };
 
 export default function NotificationBell() {

@@ -29,6 +29,10 @@ const { licensesRouter } = await import("./licenses/routes.js");
 const { certificationsRouter } = await import("./certifications/routes.js");
 const { classSessionsRouter } = await import("./class-sessions/routes.js");
 const { notificationsRouter } = await import("./notifications/routes.js");
+const { mdSubscriptionsRouter } = await import("./md-subscriptions/routes.js");
+const { mdRelationshipsRouter } = await import("./md-relationships/routes.js");
+const { mdServiceOfferingsRouter } = await import("./md-service-offerings/routes.js");
+const { mdProfileRouter } = await import("./md-profile/routes.js");
 const { functionsRouter } = await import("./functions/routes.js");
 
 export function createAdminApp() {
@@ -58,6 +62,10 @@ export function createAdminApp() {
   app.use("/admin/certifications", certificationsRouter);
   app.use("/admin/class-sessions", classSessionsRouter);
   app.use("/admin/notifications", notificationsRouter);
+  app.use("/admin/md-subscriptions", mdSubscriptionsRouter);
+  app.use("/admin/md-relationships", mdRelationshipsRouter);
+  app.use("/admin/md-service-offerings", mdServiceOfferingsRouter);
+  app.use("/admin/md-profile", mdProfileRouter);
   app.use("/functions", functionsRouter);
 
   app.use((error, _req, res, _next) => {

@@ -3,6 +3,8 @@ import { query } from "../db.js";
 import { getMeFromAccessToken } from "../auth/service.js";
 import { notifyAdminsOfPendingCourseCertIssuance } from "../certificationNotifications.js";
 import { withCourseEmailShell } from "../courseEmailShell.js";
+import { listEligibleMedicalDirectorsForService } from "../mdEligibleDirectors.js";
+import { submitMdBoardCoverageAssignment } from "../mdAssignmentService.js";
 import Stripe from "stripe";
 
 export const functionsRouter = Router();
@@ -441,6 +443,9 @@ async function createCertificationsForEnrollment(enrollment, course, me) {
         service_type_id: cert?.service_type_id || null,
         service_type_name: cert?.service_type_name || null
       };
+      if (hasColumn("certificate_number")) {
+        valuesByColumn.certificate_number = `NOVI-${Date.now()}`;
+      }
       const insertColumns = Object.keys(valuesByColumn).filter((col) => hasColumn(col));
       if (insertColumns.length === 0) continue;
       const insertValues = insertColumns.map((col) => valuesByColumn[col]);
@@ -458,6 +463,196 @@ async function createCertificationsForEnrollment(enrollment, course, me) {
 
   return created;
 }
+
+/**
+ * Stripe Checkout for recurring MD Board coverage, or immediate success when amount is $0.
+ * Success return URL must match ProviderCredentialsCoverage Stripe handler (?md_payment_status=success&service_type_id=...).
+ */
+functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ success: false, error: "Missing bearer token." });
+    const me = await getMeFromAccessToken(token);
+    const body = req.body || {};
+    const serviceTypeId = String(body.service_type_id || "").trim();
+    const serviceTypeName = String(body.service_type_name || "MD Board Coverage").trim() || "MD Board Coverage";
+    const enrollmentId = body.enrollment_id != null ? String(body.enrollment_id).trim() : "";
+    const amountPrimary = body.amount;
+    const amountAlt = body.prorated_amount;
+    const amountRaw =
+      amountPrimary !== undefined && amountPrimary !== null && String(amountPrimary) !== ""
+        ? amountPrimary
+        : amountAlt;
+    const amountUsd = Number(amountRaw);
+    const safeUsd = Number.isFinite(amountUsd) && amountUsd >= 0 ? amountUsd : 0;
+    const amountCents = Math.round(safeUsd * 100);
+
+    if (!serviceTypeId) {
+      return res.status(400).json({ success: false, error: "service_type_id is required." });
+    }
+
+    if (amountCents <= 0) {
+      return res.json({ success: true });
+    }
+
+    if (!stripe) {
+      return res.status(500).json({
+        success: false,
+        error: "Stripe is not configured. Set STRIPE_SECRET_KEY or use $0 activation."
+      });
+    }
+
+    const base = String(appBaseUrl || "http://localhost:5173").replace(/\/$/, "");
+    const successParams = new URLSearchParams({
+      md_payment_status: "success",
+      service_type_id: serviceTypeId
+    });
+    if (enrollmentId) successParams.set("enrollment_id", enrollmentId);
+    const successUrl = `${base}/ProviderCredentialsCoverage?${successParams.toString()}`;
+    const cancelUrl = `${base}/ProviderCredentialsCoverage?md_payment_status=cancel&service_type_id=${encodeURIComponent(serviceTypeId)}`;
+
+    const checkoutSession = await stripe.checkout.sessions.create({
+      mode: "subscription",
+      payment_method_types: ["card"],
+      customer_email: me.email || undefined,
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+      metadata: {
+        checkout_type: "md_board_coverage",
+        provider_auth_user_id: String(me.id || ""),
+        service_type_id: serviceTypeId,
+        enrollment_id: enrollmentId || ""
+      },
+      subscription_data: {
+        metadata: {
+          checkout_type: "md_board_coverage",
+          provider_auth_user_id: String(me.id || ""),
+          service_type_id: serviceTypeId,
+          enrollment_id: enrollmentId || ""
+        }
+      },
+      line_items: [
+        {
+          quantity: 1,
+          price_data: {
+            currency: "usd",
+            unit_amount: amountCents,
+            recurring: { interval: "month" },
+            product_data: {
+              name: `NOVI MD Board Coverage — ${serviceTypeName}`,
+              description: "Monthly NOVI Board medical director supervision membership"
+            }
+          }
+        }
+      ]
+    });
+
+    const url = checkoutSession?.url;
+    if (!url) {
+      return res.status(500).json({ success: false, error: "Checkout session did not return a URL." });
+    }
+    return res.json({ success: true, url });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+/** Placeholder: cancel flow can extend to Stripe + DB when subscription ids are stored. */
+functionsRouter.post("/cancelMDSubscription", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ success: false, error: "Missing bearer token." });
+    await getMeFromAccessToken(token);
+    const subscriptionId = String(req.body?.subscription_id || "").trim();
+    if (!subscriptionId) {
+      return res.status(400).json({ success: false, error: "subscription_id is required." });
+    }
+    return res.json({ success: true });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+/**
+ * Read-only preview: who would be chosen next for `service_type_id` (does **not** advance round-robin).
+ * Assignment + pointer advance happens only in `submitMdBoardCoverageAssignment`.
+ */
+functionsRouter.post("/pickMedicalDirectorForService", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ ok: false, error: "Missing bearer token." });
+    await getMeFromAccessToken(token);
+    const serviceTypeId = String(req.body?.service_type_id || "").trim();
+    if (!serviceTypeId) {
+      return res.status(400).json({ ok: false, error: "service_type_id is required." });
+    }
+
+    const eligible = await listEligibleMedicalDirectorsForService(serviceTypeId);
+    const n = eligible.length;
+    if (n === 0) {
+      return res.json({
+        ok: false,
+        error:
+          "No medical director is eligible for this service. Each Board MD must list supported services (MD dashboard → Services I cover). For local dev only, set MD_ASSIGNMENT_POOL_FALLBACK=1.",
+      });
+    }
+
+    const { rows: curRows } = await query(
+      `select seq from public.md_assignment_round_robin where service_type_id = $1 limit 1`,
+      [serviceTypeId]
+    );
+    const s = curRows?.[0] ? Number(curRows[0].seq) : 0;
+    const idx = s % n;
+    const chosen = eligible[idx];
+    return res.json({
+      ok: true,
+      preview: true,
+      medical_director_id: chosen.id,
+      medical_director_email: chosen.email || "",
+      medical_director_name: chosen.full_name || chosen.email || "",
+      assignment_index: idx,
+      eligible_count: n,
+      service_type_id: serviceTypeId,
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+/**
+ * Provider-only: after MD coverage agreement + subscription, run assignment engine (service match →
+ * optional state filter → round-robin), create pending relationship + coverage request, notify MD.
+ */
+functionsRouter.post("/submitMdBoardCoverageAssignment", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ ok: false, error: "Missing bearer token." });
+    const me = await getMeFromAccessToken(token);
+    const role = String(me.role || "").trim().toLowerCase();
+    if (role !== "provider") {
+      return res.status(403).json({ ok: false, error: "Only providers can submit MD coverage assignment." });
+    }
+    const serviceTypeId = String(req.body?.service_type_id || "").trim();
+    if (!serviceTypeId) {
+      return res.status(400).json({ ok: false, error: "service_type_id is required." });
+    }
+    const serviceTypeName = String(req.body?.service_type_name || "").trim();
+    const result = await submitMdBoardCoverageAssignment({
+      providerId: me.id,
+      providerEmail: me.email,
+      providerName: me.full_name,
+      providerState: me.state || null,
+      serviceTypeId,
+      serviceTypeName,
+    });
+    if (!result.ok) {
+      return res.status(400).json(result);
+    }
+    return res.json(result);
+  } catch (error) {
+    return next(error);
+  }
+});
 
 functionsRouter.post("/redeemClassCode", async (req, res, next) => {
   try {

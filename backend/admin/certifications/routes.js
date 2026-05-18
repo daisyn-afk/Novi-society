@@ -513,11 +513,15 @@ async function createCertificationApprovedNotification({
   const { tableName, columns } = await getNotificationTableColumnsByName();
   if (!tableName || !columns || columns.size === 0) return false;
   const recipient = await resolveNotificationRecipient({ providerId, providerEmail });
+  const name = String(certificationName || "").trim();
+  const message = name
+    ? `Your ${name} certification has been approved!`
+    : "Your certification has been approved!";
   const valuesByColumn = {
     user_id: recipient.userId || null,
     user_email: recipient.userEmail || null,
     type: "cert_awarded",
-    message: `Your ${certificationName || "certification"} certification has been approved!`,
+    message,
     link_page: `ProviderCredentialsCoverage${serviceTypeId ? `?prompt_service=${encodeURIComponent(serviceTypeId)}` : ""}`
   };
   const insertColumns = Object.keys(valuesByColumn).filter((col) => columns.has(col));
@@ -944,7 +948,40 @@ certificationsRouter.patch("/:id", async (req, res, next) => {
       }
     }
 
-    const updates = req.body || {};
+    const updates = { ...(req.body || {}) };
+    if (hasAdminAccess(me.role)) {
+      const prevStatus = String(existing?.status || "").toLowerCase();
+      const nextStatusRaw = updates.status != null ? updates.status : existing?.status;
+      const nextStatus = String(nextStatusRaw || "").toLowerCase();
+      const turningActive = nextStatus === "active" && prevStatus !== "active";
+      const turningRevoked = nextStatus === "revoked" && prevStatus !== "revoked";
+      if (turningRevoked) {
+        const reason = String(updates.rejection_reason ?? "").trim();
+        if (!reason) {
+          const err = new Error("rejection_reason is required when rejecting a certification.");
+          err.statusCode = 400;
+          throw err;
+        }
+      }
+      if (turningActive) {
+        const hasEnrollment = Boolean(String(existing?.enrollment_id || updates.enrollment_id || "").trim());
+        if (columns.has("issued_at") && !String(updates.issued_at || "").trim()) {
+          updates.issued_at = new Date().toISOString();
+        }
+        if (columns.has("certificate_number")) {
+          const fromBody = String(updates.certificate_number ?? "").trim();
+          const existingNum = String(existing?.certificate_number ?? "").trim();
+          if (fromBody) {
+            updates.certificate_number = fromBody;
+          } else if (existingNum) {
+            updates.certificate_number = existingNum;
+          } else {
+            updates.certificate_number = hasEnrollment ? `NOVI-${Date.now()}` : `NOVI-EXT-${Date.now()}`;
+          }
+        }
+      }
+    }
+
     const allowed = Object.keys(updates).filter((key) => columns.has(String(key || "").toLowerCase()));
     if (allowed.length === 0) return res.json(existing);
     const setClause = allowed.map((col, idx) => `${col} = $${idx + 2}`).join(", ");
@@ -961,6 +998,7 @@ certificationsRouter.patch("/:id", async (req, res, next) => {
     const changedStatus = hasAdminAccess(me.role) && String(existing?.status || "") !== String(updated?.status || "");
     const isApproved = String(updated?.status || "").toLowerCase() === "active";
     const isRejected = String(updated?.status || "").toLowerCase() === "revoked";
+    const wasPending = String(existing?.status || "").toLowerCase() === "pending";
     const isExternalSubmission = Boolean(
       updated?.certificate_url ||
       updated?.certification_url ||
@@ -971,7 +1009,8 @@ certificationsRouter.patch("/:id", async (req, res, next) => {
       updated?.service_type_id ||
       updated?.issued_by
     );
-    if (changedStatus && isExternalSubmission && (isApproved || isRejected)) {
+    const notifyProviderCertDecision = changedStatus && (isExternalSubmission || wasPending) && (isApproved || isRejected);
+    if (notifyProviderCertDecision) {
       const providerId = String(
         updated?.provider_id || updated?.user_id || updated?.created_by || ""
       ).trim() || null;

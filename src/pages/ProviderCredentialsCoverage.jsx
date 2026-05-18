@@ -4,7 +4,7 @@ import ProviderSalesLock from "@/components/ProviderSalesLock";
 import { useProviderAccess } from "@/components/useProviderAccess";
 import { base44 } from "@/api/base44Client";
 import { adminApiRequest } from "@/api/adminApiRequest";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -26,7 +26,6 @@ import { format } from "date-fns";
 import { getSessionWindowForDate, isNowWithinSessionRedeemWindow } from "@/lib/classCodeWindow";
 import { CLASS_TIME_ZONE } from "@/lib/classCodeWindow";
 import { downloadCertificateDocument, hasCertificateDocument, openCertificateDocument } from "@/lib/certificateDocument";
-
 const LICENSE_TYPES = ["RN", "NP", "PA", "MD", "DO", "esthetician", "other"];
 const CERT_TYPES = ["RN", "NP", "PA", "MD", "DO", "esthetician", "other"];
 const ACTIVATION_STEPS = ["Verify Training", "Select Service", "Sign & Activate"];
@@ -165,7 +164,7 @@ export default function ProviderCredentialsCoverage() {
   const [uploading, setUploading] = useState(false);
   const [certSubmitOpen, setCertSubmitOpen] = useState(false);
   const [certSubmitStep, setCertSubmitStep] = useState(0);
-  const [extCertForm, setExtCertForm] = useState({ cert_name: "", issuing_school: "", cert_type: "RN", service_type_id: "", service_type_name: "" });
+  const [extCertForm, setExtCertForm] = useState({ cert_name: "", issuing_school: "", cert_type: "RN", service_type_id: "", service_type_name: "", certificate_number: "" });
   const [extCertFileUrl, setExtCertFileUrl] = useState("");
   const [extLicenseFileUrl, setExtLicenseFileUrl] = useState("");
   const [uploadingExtCert, setUploadingExtCert] = useState(false);
@@ -200,19 +199,7 @@ export default function ProviderCredentialsCoverage() {
   const isDrawing = useRef(false);
   const qc = useQueryClient();
   const navigate = useNavigate();
-
-  // URL param handling
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get("tab")) setActiveTab(params.get("tab"));
-    const promptService = params.get("prompt_service");
-    if (promptService) {
-      setActiveTab("coverage");
-      setActivateDialog(true);
-      setSelectedServiceTypeId(promptService);
-      setStep(2);
-    }
-  }, []);
+  const location = useLocation();
 
   // Data queries
   const { data: me } = useQuery({
@@ -355,6 +342,68 @@ export default function ProviderCredentialsCoverage() {
     enabled: !!me,
   });
 
+  /** After Stripe success (or immediate $0 checkout): ensure one active MDSubscription per service, then assignment engine (pending MD approval). */
+  async function finalizeActiveMdCoverageAndAssignMd({ stId, enrollId, nowIso, signatureData }) {
+    if (!me?.id || !stId) return;
+    const serviceTypeName = serviceTypes.find((s) => s.id === stId)?.name;
+    let existingSubs = [];
+    try {
+      existingSubs = await base44.entities.MDSubscription.filter({ provider_id: me.id, service_type_id: stId });
+    } catch {
+      existingSubs = [];
+    }
+    const hasActiveForService = (existingSubs || []).some(
+      (s) => String(s?.status || "").toLowerCase() === "active"
+    );
+    if (!hasActiveForService) {
+      await base44.entities.MDSubscription.create({
+        provider_id: me.id,
+        provider_email: me.email,
+        provider_name: me.full_name,
+        service_type_id: stId,
+        service_type_name: serviceTypeName,
+        status: "active",
+        signed_at: nowIso,
+        signed_by_name: me.full_name,
+        activated_at: nowIso,
+        enrollment_id: enrollId || null,
+        ...(signatureData ? { signature_data: signatureData } : {}),
+      });
+    }
+    qc.invalidateQueries({ queryKey: ["my-md-subscriptions"] });
+    const res = await base44.functions.invoke("submitMdBoardCoverageAssignment", {
+      service_type_id: stId,
+      service_type_name: serviceTypeName || "",
+    });
+    const data = res?.data;
+    if (!data?.ok) {
+      throw new Error(data?.error || "Unable to assign a Board Medical Director for this service.");
+    }
+    qc.invalidateQueries({ queryKey: ["my-md-relationships"] });
+  }
+
+  // Open MD coverage apply flow when arriving from cert-approval notification (?prompt_service=)
+  useEffect(() => {
+    const params = new URLSearchParams(location.search || "");
+    if (params.get("tab")) setActiveTab(params.get("tab"));
+    const promptService = params.get("prompt_service");
+    if (!promptService || serviceTypes.length === 0) return;
+    setActiveTab("coverage");
+    setActivateDialog(true);
+    setSelectedServiceTypeId(promptService);
+    setStep(2);
+    params.delete("prompt_service");
+    if (params.get("tab") === "coverage") params.delete("tab");
+    const qs = params.toString();
+    navigate({ pathname: createPageUrl("ProviderCredentialsCoverage"), search: qs ? `?${qs}` : "" }, { replace: true });
+    setTimeout(() => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
+      setHasSigned(false);
+    }, 150);
+  }, [location.search, serviceTypes.length, navigate]);
+
   // Stripe return
   useEffect(() => {
     if (stripeHandled || !me?.id || serviceTypes.length === 0) return;
@@ -365,32 +414,14 @@ export default function ProviderCredentialsCoverage() {
     if (mdStatus === "success" && stId) {
       setStripeHandled(true);
       const now = new Date().toISOString();
-      const NOVI_MD_ID = "699c9815c81b2b13b2643a49";
-      const NOVI_MD_NAME = "ashlan.brookes.lane";
-      const NOVI_MD_EMAIL = "ashlan.brookes.lane@gmail.com";
-
-      base44.entities.MDSubscription.create({
-      provider_id: me.id, provider_email: me.email, provider_name: me.full_name,
-      service_type_id: stId, service_type_name: serviceTypes.find(s => s.id === stId)?.name,
-      status: "active", signed_at: now, signed_by_name: me.full_name, activated_at: now, enrollment_id: enrollId || null,
-      }).then(async () => {
-      qc.invalidateQueries({ queryKey: ["my-md-subscriptions"] });
-      // Auto-assign NOVI Board MD if not already assigned
-      const existing = await base44.entities.MedicalDirectorRelationship.filter({ provider_id: me.id, medical_director_id: NOVI_MD_ID });
-      if (existing.length === 0) {
-        await base44.entities.MedicalDirectorRelationship.create({
-          provider_id: me.id, provider_email: me.email, provider_name: me.full_name,
-          medical_director_id: NOVI_MD_ID, medical_director_email: NOVI_MD_EMAIL, medical_director_name: NOVI_MD_NAME,
-          status: "active", start_date: now.split("T")[0],
-          supervision_notes: "Assigned automatically by NOVI Board of Medical Directors.",
+      finalizeActiveMdCoverageAndAssignMd({ stId, enrollId: enrollId || null, nowIso: now, signatureData: null })
+        .then(() => navigate(createPageUrl("ProviderLaunchPad")))
+        .catch((err) => {
+          console.error("[md-coverage] finalize after Stripe failed:", err);
+          navigate(createPageUrl("ProviderLaunchPad"));
         });
-        qc.invalidateQueries({ queryKey: ["my-md-relationships"] });
-      }
-      // Provider is now fully active — redirect to Launch Pad
-      navigate(createPageUrl("ProviderLaunchPad"));
-      });
     }
-  }, [me, serviceTypes, stripeHandled]);
+  }, [me, serviceTypes, stripeHandled, navigate]);
 
   // Keep Novi Class status fresh whenever Apply dialog opens.
   useEffect(() => {
@@ -570,7 +601,7 @@ export default function ProviderCredentialsCoverage() {
   };
   const resetExtCertForm = () => {
     setCertSubmitStep(0);
-    setExtCertForm({ cert_name: "", issuing_school: "", cert_type: "RN", service_type_id: "", service_type_name: "" });
+    setExtCertForm({ cert_name: "", issuing_school: "", cert_type: "RN", service_type_id: "", service_type_name: "", certificate_number: "" });
     setExtCertFileUrl(""); setExtLicenseFileUrl("");
     setUploadExtCertError(""); setUploadExtLicenseError(""); setSubmitExtCertError("");
   };
@@ -712,6 +743,7 @@ export default function ProviderCredentialsCoverage() {
             service_type_id: payload.service_type_id,
             service_type_name: payload.service_type_name,
             certificate_url: payload.certificate_url,
+            certificate_number: payload.certificate_number,
             notes: payload.notes,
           });
         } catch (patchErr) {
@@ -758,6 +790,8 @@ export default function ProviderCredentialsCoverage() {
       issued_at: new Date().toISOString(),
       notes: extLicenseFileUrl ? `License document: ${extLicenseFileUrl}` : undefined,
       };
+      const extNum = String(extCertForm.certificate_number || "").trim();
+      if (extNum) payload.certificate_number = extNum;
       if (certDebugEnabled) console.info("[cert-debug][provider-submit-ext] payload", payload);
       const created = await createCertificationWithFallback(payload, u, "provider-submit-ext");
       if (certDebugEnabled) console.info("[cert-debug][provider-submit-ext] created", created);
@@ -890,6 +924,7 @@ export default function ProviderCredentialsCoverage() {
   const activateMutation = useMutation({
     mutationFn: async () => {
       const canvas = canvasRef.current;
+      if (!canvas) throw new Error("Signature pad is not ready. Close the dialog and try again.");
       const signatureData = canvas.toDataURL("image/png");
       const res = await base44.functions.invoke("createMDSubscriptionCheckout", {
         service_type_id: selectedServiceTypeId,
@@ -898,14 +933,25 @@ export default function ProviderCredentialsCoverage() {
         enrollment_id: verifiedSession?.enrollment_id || null,
         signature_data: signatureData,
       });
-      if (res.data?.url) { window.location.href = res.data.url; }
-      else if (res.data?.success) {
+      if (res.data?.url) {
+        window.location.href = res.data.url;
+        return;
+      }
+      if (res.data?.success) {
+        const now = new Date().toISOString();
+        await finalizeActiveMdCoverageAndAssignMd({
+          stId: selectedServiceTypeId,
+          enrollId: verifiedSession?.enrollment_id || null,
+          nowIso: now,
+          signatureData,
+        });
         qc.invalidateQueries({ queryKey: ["my-md-subscriptions"] });
         setActivateDialog(false);
         resetActivation();
-        // Provider is now fully active — redirect to Launch Pad
         navigate(createPageUrl("ProviderLaunchPad"));
+        return;
       }
+      throw new Error(res.data?.error || "Unable to activate MD coverage.");
     },
   });
 
@@ -952,6 +998,34 @@ export default function ProviderCredentialsCoverage() {
   const endDraw = () => { isDrawing.current = false; };
   const clearSignature = () => { const canvas = canvasRef.current; if (!canvas) return; canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height); setHasSigned(false); };
 
+  /** Opens apply dialog on Sign & Activate (step 2) for a known service — e.g. approved-cert banner or deep-link parity. */
+  const openApplyDialogToSignForService = (serviceTypeId) => {
+    const raw = String(serviceTypeId || "").trim();
+    const stId = raw && serviceTypes.some((s) => s.id === raw) ? raw : "";
+    setClassCode("");
+    setCodeError("");
+    setVerifiedSession(null);
+    setAttendedWindowKeys(new Set());
+    setUseExternalCert(false);
+    setCertForm({ cert_type: "RN", issuing_school: "", cert_name: "" });
+    setCertFileUrl("");
+    setUploadCertError("");
+    setSubmitCertError("");
+    setCertSubmitted(false);
+    setSelectedCoverageCourseKey(null);
+    setHasSigned(false);
+    setActiveTab("coverage");
+    if (stId) {
+      setSelectedServiceTypeId(stId);
+      setStep(2);
+    } else {
+      setSelectedServiceTypeId(null);
+      setStep(-1);
+    }
+    setActivateDialog(true);
+    setTimeout(() => clearSignature(), 150);
+  };
+
   // ─── RENDER ────────────────────────────────────────────────────────────────
   const pageContent = (
     <div className="max-w-5xl space-y-6">
@@ -980,7 +1054,7 @@ export default function ProviderCredentialsCoverage() {
             <p className="font-semibold text-sm" style={{ color: "#3D5600" }}>Your <strong>{c.service_type_name || c.certification_name}</strong> certification was approved!</p>
             <p className="text-xs mt-0.5" style={{ color: "rgba(61,86,0,0.8)" }}>You can now apply for MD Board coverage to start offering this service.</p>
           </div>
-          <Button size="sm" onClick={() => { setActivateDialog(true); resetActivation(); }} style={{ background: "#FA6F30", color: "#fff" }} className="flex-shrink-0 gap-1 h-8 text-xs">
+          <Button size="sm" onClick={() => openApplyDialogToSignForService(c.service_type_id)} style={{ background: "#FA6F30", color: "#fff" }} className="flex-shrink-0 gap-1 h-8 text-xs">
             <Zap className="w-3.5 h-3.5" /> Apply
           </Button>
           <button
@@ -2104,7 +2178,7 @@ export default function ProviderCredentialsCoverage() {
           {step === 2 && (
             <div className="space-y-4">
               <div className="rounded-xl border-2 border-orange-200 p-4 flex items-center justify-between bg-orange-50">
-                <div><p className="font-semibold text-slate-900">{selectedService?.name} — MD Board Coverage</p><p className="text-xs text-slate-500 mt-0.5">{alreadyActiveServices.length === 0 ? "First service" : "Add-on service"} · NOVI Board MD assigned</p></div>
+                <div><p className="font-semibold text-slate-900">{selectedService?.name} — MD Board Coverage</p><p className="text-xs text-slate-500 mt-0.5">{alreadyActiveServices.length === 0 ? "First service" : "Add-on service"} · NOVI assigns a Board MD automatically</p></div>
                 <div className="text-right"><p className="text-2xl font-bold text-slate-900">${getMembershipPrice()}</p><p className="text-xs text-slate-400">/month</p></div>
               </div>
               <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 max-h-40 overflow-y-auto text-sm text-slate-700 leading-relaxed">
@@ -2124,7 +2198,32 @@ export default function ProviderCredentialsCoverage() {
                 <CheckCircle className="w-3.5 h-3.5 text-green-500 flex-shrink-0" />
                 Signing as <strong className="mx-1">{me?.full_name}</strong> · {format(new Date(), "MMMM d, yyyy")}
               </div>
-              <Button onClick={() => activateMutation.mutate()} disabled={!hasSigned || activateMutation.isPending} className="w-full" style={{ background: "#2d3d66", color: "white" }}>
+              <div className="rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2.5 space-y-1.5">
+                <p className="text-xs font-semibold text-slate-800 flex items-center gap-1.5">
+                  <Info className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
+                  What happens next
+                </p>
+                <ol className="text-[11px] text-slate-600 space-y-1 list-decimal list-inside leading-snug">
+                  <li>We start your recurring monthly MD Board coverage (Stripe may open for payment when applicable).</li>
+                  <li>When checkout completes, your coverage subscription is set to active and your signature is stored.</li>
+                  <li>NOVI assigns exactly one Board Medical Director for this service using supported-service matching and sequential round-robin. You do not pick a doctor.</li>
+                  <li>That doctor receives a notification and must approve before supervision is active. You will see pending status until then.</li>
+                </ol>
+              </div>
+              {(activateMutation.isError || activateMutation.error) && (
+                <p className="text-xs text-red-600 whitespace-pre-wrap">
+                  {activateMutation.error?.message || "Could not start checkout. Check your connection or try again."}
+                </p>
+              )}
+              <Button
+                onClick={() => {
+                  activateMutation.reset();
+                  activateMutation.mutate();
+                }}
+                disabled={!hasSigned || activateMutation.isPending}
+                className="w-full"
+                style={{ background: "#2d3d66", color: "white" }}
+              >
                 {activateMutation.isPending ? "Activating..." : "Sign & Activate MD Board Coverage"}
               </Button>
             </div>
@@ -2298,6 +2397,14 @@ export default function ProviderCredentialsCoverage() {
               <div className="grid grid-cols-2 gap-3">
                 <div><label className="text-xs font-semibold text-slate-600 mb-1 block">Cert Name *</label><Input value={extCertForm.cert_name} onChange={e => setExtCertForm(f => ({ ...f, cert_name: e.target.value }))} placeholder="e.g. Botox Certification" /></div>
                 <div><label className="text-xs font-semibold text-slate-600 mb-1 block">Issuing School *</label><Input value={extCertForm.issuing_school} onChange={e => setExtCertForm(f => ({ ...f, issuing_school: e.target.value }))} /></div>
+                <div className="col-span-2">
+                  <label className="text-xs font-semibold text-slate-600 mb-1 block">Certificate number (optional)</label>
+                  <Input
+                    value={extCertForm.certificate_number}
+                    onChange={e => setExtCertForm(f => ({ ...f, certificate_number: e.target.value }))}
+                    placeholder="If your credential already has a number, enter it. Otherwise NOVI assigns NOVI-EXT-… when approved."
+                  />
+                </div>
                 <div className="col-span-2">
                   <label className="text-xs font-semibold text-slate-600 mb-1 block">License Type</label>
                   <div className="flex flex-wrap gap-1.5">

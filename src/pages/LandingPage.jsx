@@ -126,22 +126,43 @@ export default function LandingPage() {
           gap: 0;
         }
 
+        .landing-nav-inner {
+          gap: 16px;
+        }
         @media (max-width: 768px) {
           .grid-2 { grid-template-columns: 1fr; }
           .hide-mobile { display: none !important; }
           .hero-flex { flex-direction: column !important; }
-          .stats-row { flex-wrap: wrap !important; gap: 24px !important; }
+          .landing-nav-inner { padding: 0 20px !important; gap: 20px; }
+          .stats-row {
+            display: grid !important;
+            grid-template-columns: 1fr 1fr;
+            gap: 28px 16px;
+            align-items: start;
+          }
+          .stats-row .stat-item {
+            border-right: none !important;
+            padding: 0 !important;
+            text-align: center;
+          }
+          .stats-row .stat-number { justify-content: center; }
+          .stats-row .stat-label {
+            justify-content: center;
+            text-align: center;
+            min-height: 2.75em;
+          }
           .cta-buttons { flex-direction: column !important; align-items: stretch !important; }
           .pillars-grid { grid-template-columns: 1fr 1fr !important; }
         }
         @media (max-width: 480px) {
           .pillars-grid { grid-template-columns: 1fr !important; }
+          .landing-nav-inner { padding: 0 16px !important; gap: 16px; }
         }
       `}</style>
 
       {/* ── NAV ── */}
       <nav style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 100, background: "rgba(245,243,239,0.9)", backdropFilter: "blur(20px)", borderBottom: "1px solid rgba(30,37,53,0.07)" }}>
-        <div style={{ maxWidth: 1200, margin: "0 auto", padding: "0 32px", minHeight: 70, height: 70, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div className="landing-nav-inner" style={{ maxWidth: 1200, margin: "0 auto", padding: "0 32px", minHeight: 70, height: 70, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <Link
             to={createPageUrl("LandingPage")}
             style={{
@@ -152,12 +173,13 @@ export default function LandingPage() {
               padding: "10px 18px",
               borderRadius: 14,
               boxShadow: "0 2px 14px rgba(30,37,53,0.18)",
+              flexShrink: 0,
             }}
             aria-label="NOVI Society home"
           >
             <img src={NOVI_LOGO_SRC} alt="" width={180} height={52} style={{ height: 40, width: "auto", display: "block" }} />
           </Link>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div className="landing-nav-actions" style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" }}>
             <button
               type="button"
               onClick={() => {
@@ -267,9 +289,9 @@ export default function LandingPage() {
             { n: "98%", label: "Satisfaction Rate" },
             { n: "12+", label: "Certifications" },
           ].map(({ n, label }, i) => (
-            <div key={label} style={{ flex: 1, paddingRight: 32, borderRight: i < 3 ? "1px solid rgba(30,37,53,0.1)" : "none", paddingLeft: i > 0 ? 32 : 0 }}>
-              <p className="novi-serif" style={{ fontSize: 44, color: BRAND.dark, fontWeight: 400, lineHeight: 1, fontStyle: "italic" }}>{n}</p>
-              <p className="novi-sans" style={{ fontSize: 11, color: "rgba(30,37,53,0.4)", textTransform: "uppercase", letterSpacing: "0.14em", marginTop: 8, fontWeight: 600 }}>{label}</p>
+            <div key={label} className="stat-item" style={{ flex: 1, paddingRight: 32, borderRight: i < 3 ? "1px solid rgba(30,37,53,0.1)" : "none", paddingLeft: i > 0 ? 32 : 0 }}>
+              <p className="novi-serif stat-number" style={{ fontSize: 44, color: BRAND.dark, fontWeight: 400, lineHeight: 1, fontStyle: "italic", margin: 0, display: "flex" }}>{n}</p>
+              <p className="novi-sans stat-label" style={{ fontSize: 11, color: "rgba(30,37,53,0.4)", textTransform: "uppercase", letterSpacing: "0.14em", marginTop: 8, fontWeight: 600, marginBottom: 0, display: "flex", flexWrap: "wrap", lineHeight: 1.35 }}>{label}</p>
             </div>
           ))}
         </div>
@@ -350,6 +372,19 @@ export default function LandingPage() {
             <Link to={createPageUrl("Onboarding")} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "12px 28px", background: BRAND.dark, color: "white", fontWeight: 700, fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase", borderRadius: 100, textDecoration: "none", fontFamily: "'DM Sans', sans-serif" }}>
               Find a Provider <ArrowRight style={{ width: 13, height: 13 }} />
             </Link>
+            <div style={{ marginTop: 28, paddingTop: 24, borderTop: "1px solid rgba(30,37,53,0.12)" }}>
+              <h4 className="novi-serif" style={{ fontSize: "clamp(22px, 3.2vw, 36px)", color: BRAND.dark, fontWeight: 400, fontStyle: "italic", lineHeight: 1.1, marginBottom: 20, marginTop: 0 }}>
+                Training course model
+              </h4>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+                <Link to={createPageUrl("ModelSignup")} className="btn-dark" style={{ padding: "10px 22px", fontSize: 11 }}>
+                  Sign up
+                </Link>
+                <Link to={createPageUrl("ModelBookingLookup")} className="btn-outline" style={{ padding: "10px 22px", fontSize: 11 }}>
+                  Look up booking
+                </Link>
+              </div>
+            </div>
           </div>
         </div>
       </section>

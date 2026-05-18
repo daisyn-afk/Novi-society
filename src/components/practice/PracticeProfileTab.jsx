@@ -202,7 +202,7 @@ export default function PracticeProfileTab({ form, setForm, me, onSave, saving, 
           <div className="grid sm:grid-cols-2 gap-4">
             <div className="sm:col-span-2">
               <FieldLabel><Building2 className="w-3.5 h-3.5" /> Practice / Business Name</FieldLabel>
-              <GlassInput placeholder="e.g. Glow by Ashlan" value={form.practice_name} onChange={e => f("practice_name", e.target.value)} />
+              <GlassInput placeholder="e.g. Your practice name" value={form.practice_name} onChange={e => f("practice_name", e.target.value)} />
             </div>
             <div>
               <FieldLabel><Mail className="w-3.5 h-3.5" /> Contact Email</FieldLabel>

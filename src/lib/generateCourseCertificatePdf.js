@@ -15,6 +15,9 @@ const COLORS = {
   line: [223, 228, 236],
 };
 
+/** Matches `roundedRect(..., frameX + 6, ...)` inner border so the header banner follows the same top corners. */
+const CERT_INNER_FRAME_RADIUS = 10;
+
 function setFill(doc, color) {
   doc.setFillColor(color[0], color[1], color[2]);
 }
@@ -39,6 +42,29 @@ function drawHorizontalGradient(doc, x, y, width, height, startColor, endColor) 
     setFill(doc, blendColor(startColor, endColor, amount));
     doc.rect(x + sliceWidth * step, y, sliceWidth + 0.75, height, "F");
   }
+}
+
+/** Top edge matches inner certificate frame; bottom edge is straight (same cubic approximation as jsPDF.roundedRect). */
+function clipTopRoundedBanner(doc, x, y, w, h, rx, ry) {
+  const MyArc = (4 / 3) * (Math.SQRT2 - 1);
+  const rxi = Math.min(rx, w * 0.5);
+  const ryi = Math.min(ry, h * 0.5);
+  doc.lines(
+    [
+      [w - 2 * rxi, 0],
+      [rxi * MyArc, 0, rxi, ryi - ryi * MyArc, rxi, ryi],
+      [0, h - ryi],
+      [-w, 0],
+      [0, -(h - ryi)],
+      [0, -(ryi * MyArc), rxi * MyArc, -ryi, rxi, -ryi],
+    ],
+    x + rxi,
+    y,
+    [1, 1],
+    null,
+    true
+  );
+  doc.clip().discardPath();
 }
 
 function detectImageFormat(dataUrl) {
@@ -143,6 +169,9 @@ function drawHeaderLogo(doc, logoDataUrl, logoDimensions, frameX, frameY, frameW
   const bandWidth = frameWidth - innerPad * 2;
   const headerHeight = 112;
 
+  doc.saveGraphicsState();
+  clipTopRoundedBanner(doc, bandX, bandY, bandWidth, headerHeight, CERT_INNER_FRAME_RADIUS, CERT_INNER_FRAME_RADIUS);
+
   drawHorizontalGradient(doc, bandX, bandY, bandWidth, headerHeight, COLORS.ink, COLORS.teal);
 
   if (logoDataUrl && logoDimensions) {
@@ -163,6 +192,8 @@ function drawHeaderLogo(doc, logoDataUrl, logoDimensions, frameX, frameY, frameW
     setText(doc, COLORS.paper);
     doc.text("NOVI SOCIETY", bandX + bandWidth / 2, bandY + 62, { align: "center" });
   }
+
+  doc.restoreGraphicsState();
 
   return bandY + headerHeight + 24;
 }
@@ -273,7 +304,7 @@ export async function generateCourseCertificatePdf({
 
   setStroke(doc, COLORS.teal);
   doc.setLineWidth(0.6);
-  doc.roundedRect(frameX + 6, frameY + 6, frameWidth - 12, frameHeight - 12, 10, 10, "S");
+  doc.roundedRect(frameX + 6, frameY + 6, frameWidth - 12, frameHeight - 12, CERT_INNER_FRAME_RADIUS, CERT_INNER_FRAME_RADIUS, "S");
 
   let logoDataUrl = null;
   let logoDimensions = null;
