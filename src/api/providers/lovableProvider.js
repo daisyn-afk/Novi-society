@@ -279,8 +279,19 @@ export function createLovableProviderClient() {
             const providerEmail = filters?.provider_email ? String(filters.provider_email).toLowerCase() : "";
             const status = filters?.status ? String(filters.status).toLowerCase() : "";
             return (all || []).filter((row) => {
-              if (providerId && String(row?.provider_id || "") !== providerId) return false;
-              if (providerEmail && String(row?.provider_email || "").toLowerCase() !== providerEmail) return false;
+              if (providerId || providerEmail) {
+                const rowProviderId = String(row?.provider_id || "");
+                const rowProviderEmail = String(row?.provider_email || "").toLowerCase();
+                const idMatch = providerId && rowProviderId === providerId;
+                const emailMatch = providerEmail && rowProviderEmail === providerEmail;
+                if (providerId && providerEmail) {
+                  if (!idMatch && !emailMatch) return false;
+                } else if (providerId && !idMatch) {
+                  return false;
+                } else if (providerEmail && !emailMatch) {
+                  return false;
+                }
+              }
               if (status && String(row?.status || "").toLowerCase() !== status) return false;
               return true;
             });
@@ -391,6 +402,90 @@ export function createLovableProviderClient() {
           delete: createNotImplementedMethod("entities.Enrollment.delete")
         };
       }
+      if (name === "Notification" || name === "Notifications" || name === "notification" || name === "notifications") {
+        return {
+          list: (_sort = "", limit = 30) =>
+            authRequest(`/admin/notifications?limit=${encodeURIComponent(String(limit || 30))}`, { method: "GET" }),
+          filter: (filters = {}, _sort = "", limit = 30) => {
+            const params = new URLSearchParams();
+            if (Object.hasOwn(filters, "user_id") && filters.user_id) {
+              params.set("user_id", String(filters.user_id));
+            }
+            if (Object.hasOwn(filters, "user_email") && filters.user_email) {
+              params.set("user_email", String(filters.user_email));
+            }
+            params.set("limit", String(limit || 30));
+            const qs = params.toString();
+            return authRequest(`/admin/notifications${qs ? `?${qs}` : ""}`, { method: "GET" });
+          },
+          get: (id) => authRequest(`/admin/notifications/${encodeURIComponent(id)}`, { method: "GET" }),
+          create: (payload) => authRequest("/admin/notifications", {
+            method: "POST",
+            body: JSON.stringify(payload || {})
+          }),
+          update: (id, payload) => authRequest(`/admin/notifications/${encodeURIComponent(id)}`, {
+            method: "PATCH",
+            body: JSON.stringify(payload || {})
+          }),
+          delete: createNotImplementedMethod(`entities.${name}.delete`)
+        };
+      }
+      if (name === "User") {
+        return {
+          list: async () => {
+            const out = [];
+            for (let page = 1; page <= 20; page += 1) {
+              const raw = await authRequest(`/admin/users?page=${page}&page_size=100`, { method: "GET" });
+              const batch = Array.isArray(raw?.data) ? raw.data : [];
+              out.push(...batch);
+              if (batch.length < 100) break;
+            }
+            return out.map((row) => ({
+              ...row,
+              id: String(row?.auth_user_id || row?.id || "").trim() || row.id
+            }));
+          },
+          get: createNotImplementedMethod("entities.User.get"),
+          filter: createNotImplementedMethod("entities.User.filter"),
+          create: createNotImplementedMethod("entities.User.create"),
+          update: createNotImplementedMethod("entities.User.update"),
+          delete: createNotImplementedMethod("entities.User.delete")
+        };
+      }
+      if (name === "MDSubscription") {
+        return {
+          list: () => authRequest("/admin/md-subscriptions", { method: "GET" }),
+          filter: async (filters = {}) => {
+            const pid = String(filters?.provider_id || "").trim();
+            const qs = pid ? `?provider_id=${encodeURIComponent(pid)}` : "";
+            return authRequest(`/admin/md-subscriptions${qs}`, { method: "GET" });
+          },
+          create: (payload) =>
+            authRequest("/admin/md-subscriptions", { method: "POST", body: JSON.stringify(payload || {}) }),
+          get: createNotImplementedMethod("entities.MDSubscription.get"),
+          update: createNotImplementedMethod("entities.MDSubscription.update"),
+          delete: createNotImplementedMethod("entities.MDSubscription.delete")
+        };
+      }
+      if (name === "MedicalDirectorRelationship") {
+        return {
+          list: () => authRequest("/admin/md-relationships", { method: "GET" }),
+          filter: async (filters = {}) => {
+            const pid = String(filters?.provider_id || "").trim();
+            const qs = pid ? `?provider_id=${encodeURIComponent(pid)}` : "";
+            return authRequest(`/admin/md-relationships${qs}`, { method: "GET" });
+          },
+          create: (payload) =>
+            authRequest("/admin/md-relationships", { method: "POST", body: JSON.stringify(payload || {}) }),
+          get: createNotImplementedMethod("entities.MedicalDirectorRelationship.get"),
+          update: (id, payload) =>
+            authRequest(`/admin/md-relationships/${encodeURIComponent(id)}`, {
+              method: "PATCH",
+              body: JSON.stringify(payload || {}),
+            }),
+          delete: createNotImplementedMethod("entities.MedicalDirectorRelationship.delete")
+        };
+      }
       return {
         list: createNotImplementedMethod(`entities.${name}.list`),
         get: createNotImplementedMethod(`entities.${name}.get`),
@@ -481,6 +576,23 @@ export function createLovableProviderClient() {
     },
     functions: {
       invoke: async (functionName, payload) => {
+        // Payment-creating endpoints get a fresh client_timestamp at the
+        // moment of invocation so the backend can compare it to
+        // server_received_timestamp and detect stale frontend state.
+        const PAYMENT_FUNCTIONS = new Set([
+          "createPreOrderCheckout",
+          "createModelCheckout",
+          "createCheckoutSession"
+        ]);
+        const isPaymentFn = PAYMENT_FUNCTIONS.has(functionName);
+        const clientTimestamp = isPaymentFn ? new Date().toISOString() : null;
+        const stampedPayload = isPaymentFn
+          ? { ...(payload || {}), client_timestamp: clientTimestamp }
+          : (payload || {});
+        const paymentHeaders = isPaymentFn
+          ? { "x-novi-client-timestamp": clientTimestamp }
+          : undefined;
+
         if (functionName === "createPreOrderCheckout") {
           if (payload?.pre_order_id) {
             throw new Error("[lovable-provider] createPreOrderCheckout with pre_order_id is not implemented yet.");
@@ -488,7 +600,8 @@ export function createLovableProviderClient() {
           return {
             data: await requestJson("/admin/checkout/service", {
               method: "POST",
-              body: JSON.stringify(payload || {})
+              body: JSON.stringify(stampedPayload),
+              headers: paymentHeaders
             })
           };
         }
@@ -503,7 +616,8 @@ export function createLovableProviderClient() {
         return {
           data: await authRequest(`/functions/${functionName}`, {
             method: "POST",
-            body: JSON.stringify(payload || {})
+            body: JSON.stringify(stampedPayload),
+            headers: paymentHeaders
           })
         };
       }

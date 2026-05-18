@@ -7,6 +7,18 @@ function getAccessToken() {
 }
 
 export const providerOnboardingApi = {
+  getMe: async () => {
+    const token = getAccessToken();
+    if (!token) {
+      throw new Error("Please login as a provider to continue.");
+    }
+    return adminApiRequest("/admin/provider-onboarding/me", {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    });
+  },
   submitBasic: async (payload) => {
     const token = getAccessToken();
     if (!token) {

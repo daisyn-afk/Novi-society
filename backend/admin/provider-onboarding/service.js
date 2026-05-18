@@ -1,9 +1,9 @@
-import { pool } from "../db.js";
+import { pool, query } from "../db.js";
 import { getMeFromAccessToken } from "../auth/service.js";
 
 let tableEnsured = false;
 
-async function ensureProviderOnboardingTable() {
+export async function ensureProviderOnboardingTable() {
   if (tableEnsured) return;
   const client = await pool.connect();
   try {
@@ -131,6 +131,32 @@ function validateAdult(dobValue) {
     err.statusCode = 400;
     throw err;
   }
+}
+
+export async function getProviderBasicOnboardingForMe(accessToken) {
+  if (!accessToken) {
+    const err = new Error("Missing bearer token.");
+    err.statusCode = 401;
+    throw err;
+  }
+  await ensureProviderOnboardingTable();
+  const me = await getMeFromAccessToken(accessToken);
+  if (me?.role !== "provider") {
+    const err = new Error("Only provider users can read provider onboarding status.");
+    err.statusCode = 403;
+    throw err;
+  }
+  const { rows } = await query(
+    `select id, auth_user_id, onboarding_status, created_at, updated_at
+     from public.provider_basic_onboarding
+     where auth_user_id = $1
+     limit 1`,
+    [me.id]
+  );
+  return {
+    has_completed_basic: Boolean(rows[0]),
+    record: rows[0] || null
+  };
 }
 
 export async function submitProviderBasicOnboarding({ accessToken, payload }) {

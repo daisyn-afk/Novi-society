@@ -62,7 +62,9 @@ export const ALLOWED_PAGES_BY_ROLE: Record<string, Set<string>> = {
     "MDTreatmentRecords",
     "MDCompliance",
     "MDCertifications",
+    "MDProfile",
     "MDProviders",
+    "MDServiceOfferings",
   ]),
   patient: new Set([
     "PatientJourney",
@@ -90,8 +92,8 @@ export function normalizeRole(role?: string | null) {
 
 export function getDashboardPageForRole(role?: string | null) {
   const normalizedRole = normalizeRole(role);
-  if (!normalizedRole) return "NoviLanding";
-  return DASHBOARD_BY_ROLE[normalizedRole] || "NoviLanding";
+  if (!normalizedRole) return "LandingPage";
+  return DASHBOARD_BY_ROLE[normalizedRole] || "LandingPage";
 }
 
 export function getDashboardPathForRole(role?: string | null) {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { Input } from "@/components/ui/input";
@@ -10,6 +10,13 @@ import { Upload, CheckCircle, ArrowRight } from "lucide-react";
 import { providerOnboardingApi } from "@/api/providerOnboardingApi";
 import { getDashboardPathForRole } from "@/lib/routeAccessPolicy";
 import { adminUploadsApi } from "@/api/adminUploadsApi";
+import {
+  readProviderSignupGoal,
+  clearProviderSignupGoal,
+  clearSkipExploreFlag,
+  GOAL_NEED_MD_COVERAGE,
+  GOAL_NEED_TRAINING,
+} from "@/lib/providerSignupIntent";
 
 const LICENSE_TYPES = ["RN", "NP", "PA", "MD", "DO", "esthetician", "other"];
 const US_ZIP_REGEX = /^\d{5}(-\d{4})?$/;
@@ -20,6 +27,21 @@ const inputClass = "bg-white/80 border-slate-200";
 export default function ProviderBasicOnboarding() {
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const goal = useMemo(() => readProviderSignupGoal(), []);
+  const goalHeadline = useMemo(() => {
+    if (goal === GOAL_NEED_MD_COVERAGE) return "Medical director coverage";
+    if (goal === GOAL_NEED_TRAINING) return "Certification & training";
+    return "Tell us about yourself";
+  }, [goal]);
+  const goalSub = useMemo(() => {
+    if (goal === GOAL_NEED_MD_COVERAGE) {
+      return "You indicated you already have credentials and need MD oversight. We still need your license on file for compliance.";
+    }
+    if (goal === GOAL_NEED_TRAINING) {
+      return "You’re on the training path — complete this profile and license so we can reserve courses and verify your RN/NP/PA status.";
+    }
+    return "We need some basic information and your professional license to get you started.";
+  }, [goal]);
   const [form, setForm] = useState({
     dob: "",
     address_line1: "",
@@ -138,8 +160,11 @@ export default function ProviderBasicOnboarding() {
       });
     },
     onSuccess: () => {
+      clearProviderSignupGoal();
+      clearSkipExploreFlag();
       qc.invalidateQueries({ queryKey: ["my-licenses"] });
       qc.invalidateQueries({ queryKey: ["me"] });
+      qc.invalidateQueries({ queryKey: ["provider-basic-onboarding"] });
       navigate(createPageUrl("ProviderDashboard"));
     },
   });
@@ -200,10 +225,10 @@ export default function ProviderBasicOnboarding() {
         <div className="text-center mb-8">
           <p className="text-xs font-bold uppercase tracking-widest mb-2" style={{ color: "#DA6A63" }}>Provider Registration</p>
           <h1 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 28, color: "#1e2535", fontStyle: "italic", lineHeight: 1.2 }}>
-            Tell us about yourself
+            {goalHeadline}
           </h1>
           <p className="mt-3 text-sm" style={{ color: "rgba(30,37,53,0.6)" }}>
-            We need some basic information and your professional license to get you started.
+            {goalSub}
           </p>
         </div>
 

@@ -36,7 +36,10 @@ export default function MDProviderRelationships() {
   });
 
   const declineMutation = useMutation({
-    mutationFn: (id) => base44.entities.MedicalDirectorRelationship.delete(id),
+    mutationFn: (id) =>
+      base44.entities.MedicalDirectorRelationship.update(id, {
+        status: "rejected",
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["md-provider-relationships"] }),
   });
 

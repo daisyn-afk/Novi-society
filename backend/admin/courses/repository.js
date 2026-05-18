@@ -66,9 +66,101 @@ const JSONB_COLUMNS = new Set([
   "certifications_awarded"
 ]);
 
+/** `scheduled_courses.template_id` → `public.template_courses.id` (not scheduled_courses rows). */
+const TEMPLATE_COURSE_COLUMNS = `
+  id,
+  title,
+  description,
+  category::text as category,
+  level::text as level,
+  price,
+  duration_hours,
+  location,
+  cover_image_url,
+  instructor_name,
+  instructor_bio,
+  syllabus,
+  requirements,
+  what_to_bring,
+  getting_ready_info,
+  pre_course_materials,
+  tags,
+  linked_service_type_ids
+`;
+
 function serializeValueForColumn(column, value) {
   if (!JSONB_COLUMNS.has(column)) return value;
   return JSON.stringify(Array.isArray(value) ? value : []);
+}
+
+function nonempty(v) {
+  return v != null && String(v).trim() !== "";
+}
+
+/**
+ * Scheduled instances copy template fields at creation time; merge so template edits
+ * (image, description, etc.) show on the landing page and public lists.
+ *
+ * Title priority: the scheduled course's own title always wins — it is the admin-entered
+ * value. Fall back to the template title only when the scheduled row has no title stored.
+ * This mirrors the price/location logic below.
+ */
+function mergeScheduledWithTemplate(scheduled, template) {
+  return {
+    ...scheduled,
+    title: nonempty(scheduled.title) ? scheduled.title : template.title,
+    template_title: template.title,
+    description: nonempty(template.description) ? template.description : scheduled.description,
+    category: nonempty(template.category) ? template.category : scheduled.category,
+    level: nonempty(template.level) ? template.level : scheduled.level,
+    cover_image_url: nonempty(template.cover_image_url)
+      ? template.cover_image_url
+      : nonempty(scheduled.cover_image_url)
+        ? scheduled.cover_image_url
+        : null,
+    syllabus: template.syllabus != null ? template.syllabus : scheduled.syllabus,
+    requirements: template.requirements != null ? template.requirements : scheduled.requirements,
+    what_to_bring: template.what_to_bring != null ? template.what_to_bring : scheduled.what_to_bring,
+    getting_ready_info: template.getting_ready_info != null ? template.getting_ready_info : scheduled.getting_ready_info,
+    pre_course_materials: template.pre_course_materials != null ? template.pre_course_materials : scheduled.pre_course_materials,
+    tags: template.tags != null ? template.tags : scheduled.tags,
+    instructor_name: nonempty(template.instructor_name) ? template.instructor_name : scheduled.instructor_name,
+    instructor_bio: nonempty(template.instructor_bio) ? template.instructor_bio : scheduled.instructor_bio,
+    duration_hours: template.duration_hours != null ? template.duration_hours : scheduled.duration_hours,
+    linked_service_type_ids:
+      template.linked_service_type_ids != null ? template.linked_service_type_ids : scheduled.linked_service_type_ids,
+    price: scheduled.price != null ? scheduled.price : template.price,
+    location: nonempty(scheduled.location) ? scheduled.location : template.location,
+  };
+}
+
+async function applyTemplateMergeToRows(rows) {
+  const scheduled = rows.filter((r) => r?.type === "scheduled" && r?.template_id);
+  const ids = [...new Set(scheduled.map((r) => String(r.template_id)))];
+  if (ids.length === 0) return rows;
+
+  const placeholders = ids.map((_, i) => `$${i + 1}`).join(", ");
+  const { rows: templates } = await query(
+    `select ${TEMPLATE_COURSE_COLUMNS} from public.template_courses where id in (${placeholders})`,
+    ids
+  );
+  const tmplMap = new Map(templates.map((t) => [String(t.id), t]));
+
+  return rows.map((row) => {
+    if (row?.type !== "scheduled" || !row.template_id) return row;
+    const tmpl = tmplMap.get(String(row.template_id));
+    return tmpl ? mergeScheduledWithTemplate(row, tmpl) : row;
+  });
+}
+
+async function mergeScheduledRowWithItsTemplate(course) {
+  if (!course || course.type !== "scheduled" || !course.template_id) return course;
+  const { rows } = await query(
+    `select ${TEMPLATE_COURSE_COLUMNS} from public.template_courses where id = $1 limit 1`,
+    [course.template_id]
+  );
+  const tmpl = rows[0];
+  return tmpl ? mergeScheduledWithTemplate(course, tmpl) : course;
 }
 
 export async function listCourses({ type } = {}) {
@@ -86,7 +178,7 @@ export async function listCourses({ type } = {}) {
     order by created_date desc
   `;
   const { rows } = await query(sql, values);
-  return rows;
+  return applyTemplateMergeToRows(rows);
 }
 
 export async function getCourseById(id) {
@@ -94,7 +186,9 @@ export async function getCourseById(id) {
     `select ${COLUMNS} from public.scheduled_courses where id = $1 limit 1`,
     [id]
   );
-  return rows[0] ?? null;
+  const course = rows[0] ?? null;
+  if (!course) return null;
+  return mergeScheduledRowWithItsTemplate(course);
 }
 
 export async function createCourse(payload, createdByEmail) {
@@ -116,7 +210,7 @@ export async function createCourse(payload, createdByEmail) {
     values
   );
 
-  return rows[0];
+  return mergeScheduledRowWithItsTemplate(rows[0]);
 }
 
 export async function updateCourse(id, payload) {
@@ -145,7 +239,7 @@ export async function updateCourse(id, payload) {
     values
   );
 
-  return rows[0] ?? null;
+  return mergeScheduledRowWithItsTemplate(rows[0] ?? null);
 }
 
 export async function deleteCourse(id) {

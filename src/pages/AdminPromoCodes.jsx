@@ -5,7 +5,8 @@ import { promoCodesApi } from "@/api/promoCodesApi";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { useToast } from "@/components/ui/use-toast";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const EMPTY_FORM = {
@@ -38,10 +39,12 @@ function toDatetimeInputValue(value) {
 
 export default function AdminPromoCodes() {
   const qc = useQueryClient();
+  const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [activeTab, setActiveTab] = useState("course");
   const [form, setForm] = useState(EMPTY_FORM);
+  const [deleteTarget, setDeleteTarget] = useState(null);
 
   const { data: promoCodes = [], isLoading } = useQuery({
     queryKey: ["admin-promo-codes"],
@@ -63,7 +66,14 @@ export default function AdminPromoCodes() {
 
   const deleteMutation = useMutation({
     mutationFn: promoCodesApi.remove,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin-promo-codes"] })
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin-promo-codes"] });
+      setDeleteTarget(null);
+      toast({ title: "Promo code deleted" });
+    },
+    onError: (err) => {
+      toast({ title: "Delete failed", description: err?.message || "Try again.", variant: "destructive" });
+    },
   });
 
   const scopedPromoCodes = useMemo(
@@ -188,7 +198,7 @@ export default function AdminPromoCodes() {
                   <Button variant="ghost" size="icon" onClick={() => openEdit(promo)}>
                     <Pencil className="w-4 h-4 text-slate-500" />
                   </Button>
-                  <Button variant="ghost" size="icon" onClick={() => deleteMutation.mutate(promo.id)}>
+                  <Button variant="ghost" size="icon" onClick={() => setDeleteTarget(promo)}>
                     <Trash2 className="w-4 h-4 text-red-400" />
                   </Button>
                 </div>
@@ -271,6 +281,30 @@ export default function AdminPromoCodes() {
               </Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(deleteTarget)} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete promo code?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-slate-600">
+            This will permanently remove <strong>{deleteTarget?.code}</strong>. This action cannot be undone.
+          </p>
+          {deleteMutation.error ? (
+            <p className="text-sm text-red-600">{deleteMutation.error?.message || "Delete failed."}</p>
+          ) : null}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              disabled={deleteMutation.isPending}
+              onClick={() => deleteMutation.mutate(deleteTarget.id)}
+            >
+              {deleteMutation.isPending ? "Deleting…" : "Delete"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

@@ -1,30 +1,16 @@
-import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Textarea } from "@/components/ui/textarea";
-import { Shield, Clock, CheckCircle2, AlertTriangle, Search, Plus, Calendar } from "lucide-react";
+import { Shield, Clock, CheckCircle2, AlertTriangle, Calendar } from "lucide-react";
 import { format, differenceInMonths } from "date-fns";
+import { Link } from "react-router-dom";
+import { createPageUrl } from "@/utils";
 import ProviderLockGate from "@/components/ProviderLockGate";
 
-const statusConfig = {
-  pending: { label: "Awaiting Approval", color: "bg-yellow-100 text-yellow-800", icon: Clock },
-  active: { label: "Active", color: "bg-green-100 text-green-800", icon: CheckCircle2 },
-  suspended: { label: "Suspended", color: "bg-red-100 text-red-800", icon: AlertTriangle },
-  terminated: { label: "Terminated", color: "bg-slate-100 text-slate-800" },
-};
-
 export default function ProviderMDRelationships() {
-  const [requestDialog, setRequestDialog] = useState(false);
-  const [searchEmail, setSearchEmail] = useState("");
-  const [notes, setNotes] = useState("");
-  const queryClient = useQueryClient();
-
   const { data: me } = useQuery({
     queryKey: ["me"],
     queryFn: () => base44.auth.me(),
@@ -41,43 +27,6 @@ export default function ProviderMDRelationships() {
     enabled: !!me,
   });
 
-  const { data: medicalDirectors = [] } = useQuery({
-    queryKey: ["medical-directors"],
-    queryFn: async () => {
-      const allUsers = await base44.entities.User.list();
-      return allUsers.filter(u => u.role === "medical_director");
-    },
-  });
-
-  const requestRelationshipMutation = useMutation({
-    mutationFn: async (mdId) => {
-      const md = medicalDirectors.find(m => m.id === mdId);
-      return base44.entities.MedicalDirectorRelationship.create({
-        provider_id: me.id,
-        provider_email: me.email,
-        provider_name: me.full_name,
-        medical_director_id: mdId,
-        medical_director_email: md.email,
-        medical_director_name: md.full_name,
-        status: "pending",
-      });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["my-md-relationships"] });
-      setRequestDialog(false);
-      setSearchEmail("");
-      setNotes("");
-    },
-  });
-
-  const filteredMDs = medicalDirectors.filter(md =>
-    md.email.toLowerCase().includes(searchEmail.toLowerCase()) ||
-    md.full_name.toLowerCase().includes(searchEmail.toLowerCase())
-  );
-
-  const existingMDIds = relationships.map(r => r.medical_director_id);
-  const availableMDs = filteredMDs.filter(md => !existingMDIds.includes(md.id));
-
   const pendingRelationships = relationships.filter(r => r.status === "pending");
   const activeRelationships = relationships.filter(r => r.status === "active");
   const suspendedRelationships = relationships.filter(r => r.status === "suspended");
@@ -85,23 +34,25 @@ export default function ProviderMDRelationships() {
   return (
     <ProviderLockGate>
       <div className="space-y-6 max-w-5xl">
-        <div className="flex items-start justify-between">
+        <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h2 className="text-2xl font-bold text-slate-900">Medical Director Supervision</h2>
             <p className="text-slate-500 text-sm mt-1">
-              Request and manage supervision relationships with medical directors
+              NOVI assigns Board medical directors automatically when you activate coverage — you do not request or choose an MD here.
             </p>
           </div>
-          <Button
-            onClick={() => setRequestDialog(true)}
-            className="gap-2"
-          >
-            <Plus className="w-4 h-4" />
-            Request Supervisor
+          <Button asChild style={{ background: "#FA6F30", color: "#fff" }}>
+            <Link to={createPageUrl("ProviderCredentialsCoverage")}>Credentials &amp; Coverage</Link>
           </Button>
         </div>
 
-        {/* Pending Requests */}
+        <Alert className="border-slate-200 bg-slate-50">
+          <Shield className="h-4 w-4 text-slate-600" />
+          <AlertDescription className="text-slate-700 text-sm">
+            When you complete MD coverage checkout for a service, the platform links you to a supervising physician from the NOVI pool for that service. If you already have an active supervisor who covers your new service, that relationship is reused.
+          </AlertDescription>
+        </Alert>
+
         {pendingRelationships.length > 0 && (
           <div className="space-y-4">
             <h3 className="font-semibold text-slate-900 flex items-center gap-2">
@@ -127,17 +78,15 @@ export default function ProviderMDRelationships() {
           </div>
         )}
 
-        {/* Suspended */}
         {suspendedRelationships.length > 0 && (
           <Alert variant="destructive">
             <AlertTriangle className="h-4 w-4" />
             <AlertDescription>
-              You have {suspendedRelationships.length} suspended supervision relationship(s). Contact your medical director or request a new supervisor.
+              You have {suspendedRelationships.length} suspended supervision relationship(s). Contact NOVI support or your supervising physician.
             </AlertDescription>
           </Alert>
         )}
 
-        {/* Active Relationships */}
         <div className="space-y-4">
           <h3 className="font-semibold text-slate-900 flex items-center gap-2">
             <Shield className="w-4 h-4" />
@@ -148,9 +97,11 @@ export default function ProviderMDRelationships() {
             <Card>
               <CardContent className="py-8 text-center">
                 <Shield className="w-10 h-10 mx-auto text-slate-200 mb-3" />
-                <p className="text-slate-400 mb-4">No active medical director relationships yet.</p>
-                <Button onClick={() => setRequestDialog(true)} variant="outline">
-                  Request a Medical Director
+                <p className="text-slate-600 text-sm max-w-md mx-auto mb-4">
+                  Activate MD coverage under Credentials &amp; Coverage to be assigned a NOVI Board medical director.
+                </p>
+                <Button asChild variant="outline">
+                  <Link to={createPageUrl("ProviderCredentialsCoverage")}>Go to Credentials &amp; Coverage</Link>
                 </Button>
               </CardContent>
             </Card>
@@ -207,63 +158,6 @@ export default function ProviderMDRelationships() {
             </div>
           )}
         </div>
-
-        {/* Request Dialog */}
-        <Dialog open={requestDialog} onOpenChange={setRequestDialog}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Request Medical Director Supervision</DialogTitle>
-            </DialogHeader>
-
-            <div className="space-y-4">
-              <div>
-                <label className="text-sm font-medium text-slate-700 block mb-2">
-                  Search Medical Directors
-                </label>
-                <div className="relative">
-                  <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
-                  <Input
-                    placeholder="Search by name or email..."
-                    value={searchEmail}
-                    onChange={(e) => setSearchEmail(e.target.value)}
-                    className="pl-9"
-                  />
-                </div>
-              </div>
-
-              {searchEmail && availableMDs.length > 0 ? (
-                <div className="space-y-2 max-h-64 overflow-y-auto">
-                  {availableMDs.map(md => (
-                    <button
-                      key={md.id}
-                      onClick={() => {
-                        requestRelationshipMutation.mutate(md.id);
-                      }}
-                      className="w-full text-left p-3 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors"
-                    >
-                      <p className="font-semibold text-slate-900">{md.full_name}</p>
-                      <p className="text-sm text-slate-500">{md.email}</p>
-                    </button>
-                  ))}
-                </div>
-              ) : searchEmail ? (
-                <p className="text-sm text-slate-500 text-center py-4">
-                  No available medical directors found.
-                </p>
-              ) : (
-                <p className="text-sm text-slate-500 text-center py-4">
-                  Start typing to search for medical directors.
-                </p>
-              )}
-            </div>
-
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setRequestDialog(false)}>
-                Cancel
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
       </div>
     </ProviderLockGate>
   );

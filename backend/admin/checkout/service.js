@@ -13,6 +13,15 @@ import {
   sessionEntryCalendarKeys,
   toSessionDateKey
 } from "../lib/sessionDateSeats.js";
+import { getMeFromAccessToken } from "../auth/service.js";
+import { ensureProviderOnboardingTable } from "../provider-onboarding/service.js";
+import {
+  recordCheckoutInitiated,
+  recordPreOrderInitiated,
+  enrichPaymentTransaction,
+  markAttemptFailed,
+  PAYMENT_FLOW
+} from "../payments/service.js";
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
 const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
@@ -185,17 +194,92 @@ export async function createCourseCheckout(payload, options = {}) {
   const courseDateNorm = normalizeCourseDateInput(course_date);
   const normalizedCourseDate = courseDateNorm ? (toSessionDateKey(courseDateNorm) || courseDateNorm) : null;
 
-  if (!course_id || !normalizedCustomerEmail || !normalizedCustomerName) {
-    const err = new Error("Missing required checkout fields: course_id, customer_email, customer_name.");
-    err.statusCode = 400;
-    throw err;
-  }
+  // STEP 1 — Log the attempt before any validation. This guarantees that every
+  // click of "Pay" creates a new row in payment_transactions with the EXACT
+  // request body, even if the user sent an invalid course_id, a bad email, or
+  // forgot to tick the terms checkbox. The raw payload is preserved so support
+  // can see exactly what the user submitted.
+  // NOTE: this insert is intentionally OUTSIDE the business transaction below.
+  // If the business transaction rolls back, the attempt row is preserved (and
+  // marked failed in the catch).
+  const trackingCtx = options?.trackingContext || {};
+  const attemptId = await recordCheckoutInitiated({
+    payment_flow: PAYMENT_FLOW.COURSE,
+    payment_type: "course",
+    selected_item_id: course_id != null ? String(course_id) : null,
+    customer_email: normalizedCustomerEmail || (customer_email ? String(customer_email) : null),
+    customer_name: normalizedCustomerName || null,
+    customer_phone: phone || null,
+    source_context: trackingCtx.source_context || "course_checkout",
+    source_origin: trackingCtx.source_origin || options?.requestOrigin || null,
+    request_ip: trackingCtx.request_ip || null,
+    user_agent: trackingCtx.user_agent || null,
+    client_timestamp: trackingCtx.client_timestamp || null,
+    server_received_timestamp: trackingCtx.server_received_timestamp || new Date().toISOString(),
+    request_payload_snapshot: payload || null
+  });
 
-  if (!terms_confirmed || !refund_policy_confirmed) {
-    const err = new Error("Terms and refund policy confirmations are required.");
-    err.statusCode = 400;
+  try {
+    if (!course_id || !normalizedCustomerEmail || !normalizedCustomerName) {
+      const err = new Error("Missing required checkout fields: course_id, customer_email, customer_name.");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    if (!terms_confirmed || !refund_policy_confirmed) {
+      const err = new Error("Terms and refund policy confirmations are required.");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    return await runCourseCheckoutBusiness({
+      attemptId,
+      payload,
+      options,
+      frontendBaseUrl,
+      normalizedCustomerEmail,
+      normalizedCustomerName,
+      normalizedCourseDate
+    });
+  } catch (err) {
+    // Persist the failure on the attempt row (status -> failed, failure_*
+    // captured). Never lets the tracker mask the original error.
+    await markAttemptFailed(attemptId, {
+      failure_reason: err?.code || err?.statusCode ? String(err.code || err.statusCode) : "validation_or_processing_error",
+      failure_message: err?.message || null,
+      failure_code: err?.code || null,
+      http_status_code: err?.statusCode || null
+    });
     throw err;
   }
+}
+
+async function runCourseCheckoutBusiness({
+  attemptId,
+  payload,
+  options,
+  frontendBaseUrl,
+  normalizedCustomerEmail,
+  normalizedCustomerName,
+  normalizedCourseDate
+}) {
+  const {
+    course_id,
+    course_session_id,
+    course_start_time,
+    course_end_time,
+    customer_name,
+    first_name,
+    last_name,
+    phone,
+    license_type,
+    license_number,
+    license_image_url,
+    promo_code,
+    terms_confirmed,
+    refund_policy_confirmed,
+    course_date
+  } = payload || {};
 
   const client = await pool.connect();
   try {
@@ -203,6 +287,34 @@ export async function createCourseCheckout(payload, options = {}) {
     // Fail fast on row locks / long queries in serverless environments.
     await client.query("set local lock_timeout = '8s'");
     await client.query("set local statement_timeout = '20s'");
+
+    const authHeader = String(options?.authorization || "").trim();
+    const bearer =
+      authHeader.length > 6 && authHeader.toLowerCase().startsWith("bearer ")
+        ? authHeader.slice(7).trim()
+        : "";
+    if (bearer && normalizedCustomerEmail) {
+      try {
+        await ensureProviderOnboardingTable();
+        const me = await getMeFromAccessToken(bearer);
+        const meEmail = String(me?.email || "").trim().toLowerCase();
+        if (normalizeRole(me?.role) === "provider" && meEmail && meEmail === normalizedCustomerEmail) {
+          const obRes = await client.query(
+            `select 1 from public.provider_basic_onboarding where auth_user_id = $1 limit 1`,
+            [me.id]
+          );
+          if (!obRes.rows?.length) {
+            const err = new Error(
+              "Complete your provider profile and license upload before purchasing a course. You can finish this from your dashboard (Onboarding pending), or log out to pay as a guest with a different email."
+            );
+            err.statusCode = 403;
+            throw err;
+          }
+        }
+      } catch (e) {
+        if (e?.statusCode === 403) throw e;
+      }
+    }
 
     const courseRes = await client.query(
       `select id, title, price, available_seats, is_active, session_dates
@@ -366,6 +478,20 @@ export async function createCourseCheckout(payload, options = {}) {
     );
     const preOrderId = preOrderRes.rows[0].id;
 
+    const stripeMetadata = {
+      pre_order_id: preOrderId,
+      course_id: String(course.id),
+      course_date: normalizedCourseDate || "",
+      course_session_id: String(course_session_id || ""),
+      course_start_time: String(course_start_time || ""),
+      course_end_time: String(course_end_time || ""),
+      provider_email: String(normalizedCustomerEmail),
+      provider_name: String(customer_name),
+      app_source: "novi-landing",
+      app_base_url: frontendBaseUrl,
+      checkout_type: "course"
+    };
+
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
       customer_email: normalizedCustomerEmail,
@@ -384,17 +510,12 @@ export async function createCourseCheckout(payload, options = {}) {
           quantity: 1
         }
       ],
-      metadata: {
-        pre_order_id: preOrderId,
-        course_id: String(course.id),
-        course_date: normalizedCourseDate || "",
-        course_session_id: String(course_session_id || ""),
-        course_start_time: String(course_start_time || ""),
-        course_end_time: String(course_end_time || ""),
-        provider_email: String(normalizedCustomerEmail),
-        provider_name: String(customer_name),
-        app_source: "novi-landing",
-        app_base_url: frontendBaseUrl
+      metadata: stripeMetadata,
+      // Mirror metadata onto the underlying PaymentIntent so payment_intent.*
+      // and charge.* webhook events can be correlated back to this transaction
+      // even before the checkout session emits a completed event.
+      payment_intent_data: {
+        metadata: stripeMetadata
       }
     });
 
@@ -416,6 +537,28 @@ export async function createCourseCheckout(payload, options = {}) {
       );
     }
 
+    // Attach the freshly-created Stripe session + pre_order to the attempt
+    // row we already inserted at the top of createCourseCheckout. This is an
+    // UPDATE (by primary key) — never an INSERT — so the attempt's identity
+    // and request_payload_snapshot remain stable.
+    await enrichPaymentTransaction(
+      { id: attemptId },
+      {
+        pre_order_id: preOrderId,
+        course_id: course.id,
+        item_id: String(course.id),
+        item_name: course.title,
+        amount_subtotal: subtotal,
+        amount_discount: discount,
+        amount_total: total,
+        stripe_session_id: session.id,
+        stripe_payment_intent_id: session.payment_intent ? String(session.payment_intent) : null,
+        stripe_checkout_url: session.url,
+        receipt_email: normalizedCustomerEmail
+      },
+      client
+    );
+
     await client.query("commit");
     return {
       checkout_url: session.url,
@@ -431,7 +574,7 @@ export async function createCourseCheckout(payload, options = {}) {
   }
 }
 
-export async function createServicePreOrder(payload) {
+export async function createServicePreOrder(payload, options = {}) {
   const {
     customer_name,
     customer_email,
@@ -444,17 +587,81 @@ export async function createServicePreOrder(payload) {
     certification_document_url
   } = payload || {};
 
-  if (!customer_name || !customer_email) {
-    const err = new Error("customer_name and customer_email are required.");
-    err.statusCode = 400;
-    throw err;
-  }
-  if (!service_type_id) {
-    const err = new Error("service_type_id is required.");
-    err.statusCode = 400;
-    throw err;
-  }
+  // STEP 1 — Log every attempt up-front (even invalid ones) so support has a
+  // trail when a user complains they signed up but nothing shows up in the
+  // admin pre-orders list.
+  const trackingCtx = options?.trackingContext || {};
+  const attemptId = await recordPreOrderInitiated({
+    payment_type: "md_service",
+    selected_item_id: service_type_id != null ? String(service_type_id) : null,
+    customer_email,
+    customer_name,
+    customer_phone: phone || null,
+    amount_total: 0,
+    source_context: trackingCtx.source_context || "md_service_signup",
+    source_origin: trackingCtx.source_origin || null,
+    request_ip: trackingCtx.request_ip || null,
+    user_agent: trackingCtx.user_agent || null,
+    client_timestamp: trackingCtx.client_timestamp || null,
+    server_received_timestamp: trackingCtx.server_received_timestamp || new Date().toISOString(),
+    request_payload_snapshot: payload || null,
+    metadata: {
+      notes: notes || null,
+      license_type: license_type || null,
+      license_number: license_number || null,
+      license_image_url: license_image_url || null,
+      certification_document_url: certification_document_url || null
+    }
+  });
 
+  try {
+    if (!customer_name || !customer_email) {
+      const err = new Error("customer_name and customer_email are required.");
+      err.statusCode = 400;
+      throw err;
+    }
+    if (!service_type_id) {
+      const err = new Error("service_type_id is required.");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    return await runServicePreOrderBusiness({
+      attemptId,
+      payload,
+      customer_name,
+      customer_email,
+      phone,
+      notes,
+      service_type_id,
+      license_type,
+      license_number,
+      license_image_url,
+      certification_document_url
+    });
+  } catch (err) {
+    await markAttemptFailed(attemptId, {
+      failure_reason: err?.code || err?.statusCode ? String(err.code || err.statusCode) : "validation_or_processing_error",
+      failure_message: err?.message || null,
+      failure_code: err?.code || null,
+      http_status_code: err?.statusCode || null
+    });
+    throw err;
+  }
+}
+
+async function runServicePreOrderBusiness({
+  attemptId,
+  customer_name,
+  customer_email,
+  phone,
+  notes,
+  service_type_id,
+  license_type,
+  license_number,
+  license_image_url,
+  certification_document_url
+}) {
   const client = await pool.connect();
   try {
     const serviceRes = await client.query(
@@ -531,6 +738,19 @@ export async function createServicePreOrder(payload) {
         [preOrderId]
       );
     }
+
+    // Attach the freshly-created pre_order row + resolved service details to
+    // the attempt row we already inserted at the top of createServicePreOrder.
+    await enrichPaymentTransaction(
+      { id: attemptId },
+      {
+        pre_order_id: preOrderId,
+        service_type_id: String(service.id),
+        item_id: String(service.id),
+        item_name: service.name
+      },
+      client
+    );
 
     return {
       pre_order_id: preOrderId
@@ -1803,6 +2023,36 @@ export async function processCompletedCheckoutSession(session) {
       );
       postCommitPaymentId = paymentInsertRes.rows[0]?.id ?? null;
     }
+
+    // Enrich the centralized payment_transactions row with any data we now
+    // have but didn't have at initiation time (charge id, customer id,
+    // billing details, etc.). The webhook handler will also update payment
+    // status to 'succeeded' on checkout.session.completed; this call is
+    // additive and idempotent.
+    await enrichPaymentTransaction(
+      {
+        stripe_session_id: stripeSessionId,
+        stripe_payment_intent_id: paymentIntentId,
+        pre_order_id: preOrder.id
+      },
+      {
+        payment_status: "succeeded",
+        amount_paid: Number(session.amount_total || 0) / 100,
+        amount_total: Number(session.amount_total || 0) / 100,
+        amount_subtotal: Number(session.amount_subtotal || 0) / 100,
+        stripe_payment_intent_id: paymentIntentId,
+        stripe_customer_id: customerId,
+        stripe_checkout_status: session.status || null,
+        stripe_payment_status: session.payment_status || null,
+        billing_name: billingDetails.name || null,
+        billing_email: billingDetails.email || preOrder.customer_email,
+        billing_phone: billingDetails.phone || null,
+        billing_address: billingDetails.address || null,
+        linked_user_id: linkedUserId,
+        stripe_metadata: paymentStripeMetadata
+      },
+      client
+    );
 
     if (!existingPaymentConfirmationSent) {
       postCommitEmail = {

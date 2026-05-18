@@ -423,19 +423,9 @@ export default function ProviderCodeRedemption() {
                   <p className="text-sm text-slate-700">
                     <strong>Session:</strong> {formatSessionDateLabel(successDialog.session_date)}
                   </p>
-                  {successDialog.certifications?.length > 0 && (
-                    <div className="pt-2 border-t border-green-200">
-                      <p className="text-sm font-semibold text-slate-700 mb-2">Certifications Awarded:</p>
-                      <div className="space-y-1">
-                        {successDialog.certifications.map((cert, i) => (
-                          <div key={i} className="flex items-center gap-2 text-sm">
-                            <CheckCircle className="w-4 h-4 text-green-600" />
-                            <span className="text-slate-700">{cert}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                  <p className="text-sm text-slate-700 pt-2 border-t border-green-200">
+                    Your course certificate will appear in Credentials &amp; Coverage after NOVI admin issues it.
+                  </p>
                 </div>
                 <Link to={createPageUrl("ProviderCredentialsCoverage")} className="block">
                   <Button className="w-full" style={{ background: "#FA6F30", color: "#fff" }}>

@@ -1,7 +1,18 @@
 import { Router } from "express";
 import { query } from "../db.js";
 import { getMeFromAccessToken } from "../auth/service.js";
+import { notifyAdminsOfPendingCourseCertIssuance } from "../certificationNotifications.js";
+import { withCourseEmailShell } from "../courseEmailShell.js";
+import { listEligibleMedicalDirectorsForService } from "../mdEligibleDirectors.js";
+import { submitMdBoardCoverageAssignment } from "../mdAssignmentService.js";
 import Stripe from "stripe";
+import {
+  recordCheckoutInitiated,
+  enrichPaymentTransaction,
+  markAttemptFailed,
+  recordStripeWebhookEvent,
+  PAYMENT_FLOW
+} from "../payments/service.js";
 
 export const functionsRouter = Router();
 let certificationColumnsPromise = null;
@@ -254,25 +265,6 @@ async function sendResendEmail({ to, subject, html }) {
   return payload;
 }
 
-function withCourseEmailShell({ title, contentHtml }) {
-  return `
-<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"></head>
-<body style="font-family:'DM Sans',Arial,sans-serif;background:#f5f3ef;margin:0;padding:32px;">
-  <div style="max-width:560px;margin:0 auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08);">
-    <div style="background:linear-gradient(135deg,#1e2535 0%,#2D6B7F 60%,#7B8EC8 100%);padding:40px 32px;text-align:center;">
-      <p style="font-size:11px;font-weight:700;letter-spacing:0.2em;text-transform:uppercase;color:rgba(255,255,255,0.5);margin:0 0 8px;">novi society</p>
-      <h1 style="font-family:Georgia,serif;font-size:28px;color:#fff;margin:0;font-style:italic;font-weight:400;">${title}</h1>
-    </div>
-    <div style="padding:32px;">${contentHtml}</div>
-    <div style="background:#f5f3ef;padding:20px 32px;text-align:center;">
-      <p style="color:rgba(30,37,53,0.4);font-size:11px;margin:0;">© NOVI Society LLC · <a href="https://novisociety.com" style="color:rgba(30,37,53,0.4);">novisociety.com</a></p>
-    </div>
-  </div>
-</body>
-</html>`.trim();
-}
 
 export async function processModelCheckoutCompletedSession(session) {
   const metadata = session?.metadata || {};
@@ -308,6 +300,27 @@ export async function processModelCheckoutCompletedSession(session) {
          updated_at = now()
      where id = $1`,
     [row.id, paidAmount, stripeSessionId || null, stripePaymentIntentId || null, nowIso]
+  );
+
+  await enrichPaymentTransaction(
+    {
+      stripe_session_id: stripeSessionId || null,
+      stripe_payment_intent_id: stripePaymentIntentId || null,
+      pre_order_id: row.id
+    },
+    {
+      payment_status: "succeeded",
+      amount_paid: paidAmount,
+      amount_total: paidAmount,
+      stripe_payment_intent_id: stripePaymentIntentId || null,
+      stripe_customer_id: session?.customer ? String(session.customer) : null,
+      stripe_checkout_status: session?.status || null,
+      stripe_payment_status: session?.payment_status || null,
+      billing_name: session?.customer_details?.name || null,
+      billing_email: session?.customer_details?.email || row.customer_email,
+      billing_phone: session?.customer_details?.phone || null,
+      billing_address: session?.customer_details?.address || null
+    }
   );
 
   try {
@@ -458,6 +471,9 @@ async function createCertificationsForEnrollment(enrollment, course, me) {
         service_type_id: cert?.service_type_id || null,
         service_type_name: cert?.service_type_name || null
       };
+      if (hasColumn("certificate_number")) {
+        valuesByColumn.certificate_number = `NOVI-${Date.now()}`;
+      }
       const insertColumns = Object.keys(valuesByColumn).filter((col) => hasColumn(col));
       if (insertColumns.length === 0) continue;
       const insertValues = insertColumns.map((col) => valuesByColumn[col]);
@@ -475,6 +491,196 @@ async function createCertificationsForEnrollment(enrollment, course, me) {
 
   return created;
 }
+
+/**
+ * Stripe Checkout for recurring MD Board coverage, or immediate success when amount is $0.
+ * Success return URL must match ProviderCredentialsCoverage Stripe handler (?md_payment_status=success&service_type_id=...).
+ */
+functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ success: false, error: "Missing bearer token." });
+    const me = await getMeFromAccessToken(token);
+    const body = req.body || {};
+    const serviceTypeId = String(body.service_type_id || "").trim();
+    const serviceTypeName = String(body.service_type_name || "MD Board Coverage").trim() || "MD Board Coverage";
+    const enrollmentId = body.enrollment_id != null ? String(body.enrollment_id).trim() : "";
+    const amountPrimary = body.amount;
+    const amountAlt = body.prorated_amount;
+    const amountRaw =
+      amountPrimary !== undefined && amountPrimary !== null && String(amountPrimary) !== ""
+        ? amountPrimary
+        : amountAlt;
+    const amountUsd = Number(amountRaw);
+    const safeUsd = Number.isFinite(amountUsd) && amountUsd >= 0 ? amountUsd : 0;
+    const amountCents = Math.round(safeUsd * 100);
+
+    if (!serviceTypeId) {
+      return res.status(400).json({ success: false, error: "service_type_id is required." });
+    }
+
+    if (amountCents <= 0) {
+      return res.json({ success: true });
+    }
+
+    if (!stripe) {
+      return res.status(500).json({
+        success: false,
+        error: "Stripe is not configured. Set STRIPE_SECRET_KEY or use $0 activation."
+      });
+    }
+
+    const base = String(appBaseUrl || "http://localhost:5173").replace(/\/$/, "");
+    const successParams = new URLSearchParams({
+      md_payment_status: "success",
+      service_type_id: serviceTypeId
+    });
+    if (enrollmentId) successParams.set("enrollment_id", enrollmentId);
+    const successUrl = `${base}/ProviderCredentialsCoverage?${successParams.toString()}`;
+    const cancelUrl = `${base}/ProviderCredentialsCoverage?md_payment_status=cancel&service_type_id=${encodeURIComponent(serviceTypeId)}`;
+
+    const checkoutSession = await stripe.checkout.sessions.create({
+      mode: "subscription",
+      payment_method_types: ["card"],
+      customer_email: me.email || undefined,
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+      metadata: {
+        checkout_type: "md_board_coverage",
+        provider_auth_user_id: String(me.id || ""),
+        service_type_id: serviceTypeId,
+        enrollment_id: enrollmentId || ""
+      },
+      subscription_data: {
+        metadata: {
+          checkout_type: "md_board_coverage",
+          provider_auth_user_id: String(me.id || ""),
+          service_type_id: serviceTypeId,
+          enrollment_id: enrollmentId || ""
+        }
+      },
+      line_items: [
+        {
+          quantity: 1,
+          price_data: {
+            currency: "usd",
+            unit_amount: amountCents,
+            recurring: { interval: "month" },
+            product_data: {
+              name: `NOVI MD Board Coverage — ${serviceTypeName}`,
+              description: "Monthly NOVI Board medical director supervision membership"
+            }
+          }
+        }
+      ]
+    });
+
+    const url = checkoutSession?.url;
+    if (!url) {
+      return res.status(500).json({ success: false, error: "Checkout session did not return a URL." });
+    }
+    return res.json({ success: true, url });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+/** Placeholder: cancel flow can extend to Stripe + DB when subscription ids are stored. */
+functionsRouter.post("/cancelMDSubscription", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ success: false, error: "Missing bearer token." });
+    await getMeFromAccessToken(token);
+    const subscriptionId = String(req.body?.subscription_id || "").trim();
+    if (!subscriptionId) {
+      return res.status(400).json({ success: false, error: "subscription_id is required." });
+    }
+    return res.json({ success: true });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+/**
+ * Read-only preview: who would be chosen next for `service_type_id` (does **not** advance round-robin).
+ * Assignment + pointer advance happens only in `submitMdBoardCoverageAssignment`.
+ */
+functionsRouter.post("/pickMedicalDirectorForService", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ ok: false, error: "Missing bearer token." });
+    await getMeFromAccessToken(token);
+    const serviceTypeId = String(req.body?.service_type_id || "").trim();
+    if (!serviceTypeId) {
+      return res.status(400).json({ ok: false, error: "service_type_id is required." });
+    }
+
+    const eligible = await listEligibleMedicalDirectorsForService(serviceTypeId);
+    const n = eligible.length;
+    if (n === 0) {
+      return res.json({
+        ok: false,
+        error:
+          "No medical director is eligible for this service. Each Board MD must list supported services (MD dashboard → Services I cover). For local dev only, set MD_ASSIGNMENT_POOL_FALLBACK=1.",
+      });
+    }
+
+    const { rows: curRows } = await query(
+      `select seq from public.md_assignment_round_robin where service_type_id = $1 limit 1`,
+      [serviceTypeId]
+    );
+    const s = curRows?.[0] ? Number(curRows[0].seq) : 0;
+    const idx = s % n;
+    const chosen = eligible[idx];
+    return res.json({
+      ok: true,
+      preview: true,
+      medical_director_id: chosen.id,
+      medical_director_email: chosen.email || "",
+      medical_director_name: chosen.full_name || chosen.email || "",
+      assignment_index: idx,
+      eligible_count: n,
+      service_type_id: serviceTypeId,
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+/**
+ * Provider-only: after MD coverage agreement + subscription, run assignment engine (service match →
+ * optional state filter → round-robin), create pending relationship + coverage request, notify MD.
+ */
+functionsRouter.post("/submitMdBoardCoverageAssignment", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ ok: false, error: "Missing bearer token." });
+    const me = await getMeFromAccessToken(token);
+    const role = String(me.role || "").trim().toLowerCase();
+    if (role !== "provider") {
+      return res.status(403).json({ ok: false, error: "Only providers can submit MD coverage assignment." });
+    }
+    const serviceTypeId = String(req.body?.service_type_id || "").trim();
+    if (!serviceTypeId) {
+      return res.status(400).json({ ok: false, error: "service_type_id is required." });
+    }
+    const serviceTypeName = String(req.body?.service_type_name || "").trim();
+    const result = await submitMdBoardCoverageAssignment({
+      providerId: me.id,
+      providerEmail: me.email,
+      providerName: me.full_name,
+      providerState: me.state || null,
+      serviceTypeId,
+      serviceTypeName,
+    });
+    if (!result.ok) {
+      return res.status(400).json(result);
+    }
+    return res.json(result);
+  } catch (error) {
+    return next(error);
+  }
+});
 
 functionsRouter.post("/redeemClassCode", async (req, res, next) => {
   try {
@@ -708,9 +914,28 @@ functionsRouter.post("/redeemClassCode", async (req, res, next) => {
          where id = $1`,
         [enrollment.id]
       );
+      try {
+        const { rows: issuedCertRows } = await query(
+          `select id
+           from public.certification
+           where enrollment_id::text = $1
+             and lower(coalesce(status, '')) = 'active'
+           limit 1`,
+          [String(enrollment.id)]
+        );
+        if (!issuedCertRows[0]) {
+          void notifyAdminsOfPendingCourseCertIssuance({
+            enrollmentId: enrollment.id,
+            providerName: enrollment.provider_name || me.full_name || null,
+            providerEmail: enrollment.provider_email || me.email || null,
+            courseTitle: course.title || session.course_title || null,
+            courseId: session.course_id || enrollment.course_id || null,
+          });
+        }
+      } catch {
+        // best effort
+      }
     }
-
-    const certifications = await createCertificationsForEnrollment(enrollment, course, me);
 
     return res.json({
       success: true,
@@ -718,7 +943,7 @@ functionsRouter.post("/redeemClassCode", async (req, res, next) => {
       enrollment_id: String(enrollment.id || ""),
       course_title: session.course_title || course.title,
       session_date: effectiveSessionDate || String(session.session_date || "").slice(0, 10),
-      certifications
+      certifications: []
     });
   } catch (error) {
     return next(error);
@@ -782,22 +1007,71 @@ functionsRouter.post("/validateModelPromo", async (req, res, next) => {
 });
 
 functionsRouter.post("/createModelCheckout", async (req, res, next) => {
+  const body = req.body || {};
+  const serverReceivedAt = new Date().toISOString();
+  const clientTimestamp =
+    req.get("x-novi-client-timestamp") ||
+    body.client_timestamp ||
+    null;
+  const trackingSourceOrigin = req.get("origin") || req.get("referer") || null;
+  const trackingRequestIp = (() => {
+    const forwarded = req.get("x-forwarded-for");
+    if (forwarded) return String(forwarded).split(",")[0].trim();
+    return req.ip || req.socket?.remoteAddress || null;
+  })();
+  const trackingUserAgent = req.get("user-agent") || null;
+  const trackingSourceContext =
+    req.get("x-novi-source-context") || body.source_context || "model_signup";
+
+  const customerEmail = String(body.customer_email || "").trim().toLowerCase();
+  const customerName = String(body.customer_name || "").trim();
+  const phone = String(body.phone || "").trim();
+  const courseId = String(body.course_id || "").trim();
+  const courseDate = String(body.course_date || "").slice(0, 10);
+  const timeSlot = String(body.time_slot || "").trim();
+  let isWaitlist = Boolean(body.is_waitlist);
+  const treatmentType = String(body.treatment_type || "").trim();
+
+  // STEP 1 — Always log the attempt with the exact payload, before any
+  // validation. This guarantees a row exists in payment_transactions even if
+  // the request is rejected due to bad input, sold-out slots, etc.
+  const attemptId = await recordCheckoutInitiated({
+    payment_flow: PAYMENT_FLOW.MODEL,
+    payment_type: "model",
+    selected_item_id: body.course_id != null ? String(body.course_id) : null,
+    customer_email: customerEmail || (body.customer_email ? String(body.customer_email) : null),
+    customer_name: customerName || null,
+    customer_phone: phone || null,
+    source_context: trackingSourceContext,
+    source_origin: trackingSourceOrigin,
+    request_ip: trackingRequestIp,
+    user_agent: trackingUserAgent,
+    client_timestamp: clientTimestamp,
+    server_received_timestamp: serverReceivedAt,
+    request_payload_snapshot: body,
+    metadata: {
+      treatment_type: treatmentType || null,
+      time_slot: timeSlot || null,
+      course_date: courseDate || null,
+      is_waitlist: isWaitlist
+    }
+  });
+
   try {
-    if (!stripe) return res.status(500).json({ error: "Stripe is not configured." });
-    const body = req.body || {};
-    const customerEmail = String(body.customer_email || "").trim().toLowerCase();
-    const customerName = String(body.customer_name || "").trim();
-    const phone = String(body.phone || "").trim();
-    const courseId = String(body.course_id || "").trim();
-    const courseDate = String(body.course_date || "").slice(0, 10);
-    const timeSlot = String(body.time_slot || "").trim();
-    let isWaitlist = Boolean(body.is_waitlist);
-    const treatmentType = String(body.treatment_type || "").trim();
+    if (!stripe) {
+      const e = new Error("Stripe is not configured.");
+      e.statusCode = 500;
+      throw e;
+    }
     if (!customerEmail || !customerName || !phone || !courseId || !courseDate || !treatmentType) {
-      return res.status(400).json({ error: "Missing required fields." });
+      const e = new Error("Missing required fields.");
+      e.statusCode = 400;
+      throw e;
     }
     if (!isWaitlist && !timeSlot) {
-      return res.status(400).json({ error: "time_slot is required unless waitlisted." });
+      const e = new Error("time_slot is required unless waitlisted.");
+      e.statusCode = 400;
+      throw e;
     }
 
     const { rows: courseRows } = await query(
@@ -808,7 +1082,11 @@ functionsRouter.post("/createModelCheckout", async (req, res, next) => {
       [courseId]
     );
     const course = courseRows[0];
-    if (!course || course.is_active === false) return res.status(404).json({ error: "Course not found." });
+    if (!course || course.is_active === false) {
+      const e = new Error("Course not found.");
+      e.statusCode = 404;
+      throw e;
+    }
 
     if (!isWaitlist) {
       const { rows: capRows } = await query(
@@ -912,6 +1190,20 @@ functionsRouter.post("/createModelCheckout", async (req, res, next) => {
          where id = $1`,
         [preOrderId, 0]
       );
+      await enrichPaymentTransaction(
+        { id: attemptId },
+        {
+          pre_order_id: preOrderId,
+          course_id: courseId,
+          item_id: courseId,
+          item_name: `${course.title || "NOVI Training Course"} - Model Signup`,
+          amount_subtotal: 50,
+          amount_discount: 50,
+          amount_total: 0,
+          amount_paid: 0,
+          payment_status: "succeeded"
+        }
+      );
       await sendResendEmail({
         to: customerEmail,
         subject: `Your Model Training Booking is Confirmed - ${fmtDateLocal(courseDate)}`,
@@ -925,6 +1217,18 @@ functionsRouter.post("/createModelCheckout", async (req, res, next) => {
 
     const successUrl = `${appBaseUrl || "http://localhost:5173"}/ModelSignup?success=true&pre_order_id=${encodeURIComponent(preOrderId)}&course_id=${encodeURIComponent(courseId)}&customer_email=${encodeURIComponent(customerEmail)}&customer_name=${encodeURIComponent(customerName)}&phone=${encodeURIComponent(phone)}&date_of_birth=${encodeURIComponent(body.date_of_birth ? String(body.date_of_birth).slice(0, 10) : "")}&treatment_type=${encodeURIComponent(treatmentType)}`;
     const cancelUrl = `${appBaseUrl || "http://localhost:5173"}/ModelSignup?cancelled=true`;
+    const checkoutMetadata = {
+      checkout_type: "model",
+      pre_order_id: String(preOrderId || ""),
+      course_id: courseId,
+      course_date: courseDate,
+      customer_email: customerEmail,
+      customer_name: customerName,
+      phone,
+      time_slot: timeSlot || "",
+      treatment_type: treatmentType,
+      is_waitlist: String(isWaitlist)
+    };
     const checkoutSession = await stripe.checkout.sessions.create({
       mode: "payment",
       payment_method_types: ["card"],
@@ -942,33 +1246,100 @@ functionsRouter.post("/createModelCheckout", async (req, res, next) => {
           }
         }
       }],
-      metadata: {
-        checkout_type: "model",
-        pre_order_id: String(preOrderId || ""),
-        course_id: courseId,
-        course_date: courseDate,
-        customer_email: customerEmail,
-        customer_name: customerName,
-        phone,
-        time_slot: timeSlot || "",
-        treatment_type: treatmentType,
-        is_waitlist: String(isWaitlist)
+      metadata: checkoutMetadata,
+      // Mirror metadata to the PaymentIntent so payment_intent.* and charge.*
+      // webhook events carry enough context to be correlated.
+      payment_intent_data: {
+        metadata: checkoutMetadata
       }
     });
     await query(`update public.pre_orders set stripe_session_id = $2, updated_at = now() where id = $1`, [preOrderId, checkoutSession.id]);
+
+    await enrichPaymentTransaction(
+      { id: attemptId },
+      {
+        pre_order_id: preOrderId,
+        course_id: courseId,
+        item_id: courseId,
+        item_name: `${course.title || "NOVI Training Course"} - Model Signup`,
+        amount_subtotal: 50,
+        amount_discount: (50 - finalCents / 100),
+        amount_total: finalCents / 100,
+        stripe_session_id: checkoutSession.id,
+        stripe_payment_intent_id: checkoutSession.payment_intent ? String(checkoutSession.payment_intent) : null,
+        stripe_checkout_url: checkoutSession.url,
+        receipt_email: customerEmail,
+        stripe_metadata: checkoutMetadata
+      }
+    );
+
     return res.status(201).json({ url: checkoutSession.url, pre_order_id: preOrderId, waitlist_auto: isWaitlist });
   } catch (error) {
+    await markAttemptFailed(attemptId, {
+      failure_reason: error?.code || error?.statusCode ? String(error.code || error.statusCode) : "validation_or_processing_error",
+      failure_message: error?.message || null,
+      failure_code: error?.code || null,
+      http_status_code: error?.statusCode || null
+    });
     return next(error);
   }
 });
 
+const MODEL_WEBHOOK_TRACKED_EVENTS = new Set([
+  "checkout.session.created",
+  "checkout.session.completed",
+  "checkout.session.expired",
+  "checkout.session.async_payment_succeeded",
+  "checkout.session.async_payment_failed",
+  "payment_intent.created",
+  "payment_intent.succeeded",
+  "payment_intent.payment_failed",
+  "payment_intent.canceled",
+  "payment_intent.processing",
+  "payment_intent.requires_action",
+  "charge.succeeded",
+  "charge.failed",
+  "charge.refunded",
+  "charge.captured",
+  "charge.dispute.created"
+]);
+
 functionsRouter.post("/modelCheckoutWebhook", async (req, res, next) => {
   try {
-    if (!stripe || !stripeWebhookSecret) return res.status(500).json({ error: "Stripe webhook is not configured." });
+    if (!stripe || !stripeWebhookSecret) {
+      // eslint-disable-next-line no-console
+      console.error("[webhook/modelCheckoutWebhook] rejected: STRIPE_SECRET_KEY or STRIPE_WEBHOOK_SECRET not set");
+      return res.status(500).json({ error: "Stripe webhook is not configured." });
+    }
     const signatureHeader = req.headers["stripe-signature"];
     const signature = Array.isArray(signatureHeader) ? signatureHeader[0] : signatureHeader;
-    if (!signature) return res.status(400).json({ error: "Missing stripe-signature." });
-    const event = stripe.webhooks.constructEvent(req.body, signature, stripeWebhookSecret);
+    if (!signature) {
+      // eslint-disable-next-line no-console
+      console.warn("[webhook/modelCheckoutWebhook] rejected: missing stripe-signature header");
+      return res.status(400).json({ error: "Missing stripe-signature." });
+    }
+    if (!Buffer.isBuffer(req.body)) {
+      // eslint-disable-next-line no-console
+      console.error(
+        "[webhook/modelCheckoutWebhook] rejected: req.body is not a Buffer (got %s). " +
+          "Ensure express.raw() is mounted on this path BEFORE express.json(), and on Vercel that `api.bodyParser = false`.",
+        typeof req.body
+      );
+      return res.status(400).json({ error: "Webhook body was pre-parsed; raw bytes required for signature verification." });
+    }
+    let event;
+    try {
+      event = stripe.webhooks.constructEvent(req.body, signature, stripeWebhookSecret);
+    } catch (verifyError) {
+      // eslint-disable-next-line no-console
+      console.error("[webhook/modelCheckoutWebhook] signature verification FAILED:", verifyError?.message || verifyError);
+      return res.status(400).json({ error: `Signature verification failed: ${verifyError?.message || "unknown"}` });
+    }
+    if (MODEL_WEBHOOK_TRACKED_EVENTS.has(event.type)) {
+      await recordStripeWebhookEvent(event);
+    }
+    // eslint-disable-next-line no-console
+    console.log("[webhook/modelCheckoutWebhook] processed", event.type, event.id);
     if (event.type === "checkout.session.completed") {
       const session = event.data?.object || {};
       if (String(session?.metadata?.checkout_type || "") === "model") {
@@ -977,6 +1348,8 @@ functionsRouter.post("/modelCheckoutWebhook", async (req, res, next) => {
     }
     return res.json({ received: true });
   } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error("[webhook/modelCheckoutWebhook] handler threw:", error?.message || error);
     return next(error);
   }
 });

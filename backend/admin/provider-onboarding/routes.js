@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { submitProviderBasicOnboarding } from "./service.js";
+import { getProviderBasicOnboardingForMe, submitProviderBasicOnboarding } from "./service.js";
 
 export const providerOnboardingRouter = Router();
 
@@ -8,6 +8,19 @@ function getBearerToken(req) {
   if (!raw.startsWith("Bearer ")) return null;
   return raw.slice("Bearer ".length).trim() || null;
 }
+
+providerOnboardingRouter.get("/me", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) {
+      return res.status(401).json({ error: "Missing bearer token." });
+    }
+    const data = await getProviderBasicOnboardingForMe(token);
+    return res.json(data);
+  } catch (error) {
+    return next(error);
+  }
+});
 
 providerOnboardingRouter.post("/basic", async (req, res, next) => {
   try {

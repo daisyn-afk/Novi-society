@@ -5,7 +5,8 @@ import { base44 } from "@/api/base44Client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { useToast } from "@/components/ui/use-toast";
 import {
   Plus, Pencil, Trash2, Users, DollarSign, BookOpen, Award,
   Calendar, Search, CheckCircle, Eye, EyeOff, RefreshCw, CalendarDays, LayoutTemplate, Clock, Package, MapPin, Key, ChevronDown, ChevronRight
@@ -103,6 +104,9 @@ function SessionRow({ s, showCodes, setShowCodes, regenCode, setConfirmAttendanc
 export default function AdminCourses() {
   const [tab, setTab] = useState("templates");
   const qc = useQueryClient();
+  const { toast } = useToast();
+
+  const [deleteTarget, setDeleteTarget] = useState(null);
 
   const [templateOpen, setTemplateOpen] = useState(false);
   const [templateForm, setTemplateForm] = useState(EMPTY_TEMPLATE);
@@ -157,7 +161,14 @@ export default function AdminCourses() {
   });
   const removeTemplate = useMutation({
     mutationFn: (id) => base44.entities.Course.delete(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["courses", "base44"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["courses", "base44"] });
+      setDeleteTarget(null);
+      toast({ title: "Course deleted" });
+    },
+    onError: (err) => {
+      toast({ title: "Delete failed", description: err?.message || "Try again.", variant: "destructive" });
+    },
   });
   const saveScheduled = useMutation({
     mutationFn: ({ data, editingId }) => {
@@ -328,7 +339,7 @@ export default function AdminCourses() {
                     onClick={() => { setTemplateForm({ ...c, certifications_awarded: c.certifications_awarded||[], linked_service_type_ids: c.linked_service_type_ids||[], pre_course_materials: c.pre_course_materials||[], platform_coverage: c.platform_coverage||[] }); setEditingTemplate(c.id); setTemplateOpen(true); }}>
                     <Pencil className="w-3.5 h-3.5" /> Edit
                   </button>
-                  <button className="py-2 px-3 text-xs font-semibold rounded-xl transition-opacity hover:opacity-70" style={{ background: "rgba(218,106,99,0.08)", color: "#DA6A63" }} onClick={() => removeTemplate.mutate(c.id)}>
+                  <button className="py-2 px-3 text-xs font-semibold rounded-xl transition-opacity hover:opacity-70" style={{ background: "rgba(218,106,99,0.08)", color: "#DA6A63" }} onClick={() => setDeleteTarget({ id: c.id, label: c.title })}>
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 </div>
@@ -484,7 +495,7 @@ export default function AdminCourses() {
                       onClick={() => { setScheduleForm({ template_id: c.template_id, title: c.title, price: c.price, location: c.location, instructor_name: c.instructor_name, session_dates: c.session_dates || [], is_active: c.is_active, is_featured: c.is_featured }); setEditingSchedule(c.id); setScheduleOpen(true); }}>
                       <Pencil className="w-3.5 h-3.5" /> Edit
                     </button>
-                    <button className="py-2 px-3 text-xs font-semibold rounded-xl hover:opacity-70 transition-opacity" style={{ background: "rgba(218,106,99,0.08)", color: "#DA6A63" }} onClick={() => removeTemplate.mutate(c.id)}>
+                    <button className="py-2 px-3 text-xs font-semibold rounded-xl hover:opacity-70 transition-opacity" style={{ background: "rgba(218,106,99,0.08)", color: "#DA6A63" }} onClick={() => setDeleteTarget({ id: c.id, label: c.title })}>
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
@@ -637,6 +648,30 @@ export default function AdminCourses() {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(deleteTarget)} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete course?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-slate-600">
+            This will permanently remove <strong>{deleteTarget?.label}</strong>. This action cannot be undone.
+          </p>
+          {removeTemplate.error ? (
+            <p className="text-sm text-red-600">{removeTemplate.error?.message || "Delete failed."}</p>
+          ) : null}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              disabled={removeTemplate.isPending}
+              onClick={() => removeTemplate.mutate(deleteTarget.id)}
+            >
+              {removeTemplate.isPending ? "Deleting…" : "Delete"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

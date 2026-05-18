@@ -68,6 +68,8 @@ import MDCompliance from './pages/MDCompliance';
 import MDDashboard from './pages/MDDashboard';
 import MDProviderRelationships from './pages/MDProviderRelationships';
 import MDProviders from './pages/MDProviders';
+import MDProfile from './pages/MDProfile';
+import MDServiceOfferings from './pages/MDServiceOfferings';
 import NoviLanding from './pages/NoviLanding';
 import Onboarding from './pages/Onboarding';
 import PatientAppointments from './pages/PatientAppointments';
@@ -113,10 +115,12 @@ export const PAGES = {
     "CourseCheckout": CourseCheckout,
     "LandingPage": LandingPage,
     "MDCertifications": MDCertifications,
+    "MDProfile": MDProfile,
     "MDCompliance": MDCompliance,
     "MDDashboard": MDDashboard,
     "MDProviderRelationships": MDProviderRelationships,
     "MDProviders": MDProviders,
+    "MDServiceOfferings": MDServiceOfferings,
     "NoviLanding": NoviLanding,
     "Onboarding": Onboarding,
     "PatientAppointments": PatientAppointments,
@@ -144,7 +148,7 @@ export const PAGES = {
 }
 
 export const pagesConfig = {
-    mainPage: "NoviLanding",
+    mainPage: "LandingPage",
     Pages: PAGES,
     Layout: __Layout,
 };

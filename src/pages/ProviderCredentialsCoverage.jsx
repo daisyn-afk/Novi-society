@@ -4,7 +4,7 @@ import ProviderSalesLock from "@/components/ProviderSalesLock";
 import { useProviderAccess } from "@/components/useProviderAccess";
 import { base44 } from "@/api/base44Client";
 import { adminApiRequest } from "@/api/adminApiRequest";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -16,8 +16,8 @@ import {
   Shield, CheckCircle, CheckCircle2, Clock, AlertTriangle, Plus,
   Calendar, KeyRound, Award, Zap, ChevronRight, RotateCcw, Upload,
   BookOpen, Users, FileText, MapPin, ShieldCheck,
-  ChevronDown, ChevronUp, Sparkles, ExternalLink, Star, DollarSign, Info, TrendingUp,
-  XCircle, Settings, Trash2, CreditCard, RefreshCw
+  ChevronDown, ChevronUp, Sparkles, ExternalLink, Download, Star, DollarSign, Info, TrendingUp,
+  XCircle, Settings, Trash2, CreditCard, RefreshCw, X
 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Link } from "react-router-dom";
@@ -25,7 +25,7 @@ import { createPageUrl } from "@/utils";
 import { format } from "date-fns";
 import { getSessionWindowForDate, isNowWithinSessionRedeemWindow } from "@/lib/classCodeWindow";
 import { CLASS_TIME_ZONE } from "@/lib/classCodeWindow";
-
+import { downloadCertificateDocument, hasCertificateDocument, openCertificateDocument } from "@/lib/certificateDocument";
 const LICENSE_TYPES = ["RN", "NP", "PA", "MD", "DO", "esthetician", "other"];
 const CERT_TYPES = ["RN", "NP", "PA", "MD", "DO", "esthetician", "other"];
 const ACTIVATION_STEPS = ["Verify Training", "Select Service", "Sign & Activate"];
@@ -86,6 +86,7 @@ function GlassCard({ children, className = "", style = {} }) {
 }
 
 function CertRow({ cert: c, muted = false }) {
+  const canViewCertificate = hasCertificateDocument(c);
   const configs = {
     active: { label: "Active", bg: "rgba(200,230,60,0.15)", color: "#4a6b10", border: "rgba(200,230,60,0.4)" },
     pending: { label: "Under Review", bg: "rgba(250,111,48,0.1)", color: "#FA6F30", border: "rgba(250,111,48,0.25)" },
@@ -105,10 +106,27 @@ function CertRow({ cert: c, muted = false }) {
       </div>
       <div className="flex items-center gap-2 flex-shrink-0">
         <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: cfg.bg, color: cfg.color, border: `1px solid ${cfg.border}` }}>{cfg.label}</span>
-        {c.certificate_url && (
-          <a href={c.certificate_url} target="_blank" rel="noreferrer">
-            <ExternalLink className="w-3.5 h-3.5" style={{ color: "rgba(255,255,255,0.4)" }} />
-          </a>
+        {canViewCertificate && (
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => openCertificateDocument(c)}
+              className="inline-flex items-center justify-center rounded-md p-1.5 transition-all hover:brightness-95"
+              style={{ background: "rgba(123,142,200,0.12)", border: "1px solid rgba(123,142,200,0.25)" }}
+              title="Open certificate"
+            >
+              <ExternalLink className="w-3.5 h-3.5" style={{ color: "#7B8EC8" }} />
+            </button>
+            <button
+              type="button"
+              onClick={() => downloadCertificateDocument(c, `${c.certification_name || "certificate"}.pdf`)}
+              className="inline-flex items-center justify-center rounded-md p-1.5 transition-all hover:brightness-95"
+              style={{ background: "rgba(123,142,200,0.12)", border: "1px solid rgba(123,142,200,0.25)" }}
+              title="Download PDF"
+            >
+              <Download className="w-3.5 h-3.5" style={{ color: "#7B8EC8" }} />
+            </button>
+          </div>
         )}
       </div>
     </div>
@@ -118,6 +136,26 @@ function CertRow({ cert: c, muted = false }) {
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function ProviderCredentialsCoverage() {
+  const readUiCache = (key, fallback = []) => {
+    if (typeof window === "undefined") return fallback;
+    try {
+      const raw = window.localStorage.getItem(`pcache:${key}`);
+      if (!raw) return fallback;
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : fallback;
+    } catch {
+      return fallback;
+    }
+  };
+  const writeUiCache = (key, value) => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(`pcache:${key}`, JSON.stringify(Array.isArray(value) ? value : []));
+    } catch {
+      // ignore storage errors
+    }
+  };
+
   const { status: accessStatus } = useProviderAccess();
   const [activeTab, setActiveTab] = useState("overview");
   const [licenseOpen, setLicenseOpen] = useState(false);
@@ -126,7 +164,7 @@ export default function ProviderCredentialsCoverage() {
   const [uploading, setUploading] = useState(false);
   const [certSubmitOpen, setCertSubmitOpen] = useState(false);
   const [certSubmitStep, setCertSubmitStep] = useState(0);
-  const [extCertForm, setExtCertForm] = useState({ cert_name: "", issuing_school: "", cert_type: "RN", service_type_id: "", service_type_name: "" });
+  const [extCertForm, setExtCertForm] = useState({ cert_name: "", issuing_school: "", cert_type: "RN", service_type_id: "", service_type_name: "", certificate_number: "" });
   const [extCertFileUrl, setExtCertFileUrl] = useState("");
   const [extLicenseFileUrl, setExtLicenseFileUrl] = useState("");
   const [uploadingExtCert, setUploadingExtCert] = useState(false);
@@ -156,29 +194,27 @@ export default function ProviderCredentialsCoverage() {
   const [cancelForm, setCancelForm] = useState({ reason: "", notes: "", confirmation_name: "" });
   const [cancelStep, setCancelStep] = useState(0); // 0=form, 1=confirm, 2=done
   const [cancelLoading, setCancelLoading] = useState(false);
+  const [dismissedApprovedAlertIds, setDismissedApprovedAlertIds] = useState([]);
   const canvasRef = useRef(null);
   const isDrawing = useRef(false);
   const qc = useQueryClient();
   const navigate = useNavigate();
-
-  // URL param handling
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get("tab")) setActiveTab(params.get("tab"));
-    const promptService = params.get("prompt_service");
-    if (promptService) {
-      setActiveTab("coverage");
-      setActivateDialog(true);
-      setSelectedServiceTypeId(promptService);
-      setStep(2);
-    }
-  }, []);
+  const location = useLocation();
 
   // Data queries
-  const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => base44.auth.me() });
+  const { data: me } = useQuery({
+    queryKey: ["me"],
+    queryFn: () => base44.auth.me(),
+    staleTime: 120000,
+    refetchOnWindowFocus: false,
+  });
   const { data: licenses = [], isLoading: loadingLicenses } = useQuery({
     queryKey: ["my-licenses"],
     queryFn: async () => { const u = await base44.auth.me(); return base44.entities.License.filter({ provider_id: u.id }); },
+    initialData: () => readUiCache("my-licenses", []),
+    staleTime: 120000,
+    refetchOnWindowFocus: true,
+    refetchInterval: 5000,
   });
   const { data: serviceTypes = [] } = useQuery({
     queryKey: ["service-types"],
@@ -186,13 +222,27 @@ export default function ProviderCredentialsCoverage() {
   });
   const { data: myCerts = [] } = useQuery({
     queryKey: ["my-certs"],
-    queryFn: async () => { const u = await base44.auth.me(); return base44.entities.Certification.filter({ provider_id: u.id }, "-issued_at"); },
+    queryFn: async () => {
+      const u = await base44.auth.me();
+      return base44.entities.Certification.filter({
+        provider_id: u.id,
+        provider_email: u.email,
+      });
+    },
     enabled: !!me,
+    initialData: () => readUiCache("my-certs", []),
+    staleTime: 120000,
+    refetchOnWindowFocus: true,
+    refetchInterval: 5000,
   });
   const { data: mySubscriptions = [] } = useQuery({
     queryKey: ["my-md-subscriptions"],
     queryFn: async () => { const u = await base44.auth.me(); return base44.entities.MDSubscription.filter({ provider_id: u.id }); },
     enabled: !!me,
+    initialData: () => readUiCache("my-md-subscriptions", []),
+    staleTime: 120000,
+    refetchOnWindowFocus: true,
+    refetchInterval: 10000,
   });
   const { data: myEnrollments = [], isLoading: loadingMyEnrollments, isFetching: fetchingMyEnrollments } = useQuery({
     queryKey: ["my-enrollments-coverage"],
@@ -231,6 +281,10 @@ export default function ProviderCredentialsCoverage() {
       return Array.from(map.values());
     },
     enabled: !!me,
+    initialData: () => readUiCache("my-enrollments-coverage", []),
+    staleTime: 60000,
+    refetchOnWindowFocus: true,
+    refetchInterval: 10000,
   });
   const { data: mySessions = [], isLoading: loadingMySessions, isFetching: fetchingMySessions } = useQuery({
     queryKey: ["my-sessions-coverage", myEnrollments.map((e) => `${e.id}:${e.course_id}:${e.session_date || ""}`).join("|")],
@@ -258,7 +312,26 @@ export default function ProviderCredentialsCoverage() {
       });
     },
     enabled: !!me,
+    initialData: () => readUiCache("my-sessions-coverage", []),
+    staleTime: 60000,
+    refetchOnWindowFocus: true,
+    refetchInterval: 10000,
   });
+  useEffect(() => { writeUiCache("my-licenses", licenses || []); }, [licenses]);
+  useEffect(() => { writeUiCache("my-certs", myCerts || []); }, [myCerts]);
+  useEffect(() => { writeUiCache("my-md-subscriptions", mySubscriptions || []); }, [mySubscriptions]);
+  useEffect(() => { writeUiCache("my-enrollments-coverage", myEnrollments || []); }, [myEnrollments]);
+  useEffect(() => { writeUiCache("my-sessions-coverage", mySessions || []); }, [mySessions]);
+  useEffect(() => {
+    if (!me?.id || typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(`pcache:dismissed-approved-alerts:${me.id}`);
+      const parsed = raw ? JSON.parse(raw) : [];
+      setDismissedApprovedAlertIds(Array.isArray(parsed) ? parsed : []);
+    } catch {
+      setDismissedApprovedAlertIds([]);
+    }
+  }, [me?.id]);
   const { data: courses = [] } = useQuery({
     queryKey: ["courses-coverage"],
     queryFn: () => base44.entities.Course.list(),
@@ -268,6 +341,68 @@ export default function ProviderCredentialsCoverage() {
     queryFn: async () => { if (!me) return []; return base44.entities.MedicalDirectorRelationship.filter({ provider_id: me.id }); },
     enabled: !!me,
   });
+
+  /** After Stripe success (or immediate $0 checkout): ensure one active MDSubscription per service, then assignment engine (pending MD approval). */
+  async function finalizeActiveMdCoverageAndAssignMd({ stId, enrollId, nowIso, signatureData }) {
+    if (!me?.id || !stId) return;
+    const serviceTypeName = serviceTypes.find((s) => s.id === stId)?.name;
+    let existingSubs = [];
+    try {
+      existingSubs = await base44.entities.MDSubscription.filter({ provider_id: me.id, service_type_id: stId });
+    } catch {
+      existingSubs = [];
+    }
+    const hasActiveForService = (existingSubs || []).some(
+      (s) => String(s?.status || "").toLowerCase() === "active"
+    );
+    if (!hasActiveForService) {
+      await base44.entities.MDSubscription.create({
+        provider_id: me.id,
+        provider_email: me.email,
+        provider_name: me.full_name,
+        service_type_id: stId,
+        service_type_name: serviceTypeName,
+        status: "active",
+        signed_at: nowIso,
+        signed_by_name: me.full_name,
+        activated_at: nowIso,
+        enrollment_id: enrollId || null,
+        ...(signatureData ? { signature_data: signatureData } : {}),
+      });
+    }
+    qc.invalidateQueries({ queryKey: ["my-md-subscriptions"] });
+    const res = await base44.functions.invoke("submitMdBoardCoverageAssignment", {
+      service_type_id: stId,
+      service_type_name: serviceTypeName || "",
+    });
+    const data = res?.data;
+    if (!data?.ok) {
+      throw new Error(data?.error || "Unable to assign a Board Medical Director for this service.");
+    }
+    qc.invalidateQueries({ queryKey: ["my-md-relationships"] });
+  }
+
+  // Open MD coverage apply flow when arriving from cert-approval notification (?prompt_service=)
+  useEffect(() => {
+    const params = new URLSearchParams(location.search || "");
+    if (params.get("tab")) setActiveTab(params.get("tab"));
+    const promptService = params.get("prompt_service");
+    if (!promptService || serviceTypes.length === 0) return;
+    setActiveTab("coverage");
+    setActivateDialog(true);
+    setSelectedServiceTypeId(promptService);
+    setStep(2);
+    params.delete("prompt_service");
+    if (params.get("tab") === "coverage") params.delete("tab");
+    const qs = params.toString();
+    navigate({ pathname: createPageUrl("ProviderCredentialsCoverage"), search: qs ? `?${qs}` : "" }, { replace: true });
+    setTimeout(() => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
+      setHasSigned(false);
+    }, 150);
+  }, [location.search, serviceTypes.length, navigate]);
 
   // Stripe return
   useEffect(() => {
@@ -279,32 +414,14 @@ export default function ProviderCredentialsCoverage() {
     if (mdStatus === "success" && stId) {
       setStripeHandled(true);
       const now = new Date().toISOString();
-      const NOVI_MD_ID = "699c9815c81b2b13b2643a49";
-      const NOVI_MD_NAME = "ashlan.brookes.lane";
-      const NOVI_MD_EMAIL = "ashlan.brookes.lane@gmail.com";
-
-      base44.entities.MDSubscription.create({
-      provider_id: me.id, provider_email: me.email, provider_name: me.full_name,
-      service_type_id: stId, service_type_name: serviceTypes.find(s => s.id === stId)?.name,
-      status: "active", signed_at: now, signed_by_name: me.full_name, activated_at: now, enrollment_id: enrollId || null,
-      }).then(async () => {
-      qc.invalidateQueries({ queryKey: ["my-md-subscriptions"] });
-      // Auto-assign NOVI Board MD if not already assigned
-      const existing = await base44.entities.MedicalDirectorRelationship.filter({ provider_id: me.id, medical_director_id: NOVI_MD_ID });
-      if (existing.length === 0) {
-        await base44.entities.MedicalDirectorRelationship.create({
-          provider_id: me.id, provider_email: me.email, provider_name: me.full_name,
-          medical_director_id: NOVI_MD_ID, medical_director_email: NOVI_MD_EMAIL, medical_director_name: NOVI_MD_NAME,
-          status: "active", start_date: now.split("T")[0],
-          supervision_notes: "Assigned automatically by NOVI Board of Medical Directors.",
+      finalizeActiveMdCoverageAndAssignMd({ stId, enrollId: enrollId || null, nowIso: now, signatureData: null })
+        .then(() => navigate(createPageUrl("ProviderLaunchPad")))
+        .catch((err) => {
+          console.error("[md-coverage] finalize after Stripe failed:", err);
+          navigate(createPageUrl("ProviderLaunchPad"));
         });
-        qc.invalidateQueries({ queryKey: ["my-md-relationships"] });
-      }
-      // Provider is now fully active — redirect to Launch Pad
-      navigate(createPageUrl("ProviderLaunchPad"));
-      });
     }
-  }, [me, serviceTypes, stripeHandled]);
+  }, [me, serviceTypes, stripeHandled, navigate]);
 
   // Keep Novi Class status fresh whenever Apply dialog opens.
   useEffect(() => {
@@ -366,6 +483,23 @@ export default function ProviderCredentialsCoverage() {
   const selectedService = serviceTypes.find(s => s.id === selectedServiceTypeId);
   const activeServices = serviceTypes.filter(s => alreadyActiveServices.includes(s.id));
   const approvedCertsWithoutCoverage = myCerts.filter(c => c.status === "active" && c.service_type_id && !alreadyActiveServices.includes(c.service_type_id));
+  const visibleApprovedCertsWithoutCoverage = approvedCertsWithoutCoverage.filter((c) => !dismissedApprovedAlertIds.includes(c.id));
+  const dismissApprovedAlert = (certId) => {
+    const normalizedId = String(certId || "").trim();
+    if (!normalizedId) return;
+    setDismissedApprovedAlertIds((prev) => {
+      if (prev.includes(normalizedId)) return prev;
+      const next = [...prev, normalizedId];
+      if (typeof window !== "undefined" && me?.id) {
+        try {
+          window.localStorage.setItem(`pcache:dismissed-approved-alerts:${me.id}`, JSON.stringify(next));
+        } catch {
+          // ignore storage errors
+        }
+      }
+      return next;
+    });
+  };
   const classCodeEligibleEnrollments = Array.from(
     [...myEnrollments, ...mySessions.map((session) => {
       const rawEnrollmentKey = String(session?.enrollment_id || "");
@@ -467,7 +601,7 @@ export default function ProviderCredentialsCoverage() {
   };
   const resetExtCertForm = () => {
     setCertSubmitStep(0);
-    setExtCertForm({ cert_name: "", issuing_school: "", cert_type: "RN", service_type_id: "", service_type_name: "" });
+    setExtCertForm({ cert_name: "", issuing_school: "", cert_type: "RN", service_type_id: "", service_type_name: "", certificate_number: "" });
     setExtCertFileUrl(""); setExtLicenseFileUrl("");
     setUploadExtCertError(""); setUploadExtLicenseError(""); setSubmitExtCertError("");
   };
@@ -590,6 +724,7 @@ export default function ProviderCredentialsCoverage() {
       const created = await adminApiRequest("/admin/certifications", {
         method: "POST",
         body: JSON.stringify(payload),
+        timeoutMs: 4500,
       });
       if (certDebugEnabled) console.info(`[cert-debug][${debugTag}] created-via-admin-api`, created);
       return created;
@@ -608,6 +743,7 @@ export default function ProviderCredentialsCoverage() {
             service_type_id: payload.service_type_id,
             service_type_name: payload.service_type_name,
             certificate_url: payload.certificate_url,
+            certificate_number: payload.certificate_number,
             notes: payload.notes,
           });
         } catch (patchErr) {
@@ -618,6 +754,26 @@ export default function ProviderCredentialsCoverage() {
     }
   };
   const submitExtCertMutation = useMutation({
+    onMutate: async () => {
+      await qc.cancelQueries({ queryKey: ["my-certs"] });
+      const previous = qc.getQueryData(["my-certs"]);
+      const tempId = `temp-cert-${Date.now()}`;
+      qc.setQueryData(["my-certs"], (old = []) => ([
+        {
+          id: tempId,
+          certification_name: extCertForm.cert_name,
+          service_type_id: extCertForm.service_type_id,
+          service_type_name: extCertForm.service_type_name,
+          issued_by: extCertForm.issuing_school,
+          certificate_url: extCertFileUrl,
+          status: "pending",
+          created_at: new Date().toISOString(),
+        },
+        ...(Array.isArray(old) ? old : []),
+      ]));
+      setCertSubmitStep(2);
+      return { previous };
+    },
     mutationFn: async () => {
       const u = await base44.auth.me();
       if (!u?.id || !u?.email) throw new Error("Your session is not ready. Please refresh and try again.");
@@ -634,15 +790,43 @@ export default function ProviderCredentialsCoverage() {
       issued_at: new Date().toISOString(),
       notes: extLicenseFileUrl ? `License document: ${extLicenseFileUrl}` : undefined,
       };
+      const extNum = String(extCertForm.certificate_number || "").trim();
+      if (extNum) payload.certificate_number = extNum;
       if (certDebugEnabled) console.info("[cert-debug][provider-submit-ext] payload", payload);
       const created = await createCertificationWithFallback(payload, u, "provider-submit-ext");
       if (certDebugEnabled) console.info("[cert-debug][provider-submit-ext] created", created);
       return created;
     },
-    onSuccess: () => { setSubmitExtCertError(""); qc.invalidateQueries({ queryKey: ["my-certs"] }); setCertSubmitStep(2); },
-    onError: (err) => { setSubmitExtCertError(err?.message || "Could not submit external certification."); },
+    onSuccess: () => {
+      setSubmitExtCertError(""); qc.invalidateQueries({ queryKey: ["my-certs"] }); setCertSubmitStep(2);
+    },
+    onError: (err, _vars, context) => {
+      if (context?.previous) qc.setQueryData(["my-certs"], context.previous);
+      setCertSubmitStep(1);
+      setSubmitExtCertError(err?.message || "Could not submit external certification.");
+    },
   });
   const submitExternalCertMutation = useMutation({
+    onMutate: async () => {
+      await qc.cancelQueries({ queryKey: ["my-certs"] });
+      const previous = qc.getQueryData(["my-certs"]);
+      const tempId = `temp-cert-${Date.now()}`;
+      qc.setQueryData(["my-certs"], (old = []) => ([
+        {
+          id: tempId,
+          certification_name: certForm.cert_name,
+          service_type_id: certForm.service_type_id,
+          service_type_name: certForm.service_type_name,
+          issued_by: certForm.issuing_school,
+          certificate_url: certFileUrl,
+          status: "pending",
+          created_at: new Date().toISOString(),
+        },
+        ...(Array.isArray(old) ? old : []),
+      ]));
+      setCertSubmitted(true);
+      return { previous };
+    },
     mutationFn: async () => {
       const u = await base44.auth.me();
       if (!u?.id || !u?.email) throw new Error("Your session is not ready. Please refresh and try again.");
@@ -661,8 +845,14 @@ export default function ProviderCredentialsCoverage() {
       if (certDebugEnabled) console.info("[cert-debug][provider-submit-standard] created", created);
       return created;
     },
-    onSuccess: () => { setSubmitCertError(""); qc.invalidateQueries({ queryKey: ["my-certs"] }); setCertSubmitted(true); },
-    onError: (err) => { setSubmitCertError(err?.message || "Could not submit external certification."); },
+    onSuccess: () => {
+      setSubmitCertError(""); qc.invalidateQueries({ queryKey: ["my-certs"] }); setCertSubmitted(true);
+    },
+    onError: (err, _vars, context) => {
+      if (context?.previous) qc.setQueryData(["my-certs"], context.previous);
+      setCertSubmitted(false);
+      setSubmitCertError(err?.message || "Could not submit external certification.");
+    },
   });
   const verifyCodeMutation = useMutation({
     mutationFn: async () => {
@@ -734,6 +924,7 @@ export default function ProviderCredentialsCoverage() {
   const activateMutation = useMutation({
     mutationFn: async () => {
       const canvas = canvasRef.current;
+      if (!canvas) throw new Error("Signature pad is not ready. Close the dialog and try again.");
       const signatureData = canvas.toDataURL("image/png");
       const res = await base44.functions.invoke("createMDSubscriptionCheckout", {
         service_type_id: selectedServiceTypeId,
@@ -742,14 +933,25 @@ export default function ProviderCredentialsCoverage() {
         enrollment_id: verifiedSession?.enrollment_id || null,
         signature_data: signatureData,
       });
-      if (res.data?.url) { window.location.href = res.data.url; }
-      else if (res.data?.success) {
+      if (res.data?.url) {
+        window.location.href = res.data.url;
+        return;
+      }
+      if (res.data?.success) {
+        const now = new Date().toISOString();
+        await finalizeActiveMdCoverageAndAssignMd({
+          stId: selectedServiceTypeId,
+          enrollId: verifiedSession?.enrollment_id || null,
+          nowIso: now,
+          signatureData,
+        });
         qc.invalidateQueries({ queryKey: ["my-md-subscriptions"] });
         setActivateDialog(false);
         resetActivation();
-        // Provider is now fully active — redirect to Launch Pad
         navigate(createPageUrl("ProviderLaunchPad"));
+        return;
       }
+      throw new Error(res.data?.error || "Unable to activate MD coverage.");
     },
   });
 
@@ -796,6 +998,34 @@ export default function ProviderCredentialsCoverage() {
   const endDraw = () => { isDrawing.current = false; };
   const clearSignature = () => { const canvas = canvasRef.current; if (!canvas) return; canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height); setHasSigned(false); };
 
+  /** Opens apply dialog on Sign & Activate (step 2) for a known service — e.g. approved-cert banner or deep-link parity. */
+  const openApplyDialogToSignForService = (serviceTypeId) => {
+    const raw = String(serviceTypeId || "").trim();
+    const stId = raw && serviceTypes.some((s) => s.id === raw) ? raw : "";
+    setClassCode("");
+    setCodeError("");
+    setVerifiedSession(null);
+    setAttendedWindowKeys(new Set());
+    setUseExternalCert(false);
+    setCertForm({ cert_type: "RN", issuing_school: "", cert_name: "" });
+    setCertFileUrl("");
+    setUploadCertError("");
+    setSubmitCertError("");
+    setCertSubmitted(false);
+    setSelectedCoverageCourseKey(null);
+    setHasSigned(false);
+    setActiveTab("coverage");
+    if (stId) {
+      setSelectedServiceTypeId(stId);
+      setStep(2);
+    } else {
+      setSelectedServiceTypeId(null);
+      setStep(-1);
+    }
+    setActivateDialog(true);
+    setTimeout(() => clearSignature(), 150);
+  };
+
   // ─── RENDER ────────────────────────────────────────────────────────────────
   const pageContent = (
     <div className="max-w-5xl space-y-6">
@@ -817,16 +1047,24 @@ export default function ProviderCredentialsCoverage() {
       </div>
 
       {/* Alerts */}
-      {approvedCertsWithoutCoverage.map(c => (
+      {visibleApprovedCertsWithoutCoverage.map(c => (
         <div key={c.id} className="flex items-center gap-3 px-5 py-4 rounded-2xl" style={{ background: "rgba(200,230,60,0.15)", border: "1px solid rgba(200,230,60,0.4)" }}>
           <CheckCircle className="w-5 h-5 flex-shrink-0" style={{ color: "#C8E63C" }} />
           <div className="flex-1">
             <p className="font-semibold text-sm" style={{ color: "#3D5600" }}>Your <strong>{c.service_type_name || c.certification_name}</strong> certification was approved!</p>
             <p className="text-xs mt-0.5" style={{ color: "rgba(61,86,0,0.8)" }}>You can now apply for MD Board coverage to start offering this service.</p>
           </div>
-          <Button size="sm" onClick={() => { setActivateDialog(true); resetActivation(); }} style={{ background: "#FA6F30", color: "#fff" }} className="flex-shrink-0 gap-1 h-8 text-xs">
+          <Button size="sm" onClick={() => openApplyDialogToSignForService(c.service_type_id)} style={{ background: "#FA6F30", color: "#fff" }} className="flex-shrink-0 gap-1 h-8 text-xs">
             <Zap className="w-3.5 h-3.5" /> Apply
           </Button>
+          <button
+            onClick={() => dismissApprovedAlert(c.id)}
+            className="p-1 rounded-md hover:bg-black/5 transition-colors"
+            aria-label="Dismiss alert"
+            title="Dismiss"
+          >
+            <X className="w-4 h-4" style={{ color: "rgba(61,86,0,0.7)" }} />
+          </button>
         </div>
       ))}
 
@@ -1506,7 +1744,9 @@ export default function ProviderCredentialsCoverage() {
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {activeCerts.map(c => (
+                  {activeCerts.map((c) => {
+                    const canViewCertificate = hasCertificateDocument(c);
+                    return (
                     <div key={c.id} className="flex items-center gap-3 px-4 py-3 rounded-xl" style={{ background: "rgba(255,255,255,0.7)", border: "1px solid rgba(30,37,53,0.08)" }}>
                       <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: "rgba(200,230,60,0.15)" }}>
                         <Award className="w-4 h-4" style={{ color: "#4a6b10" }} />
@@ -1519,17 +1759,31 @@ export default function ProviderCredentialsCoverage() {
                           {c.issued_at && ` · ${format(new Date(c.issued_at), "MMM d, yyyy")}`}
                         </p>
                       </div>
-                      {c.certificate_url ? (
-                        <a href={c.certificate_url} target="_blank" rel="noreferrer"
-                          className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-all hover:brightness-95"
-                          style={{ background: "rgba(123,142,200,0.12)", color: "#7B8EC8", border: "1px solid rgba(123,142,200,0.25)" }}>
-                          <ExternalLink className="w-3 h-3" /> View
-                        </a>
+                      {canViewCertificate ? (
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => openCertificateDocument(c)}
+                            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-all hover:brightness-95"
+                            style={{ background: "rgba(123,142,200,0.12)", color: "#7B8EC8", border: "1px solid rgba(123,142,200,0.25)" }}
+                          >
+                            <ExternalLink className="w-3 h-3" /> View
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => downloadCertificateDocument(c, `${c.certification_name || "certificate"}.pdf`)}
+                            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-all hover:brightness-95"
+                            style={{ background: "rgba(123,142,200,0.12)", color: "#7B8EC8", border: "1px solid rgba(123,142,200,0.25)" }}
+                          >
+                            <Download className="w-3 h-3" /> PDF
+                          </button>
+                        </div>
                       ) : (
                         <span className="text-xs" style={{ color: "rgba(30,37,53,0.35)" }}>No file</span>
                       )}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -1924,7 +2178,7 @@ export default function ProviderCredentialsCoverage() {
           {step === 2 && (
             <div className="space-y-4">
               <div className="rounded-xl border-2 border-orange-200 p-4 flex items-center justify-between bg-orange-50">
-                <div><p className="font-semibold text-slate-900">{selectedService?.name} — MD Board Coverage</p><p className="text-xs text-slate-500 mt-0.5">{alreadyActiveServices.length === 0 ? "First service" : "Add-on service"} · NOVI Board MD assigned</p></div>
+                <div><p className="font-semibold text-slate-900">{selectedService?.name} — MD Board Coverage</p><p className="text-xs text-slate-500 mt-0.5">{alreadyActiveServices.length === 0 ? "First service" : "Add-on service"} · NOVI assigns a Board MD automatically</p></div>
                 <div className="text-right"><p className="text-2xl font-bold text-slate-900">${getMembershipPrice()}</p><p className="text-xs text-slate-400">/month</p></div>
               </div>
               <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 max-h-40 overflow-y-auto text-sm text-slate-700 leading-relaxed">
@@ -1944,7 +2198,32 @@ export default function ProviderCredentialsCoverage() {
                 <CheckCircle className="w-3.5 h-3.5 text-green-500 flex-shrink-0" />
                 Signing as <strong className="mx-1">{me?.full_name}</strong> · {format(new Date(), "MMMM d, yyyy")}
               </div>
-              <Button onClick={() => activateMutation.mutate()} disabled={!hasSigned || activateMutation.isPending} className="w-full" style={{ background: "#2d3d66", color: "white" }}>
+              <div className="rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2.5 space-y-1.5">
+                <p className="text-xs font-semibold text-slate-800 flex items-center gap-1.5">
+                  <Info className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
+                  What happens next
+                </p>
+                <ol className="text-[11px] text-slate-600 space-y-1 list-decimal list-inside leading-snug">
+                  <li>We start your recurring monthly MD Board coverage (Stripe may open for payment when applicable).</li>
+                  <li>When checkout completes, your coverage subscription is set to active and your signature is stored.</li>
+                  <li>NOVI assigns exactly one Board Medical Director for this service using supported-service matching and sequential round-robin. You do not pick a doctor.</li>
+                  <li>That doctor receives a notification and must approve before supervision is active. You will see pending status until then.</li>
+                </ol>
+              </div>
+              {(activateMutation.isError || activateMutation.error) && (
+                <p className="text-xs text-red-600 whitespace-pre-wrap">
+                  {activateMutation.error?.message || "Could not start checkout. Check your connection or try again."}
+                </p>
+              )}
+              <Button
+                onClick={() => {
+                  activateMutation.reset();
+                  activateMutation.mutate();
+                }}
+                disabled={!hasSigned || activateMutation.isPending}
+                className="w-full"
+                style={{ background: "#2d3d66", color: "white" }}
+              >
                 {activateMutation.isPending ? "Activating..." : "Sign & Activate MD Board Coverage"}
               </Button>
             </div>
@@ -2118,6 +2397,14 @@ export default function ProviderCredentialsCoverage() {
               <div className="grid grid-cols-2 gap-3">
                 <div><label className="text-xs font-semibold text-slate-600 mb-1 block">Cert Name *</label><Input value={extCertForm.cert_name} onChange={e => setExtCertForm(f => ({ ...f, cert_name: e.target.value }))} placeholder="e.g. Botox Certification" /></div>
                 <div><label className="text-xs font-semibold text-slate-600 mb-1 block">Issuing School *</label><Input value={extCertForm.issuing_school} onChange={e => setExtCertForm(f => ({ ...f, issuing_school: e.target.value }))} /></div>
+                <div className="col-span-2">
+                  <label className="text-xs font-semibold text-slate-600 mb-1 block">Certificate number (optional)</label>
+                  <Input
+                    value={extCertForm.certificate_number}
+                    onChange={e => setExtCertForm(f => ({ ...f, certificate_number: e.target.value }))}
+                    placeholder="If your credential already has a number, enter it. Otherwise NOVI assigns NOVI-EXT-… when approved."
+                  />
+                </div>
                 <div className="col-span-2">
                   <label className="text-xs font-semibold text-slate-600 mb-1 block">License Type</label>
                   <div className="flex flex-wrap gap-1.5">

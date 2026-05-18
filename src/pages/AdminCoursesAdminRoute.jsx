@@ -8,7 +8,7 @@ import { templateCoursesApi } from "@/api/templateCoursesApi";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   Plus, Pencil, Trash2, Users, DollarSign, BookOpen, Award,
   Calendar, CheckCircle, Eye, EyeOff, RefreshCw, CalendarDays, LayoutTemplate, Clock, Package, MapPin, Key, ChevronDown, ChevronRight
@@ -96,6 +96,8 @@ export default function Admincourses() {
   const [tab, setTab] = useState("templates");
   const qc = useQueryClient();
   const { toast } = useToast();
+
+  const [deleteTarget, setDeleteTarget] = useState(null); // { id, type: "template" | "scheduled", label }
 
   const [templateOpen, setTemplateOpen] = useState(false);
   const [templateForm, setTemplateForm] = useState(EMPTY_TEMPLATE);
@@ -234,6 +236,8 @@ export default function Admincourses() {
     mutationFn: (id) => templateCoursesApi.remove(id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["template-courses"] });
+      setDeleteTarget(null);
+      toast({ title: "Course template deleted" });
     },
     onError: (err) => {
       toast({ title: "Delete failed", description: err?.message || "Try again.", variant: "destructive" });
@@ -299,6 +303,10 @@ export default function Admincourses() {
       const previousCourses = qc.getQueryData(["courses", "admin-api-scheduled"]) || [];
       qc.setQueryData(["courses", "admin-api-scheduled"], (current = []) => current.filter((course) => course.id !== id));
       return { previousCourses };
+    },
+    onSuccess: () => {
+      setDeleteTarget(null);
+      toast({ title: "Scheduled course deleted" });
     },
     onError: (err, _id, context) => {
       if (context?.previousCourses) {
@@ -516,7 +524,7 @@ export default function Admincourses() {
                     onClick={() => { setTemplateForm({ ...c, certifications_awarded: c.certifications_awarded||[], linked_service_type_ids: c.linked_service_type_ids||[], pre_course_materials: c.pre_course_materials||[], platform_coverage: c.platform_coverage||[] }); setEditingTemplate(c.id); setTemplateOpen(true); }}>
                     <Pencil className="w-3.5 h-3.5" /> Edit
                   </button>
-                  <button className="py-2 px-3 text-xs font-semibold rounded-xl transition-opacity hover:opacity-70" style={{ background: "rgba(218,106,99,0.08)", color: "#DA6A63" }} onClick={() => removeTemplate.mutate(c.id)}>
+                  <button className="py-2 px-3 text-xs font-semibold rounded-xl transition-opacity hover:opacity-70" style={{ background: "rgba(218,106,99,0.08)", color: "#DA6A63" }} onClick={() => setDeleteTarget({ id: c.id, type: "template", label: c.title })}>
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 </div>
@@ -554,7 +562,9 @@ export default function Admincourses() {
                   <div className="flex items-center gap-1.5 mb-1">
                     <Calendar className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#DA6A63" }} />
                     <span className="text-xs font-bold uppercase tracking-wider" style={{ color: "#DA6A63" }}>Scheduled</span>
-                    {tmpl && <span className="text-xs" style={{ color: "#b0b8cc" }}>from &ldquo;{tmpl.title}&rdquo;</span>}
+                    {(c.template_title || (tmpl && tmpl.title)) && (
+                      <span className="text-xs" style={{ color: "#b0b8cc" }}>from &ldquo;{c.template_title || tmpl.title}&rdquo;</span>
+                    )}
                   </div>
                   <h3 className="font-semibold text-sm leading-tight mb-2" style={{ color: "#1a2540" }}>{c.title}</h3>
                   <div className="flex items-center gap-3 mb-3 text-sm">
@@ -684,7 +694,7 @@ export default function Admincourses() {
                       onClick={() => void openScheduledCourseEditor(c)}>
                       <Pencil className="w-3.5 h-3.5" /> Edit
                     </button>
-                    <button className="py-2 px-3 text-xs font-semibold rounded-xl hover:opacity-70 transition-opacity" style={{ background: "rgba(218,106,99,0.08)", color: "#DA6A63" }} onClick={() => removeScheduled.mutate(c.id)}>
+                    <button className="py-2 px-3 text-xs font-semibold rounded-xl hover:opacity-70 transition-opacity" style={{ background: "rgba(218,106,99,0.08)", color: "#DA6A63" }} onClick={() => setDeleteTarget({ id: c.id, type: "scheduled", label: c.title })}>
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
@@ -799,6 +809,34 @@ export default function Admincourses() {
           <div className="flex justify-end">
             <Button onClick={() => setRegenErrorDialog({ open: false, title: "", description: "" })}>Close</Button>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(deleteTarget)} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {deleteTarget?.type === "template" ? "Delete course template?" : "Delete scheduled course?"}
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-slate-600">
+            This will permanently remove <strong>{deleteTarget?.label}</strong>.
+            {deleteTarget?.type === "template" && " All scheduled courses linked to this template will also be deleted."}
+            {" "}This action cannot be undone.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              disabled={removeTemplate.isPending || removeScheduled.isPending}
+              onClick={() => {
+                if (deleteTarget.type === "template") removeTemplate.mutate(deleteTarget.id);
+                else removeScheduled.mutate(deleteTarget.id);
+              }}
+            >
+              {(removeTemplate.isPending || removeScheduled.isPending) ? "Deleting…" : "Delete"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
