@@ -6,11 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Textarea } from "@/components/ui/textarea";
 import {
-  Shield, CheckCircle, CheckCircle2, Clock, AlertTriangle, Search, Plus,
+  Shield, CheckCircle, CheckCircle2, Clock, AlertTriangle, Plus,
   Calendar, KeyRound, Award, PenLine, Zap, ChevronRight, RotateCcw, Upload,
   Star, BookOpen, Users, BarChart3, Lock, DollarSign, FileText
 } from "lucide-react";
@@ -58,8 +57,6 @@ const NOVI_FEATURES = [
 export default function ProviderMDCoverage() {
   const [activeTab, setActiveTab] = useState("coverage");
   const [activateDialog, setActivateDialog] = useState(false);
-  const [requestDialog, setRequestDialog] = useState(false);
-  const [searchEmail, setSearchEmail] = useState("");
 
   // Activation multi-step state
   const [step, setStep] = useState(0);
@@ -116,14 +113,6 @@ export default function ProviderMDCoverage() {
       return base44.entities.MedicalDirectorRelationship.filter({ provider_id: me.id });
     },
     enabled: !!me,
-  });
-
-  const { data: medicalDirectors = [] } = useQuery({
-    queryKey: ["medical-directors"],
-    queryFn: async () => {
-      const allUsers = await base44.entities.User.list();
-      return allUsers.filter(u => u.role === "medical_director");
-    },
   });
 
   // Canvas signature setup
@@ -249,26 +238,6 @@ export default function ProviderMDCoverage() {
     },
   });
 
-  const requestRelationshipMutation = useMutation({
-    mutationFn: async (mdId) => {
-      const md = medicalDirectors.find(m => m.id === mdId);
-      return base44.entities.MedicalDirectorRelationship.create({
-        provider_id: me.id,
-        provider_email: me.email,
-        provider_name: me.full_name,
-        medical_director_id: mdId,
-        medical_director_email: md.email,
-        medical_director_name: md.full_name,
-        status: "pending",
-      });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["my-md-relationships"] });
-      setRequestDialog(false);
-      setSearchEmail("");
-    },
-  });
-
   const resetActivation = () => {
     setStep(0);
     setClassCode("");
@@ -316,13 +285,8 @@ export default function ProviderMDCoverage() {
   const activeSubscriptions = mySubscriptions.filter(s => s.status === "active");
   const selectedService = serviceTypes.find(s => s.id === selectedServiceTypeId);
 
-  const existingMDIds = relationships.map(r => r.medical_director_id);
   const activeRelationships = relationships.filter(r => r.status === "active");
   const pendingRelationships = relationships.filter(r => r.status === "pending");
-  const filteredMDs = medicalDirectors.filter(md =>
-    md.email.toLowerCase().includes(searchEmail.toLowerCase()) ||
-    md.full_name.toLowerCase().includes(searchEmail.toLowerCase())
-  ).filter(md => !existingMDIds.includes(md.id));
 
   return (
     <div className="max-w-4xl space-y-6">
@@ -565,12 +529,19 @@ export default function ProviderMDCoverage() {
 
         {/* MD SUPERVISION TAB */}
         <TabsContent value="supervision" className="space-y-4 pt-4">
-          <div className="flex items-center justify-between">
-            <p className="text-slate-600 text-sm">Connect with a medical director to enable supervised practice.</p>
-            <Button size="sm" variant="outline" onClick={() => setRequestDialog(true)} className="gap-2">
-              <Plus className="w-4 h-4" />
-              Request Supervisor
-            </Button>
+          <Alert className="border-slate-200 bg-slate-50">
+            <Shield className="h-4 w-4 text-slate-600" />
+            <AlertDescription className="text-slate-700 text-sm">
+              NOVI assigns a Board medical director automatically when you activate MD coverage for a service (you do not pick an MD).
+              Complete coverage under <strong>My Credentials &amp; Coverage</strong> to be linked to the supervising physician for your services.
+            </AlertDescription>
+          </Alert>
+          <div className="flex flex-wrap gap-2">
+            <Link to={createPageUrl("ProviderCredentialsCoverage")}>
+              <Button size="sm" className="gap-2" style={{ background: "#FA6F30", color: "#fff" }}>
+                Go to Credentials &amp; Coverage
+              </Button>
+            </Link>
           </div>
 
           {pendingRelationships.length > 0 && (
@@ -635,9 +606,11 @@ export default function ProviderMDCoverage() {
               <Card>
                 <CardContent className="py-8 text-center">
                   <Shield className="w-10 h-10 mx-auto text-slate-200 mb-3" />
-                  <p className="text-slate-400 text-sm">No medical director connections yet.</p>
-                  <Button variant="outline" size="sm" className="mt-3" onClick={() => setRequestDialog(true)}>
-                    Connect with an MD
+                  <p className="text-slate-600 text-sm max-w-md mx-auto">
+                    After you sign and pay for MD coverage for a service, NOVI assigns you to a supervising physician from the Board pool for that service.
+                  </p>
+                  <Button variant="outline" size="sm" className="mt-4" asChild>
+                    <Link to={createPageUrl("ProviderCredentialsCoverage")}>Apply for MD coverage</Link>
                   </Button>
                 </CardContent>
               </Card>
@@ -926,47 +899,6 @@ export default function ProviderMDCoverage() {
               </Button>
             </div>
           )}
-        </DialogContent>
-      </Dialog>
-
-      {/* Request MD Dialog */}
-      <Dialog open={requestDialog} onOpenChange={setRequestDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Request Medical Director Supervision</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="relative">
-              <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
-              <Input
-                placeholder="Search by name or email..."
-                value={searchEmail}
-                onChange={(e) => setSearchEmail(e.target.value)}
-                className="pl-9"
-              />
-            </div>
-            {searchEmail && filteredMDs.length > 0 ? (
-              <div className="space-y-2 max-h-64 overflow-y-auto">
-                {filteredMDs.map(md => (
-                  <button
-                    key={md.id}
-                    onClick={() => requestRelationshipMutation.mutate(md.id)}
-                    className="w-full text-left p-3 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors"
-                  >
-                    <p className="font-semibold text-slate-900">{md.full_name}</p>
-                    <p className="text-sm text-slate-500">{md.email}</p>
-                  </button>
-                ))}
-              </div>
-            ) : searchEmail ? (
-              <p className="text-sm text-slate-500 text-center py-4">No available medical directors found.</p>
-            ) : (
-              <p className="text-sm text-slate-500 text-center py-4">Start typing to search for medical directors.</p>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setRequestDialog(false)}>Cancel</Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

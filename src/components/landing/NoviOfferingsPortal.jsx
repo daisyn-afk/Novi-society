@@ -888,7 +888,6 @@ export default function NoviOfferingsPortal({ children }) {
                           <SelectItem value="PA">PA - Physician Assistant</SelectItem>
                           <SelectItem value="MD">MD - Medical Doctor</SelectItem>
                           <SelectItem value="DO">DO - Doctor of Osteopathy</SelectItem>
-                          <SelectItem value="esthetician">Licensed Esthetician</SelectItem>
                           <SelectItem value="other">Other Healthcare Professional</SelectItem>
                         </SelectContent>
                       </Select>

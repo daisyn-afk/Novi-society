@@ -6,7 +6,7 @@ import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   LayoutDashboard, BookOpen, Award, FileText, Users,
-  Calendar, Star, ShieldCheck, ClipboardList, Settings,
+  Calendar, Star, ShieldCheck, ClipboardList, Settings, Layers,
   Menu, X, LogOut, User, Lock, Stethoscope, Sparkles, Clock, AlertTriangle, ShoppingBag, Mail, Rocket, TicketPercent
 } from "lucide-react";
 import { useProviderAccess } from "@/components/useProviderAccess";
@@ -57,6 +57,7 @@ const navByRole = {
     { label: "Treatment Records", icon: ClipboardList, page: "MDTreatmentRecords" },
     { label: "Compliance Logs", icon: ShieldCheck, page: "MDCompliance" },
     { label: "Certifications", icon: Award, page: "MDCertifications" },
+    { label: "MD Profile", icon: User, page: "MDProfile" },
   ],
   patient: [
     { label: "My Journey", icon: Sparkles, page: "PatientJourney" },

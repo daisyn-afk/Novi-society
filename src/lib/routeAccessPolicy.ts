@@ -62,7 +62,9 @@ export const ALLOWED_PAGES_BY_ROLE: Record<string, Set<string>> = {
     "MDTreatmentRecords",
     "MDCompliance",
     "MDCertifications",
+    "MDProfile",
     "MDProviders",
+    "MDServiceOfferings",
   ]),
   patient: new Set([
     "PatientJourney",

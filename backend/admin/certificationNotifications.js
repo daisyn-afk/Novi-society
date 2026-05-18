@@ -107,7 +107,7 @@ async function resolveNotificationRecipient({ providerId, providerEmail }) {
   }
 }
 
-async function insertNotification(valuesByColumn) {
+export async function insertAppNotification(valuesByColumn) {
   const { tableName, columns } = await getNotificationTableColumnsByName();
   if (!tableName || !columns || columns.size === 0) return false;
   const insertColumns = Object.keys(valuesByColumn).filter((col) => columns.has(col));
@@ -197,7 +197,7 @@ export async function notifyAdminsOfPendingCourseCertIssuance({
   const linkPage = `AdminLicenses?tab=certifications&focus_type=awaiting_issue&enrollment_id=${enrollmentParam}&course_id=${courseParam}`;
   const message = `${providerName || providerEmail || "A provider"} completed ${courseTitle || "a course"} and is ready for certificate issuance.`;
   for (const admin of admins) {
-    await insertNotification({
+    await insertAppNotification({
       user_id: String(admin?.auth_user_id || "").trim() || null,
       user_email: String(admin?.email || "").trim().toLowerCase() || null,
       type: "cert_issue_pending",
@@ -213,7 +213,7 @@ export async function createCourseCertificateIssuedNotification({
   certificationName
 }) {
   const recipient = await resolveNotificationRecipient({ providerId, providerEmail });
-  return insertNotification({
+  return insertAppNotification({
     user_id: recipient.userId || null,
     user_email: recipient.userEmail || null,
     type: "cert_awarded",
@@ -266,6 +266,155 @@ export async function sendCourseCertificateIssuedEmail({
     console.error("[certifications] course certificate email request failed:", error);
     return false;
   }
+}
+
+/** Logged-in MDs: Login sends them to `next`. Others: sign in, then same destination. */
+function buildMdEmailOpenUrl(targetPath = "/MDDashboard") {
+  const base = String(appBaseUrl || "").replace(/\/+$/, "");
+  const path = String(targetPath || "/MDDashboard").trim();
+  const normalized = path.startsWith("/") ? path : `/${path}`;
+  return `${base}/login?next=${encodeURIComponent(normalized)}`;
+}
+
+function buildMdAutoAssignmentEmailHtml({ mdFirstName, providerLabel, serviceLabel, openUrl }) {
+  const safeMd = escapeHtml(mdFirstName || "Doctor");
+  const safeProvider = escapeHtml(providerLabel || "A provider");
+  const safeService = escapeHtml(serviceLabel || "a service");
+  const safeOpenUrl = escapeHtml(openUrl || buildMdEmailOpenUrl());
+
+  return `
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+<body style="margin:0;padding:0;background:#f5f3ef;font-family:'DM Sans',Helvetica,Arial,sans-serif">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f3ef;padding:40px 0">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
+        <tr><td style="background:linear-gradient(135deg,#2D6B7F 0%,#7B8EC8 55%,#C8E63C 100%);padding:36px 40px;text-align:center;border-radius:16px 16px 0 0">
+          <img src="${noviEmailLogoUrl}" alt="NOVI Society" style="width:160px;height:auto" />
+        </td></tr>
+        <tr><td style="background:#fff;padding:48px 40px;border-radius:0 0 16px 16px">
+          <p style="margin:0 0 24px;font-size:16px;color:#374151;line-height:1.6">Hi Dr. ${safeMd},</p>
+          <p style="margin:0 0 24px;font-size:16px;color:#374151;line-height:1.6">Welcome to NOVI Society — you have been <strong>auto-assigned</strong> as the supervising medical director for a new provider coverage request.</p>
+          <div style="background:#f9f8f6;border-radius:12px;padding:24px;margin-bottom:32px;border:1px solid rgba(0,0,0,0.07)">
+            <p style="margin:0 0 12px;font-size:13px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#2D6B7F">Request Details</p>
+            <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+              <tr><td style="padding:6px 0;color:#6b7280;font-size:14px;width:120px"><strong>Provider</strong></td><td style="padding:6px 0;font-size:14px;color:#111827">${safeProvider}</td></tr>
+              <tr><td style="padding:6px 0;color:#6b7280;font-size:14px"><strong>Service</strong></td><td style="padding:6px 0;font-size:14px;color:#111827">${safeService}</td></tr>
+            </table>
+          </div>
+          <p style="margin:0 0 24px;font-size:15px;color:#374151;line-height:1.6">
+            Please log in to NOVI and <strong>approve or decline</strong> this supervision request under <strong>Provider Supervision</strong>.
+          </p>
+          ${safeOpenUrl ? `<p style="margin:0 0 32px"><a href="${safeOpenUrl}" style="display:inline-block;background:#2D6B7F;color:#fff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:600;font-size:14px">Open NOVI</a></p>` : ""}
+          <p style="margin:0;font-size:15px;color:#374151">Best,<br><strong>The NOVI Society Team</strong></p>
+        </td></tr>
+        <tr><td style="padding:24px 40px;text-align:center">
+          <p style="margin:0;font-size:12px;color:#9ca3af">© ${new Date().getFullYear()} NOVI Society LLC · 8109 Meadow Valley Dr, McKinney, TX 75071</p>
+          <p style="margin:4px 0 0;font-size:12px;color:#9ca3af"><a href="mailto:support@novisociety.com" style="color:#9ca3af">support@novisociety.com</a></p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+}
+
+async function resolveMedicalDirectorEmail(medicalDirectorId, fallbackEmail) {
+  const direct = String(fallbackEmail || "").trim().toLowerCase();
+  if (direct) return { email: direct, full_name: null, first_name: null };
+  const mdId = String(medicalDirectorId || "").trim();
+  if (!mdId) return { email: null, full_name: null, first_name: null };
+  try {
+    const { rows } = await query(
+      `select email, full_name, first_name
+       from public.users
+       where auth_user_id::text = $1
+          or id::text = $1
+       limit 1`,
+      [mdId]
+    );
+    return {
+      email: String(rows?.[0]?.email || "").trim().toLowerCase() || null,
+      full_name: String(rows?.[0]?.full_name || "").trim() || null,
+      first_name: String(rows?.[0]?.first_name || "").trim() || null,
+    };
+  } catch {
+    return { email: null, full_name: null, first_name: null };
+  }
+}
+
+/**
+ * In-app notification + email when an MD is auto-assigned to a provider coverage request.
+ */
+export async function notifyMdOfAutoAssignment({
+  medicalDirectorId,
+  medicalDirectorEmail,
+  medicalDirectorName,
+  providerName,
+  providerEmail,
+  serviceTypeName,
+}) {
+  const mdId = String(medicalDirectorId || "").trim();
+  const resolved = await resolveMedicalDirectorEmail(mdId, medicalDirectorEmail);
+  const mdEmail = resolved?.email || String(medicalDirectorEmail || "").trim().toLowerCase() || null;
+  const providerLabel = String(providerName || providerEmail || "A provider").trim();
+  const serviceLabel = String(serviceTypeName || "a service").trim();
+  const msg = `${providerLabel} requested NOVI Board MD coverage for ${serviceLabel}. Please approve or decline in Provider Supervision.`;
+
+  const notified = await insertAppNotification({
+    user_id: mdId || null,
+    user_email: mdEmail || null,
+    type: "md_coverage_pending",
+    message: msg,
+    link_page: "MDProviderRelationships",
+  });
+
+  let emailed = false;
+  if (mdEmail && resendApiKey) {
+    const openUrl = buildMdEmailOpenUrl("/MDDashboard");
+    const mdFirst =
+      resolved?.first_name ||
+      String(medicalDirectorName || resolved?.full_name || "")
+        .trim()
+        .split(/\s+/)[0] ||
+      "there";
+    const html = buildMdAutoAssignmentEmailHtml({
+      mdFirstName: mdFirst,
+      providerLabel,
+      serviceLabel,
+      openUrl,
+    });
+    try {
+      const result = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${resendApiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          from: resendFromEmail,
+          to: [mdEmail],
+          subject: `NOVI: New supervision request — ${serviceLabel}`,
+          html,
+        }),
+      });
+      emailed = result.ok;
+      if (!result.ok) {
+        const bodyText = await result.text().catch(() => "");
+        // eslint-disable-next-line no-console
+        console.error("[md-assignment] MD notification email failed:", result.status, bodyText);
+      }
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error("[md-assignment] MD notification email request failed:", error);
+    }
+  } else if (!mdEmail) {
+    // eslint-disable-next-line no-console
+    console.warn("[md-assignment] MD notification email skipped: no email for MD", mdId);
+  }
+
+  return { notified, emailed, mdEmail };
 }
 
 export async function notifyProviderOfCourseCertificateIssuance(cert) {
