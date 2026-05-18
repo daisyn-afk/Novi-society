@@ -34,7 +34,7 @@ export default function ProviderPractice() {
   const [form, setForm] = useState({
     practice_name: "", bio: "", city: "", state: "", phone: "",
     consultation_fee: "", accepts_new_patients: true, avatar_url: "",
-    instagram: "", website: "",
+    instagram_handle: "", website_url: "",
   });
   const [initialized, setInitialized] = useState(false);
 
@@ -72,8 +72,8 @@ export default function ProviderPractice() {
         consultation_fee: me.consultation_fee || "",
         accepts_new_patients: me.accepts_new_patients ?? true,
         avatar_url: me.avatar_url || "",
-        instagram: me.instagram || "",
-        website: me.website || "",
+        instagram_handle: me.instagram_handle || "",
+        website_url: me.website_url || "",
       });
       setInitialized(true);
     }
