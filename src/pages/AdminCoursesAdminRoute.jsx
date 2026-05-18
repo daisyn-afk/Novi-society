@@ -562,7 +562,9 @@ export default function Admincourses() {
                   <div className="flex items-center gap-1.5 mb-1">
                     <Calendar className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#DA6A63" }} />
                     <span className="text-xs font-bold uppercase tracking-wider" style={{ color: "#DA6A63" }}>Scheduled</span>
-                    {tmpl && <span className="text-xs" style={{ color: "#b0b8cc" }}>from &ldquo;{tmpl.title}&rdquo;</span>}
+                    {(c.template_title || (tmpl && tmpl.title)) && (
+                      <span className="text-xs" style={{ color: "#b0b8cc" }}>from &ldquo;{c.template_title || tmpl.title}&rdquo;</span>
+                    )}
                   </div>
                   <h3 className="font-semibold text-sm leading-tight mb-2" style={{ color: "#1a2540" }}>{c.title}</h3>
                   <div className="flex items-center gap-3 mb-3 text-sm">

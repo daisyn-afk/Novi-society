@@ -99,12 +99,17 @@ function nonempty(v) {
 
 /**
  * Scheduled instances copy template fields at creation time; merge so template edits
- * (title, image, description, etc.) show on the landing page and public lists.
+ * (image, description, etc.) show on the landing page and public lists.
+ *
+ * Title priority: the scheduled course's own title always wins — it is the admin-entered
+ * value. Fall back to the template title only when the scheduled row has no title stored.
+ * This mirrors the price/location logic below.
  */
 function mergeScheduledWithTemplate(scheduled, template) {
   return {
     ...scheduled,
-    title: nonempty(template.title) ? template.title : scheduled.title,
+    title: nonempty(scheduled.title) ? scheduled.title : template.title,
+    template_title: template.title,
     description: nonempty(template.description) ? template.description : scheduled.description,
     category: nonempty(template.category) ? template.category : scheduled.category,
     level: nonempty(template.level) ? template.level : scheduled.level,
