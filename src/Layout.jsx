@@ -43,7 +43,6 @@ const navByRole = {
   ],
   provider: [
     { label: "Dashboard", icon: LayoutDashboard, page: "ProviderDashboard" },
-    { label: "Locked Dashboard (Preview)", icon: Lock, page: "ProviderDashboardLockedPreview" },
     { label: "Courses & Enrollments", icon: BookOpen, page: "ProviderEnrollments" },
     { label: "Class Attendance", icon: Clock, page: "ProviderCodeRedemption" },
     { label: "My Credentials & Coverage", icon: ShieldCheck, page: "ProviderCredentialsCoverage" },
