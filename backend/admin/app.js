@@ -21,6 +21,8 @@ const { promoCodesRouter } = await import("./promo-codes/routes.js");
 const { authRouter } = await import("./auth/routes.js");
 const { serviceTypesCatalogRouter } = await import("./service-types-catalog/routes.js");
 const { preOrdersRouter } = await import("./pre-orders/routes.js");
+const { coursePaymentsRouter } = await import("./course-payments/routes.js");
+const { migratedUsersRouter } = await import("./migrated-users/routes.js");
 const { trainerPrepRouter } = await import("./trainer-prep/routes.js");
 const { enrollmentsRouter } = await import("./enrollments/routes.js");
 const { usersRouter } = await import("./users/routes.js");
@@ -59,6 +61,8 @@ export function createAdminApp() {
   app.use("/admin/auth", authRouter);
   app.use("/admin/service-types", serviceTypesCatalogRouter);
   app.use("/admin/pre-orders", preOrdersRouter);
+  app.use("/admin/course-payments", coursePaymentsRouter);
+  app.use("/admin/migrated-users", migratedUsersRouter);
   app.use("/admin/trainer-prep", trainerPrepRouter);
   app.use("/admin/enrollments", enrollmentsRouter);
   app.use("/admin/users", usersRouter);

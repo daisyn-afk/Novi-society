@@ -5,12 +5,12 @@
     <link rel="icon" type="image/svg+xml" href="https://base44.com/logo_v2.svg">
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="manifest" href="/manifest.json" />
-    <title>Base44 APP</title>
-    <meta property="og:title" content="Base44 APP">
-  <meta name="twitter:title" content="Base44 APP">
-  <meta name="description" content="Lovable Generated Project">
-  <meta property="og:description" content="Lovable Generated Project">
-  <meta name="twitter:description" content="Lovable Generated Project">
+    <title>NOVI Society</title>
+    <meta property="og:title" content="NOVI Society">
+  <meta name="twitter:title" content="NOVI Society">
+  <meta name="description" content="NOVI Society">
+  <meta property="og:description" content="NOVI Society">
+  <meta name="twitter:description" content="NOVI Society">
   <meta property="og:image" content="https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/a53a80a1-e872-48fe-9ea3-8b2486179e17/id-preview-8ba3bc60--0c954e04-91a3-4d58-8f61-fc6b4f6ee30b.lovable.app-1774955352071.png">
   <meta name="twitter:image" content="https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/a53a80a1-e872-48fe-9ea3-8b2486179e17/id-preview-8ba3bc60--0c954e04-91a3-4d58-8f61-fc6b4f6ee30b.lovable.app-1774955352071.png">
   <meta name="twitter:card" content="summary_large_image">
@@ -18,13 +18,57 @@
 </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-    <!--
-    <script
-      src="https://widgets.leadconnectorhq.com/loader.js"
-      data-resources-url="https://widgets.leadconnectorhq.com/chat-widget/loader.js"
-      data-widget-id="69c574e3bf76e361d34938d4">
+    <script>
+      (function () {
+        function bootApp() {
+          var s = document.createElement("script");
+          s.type = "module";
+          s.src = "/src/main.jsx";
+          document.body.appendChild(s);
+        }
+
+        var hash = window.location.hash || "";
+        if (!hash || hash.length < 2) {
+          bootApp();
+          return;
+        }
+        if (window.location.pathname === "/set-password") {
+          bootApp();
+          return;
+        }
+
+        var params = new URLSearchParams(hash.charAt(0) === "#" ? hash.slice(1) : hash);
+        var err = params.get("error");
+        var errorCode = params.get("error_code");
+        var type = (params.get("type") || "").toLowerCase();
+        var accessToken = params.get("access_token");
+        var hasError = !!(err || errorCode);
+        var hasRecovery = (type === "recovery" || type === "invite") && accessToken;
+
+        if (!hasError && !hasRecovery) {
+          bootApp();
+          return;
+        }
+
+        var root = document.getElementById("root");
+        if (root) {
+          root.innerHTML = '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f5f3ef;font-family:DM Sans,Helvetica,Arial,sans-serif;color:#1e2535">Opening password reset…</div>';
+        }
+
+        if (hasError) {
+          var desc = params.get("error_description") || "";
+          var qs = new URLSearchParams();
+          qs.set("auth_error", "1");
+          if (err) qs.set("error", err);
+          if (errorCode) qs.set("error_code", errorCode);
+          if (desc) qs.set("error_description", desc);
+          window.location.replace(window.location.origin + "/set-password?" + qs.toString());
+          return;
+        }
+
+        try { sessionStorage.setItem("novi_recovery_hash", hash); } catch (e) {}
+        window.location.replace(window.location.origin + "/set-password?auth_recovery=1");
+      })();
     </script>
-    -->
   </body>
 </html>
