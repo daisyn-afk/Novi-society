@@ -26,6 +26,20 @@ function tierRank(tier) {
   return TIER_ORDER.indexOf(tier);
 }
 
+/** Icon stays vertically centered when label wraps on narrow screens. */
+function LockCtaLabel({ icon: Icon, children }) {
+  return (
+    <span className="inline-grid max-w-full grid-cols-[1.125rem_minmax(0,1fr)] items-center gap-x-2.5">
+      <Icon
+        className="col-start-1 row-start-1 h-4 w-4 justify-self-center self-center"
+        style={{ gridRow: "1 / -1" }}
+        aria-hidden
+      />
+      <span className="col-start-2 min-w-0 text-center text-sm leading-snug">{children}</span>
+    </span>
+  );
+}
+
 const FEATURE_META = {
   dashboard: {
     title: "Provider Dashboard",
@@ -163,8 +177,11 @@ function LockCTA({ currentStatus }) {
   if (currentStatus === "none") {
     return (
       <Link to={createPageUrl("ProviderBasicOnboarding")}>
-        <button className="w-full py-3.5 rounded-2xl font-bold text-sm text-white flex items-center justify-center gap-2 transition-all hover:opacity-90" style={{ background: "linear-gradient(135deg, #FA6F30, #DA6A63)" }}>
-          Apply Now — It Takes 2 Minutes <ArrowRight className="w-4 h-4" />
+        <button className="w-full py-3.5 px-4 rounded-2xl font-bold text-sm text-white flex items-center justify-center transition-all hover:opacity-90" style={{ background: "linear-gradient(135deg, #FA6F30, #DA6A63)" }}>
+          <span className="inline-flex items-center justify-center gap-2 max-w-full text-center leading-snug">
+            <span>Apply Now — It Takes 2 Minutes</span>
+            <ArrowRight className="h-4 w-4 shrink-0" aria-hidden />
+          </span>
         </button>
       </Link>
     );
@@ -181,13 +198,13 @@ function LockCTA({ currentStatus }) {
     return (
       <div className="space-y-3">
         <Link to={createPageUrl("ProviderEnrollments")} className="block">
-          <button className="w-full py-3.5 rounded-2xl font-bold text-sm text-white flex items-center justify-center gap-2 transition-all hover:opacity-90" style={{ background: "linear-gradient(135deg, #FA6F30, #DA6A63)" }}>
-            <BookOpen className="w-4 h-4" /> Browse & Enroll in NOVI Courses
+          <button className="w-full py-3.5 px-4 rounded-2xl font-bold text-sm text-white flex items-center justify-center transition-all hover:opacity-90" style={{ background: "linear-gradient(135deg, #FA6F30, #DA6A63)" }}>
+            <LockCtaLabel icon={BookOpen}>Browse & Enroll in NOVI Courses</LockCtaLabel>
           </button>
         </Link>
         <Link to={createPageUrl("ProviderCredentialsCoverage") + "?tab=certifications"} className="block">
-          <button className="w-full py-2.5 rounded-2xl font-semibold text-sm flex items-center justify-center gap-2 transition-all hover:opacity-80" style={{ background: "rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.7)", border: "1px solid rgba(255,255,255,0.2)" }}>
-            <Award className="w-4 h-4" /> Upload External Certification Instead
+          <button className="w-full py-3 px-4 rounded-2xl font-semibold text-sm flex items-center justify-center transition-all hover:opacity-80" style={{ background: "rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.7)", border: "1px solid rgba(255,255,255,0.2)" }}>
+            <LockCtaLabel icon={Award}>Upload External Certification Instead</LockCtaLabel>
           </button>
         </Link>
       </div>
@@ -196,8 +213,8 @@ function LockCTA({ currentStatus }) {
   if (currentStatus === "md_eligible") {
     return (
       <Link to={createPageUrl("ProviderCredentialsCoverage") + "?tab=coverage"}>
-        <button className="w-full py-3.5 rounded-2xl font-bold text-sm text-white flex items-center justify-center gap-2 transition-all hover:opacity-90" style={{ background: "linear-gradient(135deg, #C8E63C, #a8c420)", color: "#1a2a00" }}>
-          <Zap className="w-4 h-4" /> Apply for MD Board Coverage Now
+        <button className="w-full py-3.5 px-4 rounded-2xl font-bold text-sm text-white flex items-center justify-center transition-all hover:opacity-90" style={{ background: "linear-gradient(135deg, #C8E63C, #a8c420)", color: "#1a2a00" }}>
+          <LockCtaLabel icon={Zap}>Apply for MD Board Coverage Now</LockCtaLabel>
         </button>
       </Link>
     );
@@ -226,21 +243,31 @@ export default function ProviderSalesLock({ feature, applicationStatus, required
   }
 
   return (
-    <div className="relative min-h-screen">
-      {/* Blurred real content in background */}
-      <div className="pointer-events-none select-none" style={{ filter: "blur(6px)", opacity: 0.18, userSelect: "none" }}>
+    <>
+      {/* Keep page out of layout flow so the lock panel does not inherit a tall scroll height on mobile */}
+      <div className="max-h-0 overflow-hidden opacity-0 pointer-events-none" aria-hidden>
         {children}
       </div>
 
-      {/* Overlay */}
-      <div className="absolute inset-0 flex flex-col items-center justify-start pt-12 px-4" style={{ background: "linear-gradient(to bottom, rgba(30,37,53,0.7) 0%, rgba(30,37,53,0.55) 100%)" }}>
-        <div className="w-full max-w-lg">
-
+      {/* Full-viewport lock panel (mobile: edge-to-edge; desktop: main column only) */}
+      <div
+        className="fixed inset-0 z-[35] flex flex-col overflow-y-auto overscroll-contain px-4 pt-14 pb-[max(2rem,env(safe-area-inset-bottom))] lg:left-56 lg:top-14 lg:right-0 lg:bottom-0 lg:inset-auto"
+        style={{
+          background: "linear-gradient(180deg, rgba(30,37,53,0.92) 0%, rgba(30,37,53,0.88) 100%)",
+        }}
+      >
+        <div className="w-full max-w-lg mx-auto py-4">
           <LockMessage currentStatus={applicationStatus} feature={feature} />
 
-          {/* Feature card */}
-          <div className="rounded-3xl overflow-hidden" style={{ background: "rgba(255,255,255,0.14)", backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)", border: "1px solid rgba(255,255,255,0.22)" }}>
-            {/* Header */}
+          <div
+            className="rounded-3xl overflow-hidden"
+            style={{
+              background: "rgba(255,255,255,0.14)",
+              backdropFilter: "blur(20px)",
+              WebkitBackdropFilter: "blur(20px)",
+              border: "1px solid rgba(255,255,255,0.22)",
+            }}
+          >
             <div className="px-6 pt-6 pb-4 flex items-center gap-4" style={{ borderBottom: "1px solid rgba(255,255,255,0.12)" }}>
               <div className="w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0" style={{ background: `${meta.color}22` }}>
                 <Icon className="w-6 h-6" style={{ color: meta.color }} />
@@ -251,9 +278,10 @@ export default function ProviderSalesLock({ feature, applicationStatus, required
               </div>
             </div>
 
-            {/* What you unlock */}
             <div className="px-6 py-5 space-y-3">
-              <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: "rgba(255,255,255,0.4)" }}>What you'll get</p>
+              <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: "rgba(255,255,255,0.4)" }}>
+                What you&apos;ll get
+              </p>
               {meta.bullets.map((b, i) => (
                 <div key={i} className="flex items-start gap-3">
                   <CheckCircle2 className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: meta.color }} />
@@ -262,18 +290,16 @@ export default function ProviderSalesLock({ feature, applicationStatus, required
               ))}
             </div>
 
-            {/* CTA */}
             <div className="px-6 pb-6">
               <LockCTA currentStatus={applicationStatus} />
             </div>
           </div>
 
-          {/* Footer trust note */}
-          <p className="text-center text-xs mt-5" style={{ color: "rgba(255,255,255,0.3)" }}>
+          <p className="text-center text-xs mt-5 mb-2" style={{ color: "rgba(255,255,255,0.3)" }}>
             NOVI reviews all applications within 1–2 business days
           </p>
         </div>
       </div>
-    </div>
+    </>
   );
 }

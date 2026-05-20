@@ -22,7 +22,8 @@ const LICENSE_TYPES = ["RN", "NP", "PA", "MD", "DO", "esthetician", "other"];
 const US_ZIP_REGEX = /^\d{5}(-\d{4})?$/;
 
 const labelStyle = { color: "rgba(30,37,53,0.6)" };
-const inputClass = "bg-white/80 border-slate-200";
+const inputClass = "w-full min-w-0 max-w-full box-border bg-white/80 border-slate-200";
+const dateInputClass = `${inputClass} onboarding-date-input`;
 
 export default function ProviderBasicOnboarding() {
   const navigate = useNavigate();
@@ -213,7 +214,19 @@ export default function ProviderBasicOnboarding() {
         backgroundAttachment: "fixed",
       }}
     >
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&display=swap');`}</style>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&display=swap');
+        .onboarding-date-input {
+          width: 100%;
+          min-width: 0;
+          max-width: 100%;
+          box-sizing: border-box;
+        }
+        .onboarding-date-input::-webkit-date-and-time-value {
+          min-width: 0;
+          text-align: left;
+        }
+      `}</style>
 
       {/* Logo */}
       <div className="flex items-baseline gap-1.5 mb-8">
@@ -221,7 +234,7 @@ export default function ProviderBasicOnboarding() {
         <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: "0.22em", textTransform: "uppercase", color: "rgba(30,37,53,0.5)" }}>Society</span>
       </div>
 
-      <div className="w-full max-w-2xl">
+      <div className="w-full max-w-2xl min-w-0">
         <div className="text-center mb-8">
           <p className="text-xs font-bold uppercase tracking-widest mb-2" style={{ color: "#DA6A63" }}>Provider Registration</p>
           <h1 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 28, color: "#1e2535", fontStyle: "italic", lineHeight: 1.2 }}>
@@ -245,13 +258,13 @@ export default function ProviderBasicOnboarding() {
           </div>
         )}
 
-        <div className="rounded-2xl overflow-hidden mb-6" style={{ background: "rgba(255,255,255,0.7)", border: "1px solid rgba(30,37,53,0.1)" }}>
-          <div className="px-5 pt-5 pb-4 space-y-5">
+        <div className="rounded-2xl overflow-hidden mb-6 min-w-0" style={{ background: "rgba(255,255,255,0.7)", border: "1px solid rgba(30,37,53,0.1)" }}>
+          <div className="px-4 sm:px-5 pt-5 pb-4 space-y-5 min-w-0 overflow-x-hidden">
 
             {/* Personal Info */}
             <div>
               <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: "rgba(30,37,53,0.5)" }}>Personal Information</p>
-              <div>
+              <div className="min-w-0">
                 <Label className="text-xs mb-1.5 block font-semibold uppercase tracking-wide" style={labelStyle}>Date of Birth (Must be 18+) *</Label>
                 <Input
                   type="date"
@@ -261,7 +274,7 @@ export default function ProviderBasicOnboarding() {
                     setForm(f => ({ ...f, dob: value }));
                     setFieldErrors(prev => ({ ...prev, dob: "" }));
                   }}
-                  className={inputClass}
+                  className={dateInputClass}
                 />
                 {fieldErrors.dob && <p className="text-xs mt-1 text-red-600">{fieldErrors.dob}</p>}
               </div>
@@ -294,8 +307,8 @@ export default function ProviderBasicOnboarding() {
                     className={inputClass}
                   />
                 </div>
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="col-span-2">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="min-w-0 sm:col-span-2">
                     <Label className="text-xs mb-1.5 block font-semibold uppercase tracking-wide" style={labelStyle}>City *</Label>
                     <Input
                       value={form.city}
@@ -309,7 +322,7 @@ export default function ProviderBasicOnboarding() {
                     />
                     {fieldErrors.city && <p className="text-xs mt-1 text-red-600">{fieldErrors.city}</p>}
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <Label className="text-xs mb-1.5 block font-semibold uppercase tracking-wide" style={labelStyle}>State *</Label>
                     <Input
                       value={form.state}
@@ -325,8 +338,8 @@ export default function ProviderBasicOnboarding() {
                     {fieldErrors.state && <p className="text-xs mt-1 text-red-600">{fieldErrors.state}</p>}
                   </div>
                 </div>
-                <div className="grid grid-cols-3 gap-3">
-                  <div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="min-w-0 sm:max-w-[12rem]">
                     <Label className="text-xs mb-1.5 block font-semibold uppercase tracking-wide" style={labelStyle}>ZIP *</Label>
                     <Input
                       value={form.zip}
@@ -348,14 +361,14 @@ export default function ProviderBasicOnboarding() {
             <div>
               <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: "rgba(30,37,53,0.5)" }}>Professional License</p>
               <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="min-w-0">
                     <Label className="text-xs mb-1.5 block font-semibold uppercase tracking-wide" style={labelStyle}>License Type *</Label>
                     <Select value={form.license_type} onValueChange={v => {
                       setForm(f => ({ ...f, license_type: v }));
                       setFieldErrors(prev => ({ ...prev, license_type: "" }));
                     }}>
-                      <SelectTrigger className={inputClass}>
+                      <SelectTrigger className={`${inputClass} w-full`}>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -364,7 +377,7 @@ export default function ProviderBasicOnboarding() {
                     </Select>
                     {fieldErrors.license_type && <p className="text-xs mt-1 text-red-600">{fieldErrors.license_type}</p>}
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <Label className="text-xs mb-1.5 block font-semibold uppercase tracking-wide" style={labelStyle}>License Number *</Label>
                     <Input
                       value={form.license_number}
@@ -379,8 +392,8 @@ export default function ProviderBasicOnboarding() {
                     {fieldErrors.license_number && <p className="text-xs mt-1 text-red-600">{fieldErrors.license_number}</p>}
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="min-w-0 sm:max-w-[8rem]">
                     <Label className="text-xs mb-1.5 block font-semibold uppercase tracking-wide" style={labelStyle}>
                       Issuing State <span className="opacity-50 font-normal normal-case">(optional)</span>
                     </Label>
@@ -392,7 +405,7 @@ export default function ProviderBasicOnboarding() {
                       className={inputClass}
                     />
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <Label className="text-xs mb-1.5 block font-semibold uppercase tracking-wide" style={labelStyle}>
                       Expiration Date <span className="opacity-50 font-normal normal-case">(optional)</span>
                     </Label>
@@ -400,7 +413,7 @@ export default function ProviderBasicOnboarding() {
                       type="date"
                       value={form.expiration_date}
                       onChange={e => setForm(f => ({ ...f, expiration_date: e.target.value }))}
-                      className={inputClass}
+                      className={dateInputClass}
                     />
                   </div>
                 </div>

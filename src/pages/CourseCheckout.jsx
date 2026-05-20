@@ -10,6 +10,7 @@ import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { courseCheckoutApi } from "@/api/courseCheckoutApi";
 import { redirectToStripeCheckout } from "@/lib/redirectToStripeCheckout";
+import { CHECKOUT_RETURN_PROVIDER, stashCheckoutReturnTo } from "@/lib/checkoutReturnPath";
 
 export default function CourseCheckout() {
   const params = new URLSearchParams(window.location.search);
@@ -40,7 +41,9 @@ export default function CourseCheckout() {
 
   const checkout = useMutation({
     mutationFn: async () => {
+      stashCheckoutReturnTo(CHECKOUT_RETURN_PROVIDER);
       const response = await courseCheckoutApi.createCheckout({
+        checkout_return_to: CHECKOUT_RETURN_PROVIDER,
         course_id: courseId,
         course_date: selectedDate || null,
         customer_name: me?.full_name || "",

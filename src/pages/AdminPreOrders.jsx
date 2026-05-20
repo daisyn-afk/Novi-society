@@ -4,7 +4,7 @@ import { base44 } from "@/api/base44Client";
 import { coursePaymentsAdminApi } from "@/api/coursePaymentsAdminApi";
 import { migratedUsersAdminApi } from "@/api/migratedUsersAdminApi";
 import { PasswordSetupStatusBadge } from "@/components/admin/PasswordSetupTracking";
-import { isPasswordSetupComplete } from "@/lib/passwordSetupStatus";
+import { isPasswordSetupComplete, SHOW_ADMIN_PASSWORD_RESET_UI } from "@/lib/passwordSetupStatus";
 import { CheckCircle2, XCircle, Clock, Mail, ChevronDown, ChevronUp, Send, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -89,20 +89,35 @@ function PreOrderRow({ order, onApprove, onReject, onSendPasswordReset, isProces
 
   const isPending = order.status === "pending_approval";
   const isPaid = PAID_STATUSES.has(order.status);
+  const canExpand = !isPaid;
   const passwordAlreadySet = isPasswordSetupComplete(order.password_setup_status);
 
   return (
     <div className="rounded-2xl overflow-hidden mb-3" style={{ background: "rgba(255,255,255,0.7)", border: "1px solid rgba(30,37,53,0.1)" }}>
       {/* Row header */}
       <div
-        className="flex items-center gap-4 px-5 py-4 cursor-pointer hover:bg-white/5 transition-colors"
-        onClick={() => setExpanded(e => !e)}
+        className={`flex items-center gap-4 px-5 py-4${canExpand ? " cursor-pointer hover:bg-white/5 transition-colors" : ""}`}
+        onClick={canExpand ? () => setExpanded((e) => !e) : undefined}
+        role={canExpand ? "button" : undefined}
+        tabIndex={canExpand ? 0 : undefined}
+        onKeyDown={
+          canExpand
+            ? (e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setExpanded((v) => !v);
+                }
+              }
+            : undefined
+        }
       >
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-3 mb-1">
             <p className="font-semibold text-sm truncate" style={{ color: "#1e2535" }}>{order.customer_name}</p>
             <StatusBadge status={order.status} />
-            {isPaid ? <PasswordSetupStatusBadge status={order.password_setup_status} showNotSent /> : null}
+            {SHOW_ADMIN_PASSWORD_RESET_UI && isPaid ? (
+              <PasswordSetupStatusBadge status={order.password_setup_status} showNotSent />
+            ) : null}
             {isPending && (
               <span style={{ fontSize: 9, fontWeight: 700, background: "rgba(250,111,48,0.25)", color: "#FA6F30", borderRadius: 20, padding: "2px 8px", border: "1px solid rgba(250,111,48,0.4)" }}>
                 ACTION NEEDED
@@ -110,8 +125,16 @@ function PreOrderRow({ order, onApprove, onReject, onSendPasswordReset, isProces
             )}
           </div>
           <p className="text-xs truncate" style={{ color: "rgba(30,37,53,0.55)" }}>
-            {order.customer_email} · {order.order_type === "course" ? order.course_title : order.service_name}
-            {order.course_date ? ` · ${new Date(order.course_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}` : ""}
+            {isPaid
+              ? order.customer_email
+              : (
+                <>
+                  {order.customer_email} · {order.order_type === "course" ? order.course_title : order.service_name}
+                  {order.course_date
+                    ? ` · ${new Date(order.course_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`
+                    : ""}
+                </>
+              )}
           </p>
         </div>
         <div className="flex items-center gap-3 flex-shrink-0">
@@ -119,12 +142,16 @@ function PreOrderRow({ order, onApprove, onReject, onSendPasswordReset, isProces
           <span className="text-xs" style={{ color: "rgba(30,37,53,0.4)" }}>
             {order.created_date ? format(new Date(order.created_date), "MMM d, yyyy") : ""}
           </span>
-          {expanded ? <ChevronUp className="w-4 h-4" style={{ color: "rgba(30,37,53,0.4)" }} /> : <ChevronDown className="w-4 h-4" style={{ color: "rgba(30,37,53,0.4)" }} />}
+          {canExpand
+            ? expanded
+              ? <ChevronUp className="w-4 h-4" style={{ color: "rgba(30,37,53,0.4)" }} />
+              : <ChevronDown className="w-4 h-4" style={{ color: "rgba(30,37,53,0.4)" }} />
+            : null}
         </div>
       </div>
 
-      {/* Expanded detail */}
-      {expanded && (
+      {/* Expanded detail (not shown for paid enrollments) */}
+      {canExpand && expanded && (
         <div className="px-5 pb-5 border-t" style={{ borderColor: "rgba(30,37,53,0.08)" }}>
           <div className="grid sm:grid-cols-3 gap-4 mt-4 mb-5">
             <div>
@@ -245,7 +272,7 @@ function PreOrderRow({ order, onApprove, onReject, onSendPasswordReset, isProces
             </Button>
           )}
 
-          {isPaid && order.customer_email && (
+          {SHOW_ADMIN_PASSWORD_RESET_UI && isPaid && order.customer_email && (
             <div
               className="flex flex-wrap items-center gap-3 mt-1"
               onClick={(e) => e.stopPropagation()}
@@ -338,29 +365,33 @@ function CoursePaymentRow({ row, onSendPasswordReset, isSendingPasswordReset }) 
             <>Pending</>
           )}
         </span>
-        <PasswordSetupStatusBadge status={row.password_setup_status} showNotSent />
-        {passwordAlreadySet ? (
-          <span className="text-[11px] font-semibold whitespace-nowrap" style={{ color: "#2d5016" }}>
-            Password set
-          </span>
-        ) : (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={isSendingPasswordReset || !row.customer_email}
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              onSendPasswordReset(row);
-            }}
-            className="h-8 px-3 text-xs font-semibold rounded-full shrink-0"
-            style={{ borderColor: "rgba(45,107,127,0.35)", color: "#2D6B7F", background: "rgba(255,255,255,0.85)" }}
-          >
-            <Mail className="w-3.5 h-3.5 mr-1" />
-            {isSendingPasswordReset ? "Sending…" : "Send Email"}
-          </Button>
-        )}
+        {SHOW_ADMIN_PASSWORD_RESET_UI ? (
+          <>
+            <PasswordSetupStatusBadge status={row.password_setup_status} showNotSent />
+            {passwordAlreadySet ? (
+              <span className="text-[11px] font-semibold whitespace-nowrap" style={{ color: "#2d5016" }}>
+                Password set
+              </span>
+            ) : (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={isSendingPasswordReset || !row.customer_email}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onSendPasswordReset(row);
+                }}
+                className="h-8 px-3 text-xs font-semibold rounded-full shrink-0"
+                style={{ borderColor: "rgba(45,107,127,0.35)", color: "#2D6B7F", background: "rgba(255,255,255,0.85)" }}
+              >
+                <Mail className="w-3.5 h-3.5 mr-1" />
+                {isSendingPasswordReset ? "Sending…" : "Send Email"}
+              </Button>
+            )}
+          </>
+        ) : null}
       </div>
     </div>
   );

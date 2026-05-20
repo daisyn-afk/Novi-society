@@ -3,6 +3,7 @@ import {
   createCourseCheckout,
   createServicePreOrder,
   getPreOrder,
+  enrichPreOrderWithReturnContext,
   validateCoursePromoCode
 } from "./service.js";
 
@@ -79,7 +80,8 @@ checkoutRouter.get("/pre-order", async (req, res, next) => {
       sessionId: req.query.session_id || null
     });
     if (!data) return res.status(404).json({ error: "Pre-order not found." });
-    return res.json(data);
+    const enriched = await enrichPreOrderWithReturnContext(data, req.query.session_id || null);
+    return res.json(enriched);
   } catch (error) {
     return next(error);
   }
