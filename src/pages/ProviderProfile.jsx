@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Save, Camera, CheckCircle, Globe, Instagram, XCircle } from "lucide-react";
+import { isValidUsPhone, usPhoneValidationError } from "@/lib/phoneValidation";
 
 export default function ProviderProfile() {
   const { status: accessStatus } = useProviderAccess();
@@ -41,6 +42,9 @@ export default function ProviderProfile() {
   }, [me]);
 
   const validateForm = () => {
+    const phoneErr = usPhoneValidationError(form.phone, { required: true });
+    if (phoneErr) return phoneErr;
+
     if (form.website_url) {
       try {
         const u = new URL(form.website_url);
@@ -162,8 +166,22 @@ export default function ProviderProfile() {
             </div>
 
             <div>
-              <Label className={labelClassName}>Phone</Label>
-              <Input className={inputClassName} value={form.phone || ""} onChange={e => setForm({ ...form, phone: e.target.value })} placeholder="+1 (555) 000-0000" />
+              <Label className={labelClassName}>Phone *</Label>
+              <Input
+                type="tel"
+                className={inputClassName}
+                value={form.phone || ""}
+                onChange={e => setForm({ ...form, phone: e.target.value })}
+                placeholder="(555) 123-4567"
+                style={
+                  form.phone && !isValidUsPhone(form.phone)
+                    ? { borderColor: "#f87171" }
+                    : undefined
+                }
+              />
+              {form.phone && !isValidUsPhone(form.phone) && (
+                <p className="text-xs mt-1 text-red-600">Enter a valid US phone number (10 digits).</p>
+              )}
             </div>
 
             <div>
@@ -197,7 +215,7 @@ export default function ProviderProfile() {
               transition: "background 0.3s",
             }}
             onClick={() => save.mutate()}
-            disabled={save.isPending || uploading}
+            disabled={save.isPending || uploading || Boolean(usPhoneValidationError(form.phone, { required: true }))}
           >
             {save.isPending
               ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2 inline-block" />Saving...</>

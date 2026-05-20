@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import { base44 } from "@/api/base44Client";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -10,10 +11,32 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Search, Star, MapPin, Award, Calendar, DollarSign, Clock, MessageSquare, Info, Sparkles, Filter, Gift, Package, Tag } from "lucide-react";
+import { Search, Star, MapPin, Award, Calendar, DollarSign, MessageSquare, Info, Sparkles, Filter, Gift, Package, Tag } from "lucide-react";
 import MessageThread from "@/components/messaging/MessageThread";
 
+/** Matches AI scan treatment categories → service_types.category (MD marketplace). */
+const JOURNEY_CATEGORY_SLUGS = new Set([
+  "injectables",
+  "fillers",
+  "laser",
+  "skincare",
+  "body_contouring",
+  "prp",
+  "other",
+]);
+
+function serviceTypeForMdSub(sub, serviceTypes) {
+  return serviceTypes.find(
+    (s) => String(s.id) === String(sub.service_type_id) || s.name === sub.service_type_name
+  );
+}
+
 export default function PatientMarketplace() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const journeyCategory = String(searchParams.get("category") || "")
+    .trim()
+    .toLowerCase();
+
   const [search, setSearch] = useState("");
   const [serviceFilter, setServiceFilter] = useState("all");
   const [selectedProvider, setSelectedProvider] = useState(null);
@@ -65,13 +88,25 @@ export default function PatientMarketplace() {
     mdCoveredProviderIds.has(u.id)
   );
 
-  // Service filter: only show providers with active MD subscription for selected service
-  const serviceFiltered = serviceFilter === "all" ? providers : providers.filter(p => {
-    return mdSubs.some(sub => 
-      sub.provider_id === p.id && 
-      sub.service_type_name === serviceFilter
-    );
-  });
+  const serviceFiltered = useMemo(() => {
+    const activeSub = (sub) => String(sub.status || "").toLowerCase() === "active";
+
+    if (serviceFilter !== "all") {
+      return providers.filter((p) =>
+        mdSubs.some((sub) => sub.provider_id === p.id && activeSub(sub) && sub.service_type_name === serviceFilter)
+      );
+    }
+    if (JOURNEY_CATEGORY_SLUGS.has(journeyCategory)) {
+      return providers.filter((p) =>
+        mdSubs.some((sub) => {
+          if (sub.provider_id !== p.id || !activeSub(sub)) return false;
+          const st = serviceTypeForMdSub(sub, serviceTypes);
+          return st && String(st.category || "").toLowerCase() === journeyCategory;
+        })
+      );
+    }
+    return providers;
+  }, [providers, mdSubs, serviceFilter, serviceTypes, journeyCategory]);
 
   const filtered = serviceFiltered.filter(p =>
     !search || p.full_name?.toLowerCase().includes(search.toLowerCase()) ||
@@ -218,6 +253,30 @@ Based on my concerns and goals, which service types would be most relevant? Retu
           </Select>
         </div>
       </div>
+
+      {JOURNEY_CATEGORY_SLUGS.has(journeyCategory) && serviceFilter === "all" && (
+        <div className="flex flex-wrap items-center gap-2 px-4 py-3 rounded-xl bg-indigo-50 border border-indigo-100 text-sm text-indigo-900">
+          <Tag className="w-4 h-4 flex-shrink-0" />
+          <span>
+            Showing providers with active coverage in the <strong className="font-semibold">{journeyCategory}</strong> category (from your NOVI scan).
+          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="text-indigo-700 font-semibold h-8"
+            onClick={() => {
+              setSearchParams((prev) => {
+                const next = new URLSearchParams(prev);
+                next.delete("category");
+                return next;
+              });
+            }}
+          >
+            Clear
+          </Button>
+        </div>
+      )}
 
       {aiMatchDialog && (
         <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-gradient-to-r from-purple-50 to-pink-50 border border-purple-200">

@@ -13,6 +13,7 @@ import {
   sessionEntryCalendarKeys,
   toSessionDateKey
 } from "../lib/sessionDateSeats.js";
+import { syncScheduledCourseSessionSeats } from "../courses/sessionSeatsSync.js";
 import { getMeFromAccessToken } from "../auth/service.js";
 import { ensureProviderOnboardingTable } from "../provider-onboarding/service.js";
 import {
@@ -1932,6 +1933,16 @@ export async function processCompletedCheckoutSession(session) {
       }
     }
 
+    // Always reconcile per-date inventory from enrollment counts (idempotent safety net).
+    try {
+      const synced = await syncScheduledCourseSessionSeats(preOrder.course_id, client);
+      if (Array.isArray(synced)) sessionDatesForEmail = synced;
+      seatDecrementApplied = true;
+    } catch (syncErr) {
+      // eslint-disable-next-line no-console
+      console.error("[checkout] session seat sync failed:", syncErr?.message || syncErr);
+    }
+
     let wasNewUser = false;
     let linkedUserId = null;
 
@@ -1966,6 +1977,11 @@ export async function processCompletedCheckoutSession(session) {
       });
     }
 
+    const paymentStripeMetadata = {
+      ...(session.metadata || {}),
+      seat_decrement_applied: seatDecrementApplied
+    };
+
     if (existingPaymentId) {
       if (seatDecrementApplied && !existingPaymentSeatApplied) {
         await client.query(
@@ -1978,10 +1994,6 @@ export async function processCompletedCheckoutSession(session) {
       }
       postCommitPaymentId = existingPaymentId;
     } else {
-      const paymentStripeMetadata = {
-        ...(session.metadata || {}),
-        seat_decrement_applied: seatDecrementApplied
-      };
       const paymentInsertRes = await client.query(
         `insert into public.course_payments (
           pre_order_id, enrollment_id, course_id, course_title,

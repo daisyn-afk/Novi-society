@@ -486,6 +486,36 @@ export function createLovableProviderClient() {
           delete: createNotImplementedMethod("entities.MedicalDirectorRelationship.delete")
         };
       }
+      if (name === "Appointment") {
+        return {
+          list: async () => [],
+          filter: async () => [],
+          get: createNotImplementedMethod("entities.Appointment.get"),
+          create: createNotImplementedMethod("entities.Appointment.create"),
+          update: createNotImplementedMethod("entities.Appointment.update"),
+          delete: createNotImplementedMethod("entities.Appointment.delete")
+        };
+      }
+      if (name === "PatientJourney") {
+        return {
+          list: (_sort = "", limit = 200) =>
+            authRequest(`/admin/patient-journey?limit=${encodeURIComponent(String(limit || 200))}`, { method: "GET" }),
+          get: createNotImplementedMethod("entities.PatientJourney.get"),
+          filter: async (filters = {}) => {
+            const pid = String(filters?.patient_id || "").trim();
+            if (!pid) return [];
+            return authRequest(`/admin/patient-journey?patient_id=${encodeURIComponent(pid)}`, { method: "GET" });
+          },
+          create: (payload) =>
+            authRequest("/admin/patient-journey", { method: "POST", body: JSON.stringify(payload || {}) }),
+          update: (id, payload) =>
+            authRequest(`/admin/patient-journey/${encodeURIComponent(id)}`, {
+              method: "PUT",
+              body: JSON.stringify(payload || {}),
+            }),
+          delete: createNotImplementedMethod("entities.PatientJourney.delete")
+        };
+      }
       return {
         list: createNotImplementedMethod(`entities.${name}.list`),
         get: createNotImplementedMethod(`entities.${name}.get`),
@@ -624,12 +654,14 @@ export function createLovableProviderClient() {
     },
     integrations: {
       Core: {
-        UploadFile: async ({ file }) => {
+        UploadFile: async ({ file, kind } = {}) => {
           if (!file) throw new Error("[lovable-provider] Upload file is required.");
           const token = getStoredAccessToken();
           const formData = new FormData();
           formData.append("file", file);
-          const response = await fetch(`${ADMIN_API_BASE_URL}${toApiPath("/admin/uploads/license-photo")}`, {
+          const uploadPath =
+            kind === "patient_journey_selfie" ? "/admin/uploads/patient-selfie" : "/admin/uploads/license-photo";
+          const response = await fetch(`${ADMIN_API_BASE_URL}${toApiPath(uploadPath)}`, {
             method: "POST",
             headers: token ? { Authorization: `Bearer ${token}` } : {},
             body: formData
@@ -653,6 +685,18 @@ export function createLovableProviderClient() {
             ...payload,
             file_url: fileUrl
           };
+        },
+        InvokeLLM: async (body = {}) => {
+          const out = await authRequest("/admin/integrations/invoke-llm", {
+            method: "POST",
+            body: JSON.stringify(body || {})
+          });
+          if (body.response_json_schema && out && typeof out === "object" && !Object.hasOwn(out, "content")) {
+            return out;
+          }
+          if (typeof out?.content === "string") return out.content;
+          if (typeof out === "string") return out;
+          return out;
         }
       }
     }

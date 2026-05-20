@@ -177,12 +177,15 @@ export function isCourseDateSoldOut(course, courseDate, now = new Date()) {
 
 export function formatMinAvailableSeatsLabel(course) {
   const sessions = Array.isArray(course?.session_dates) ? course.session_dates : [];
-  const upcoming = getUpcomingSessionEntries(sessions);
+  const upcoming = getUpcomingSessionEntries(sessions).sort((a, b) => {
+    const da = new Date(String(a?.date || a?.session_date || "").split("T")[0] + "T12:00:00");
+    const db = new Date(String(b?.date || b?.session_date || "").split("T")[0] + "T12:00:00");
+    return da.getTime() - db.getTime();
+  });
   const valid = upcoming.filter(hasValidSessionSeatEntry);
   if (valid.length > 0) {
-    const counts = valid.map((e) => effectiveAvailableSeats(e));
-    const m = Math.min(...counts);
-    return `${m} seat${m === 1 ? "" : "s"} left`;
+    const avail = effectiveAvailableSeats(valid[0]);
+    return `${avail} seat${avail === 1 ? "" : "s"} left`;
   }
   // Scheduled per-date inventory exists but nothing upcoming — don't show stale course-level seats.
   if (sessions.some((e) => hasValidSessionSeatEntry(e))) return null;

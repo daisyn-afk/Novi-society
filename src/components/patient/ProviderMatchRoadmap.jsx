@@ -10,13 +10,13 @@ import {
 import { Button } from "@/components/ui/button";
 
 const priorityStyle = {
-  essential: { bg: "rgba(218,106,99,0.15)", color: "#DA6A63", border: "rgba(218,106,99,0.3)" },
-  recommended: { bg: "rgba(123,142,200,0.15)", color: "#7B8EC8", border: "rgba(123,142,200,0.3)" },
-  optional: { bg: "rgba(255,255,255,0.07)", color: "rgba(255,255,255,0.5)", border: "rgba(255,255,255,0.1)" },
+  essential: { bg: "rgba(218,106,99,0.12)", color: "#b84a44", border: "rgba(218,106,99,0.28)" },
+  recommended: { bg: "rgba(123,142,200,0.12)", color: "#4a5fa8", border: "rgba(123,142,200,0.28)" },
+  optional: { bg: "rgba(248,250,252,1)", color: "#64748b", border: "rgba(226,232,240,0.9)" },
 };
 
 function MatchScore({ score }) {
-  const color = score >= 80 ? "#C8E63C" : score >= 60 ? "#FA6F30" : "#7B8EC8";
+  const color = score >= 80 ? "#5a7a20" : score >= 60 ? "#c45f30" : "#4a5fa8";
   return (
     <div className="flex items-center gap-1.5">
       <div className="w-2 h-2 rounded-full" style={{ background: color }} />
@@ -51,11 +51,11 @@ function ProviderCard({ provider, treatments, certs, reviews, isTop, onBook }) {
   ));
 
   return (
-    <div className="rounded-xl overflow-hidden" style={{ background: isTop ? "rgba(200,230,60,0.08)" : "rgba(255,255,255,0.06)", border: isTop ? "1px solid rgba(200,230,60,0.3)" : "1px solid rgba(255,255,255,0.1)" }}>
+    <div className="rounded-xl overflow-hidden" style={{ background: isTop ? "rgba(200,230,60,0.08)" : "#fff", border: isTop ? "1px solid rgba(90,122,32,0.35)" : "1px solid #e5e7eb" }}>
       {isTop && (
-        <div className="flex items-center gap-1.5 px-3 py-1.5" style={{ background: "rgba(200,230,60,0.15)", borderBottom: "1px solid rgba(200,230,60,0.2)" }}>
-          <Crown className="w-3 h-3" style={{ color: "#C8E63C" }} />
-          <span className="text-xs font-bold" style={{ color: "#C8E63C" }}>Novi's Top Pick</span>
+        <div className="flex items-center gap-1.5 px-3 py-1.5" style={{ background: "rgba(200,230,60,0.2)", borderBottom: "1px solid rgba(90,122,32,0.2)" }}>
+          <Crown className="w-3 h-3" style={{ color: "#3D5600" }} />
+          <span className="text-xs font-bold" style={{ color: "#3D5600" }}>Novi's Top Pick</span>
         </div>
       )}
 
@@ -66,10 +66,10 @@ function ProviderCard({ provider, treatments, certs, reviews, isTop, onBook }) {
             {provider.full_name?.[0] || "P"}
           </div>
           <div className="flex-1 min-w-0">
-            <p className="font-semibold text-white text-sm truncate">{provider.full_name}</p>
+            <p className="font-semibold text-slate-900 text-sm truncate">{provider.full_name}</p>
             <div className="flex items-center gap-2 flex-wrap">
               {provider.city && (
-                <span className="text-xs flex items-center gap-0.5" style={{ color: "rgba(255,255,255,0.45)" }}>
+                <span className="text-xs flex items-center gap-0.5" style={{ color: "#64748b" }}>
                   <MapPin className="w-2.5 h-2.5" />{provider.city}{provider.state ? `, ${provider.state}` : ""}
                 </span>
               )}
@@ -82,7 +82,7 @@ function ProviderCard({ provider, treatments, certs, reviews, isTop, onBook }) {
           </div>
           <div className="flex flex-col items-end gap-1">
             <MatchScore score={matchScore} />
-            <button onClick={() => setExpanded(v => !v)} className="text-white/30 hover:text-white/60 transition-colors">
+            <button onClick={() => setExpanded(v => !v)} className="text-slate-400 hover:text-slate-600 transition-colors">
               {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
             </button>
           </div>
@@ -92,7 +92,7 @@ function ProviderCard({ provider, treatments, certs, reviews, isTop, onBook }) {
           <div className="mt-3 space-y-2.5">
             {/* Coverage breakdown */}
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wider mb-1.5" style={{ color: "rgba(255,255,255,0.35)" }}>
+              <p className="text-xs font-semibold uppercase tracking-wider mb-1.5" style={{ color: "#94a3b8" }}>
                 Treatment Coverage ({coverageCount}/{treatments.length})
               </p>
               <div className="space-y-1">
@@ -101,16 +101,16 @@ function ProviderCard({ provider, treatments, certs, reviews, isTop, onBook }) {
                   return (
                     <div key={i} className="flex items-center gap-2">
                       <div className="w-3.5 h-3.5 rounded-full flex items-center justify-center flex-shrink-0"
-                        style={{ background: covered ? "rgba(200,230,60,0.2)" : "rgba(255,255,255,0.06)" }}>
+                        style={{ background: covered ? "rgba(200,230,60,0.2)" : "rgba(248,250,252,1)" }}>
                         {covered
-                          ? <CheckCircle2 className="w-2.5 h-2.5" style={{ color: "#C8E63C" }} />
-                          : <span style={{ color: "rgba(255,255,255,0.2)", fontSize: 8 }}>✕</span>}
+                          ? <CheckCircle2 className="w-2.5 h-2.5" style={{ color: "#3D5600" }} />
+                          : <span style={{ color: "#cbd5e1", fontSize: 8 }}>✕</span>}
                       </div>
-                      <p className="text-xs" style={{ color: covered ? "rgba(255,255,255,0.75)" : "rgba(255,255,255,0.3)" }}>
+                      <p className="text-xs" style={{ color: covered ? "#334155" : "#94a3b8" }}>
                         {t.treatment_name}
                       </p>
                       {covered && (
-                        <span className="text-xs ml-auto" style={{ color: "rgba(255,255,255,0.35)" }}>
+                        <span className="text-xs ml-auto" style={{ color: "#94a3b8" }}>
                           ${t.estimated_cost_low}–${t.estimated_cost_high}
                         </span>
                       )}
@@ -135,7 +135,7 @@ function ProviderCard({ provider, treatments, certs, reviews, isTop, onBook }) {
             <button
               onClick={() => onBook(provider)}
               className="w-full py-2 rounded-full text-xs font-bold transition-all hover:opacity-90"
-              style={{ background: isTop ? "#C8E63C" : "rgba(123,142,200,0.2)", color: isTop ? "#1e2535" : "#a0b0e8", border: isTop ? "none" : "1px solid rgba(123,142,200,0.3)" }}>
+              style={{ background: isTop ? "#C8E63C" : "rgba(123,142,200,0.12)", color: isTop ? "#1e2535" : "#4a5fa8", border: isTop ? "none" : "1px solid rgba(123,142,200,0.3)" }}>
               <Calendar className="inline w-3 h-3 mr-1.5" /> Book with {provider.full_name?.split(" ")[0]}
             </button>
           </div>
@@ -300,17 +300,17 @@ Generate a JSON with:
         <Sparkles className="w-4 h-4 text-white" />
       </div>
       <div className="flex-1 max-w-lg">
-        <p className="text-xs text-white/40 mb-1.5 ml-1">Novi · Your Roadmap & Matched Providers</p>
-        <div className="rounded-2xl rounded-bl-sm overflow-hidden" style={{ background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.18)" }}>
+        <p className="text-xs text-slate-500 mb-1.5 ml-1 font-medium">Novi · Your Roadmap & Matched Providers</p>
+        <div className="rounded-2xl rounded-bl-sm overflow-hidden" style={{ background: "#fff", border: "1px solid #e5e7eb" }}>
 
           {!roadmap && !generating && (
             <div className="p-5 text-center space-y-3 py-6">
               <div className="w-12 h-12 rounded-2xl flex items-center justify-center mx-auto" style={{ background: "rgba(200,230,60,0.15)" }}>
-                <Sparkles className="w-6 h-6" style={{ color: "#C8E63C" }} />
+                <Sparkles className="w-6 h-6" style={{ color: "#3D5600" }} />
               </div>
               <div>
-                <p className="font-semibold text-white text-sm">Personalized Treatment Roadmap + Provider Matches</p>
-                <p className="text-xs mt-1" style={{ color: "rgba(255,255,255,0.5)" }}>I'll build a step-by-step plan and match you with certified Novi providers who can deliver each treatment — ranked by fit, ratings, and availability.</p>
+                <p className="font-semibold text-slate-900 text-sm">Personalized Treatment Roadmap + Provider Matches</p>
+                <p className="text-xs mt-1" style={{ color: "#64748b" }}>I'll build a step-by-step plan and match you with certified Novi providers who can deliver each treatment — ranked by fit, ratings, and availability.</p>
               </div>
               <button onClick={generateRoadmap}
                 className="px-5 py-2.5 rounded-full text-sm font-bold transition-all hover:opacity-90"
@@ -322,15 +322,15 @@ Generate a JSON with:
 
           {generating && (
             <div className="p-5 flex items-center gap-3 py-8 justify-center">
-              <Loader2 className="w-5 h-5 text-white/60 animate-spin" />
-              <p className="text-sm text-white/60 italic">Building your personalized plan & matching providers…</p>
+              <Loader2 className="w-5 h-5 text-slate-500 animate-spin" />
+              <p className="text-sm text-slate-600 italic">Building your personalized plan & matching providers…</p>
             </div>
           )}
 
           {roadmap && (
             <>
               {/* Tabs */}
-              <div className="flex border-b" style={{ borderColor: "rgba(255,255,255,0.1)" }}>
+              <div className="flex border-b" style={{ borderColor: "#e5e7eb" }}>
                 {[
                   { key: "roadmap", label: "Treatment Plan" },
                   { key: "providers", label: `Matched Providers (${scoredProviders.length})` },
@@ -338,8 +338,8 @@ Generate a JSON with:
                   <button key={tab.key} onClick={() => setActiveTab(tab.key)}
                     className="flex-1 py-2.5 text-xs font-semibold transition-all"
                     style={{
-                      color: activeTab === tab.key ? "#C8E63C" : "rgba(255,255,255,0.4)",
-                      borderBottom: activeTab === tab.key ? "2px solid #C8E63C" : "2px solid transparent",
+                      color: activeTab === tab.key ? "#3D5600" : "#94a3b8",
+                      borderBottom: activeTab === tab.key ? "2px solid #5a7a20" : "2px solid transparent",
                     }}>
                     {tab.label}
                   </button>
@@ -351,8 +351,8 @@ Generate a JSON with:
                   <>
                     {roadmap.ai_improvement_score && (
                       <div className="rounded-xl px-4 py-3 flex items-center justify-between" style={{ background: "rgba(200,230,60,0.1)", border: "1px solid rgba(200,230,60,0.25)" }}>
-                        <p className="text-xs text-white/60 font-semibold">AI Improvement Forecast</p>
-                        <span style={{ fontFamily: "'DM Serif Display', serif", fontSize: 28, color: "#C8E63C", lineHeight: 1 }}>
+                        <p className="text-xs text-slate-600 font-semibold">AI Improvement Forecast</p>
+                        <span style={{ fontFamily: "'DM Serif Display', serif", fontSize: 28, color: "#5a7a20", lineHeight: 1 }}>
                           {roadmap.ai_improvement_score}%
                         </span>
                       </div>
@@ -360,20 +360,20 @@ Generate a JSON with:
 
                     {treatments.length > 0 && (
                       <div className="space-y-2">
-                        <p className="text-xs font-bold uppercase tracking-wider" style={{ color: "rgba(255,255,255,0.4)" }}>Your Treatment Sequence</p>
+                        <p className="text-xs font-bold uppercase tracking-wider" style={{ color: "#94a3b8" }}>Your Treatment Sequence</p>
                         {treatments.map((t, i) => {
                           const ps = priorityStyle[t.priority] || priorityStyle.optional;
                           return (
-                            <div key={i} className="rounded-xl overflow-hidden" style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.1)" }}>
+                            <div key={i} className="rounded-xl overflow-hidden" style={{ background: "#f8fafc", border: "1px solid #e5e7eb" }}>
                               {/* Header row */}
                               <div className="flex gap-3 px-3 pt-3 pb-2">
                                 <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 text-white" style={{ background: "#7B8EC8", minWidth: 24 }}>{i + 1}</div>
                                 <div className="flex-1 min-w-0">
                                   <div className="flex items-center gap-2 flex-wrap">
-                                    <p className="font-semibold text-white text-sm">{t.treatment_name}</p>
+                                    <p className="font-semibold text-slate-900 text-sm">{t.treatment_name}</p>
                                     <span className="text-xs px-2 py-0.5 rounded-full font-bold" style={{ background: ps.bg, color: ps.color, border: `1px solid ${ps.border}` }}>{t.priority}</span>
                                   </div>
-                                  <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.45)" }}>{t.timing} · ${t.estimated_cost_low}–${t.estimated_cost_high}</p>
+                                  <p className="text-xs mt-0.5" style={{ color: "#64748b" }}>{t.timing} · ${t.estimated_cost_low}–${t.estimated_cost_high}</p>
                                 </div>
                               </div>
 
@@ -389,13 +389,13 @@ Generate a JSON with:
                               {/* Benefit headline */}
                               {t.benefit_headline && (
                                 <div className="mx-3 mb-2 px-3 py-2 rounded-lg" style={{ background: "rgba(200,230,60,0.08)", border: "1px solid rgba(200,230,60,0.15)" }}>
-                                  <p className="text-xs font-bold" style={{ color: "#C8E63C" }}>✦ {t.benefit_headline}</p>
+                                  <p className="text-xs font-bold" style={{ color: "#3D5600" }}>✦ {t.benefit_headline}</p>
                                 </div>
                               )}
 
                               {/* Rationale */}
                               {t.rationale && (
-                                <p className="text-xs px-3 pb-2 leading-relaxed" style={{ color: "rgba(255,255,255,0.55)" }}>{t.rationale}</p>
+                                <p className="text-xs px-3 pb-2 leading-relaxed" style={{ color: "#475569" }}>{t.rationale}</p>
                               )}
 
                               {/* Key benefits */}
@@ -404,7 +404,7 @@ Generate a JSON with:
                                   {t.key_benefits.map((b, bi) => (
                                     <div key={bi} className="flex items-start gap-1.5">
                                       <CheckCircle2 className="w-3 h-3 flex-shrink-0 mt-0.5" style={{ color: "#7B8EC8" }} />
-                                      <p className="text-xs" style={{ color: "rgba(255,255,255,0.5)" }}>{b}</p>
+                                      <p className="text-xs" style={{ color: "#64748b" }}>{b}</p>
                                     </div>
                                   ))}
                                 </div>
@@ -420,33 +420,33 @@ Generate a JSON with:
                         { label: "6 Month Estimate", val: roadmap.cost_projection_6mo },
                         { label: "12 Month Estimate", val: roadmap.cost_projection_12mo },
                       ].map(p => p.val ? (
-                        <div key={p.label} className="text-center rounded-xl py-3" style={{ background: "rgba(255,255,255,0.07)" }}>
-                          <p className="text-lg font-bold text-white">${p.val?.toLocaleString()}</p>
-                          <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.45)" }}>{p.label}</p>
+                        <div key={p.label} className="text-center rounded-xl py-3" style={{ background: "#f8fafc" }}>
+                          <p className="text-lg font-bold text-slate-900">${p.val?.toLocaleString()}</p>
+                          <p className="text-xs mt-0.5" style={{ color: "#64748b" }}>{p.label}</p>
                         </div>
                       ) : null)}
                     </div>
 
                     {roadmap.savings_tip && (
-                      <p className="text-xs rounded-xl px-3 py-2.5" style={{ background: "rgba(200,230,60,0.1)", color: "#C8E63C", border: "1px solid rgba(200,230,60,0.2)" }}>
+                      <p className="text-xs rounded-xl px-3 py-2.5" style={{ background: "rgba(200,230,60,0.18)", color: "#3D5600", border: "1px solid rgba(90,122,32,0.25)" }}>
                         💡 {roadmap.savings_tip}
                       </p>
                     )}
 
                     {roadmap.maintenance_plan && (
                       <div className="space-y-1">
-                        <p className="text-xs font-bold uppercase tracking-wider" style={{ color: "rgba(255,255,255,0.35)" }}>Maintenance Plan</p>
-                        <p className="text-xs leading-relaxed" style={{ color: "rgba(255,255,255,0.6)" }}>{roadmap.maintenance_plan}</p>
+                        <p className="text-xs font-bold uppercase tracking-wider" style={{ color: "#94a3b8" }}>Maintenance Plan</p>
+                        <p className="text-xs leading-relaxed" style={{ color: "#475569" }}>{roadmap.maintenance_plan}</p>
                       </div>
                     )}
 
                     <div className="flex items-center justify-between">
                       <button onClick={() => setActiveTab("providers")}
                         className="text-xs px-3 py-1.5 rounded-full font-semibold transition-all"
-                        style={{ background: "rgba(200,230,60,0.15)", color: "#C8E63C", border: "1px solid rgba(200,230,60,0.25)" }}>
+                        style={{ background: "rgba(200,230,60,0.25)", color: "#3D5600", border: "1px solid rgba(200,230,60,0.25)" }}>
                         View matched providers →
                       </button>
-                      <button onClick={generateRoadmap} className="text-xs text-white/30 hover:text-white/50 transition-colors">
+                      <button onClick={generateRoadmap} className="text-xs text-slate-400 hover:text-slate-600 transition-colors">
                         ↻ Regenerate
                       </button>
                     </div>
@@ -456,19 +456,19 @@ Generate a JSON with:
                 {activeTab === "providers" && (
                   <div className="space-y-3">
                     {treatments.length === 0 ? (
-                      <p className="text-sm text-white/50 text-center py-4">Generate your roadmap first to see matched providers.</p>
+                      <p className="text-sm text-slate-500 text-center py-4">Generate your roadmap first to see matched providers.</p>
                     ) : scoredProviders.length === 0 ? (
                       <div className="text-center py-4 space-y-2">
-                        <p className="text-sm text-white/50">No verified providers available yet.</p>
+                        <p className="text-sm text-slate-500">No verified providers available yet.</p>
                         <button onClick={() => navigate(createPageUrl("PatientMarketplace"))}
                           className="text-xs px-3 py-1.5 rounded-full font-semibold"
-                          style={{ background: "rgba(123,142,200,0.2)", color: "#a0b0e8" }}>
+                          style={{ background: "rgba(123,142,200,0.12)", color: "#4a5fa8" }}>
                           Browse all providers
                         </button>
                       </div>
                     ) : (
                       <>
-                        <p className="text-xs" style={{ color: "rgba(255,255,255,0.4)" }}>
+                        <p className="text-xs" style={{ color: "#94a3b8" }}>
                           Ranked by treatment coverage, ratings, and availability for your {treatments.length}-step plan:
                         </p>
                         {scoredProviders.map((p, i) => (
@@ -484,7 +484,7 @@ Generate a JSON with:
                         ))}
                         <button onClick={() => navigate(createPageUrl("PatientMarketplace"))}
                           className="w-full text-center text-xs py-2 rounded-full"
-                          style={{ color: "rgba(255,255,255,0.3)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                          style={{ color: "#94a3b8", border: "1px solid #e5e7eb" }}>
                           See all providers →
                         </button>
                       </>
