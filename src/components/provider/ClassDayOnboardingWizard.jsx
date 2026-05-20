@@ -7,6 +7,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Check, FileText, Shield, CreditCard, ArrowRight, Loader2, AlertCircle, Rocket, ShoppingBag, ChevronLeft, ChevronRight } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
+import { redirectToStripeCheckout } from "@/lib/redirectToStripeCheckout";
 
 export default function ClassDayOnboardingWizard({ enrollment, course, open, onClose }) {
   const [currentStep, setCurrentStep] = useState(0);
@@ -254,7 +255,7 @@ export default function ClassDayOnboardingWizard({ enrollment, course, open, onC
       });
 
       if (checkoutResponse.data?.url) {
-        window.location.href = checkoutResponse.data.url;
+        redirectToStripeCheckout(checkoutResponse.data.url);
       } else {
         toast({ title: "Success", description: "Membership setup complete! Redirecting to dashboard..." });
         setTimeout(() => { queryClient.invalidateQueries(); onClose(); }, 2000);

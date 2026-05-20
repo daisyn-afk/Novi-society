@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { adminCoursesApi } from "@/api/adminCoursesApi";
 import { courseCheckoutApi } from "@/api/courseCheckoutApi";
 import { providerOnboardingApi } from "@/api/providerOnboardingApi";
+import { redirectToStripeCheckout } from "@/lib/redirectToStripeCheckout";
 import {
   effectiveAvailableSeats,
   isCourseFullySoldOut,
@@ -92,6 +93,7 @@ export default function NoviOfferingsPortal({ children }) {
   const [serviceLicenseUploading, setServiceLicenseUploading] = useState(false);
   const [serviceCertUploading, setServiceCertUploading] = useState(false);
   const [serviceUploadError, setServiceUploadError] = useState("");
+  const [isCheckingOut, setIsCheckingOut] = useState(false);
   const selectedSessionEntry = resolveSelectedSessionEntry(selectedCourse, selectedCourseSession, selectedCourseDate);
   const selectedSessionIsSoldOut = Boolean(selectedSessionEntry && isSessionDateEntrySoldOut(selectedSessionEntry));
 
@@ -136,37 +138,33 @@ export default function NoviOfferingsPortal({ children }) {
     queryFn: () => base44.entities.ServiceType.filter({ is_active: true }),
   });
 
-  const submitMutation = useMutation({
-    mutationFn: (payload) => courseCheckoutApi.createCheckout(payload),
-    onSuccess: (response) => {
-      if (response?.checkout_url) {
-        window.location.href = response.checkout_url;
-        return;
-      }
-      throw new Error("Stripe checkout URL was not returned.");
-    },
-    onError: (error) => {
-      if (Number(error?.status) === 403) {
-        toast({
-          title: "Finish provider onboarding",
-          description:
-            error?.message ||
-            "Complete your profile and license in the app before purchasing a course with your provider login. You can log out to pay as a guest with another email.",
-          variant: "destructive",
-        });
-        return;
-      }
-      if (Number(error?.status) === 409) {
-        const msg = String(error?.message || "");
-        const soldOut = /sold out/i.test(msg);
-        toast({
-          title: soldOut ? "Sold out" : "Course already purchased",
-          description: soldOut ? msg : msg || "You already purchased this course for the selected date.",
-          variant: "destructive",
-        });
-      }
-    },
-  });
+  const handleCheckoutError = (error) => {
+    if (Number(error?.status) === 403) {
+      toast({
+        title: "Finish provider onboarding",
+        description:
+          error?.message ||
+          "Complete your profile and license in the app before purchasing a course with your provider login. You can log out to pay as a guest with another email.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (Number(error?.status) === 409) {
+      const msg = String(error?.message || "");
+      const soldOut = /sold out/i.test(msg);
+      toast({
+        title: soldOut ? "Sold out" : "Course already purchased",
+        description: soldOut ? msg : msg || "You already purchased this course for the selected date.",
+        variant: "destructive",
+      });
+      return;
+    }
+    toast({
+      title: "Checkout unavailable",
+      description: error?.message || "Unable to start payment. Please try again.",
+      variant: "destructive",
+    });
+  };
 
   const openCourseModal = (course) => {
     if (isCourseFullySoldOut(course)) return;
@@ -185,6 +183,7 @@ export default function NoviOfferingsPortal({ children }) {
     setSelectedCourseSession(null);
     setForm(BLANK_FORM);
     setPromoPreview(null);
+    setIsCheckingOut(false);
   };
 
   const promoMutation = useMutation({
@@ -203,10 +202,12 @@ export default function NoviOfferingsPortal({ children }) {
   };
   const isValidPromoApplied = Boolean(promoPreview && promoPreview.code);
 
-  const handleSubmitApplication = () => {
+  const handleSubmitApplication = async () => {
     if (!form.first_name || !form.last_name || !form.customer_email || !form.phone || !form.rn_confirmation || !form.refund_policy_confirmation) return;
     if (selectedSessionIsSoldOut) return;
     if (isCourseFullySoldOut(selectedCourse)) return;
+    if (isCheckingOut) return;
+
     const emailMatch =
       portalMe?.role === "provider" &&
       providerBasicOnboarding?.has_completed_basic === false &&
@@ -222,22 +223,30 @@ export default function NoviOfferingsPortal({ children }) {
       });
       return;
     }
+
     const fullName = `${form.first_name} ${form.last_name}`.trim();
-    submitMutation.mutate({
-      course_id: selectedCourse.id,
-      course_date: selectedSessionEntry?.date || selectedCourseDate || null,
-      course_session_id: selectedSessionEntry?.session_id || null,
-      course_start_time: selectedSessionEntry?.start_time || null,
-      course_end_time: selectedSessionEntry?.end_time || null,
-      customer_name: fullName,
-      first_name: form.first_name,
-      last_name: form.last_name,
-      customer_email: form.customer_email,
-      phone: form.phone || null,
-      promo_code: form.promo_code || null,
-      terms_confirmed: form.rn_confirmation,
-      refund_policy_confirmed: form.refund_policy_confirmation,
-    });
+    setIsCheckingOut(true);
+    try {
+      const response = await courseCheckoutApi.createCheckout({
+        course_id: selectedCourse.id,
+        course_date: selectedSessionEntry?.date || selectedCourseDate || null,
+        course_session_id: selectedSessionEntry?.session_id || null,
+        course_start_time: selectedSessionEntry?.start_time || null,
+        course_end_time: selectedSessionEntry?.end_time || null,
+        customer_name: fullName,
+        first_name: form.first_name,
+        last_name: form.last_name,
+        customer_email: form.customer_email,
+        phone: form.phone || null,
+        promo_code: form.promo_code || null,
+        terms_confirmed: form.rn_confirmation,
+        refund_policy_confirmed: form.refund_policy_confirmation,
+      });
+      redirectToStripeCheckout(response?.checkout_url);
+    } catch (error) {
+      setIsCheckingOut(false);
+      handleCheckoutError(error);
+    }
   };
 
   const serviceSpotMutation = useMutation({
@@ -747,14 +756,14 @@ export default function NoviOfferingsPortal({ children }) {
                     !form.phone ||
                     !form.rn_confirmation ||
                     !form.refund_policy_confirmation ||
-                    submitMutation.isPending
+                    isCheckingOut
                   }
                   onClick={handleSubmitApplication}
                 >
-                  {submitMutation.isPending ? (
+                  {isCheckingOut ? (
                     <>
                       <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin mr-2" />
-                      Submitting...
+                      Processing...
                     </>
                   ) : (
                     <>
@@ -765,7 +774,7 @@ export default function NoviOfferingsPortal({ children }) {
                 </Button>
               </div>
               <p className="text-center text-xs" style={{ color: "rgba(30,37,53,0.35)" }}>
-                Admin reviews your license · Payment link sent upon approval
+                Secure payment with Stripe · Admin reviews your application
               </p>
             </div>
           )}

@@ -8,6 +8,7 @@ import { useNavigate } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { ChevronLeft, Sparkles, Calendar, Shield } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { redirectToStripeCheckout } from "@/lib/redirectToStripeCheckout";
 
 // ─── Mode A: Pre-order ID provided (approval flow) ───────────────────────────
 function ApprovedPaymentCheckout({ preOrderId }) {
@@ -23,11 +24,7 @@ function ApprovedPaymentCheckout({ preOrderId }) {
       const res = await base44.functions.invoke("createPreOrderCheckout", {
         pre_order_id: preOrderId,
       });
-      if (res.data?.checkout_url) {
-        window.location.href = res.data.checkout_url;
-      } else {
-        throw new Error("Failed to create checkout session");
-      }
+      redirectToStripeCheckout(res.data?.checkout_url);
     },
   });
 
@@ -177,7 +174,7 @@ function DirectServiceCheckout({ itemId }) {
         license_state: form.license_state || null,
       });
       if (res.data?.checkout_url) {
-        window.location.href = res.data.checkout_url;
+        redirectToStripeCheckout(res.data.checkout_url);
       } else if (res.data?.pre_order_id) {
         window.location.href = `${createPageUrl("PreOrderConfirmation")}?id=${encodeURIComponent(res.data.pre_order_id)}`;
       } else {
