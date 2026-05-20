@@ -15,6 +15,7 @@ import {
   CheckCircle2, BookOpen, User, Phone, Mail, Check, ExternalLink, RefreshCw, AlertCircle
 } from "lucide-react";
 import NoviFooter from "@/components/NoviFooter";
+import { redirectToStripeCheckout } from "@/lib/redirectToStripeCheckout";
 
 const TIME_SLOTS = [
   { label: "2:00 PM", value: "14:00" },
@@ -220,7 +221,7 @@ export default function ModelSignup() {
             setShowWaitlist(true);
             setSelectedTimeSlot(null);
           }
-          window.location.href = res.data.url;
+          redirectToStripeCheckout(res.data.url);
         }
       } catch (err) {
         console.error("Payment error:", err);
