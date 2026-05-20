@@ -1,4 +1,5 @@
 import { query } from "../db.js";
+import { syncScheduledCoursesSessionSeats } from "./sessionSeatsSync.js";
 
 const COLUMNS = `
   id,
@@ -178,7 +179,8 @@ export async function listCourses({ type } = {}) {
     order by created_date desc
   `;
   const { rows } = await query(sql, values);
-  return applyTemplateMergeToRows(rows);
+  const withSyncedSeats = await syncScheduledCoursesSessionSeats(rows);
+  return applyTemplateMergeToRows(withSyncedSeats);
 }
 
 export async function getCourseById(id) {

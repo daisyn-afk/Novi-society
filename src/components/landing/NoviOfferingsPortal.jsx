@@ -343,9 +343,9 @@ export default function NoviOfferingsPortal({ children }) {
       {slot}
 
       <Dialog open={!!selectedCourse} onOpenChange={(open) => { if (!open) closeCourseModal(); }}>
-        <DialogContent className="max-w-2xl max-h-[92vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl max-h-[92vh] flex flex-col overflow-hidden bg-white">
           {selectedCourse && courseStep !== "submitted" && (
-            <DialogHeader className="pb-2">
+            <DialogHeader className="shrink-0 pb-2 pr-14 pt-1">
               <div className="flex items-center gap-3 mb-1">
                 {["dates", "info"].map((step, i) => (
                   <div key={step} className="flex items-center gap-2">
@@ -395,6 +395,7 @@ export default function NoviOfferingsPortal({ children }) {
             </DialogHeader>
           )}
 
+          <div className="flex-1 min-h-0 overflow-y-auto">
           {selectedCourse && courseStep === "dates" && (
             <div className="space-y-4 pt-2">
               {isCourseFullySoldOut(selectedCourse) && (
@@ -794,6 +795,7 @@ export default function NoviOfferingsPortal({ children }) {
               </Button>
             </div>
           )}
+          </div>
         </DialogContent>
       </Dialog>
 
@@ -803,12 +805,13 @@ export default function NoviOfferingsPortal({ children }) {
           if (!next) closeServiceModal();
         }}
       >
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
+        <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col overflow-hidden bg-white">
+          <DialogHeader className="shrink-0 pr-14 pt-1">
             <DialogTitle style={{ fontFamily: "'DM Serif Display', serif", fontStyle: "italic", color: "#1e2535", fontSize: "1.5rem" }}>
               {selectedService?.name}
             </DialogTitle>
           </DialogHeader>
+          <div className="flex-1 min-h-0 overflow-y-auto">
           {selectedService && !serviceSubmitted && (
             <div className="space-y-5 pt-2">
               <div className="pt-2 border-t" style={{ borderColor: "rgba(0,0,0,0.07)" }}>
@@ -1030,6 +1033,7 @@ export default function NoviOfferingsPortal({ children }) {
               </Button>
             </div>
           )}
+          </div>
         </DialogContent>
       </Dialog>
     </>

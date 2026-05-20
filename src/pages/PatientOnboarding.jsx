@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { base44 } from "@/api/base44Client";
 import { createPageUrl } from "@/utils";
-import { ArrowRight, ArrowLeft, CheckCircle2, Sparkles, Camera, Upload } from "lucide-react";
+import { ArrowRight, ArrowLeft, CheckCircle2, Sparkles, Camera } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -56,7 +56,10 @@ export default function PatientOnboarding() {
     const file = e.target.files?.[0];
     if (!file) return;
     setUploadingPhoto(true);
-    const { file_url } = await base44.integrations.Core.UploadFile({ file });
+    const { file_url } = await base44.integrations.Core.UploadFile({
+      file,
+      kind: "patient_journey_selfie",
+    });
     setScanUrl(file_url);
     setUploadingPhoto(false);
   };

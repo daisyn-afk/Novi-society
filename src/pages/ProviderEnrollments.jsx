@@ -148,7 +148,13 @@ export default function ProviderEnrollments() {
   const { data: courses = [], isLoading: loadingCourses } = useQuery({
     queryKey: ["courses"],
     queryFn: async () => (await adminCoursesApi.list()).filter((course) => course?.is_active !== false),
+    staleTime: 0,
   });
+
+  React.useEffect(() => {
+    if (!hasFetchedEnrollments) return;
+    void qc.invalidateQueries({ queryKey: ["courses"], refetchType: "active" });
+  }, [hasFetchedEnrollments, myEnrollments.length, qc]);
 
   const { data: certs = [] } = useQuery({
     queryKey: ["my-certs"],
@@ -188,7 +194,7 @@ export default function ProviderEnrollments() {
   const sessionByEnrollment = Object.fromEntries(sessions.map(s => [s.enrollment_id, s]));
   const activeSubServiceIds = new Set(myMDSubs.filter(s => s.status === "active").map(s => s.service_type_id));
   const activeEnrollments = myEnrollments.filter(e => e.status !== "cancelled");
-  const enrolledCourseIds = new Set(myEnrollments.map(e => e.course_id));
+  const enrolledCourseIds = new Set(activeEnrollments.map(e => e.course_id));
   const shouldShowEnrollmentStatusLoading =
     !hasFetchedEnrollments &&
     !Array.isArray(enrollmentCacheSnapshot);
