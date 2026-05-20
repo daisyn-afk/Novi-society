@@ -1,6 +1,7 @@
 import { Router } from "express";
 import multer from "multer";
-import { uploadCourseCoverImage, uploadLicenseDocument } from "../supabaseStorage.js";
+import { uploadCourseCoverImage, uploadLicenseDocument, uploadPatientJourneySelfie } from "../supabaseStorage.js";
+import { getMeFromAccessToken } from "../auth/service.js";
 
 const MAX_FILE_SIZE_BYTES = 2 * 1024 * 1024;
 const ALLOWED_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
@@ -86,6 +87,51 @@ const uploadMdDoc = multer({
 });
 
 export const uploadsRouter = Router();
+
+function getBearerToken(req) {
+  const raw = req.headers.authorization || "";
+  if (!raw.startsWith("Bearer ")) return null;
+  return raw.slice("Bearer ".length).trim() || null;
+}
+
+uploadsRouter.post("/patient-selfie", upload.single("file"), async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) {
+      const err = new Error("Missing bearer token.");
+      err.statusCode = 401;
+      throw err;
+    }
+    const me = await getMeFromAccessToken(token);
+    if (!req.file?.buffer) {
+      const err = new Error("Image file is required.");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const extension = MIME_TO_EXTENSION[req.file.mimetype];
+    if (!extension) {
+      const err = new Error("Unsupported image format.");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const uploaded = await uploadPatientJourneySelfie({
+      buffer: req.file.buffer,
+      mimeType: req.file.mimetype,
+      extension,
+      patientId: me.id
+    });
+
+    res.status(201).json({
+      ...uploaded,
+      file_url: uploaded.file_url || uploaded.url,
+      url: uploaded.url || uploaded.file_url
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 
 uploadsRouter.post("/course-cover", upload.single("file"), async (req, res, next) => {
   try {

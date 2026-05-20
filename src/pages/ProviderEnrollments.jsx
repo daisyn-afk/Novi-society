@@ -17,6 +17,7 @@ import CertificationPathway from "@/components/provider/CertificationPathway";
 import { isNowWithinSessionRedeemWindow } from "@/lib/classCodeWindow";
 import CourseCardDeck from "@/components/provider/CourseCardDeck";
 import { adminCoursesApi } from "@/api/adminCoursesApi";
+import { useAttendanceContext } from "@/components/provider/useAttendanceContext";
 
 const categoryMeta = {
   injectables:  { label: "Injectables",          color: "#FA6F30" },
@@ -33,6 +34,7 @@ const categoryMeta = {
 
 export default function ProviderEnrollments() {
   const { status: accessStatus } = useProviderAccess();
+  const attendance = useAttendanceContext();
   const qc = useQueryClient();
   const navigate = useNavigate();
   const enrollmentCacheSnapshot = qc.getQueryData(["my-enrollments"]);
@@ -146,7 +148,13 @@ export default function ProviderEnrollments() {
   const { data: courses = [], isLoading: loadingCourses } = useQuery({
     queryKey: ["courses"],
     queryFn: async () => (await adminCoursesApi.list()).filter((course) => course?.is_active !== false),
+    staleTime: 0,
   });
+
+  React.useEffect(() => {
+    if (!hasFetchedEnrollments) return;
+    void qc.invalidateQueries({ queryKey: ["courses"], refetchType: "active" });
+  }, [hasFetchedEnrollments, myEnrollments.length, qc]);
 
   const { data: certs = [] } = useQuery({
     queryKey: ["my-certs"],
@@ -186,7 +194,7 @@ export default function ProviderEnrollments() {
   const sessionByEnrollment = Object.fromEntries(sessions.map(s => [s.enrollment_id, s]));
   const activeSubServiceIds = new Set(myMDSubs.filter(s => s.status === "active").map(s => s.service_type_id));
   const activeEnrollments = myEnrollments.filter(e => e.status !== "cancelled");
-  const enrolledCourseIds = new Set(myEnrollments.map(e => e.course_id));
+  const enrolledCourseIds = new Set(activeEnrollments.map(e => e.course_id));
   const shouldShowEnrollmentStatusLoading =
     !hasFetchedEnrollments &&
     !Array.isArray(enrollmentCacheSnapshot);
@@ -406,6 +414,11 @@ export default function ProviderEnrollments() {
                     onCancel={() => { if (window.confirm("Cancel this enrollment?")) cancelEnrollment.mutate({ id: e.id }); }}
                     showClassWizardCta={showWizard}
                     onOpenClassWizard={() => setOnboardingEnrollment(e)}
+                    attendanceWindow={attendance.getWindowByEnrollment(e)}
+                    isSubmittingAttendance={attendance.isSubmitting}
+                    onSubmitAttendance={({ code, windowEntry }) =>
+                      attendance.submitAttendance({ code, windowEntry })
+                    }
                   />
                     );
                   })()

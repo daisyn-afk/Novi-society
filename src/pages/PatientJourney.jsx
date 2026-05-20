@@ -8,8 +8,23 @@ import { Button } from "@/components/ui/button";
 import ScanHistoryPanel from "@/components/patient/ScanHistoryPanel";
 import PremiumMetrics from "@/components/patient/PremiumMetrics";
 import ProviderMatchRoadmap from "@/components/patient/ProviderMatchRoadmap";
-import DailyCheckIn from "@/components/patient/DailyCheckIn";
 import PatientJourneyDashboard from "@/components/patient/PatientJourneyDashboard";
+
+/** Renders **bold** segments in Novi copy as real bold text. */
+function formatNoviRichText(text) {
+  if (text == null || text === "") return text;
+  const parts = String(text).split(/(\*\*[^*]+\*\*)/g);
+  return parts.map((part, i) => {
+    if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
+      return (
+        <strong key={i} className="font-semibold text-gray-900">
+          {part.slice(2, -2)}
+        </strong>
+      );
+    }
+    return <span key={i}>{part}</span>;
+  });
+}
 
 function NoviAvatar() {
   return (
@@ -26,7 +41,10 @@ function ScanDropzone({ onUpload }) {
     const file = e.target.files?.[0];
     if (!file) return;
     setUploading(true);
-    const { file_url } = await base44.integrations.Core.UploadFile({ file });
+    const { file_url } = await base44.integrations.Core.UploadFile({
+      file,
+      kind: "patient_journey_selfie",
+    });
     setUploading(false);
     onUpload(file_url);
   };
@@ -60,7 +78,7 @@ function Bubble({ msg, onChoice, onScanUpload, isPremium, onUpgrade, journey, la
       <div className="flex gap-3 items-end">
         <NoviAvatar />
         <div className="flex-1 max-w-sm">
-          <p className="text-xs text-gray-400 mb-1.5 ml-1">Novi</p>
+          <p className="text-xs text-slate-500 mb-1.5 ml-1 font-medium">Novi</p>
           <div className="rounded-2xl rounded-bl-sm p-4 space-y-3" style={{ background: "#fff", border: "1px solid #e5e7eb" }}>
             <p className="text-sm text-gray-700">{msg.content}</p>
             <ScanDropzone onUpload={onScanUpload} />
@@ -75,7 +93,7 @@ function Bubble({ msg, onChoice, onScanUpload, isPremium, onUpgrade, journey, la
       <div className="flex gap-3 items-end">
         <NoviAvatar />
         <div className="max-w-sm">
-          <p className="text-xs text-gray-400 mb-1.5 ml-1">Novi</p>
+          <p className="text-xs text-slate-500 mb-1.5 ml-1 font-medium">Novi</p>
           <div className="rounded-2xl rounded-bl-sm px-5 py-4 flex items-center gap-3" style={{ background: "#fff", border: "1px solid #e5e7eb" }}>
             <div className="flex gap-1">
               {[0, 1, 2].map(i => (
@@ -97,14 +115,14 @@ function Bubble({ msg, onChoice, onScanUpload, isPremium, onUpgrade, journey, la
       <div className="flex gap-3 items-end">
         <NoviAvatar />
         <div className="flex-1 max-w-lg">
-          <p className="text-xs text-gray-400 mb-1.5 ml-1">Novi</p>
+          <p className="text-xs text-slate-500 mb-1.5 ml-1 font-medium">Novi</p>
           <div className="rounded-2xl rounded-bl-sm p-5 space-y-4" style={{ background: "#fff", border: "1px solid #e5e7eb" }}>
             {msg.scanUrl && <img src={msg.scanUrl} className="w-full max-h-48 object-cover rounded-xl" alt="your scan" />}
             <p className="font-semibold text-gray-800">Your skin looks <span style={{ color: healthColor[a?.overall_skin_health] || "#1d4ed8" }}>{a?.overall_skin_health || "Good"}</span></p>
-            <p className="text-sm text-gray-600 leading-relaxed">{a?.concern_summary}</p>
+            <p className="text-sm text-gray-600 leading-relaxed">{formatNoviRichText(a?.concern_summary)}</p>
             {a?.detected_concerns?.length > 0 && (
               <div>
-                <p className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-2">What I noticed</p>
+                <p className="text-xs font-bold uppercase tracking-wider text-slate-600 mb-2">What I noticed</p>
                 <div className="flex flex-wrap gap-1.5">
                   {a.detected_concerns.map(c => (
                     <span key={c} className="text-xs px-2.5 py-1 rounded-full font-medium bg-orange-50 text-orange-700 border border-orange-100">{c}</span>
@@ -114,7 +132,7 @@ function Bubble({ msg, onChoice, onScanUpload, isPremium, onUpgrade, journey, la
             )}
             {a?.recommended_treatments?.length > 0 && (
               <div>
-                <p className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-2">Recommended Treatments</p>
+                <p className="text-xs font-bold uppercase tracking-wider text-slate-600 mb-2">Recommended Treatments</p>
                 <div className="space-y-2">
                   {a.recommended_treatments.map((t, i) => (
                     <div key={i} className="rounded-xl p-3 flex items-start gap-3" style={{ background: "rgba(123,142,200,0.07)", border: "1px solid rgba(123,142,200,0.15)" }}>
@@ -135,7 +153,7 @@ function Bubble({ msg, onChoice, onScanUpload, isPremium, onUpgrade, journey, la
             )}
             {(!a?.recommended_treatments?.length) && a?.educational_suggestions?.length > 0 && (
               <div>
-                <p className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-2">Treatments to explore</p>
+                <p className="text-xs font-bold uppercase tracking-wider text-slate-600 mb-2">Treatments to explore</p>
                 <ul className="space-y-1.5">
                   {a.educational_suggestions.map(s => (
                     <li key={s} className="flex items-start gap-2 text-sm text-gray-600">
@@ -152,7 +170,7 @@ function Bubble({ msg, onChoice, onScanUpload, isPremium, onUpgrade, journey, la
                 {/* Blurred premium preview */}
                 <div className="filter blur-sm pointer-events-none select-none p-3 space-y-2"
                   style={{ background: "rgba(123,142,200,0.06)", border: "1px solid rgba(123,142,200,0.15)" }}>
-                  <p className="text-xs font-bold uppercase tracking-wider text-gray-400">Premium Analysis</p>
+                  <p className="text-xs font-bold uppercase tracking-wider text-slate-600">Premium Analysis</p>
                   <div className="flex flex-wrap gap-1.5">
                     {["Wrinkle depth: Moderate", "Volume loss: Mild", "Symmetry: 87%", "Skin age estimate", "Treatment priority map"].map(t => (
                       <span key={t} className="text-xs px-2 py-0.5 rounded-full bg-purple-100 text-purple-600">{t}</span>
@@ -185,9 +203,9 @@ function Bubble({ msg, onChoice, onScanUpload, isPremium, onUpgrade, journey, la
       <div className="flex gap-3 items-end">
         <NoviAvatar />
         <div className="max-w-lg">
-          <p className="text-xs text-gray-400 mb-1.5 ml-1">Novi</p>
+          <p className="text-xs text-slate-500 mb-1.5 ml-1 font-medium">Novi</p>
           <div className="rounded-2xl rounded-bl-sm p-4 space-y-3" style={{ background: "#fff", border: "1px solid #e5e7eb" }}>
-            {msg.content && <p className="text-sm text-gray-700">{msg.content}</p>}
+            {msg.content && <p className="text-sm text-gray-700">{formatNoviRichText(msg.content)}</p>}
             <div className="flex flex-wrap gap-2 mt-1">
               {msg.choices.map(c => (
                 <button key={c.value} onClick={() => onChoice(c)}
@@ -212,7 +230,7 @@ function Bubble({ msg, onChoice, onScanUpload, isPremium, onUpgrade, journey, la
       <div className="flex gap-3 items-end">
         <NoviAvatar />
         <div className="max-w-sm">
-          <p className="text-xs text-gray-400 mb-1.5 ml-1">Novi</p>
+          <p className="text-xs text-slate-500 mb-1.5 ml-1 font-medium">Novi</p>
           <div className="rounded-2xl rounded-bl-sm p-5 space-y-3" style={{ background: "linear-gradient(135deg, #1e2535, #2D4A7A)" }}>
             <p className="text-sm text-white/90 leading-relaxed">{msg.content}</p>
             <Button onClick={msg.onAction} className="w-full gap-2 font-bold rounded-full"
@@ -230,7 +248,7 @@ function Bubble({ msg, onChoice, onScanUpload, isPremium, onUpgrade, journey, la
       <div className="flex gap-3 items-end">
         <NoviAvatar />
         <div className="max-w-sm">
-          <p className="text-xs text-gray-400 mb-1.5 ml-1">Novi</p>
+          <p className="text-xs text-slate-500 mb-1.5 ml-1 font-medium">Novi</p>
           <div className="rounded-2xl rounded-bl-sm p-5 space-y-3" style={{ background: "linear-gradient(135deg, #1e2535, #4a3070)" }}>
             <div className="flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-yellow-300" />
@@ -257,10 +275,10 @@ function Bubble({ msg, onChoice, onScanUpload, isPremium, onUpgrade, journey, la
     <div className={`flex gap-3 items-end ${!isNovi ? "flex-row-reverse" : ""}`}>
       {isNovi && <NoviAvatar />}
       <div className={`max-w-md ${!isNovi ? "ml-auto" : ""}`}>
-        {isNovi && <p className="text-xs text-gray-400 mb-1.5 ml-1">Novi</p>}
+        {isNovi && <p className="text-xs text-slate-500 mb-1.5 ml-1 font-medium">Novi</p>}
         <div className={`rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-line ${isNovi ? "rounded-bl-sm text-gray-700" : "rounded-br-sm text-white"}`}
           style={isNovi ? { background: "#fff", border: "1px solid #e5e7eb" } : { background: "#7B8EC8" }}>
-          {msg.content}
+          {isNovi ? formatNoviRichText(msg.content) : msg.content}
         </div>
       </div>
     </div>
@@ -283,12 +301,15 @@ export default function PatientJourney() {
   const [showScanHistory, setShowScanHistory] = useState(false);
   const [viewingScanIndex, setViewingScanIndex] = useState(null);
 
-  const { data: journeyList = [], isLoading } = useQuery({
+  const journeyChatInitialized = useRef(false);
+
+  const { data: journeyList = [], isLoading, isFetching, isFetched } = useQuery({
     queryKey: ["patient-journey"],
     queryFn: async () => {
       const user = await base44.auth.me();
       return base44.entities.PatientJourney.filter({ patient_id: user.id });
     },
+    staleTime: 60_000,
   });
 
   const { data: myAppointments = [] } = useQuery({
@@ -297,14 +318,19 @@ export default function PatientJourney() {
       const user = await base44.auth.me();
       return base44.entities.Appointment.filter({ patient_id: user.id });
     },
-    enabled: isPremium,
   });
 
-  // Show full journey dashboard once patient has had at least one treatment
+  useEffect(() => {
+    const j = journeyList[0] || null;
+    setJourney(j);
+    const premium = j?.tier === "premium" && j?.subscription_status === "active";
+    setIsPremium(premium);
+  }, [journeyList]);
+
+  // Check for subscription success redirect
   const hasCompletedAppointments = myAppointments.some(a => a.status === "completed");
   const showJourneyDashboard = hasCompletedAppointments && journey?.onboarding_completed;
 
-  // Check for subscription success redirect
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get("subscription") === "success") {
@@ -320,57 +346,60 @@ export default function PatientJourney() {
   }, [messages]);
 
   useEffect(() => {
-    if (isLoading) return;
-    const j = journeyList[0] || null;
-    setJourney(j);
-    const premium = j?.tier === "premium" && j?.subscription_status === "active";
-    setIsPremium(premium);
+    if (!isFetched || isFetching || isLoading) return;
+    if (journeyChatInitialized.current) return;
+    journeyChatInitialized.current = true;
 
+    const j = journeyList[0] || null;
+    const premium = j?.tier === "premium" && j?.subscription_status === "active";
     const hasScans = j?.scans?.length > 0;
     const hasConcerns = j?.skin_concerns?.length > 0;
 
+    let msgs = [];
     if (!j?.onboarding_completed) {
-      addMessages([
+      msgs = [
         { role: "ai", type: "text", content: "Hi! I'm Novi — your personal aesthetic guide. 👋\n\nI'm here to help you understand your skin, explore the right treatments, and connect you with a certified provider who's a great fit.\n\nWhat brings you here today?" },
         { role: "ai", type: "choices", content: "", choices: [
-          { label: "I want to look more refreshed", value: "refreshed" },
-          { label: "I have specific concerns I'd like to address", value: "concerns" },
-          { label: "I'm just exploring, not sure yet", value: "explore" },
-          { label: "I have a treatment in mind already", value: "specific" },
+          { label: "Look more refreshed", value: "refreshed" },
+          { label: "Specific concerns", value: "concerns" },
+          { label: "Just exploring", value: "explore" },
+          { label: "Have a treatment in mind", value: "specific" },
         ]},
-      ]);
+      ];
       setPhase("intro");
     } else if (hasScans && j?.scans?.[j.scans.length - 1]?.ai_analysis) {
       const lastScan = j.scans[j.scans.length - 1];
-      const msgs = [
+      msgs = [
         { role: "ai", type: "text", content: `Welcome back! Here's where we left off with your ${lastScan.label || "latest scan"}.` },
         { role: "ai", type: "scan_result", analysis: lastScan.ai_analysis, scanUrl: lastScan.scan_url },
         { role: "ai", type: "choices", content: "What would you like to do next?", choices: premium
           ? [
-              { label: "Add a new scan", value: "new_scan" },
-              { label: "Find a provider for me", value: "find_provider" },
-              { label: "Tell me about my roadmap", value: "roadmap" },
+              { label: "Show me matched providers", value: "find_provider" },
+              { label: "Generate my treatment roadmap", value: "roadmap" },
+              { label: "Add another scan", value: "new_scan" },
+              { label: "View scan history", value: "scan_history" },
             ]
           : [
-              { label: "Add a new scan", value: "new_scan" },
-              { label: "Find a provider for me", value: "find_provider" },
-              { label: "Upgrade to see my full roadmap", value: "upgrade" },
+              { label: "Find me a provider", value: "find_provider" },
+              { label: "Unlock my full roadmap", value: "upgrade" },
+              { label: "Add another scan", value: "new_scan" },
+              { label: "View scan history", value: "scan_history" },
             ]
         },
       ];
-      addMessages(msgs);
       setPhase("chat");
     } else {
-      addMessages([
+      msgs = [
         { role: "ai", type: "text", content: hasConcerns
           ? `Good to see you again! You mentioned you're concerned about ${j.skin_concerns.slice(0, 2).join(" and ")}. Ready to take the next step?`
           : "Good to see you again! Ready to continue your journey?" },
         { role: "ai", type: "text", content: "To give you a truly personalized analysis, I'd love to see a photo of you. It's completely private." },
         { role: "ai", type: "scan_request", content: "Upload a clear, well-lit selfie and I'll get to work:" },
-      ]);
+      ];
       setPhase("chat");
     }
-  }, [isLoading, journeyList]);
+    setMessages(msgs);
+  }, [isFetched, isFetching, isLoading, journeyList]);
 
   function addMessages(newMsgs) {
     setMessages(prev => [...prev, ...newMsgs]);
@@ -419,6 +448,7 @@ export default function PatientJourney() {
       });
     } else if (choice.value === "scan_history") {
       setShowScanHistory(true);
+      setViewingScanIndex(Math.max(0, (journey?.scans?.length || 1) - 1));
     } else if (choice.value === "upgrade") {
       addMsg({
         role: "ai", type: "upgrade_cta",
@@ -608,7 +638,7 @@ Example: If they ask about "looking tired under my eyes" → mention that tear t
     ]});
   }
 
-  if (isLoading || phase === "loading") {
+  if (!isFetched || isLoading || phase === "loading") {
     return (
       <div className="flex items-center justify-center min-h-64">
         <div className="w-6 h-6 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
@@ -629,36 +659,35 @@ Example: If they ask about "looking tired under my eyes" → mention that tear t
       {/* Success banner */}
       {subscriptionSuccess && (
         <div className="mb-3 px-4 py-3 rounded-xl flex items-center gap-2 text-sm font-medium flex-shrink-0"
-          style={{ background: "rgba(200,230,60,0.15)", border: "1px solid rgba(200,230,60,0.4)", color: "#C8E63C" }}>
-          <Sparkles className="w-4 h-4 flex-shrink-0" />
+          style={{ background: "rgba(200,230,60,0.22)", border: "1px solid rgba(90,122,32,0.35)", color: "#3D5600" }}>
+          <Sparkles className="w-4 h-4 flex-shrink-0" style={{ color: "#5a7a20" }} />
           Welcome to Novi Premium! Your full analysis is now unlocked.
         </div>
       )}
 
-      <div className="flex items-center gap-3 pb-4 border-b border-white/20 flex-shrink-0">
+      <div className="flex items-center gap-3 pb-4 border-b border-slate-200/80 flex-shrink-0">
         <div className="w-9 h-9 rounded-full flex items-center justify-center" style={{ background: "linear-gradient(135deg, #7B8EC8, #2D6B7F)" }}>
           <Sparkles className="w-4 h-4 text-white" />
         </div>
         <div>
-          <p style={{ fontFamily: "'DM Serif Display', serif", fontStyle: "italic", fontSize: 16, color: "#fff", fontWeight: 400 }}>Novi</p>
-          <p className="text-xs text-white/60">Your personal aesthetic guide</p>
+          <p className="text-slate-900" style={{ fontFamily: "'DM Serif Display', serif", fontStyle: "italic", fontSize: 16, fontWeight: 400 }}>Novi</p>
+          <p className="text-xs text-slate-600">Your personal aesthetic guide</p>
         </div>
         {journey?.scans?.length > 0 && (
-          <button onClick={() => setShowScanHistory(v => !v)} className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-full font-semibold transition-all hover:opacity-80 ml-auto"
-            style={{ background: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.6)", border: "1px solid rgba(255,255,255,0.15)" }}>
-            <History className="w-3 h-3" /> {journey.scans.length} Scan{journey.scans.length > 1 ? "s" : ""}
+          <button onClick={() => setShowScanHistory(v => !v)} className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-full font-semibold transition-all hover:bg-white ml-auto text-slate-700 bg-white/80 border border-slate-200/90 shadow-sm">
+            <History className="w-3 h-3 text-slate-500" /> {journey.scans.length} Scan{journey.scans.length > 1 ? "s" : ""}
           </button>
         )}
         {isPremium ? (
           <button onClick={() => setShowManage(true)} className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-bold transition-opacity hover:opacity-80 ${journey?.scans?.length > 0 ? "" : "ml-auto"}`}
-            style={{ background: "rgba(200,230,60,0.2)", color: "#C8E63C" }}>
-            <Crown className="w-3 h-3" /> Premium
+            style={{ background: "rgba(200,230,60,0.35)", color: "#3D5600", border: "1px solid rgba(90,122,32,0.25)" }}>
+            <Crown className="w-3 h-3" style={{ color: "#5a7a20" }} /> Premium
           </button>
         ) : (
           <button onClick={handleUpgrade} disabled={upgradingLoading}
             className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full font-bold transition-all hover:opacity-90 disabled:opacity-50 ${journey?.scans?.length > 0 ? "" : "ml-auto"}`}
-            style={{ background: "rgba(200,230,60,0.15)", color: "#C8E63C", border: "1px solid rgba(200,230,60,0.3)" }}>
-            <Sparkles className="w-3 h-3" />
+            style={{ background: "rgba(200,230,60,0.3)", color: "#3D5600", border: "1px solid rgba(90,122,32,0.3)" }}>
+            <Sparkles className="w-3 h-3" style={{ color: "#5a7a20" }} />
             {upgradingLoading ? "Loading…" : "Upgrade $19/mo"}
           </button>
         )}
@@ -708,6 +737,36 @@ Example: If they ask about "looking tired under my eyes" → mention that tear t
           />
         )}
         {/* Chat flow for new patients not yet in treatment */}
+        {!showJourneyDashboard && showScanHistory && journey?.scans?.length > 0 && (
+          <div className="space-y-4">
+            <ScanHistoryPanel
+              scans={journey.scans}
+              onClose={() => {
+                setShowScanHistory(false);
+                setViewingScanIndex(null);
+              }}
+              onSelectScan={(idx) => setViewingScanIndex(idx)}
+              selectedIndex={viewingScanIndex != null ? viewingScanIndex : journey.scans.length - 1}
+            />
+            {viewingScanIndex != null && journey.scans[viewingScanIndex]?.ai_analysis && (
+              <Bubble
+                msg={{
+                  role: "ai",
+                  type: "scan_result",
+                  analysis: journey.scans[viewingScanIndex].ai_analysis,
+                  scanUrl: journey.scans[viewingScanIndex].scan_url,
+                }}
+                onChoice={handleChoice}
+                onScanUpload={handleScanUpload}
+                isPremium={isPremium}
+                onUpgrade={handleUpgrade}
+                journey={journey}
+                latestScan={journey.scans[viewingScanIndex]}
+                navigate={navigate}
+              />
+            )}
+          </div>
+        )}
         {!showJourneyDashboard && messages.map((msg, i) => (
           <Bubble key={i} msg={msg} onChoice={handleChoice} onScanUpload={handleScanUpload} isPremium={isPremium} onUpgrade={handleUpgrade} journey={journey} latestScan={journey?.scans?.[journey.scans.length - 1]} navigate={navigate} />
         ))}
@@ -716,22 +775,22 @@ Example: If they ask about "looking tired under my eyes" → mention that tear t
 
       {/* Only show chat input for new patients, not post-treatment dashboard */}
       {!showJourneyDashboard && (
-        <div className="flex-shrink-0 pt-3 border-t border-white/10">
-          <div className="flex gap-2 items-center rounded-2xl px-4 py-2.5" style={{ background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.15)" }}>
+        <div className="flex-shrink-0 pt-3 border-t border-slate-200/80">
+          <div className="flex gap-2 items-center rounded-2xl px-4 py-2.5 bg-white shadow-sm border border-slate-200/90">
             <input
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={e => e.key === "Enter" && handleSend()}
               placeholder="Ask Novi anything about your skin…"
-              className="flex-1 bg-transparent outline-none text-sm text-white placeholder:text-white/40"
+              className="flex-1 bg-transparent outline-none text-sm text-slate-800 placeholder:text-slate-400"
             />
             <button onClick={handleSend} disabled={!input.trim()}
               className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 transition-all disabled:opacity-30"
-              style={{ background: input.trim() ? "#C8E63C" : "transparent" }}>
-              <Send className="w-3.5 h-3.5" style={{ color: input.trim() ? "#1e2535" : "rgba(255,255,255,0.4)" }} />
+              style={{ background: input.trim() ? "#C8E63C" : "rgba(123,142,200,0.15)" }}>
+              <Send className="w-3.5 h-3.5" style={{ color: input.trim() ? "#1e2535" : "#7B8EC8" }} />
             </button>
           </div>
-          <p className="text-center text-xs text-white/25 mt-2">Novi is not a medical provider. Always consult a professional.</p>
+          <p className="text-center text-xs text-slate-500 mt-2">Novi is not a medical provider. Always consult a professional.</p>
         </div>
       )}
     </div>

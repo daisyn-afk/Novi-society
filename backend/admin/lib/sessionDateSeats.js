@@ -214,6 +214,40 @@ export function canDecrementSessionDateSeat(entry) {
   return seatBoundsForDecrement(entry) != null;
 }
 
+export const PAID_ENROLLMENT_STATUSES = ["paid", "confirmed", "completed", "attended"];
+
+export function parseSessionDatesField(raw) {
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+/**
+ * Recompute each session row's available_seats from paid enrollment counts per calendar day.
+ */
+export function reconcileSessionDatesWithEnrollmentCounts(sessionDates, countsByDateKey) {
+  if (!Array.isArray(sessionDates) || !countsByDateKey) return sessionDates;
+  return sessionDates.map((entry) => {
+    const max = inferredMaxSeats(entry);
+    if (max == null || max < 0) return entry;
+    const keys = [...sessionEntryCalendarKeys(entry)];
+    if (keys.length === 0) return entry;
+    let enrolled = 0;
+    for (const k of keys) {
+      enrolled = Math.max(enrolled, Number(countsByDateKey.get(k) || 0));
+    }
+    const available = Math.max(0, max - enrolled);
+    return { ...entry, max_seats: max, available_seats: available };
+  });
+}
+
 export function decrementSessionDateSeatInArray(sessionDates, courseDate) {
   if (!Array.isArray(sessionDates) || courseDate == null || courseDate === "") return sessionDates;
   const norm = normalizeCourseDateInput(courseDate);

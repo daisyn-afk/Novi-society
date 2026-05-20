@@ -55,6 +55,7 @@ export const ALLOWED_PAGES_BY_ROLE: Record<string, Set<string>> = {
     "ProviderScopeRules",
     "ProviderSubscription",
     "ProviderCodeRedemption",
+    "ProviderDashboardLockedPreview",
   ]),
   medical_director: new Set([
     "MDDashboard",

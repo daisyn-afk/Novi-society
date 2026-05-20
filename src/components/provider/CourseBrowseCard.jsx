@@ -114,7 +114,7 @@ export default function CourseBrowseCard({ course, isEnrolled, onSelect, enrollm
         )}
 
         {/* Seats Status */}
-        {seatsLabel != null && (
+        {seatsLabel != null && !isEnrolled && (
           <p className="text-xs font-semibold text-center" style={{ color: isFull ? "#c0504d" : "rgba(30,37,53,0.5)" }}>
             {isFull ? "Class Full" : seatsLabel}
           </p>

@@ -2,6 +2,8 @@ import { Calendar, MapPin, Users, Clock, FileText, BookOpen, Award, CheckCircle2
 import { format, differenceInDays } from "date-fns";
 import { useState } from "react";
 import { sessionDateSeatsSummaryForEnrollment } from "@/lib/sessionDateSeats";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 
 export default function CourseEnrollmentCard({
   enrollment,
@@ -13,8 +15,13 @@ export default function CourseEnrollmentCard({
   onCancel,
   onOpenClassWizard,
   showClassWizardCta = false,
+  attendanceWindow = null,
+  onSubmitAttendance,
+  isSubmittingAttendance = false,
 }) {
   const [showDetails, setShowDetails] = useState(false);
+  const [attendanceCode, setAttendanceCode] = useState("");
+  const [attendanceMessage, setAttendanceMessage] = useState("");
   if (!course) return null;
 
   const scheduledDate =
@@ -41,6 +48,8 @@ export default function CourseEnrollmentCard({
   const daysUntilClass = scheduledDate ? differenceInDays(new Date(scheduledDate), new Date()) : null;
   const isStudying = ["paid", "confirmed"].includes(enrollment.status) && scheduledDate;
   const isCompleted = ["attended", "completed"].includes(enrollment.status);
+  const attendanceIsOpen = Boolean(attendanceWindow?.isOpen && !attendanceWindow?.isAttended);
+  const attendanceIsDone = Boolean(attendanceWindow?.isAttended);
 
   return (
     <div
@@ -209,6 +218,90 @@ export default function CourseEnrollmentCard({
                   <strong>MD coverage needed:</strong> Apply for NOVI Board supervision to practice these services.
                 </p>
               </>
+            )}
+          </div>
+        )}
+
+        {/* Attendance section */}
+        {attendanceWindow && (
+          <div
+            className="rounded-xl p-4 space-y-3"
+            style={{
+              background: attendanceIsOpen
+                ? "rgba(250,111,48,0.08)"
+                : attendanceIsDone
+                  ? "rgba(200,230,60,0.12)"
+                  : "rgba(30,37,53,0.04)",
+              border: attendanceIsOpen
+                ? "1px solid rgba(250,111,48,0.25)"
+                : attendanceIsDone
+                  ? "1px solid rgba(200,230,60,0.35)"
+                  : "1px solid rgba(30,37,53,0.1)",
+            }}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.5)" }}>
+                Attendance
+              </p>
+              <span
+                className="text-[11px] font-bold px-2.5 py-1 rounded-full"
+                style={
+                  attendanceIsDone
+                    ? { background: "rgba(200,230,60,0.25)", color: "#4a6b10" }
+                    : attendanceIsOpen
+                      ? { background: "rgba(250,111,48,0.18)", color: "#b84f20" }
+                      : { background: "rgba(30,37,53,0.1)", color: "rgba(30,37,53,0.5)" }
+                }
+              >
+                {attendanceIsDone ? "Marked" : attendanceIsOpen ? "Class is Live" : "Closed"}
+              </span>
+            </div>
+            {!attendanceIsDone && (
+              <div className="flex gap-2">
+                <Input
+                  placeholder="Enter class code"
+                  value={attendanceCode}
+                  onChange={(e) => {
+                    setAttendanceCode(e.target.value.toUpperCase());
+                    if (attendanceMessage) setAttendanceMessage("");
+                  }}
+                  maxLength={6}
+                  disabled={!attendanceIsOpen}
+                  className="font-mono tracking-widest uppercase"
+                />
+                <Button
+                  disabled={!attendanceIsOpen || attendanceCode.trim().length !== 6 || isSubmittingAttendance || !onSubmitAttendance}
+                  onClick={async () => {
+                    if (!onSubmitAttendance) return;
+                    const result = await onSubmitAttendance({
+                      enrollment,
+                      code: attendanceCode,
+                      windowEntry: attendanceWindow,
+                    });
+                    if (result?.ok) {
+                      setAttendanceCode("");
+                      setAttendanceMessage("Attendance submitted successfully.");
+                    } else if (result?.error) {
+                      setAttendanceMessage(result.error);
+                    }
+                  }}
+                  style={{ background: "#FA6F30", color: "#fff" }}
+                >
+                  Submit
+                </Button>
+              </div>
+            )}
+            <p className="text-xs" style={{ color: "rgba(30,37,53,0.55)" }}>
+              {attendanceIsDone
+                ? "Attendance already confirmed for this course session."
+                : attendanceIsOpen
+                  ? "Class is active now. Enter the 6-character instructor code."
+                  : "Attendance input unlocks during the live class window."}
+            </p>
+            {attendanceMessage && (
+              <p className="text-xs font-semibold" style={{ color: attendanceMessage.includes("success") ? "#4a6b10" : "#b84f20" }}>
+                {attendanceMessage}
+              </p>
             )}
           </div>
         )}
