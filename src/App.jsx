@@ -1,7 +1,6 @@
 import { Toaster } from "@/components/ui/toaster"
 import { QueryClientProvider } from '@tanstack/react-query'
 import { useQuery } from "@tanstack/react-query";
-import { useEffect } from "react";
 import { queryClientInstance, queryClientAdmincourses } from '@/lib/query-client'
 import NavigationTracker from '@/lib/NavigationTracker'
 import { pagesConfig } from './pages.config'
@@ -38,6 +37,7 @@ import RequestInformation from './pages/RequestInformation';
 import { base44 } from "@/api/base44Client";
 import { getDashboardPathForRole, normalizeRole, isPageAllowedForRole } from "@/lib/routeAccessPolicy";
 import RouteErrorBoundary from "@/components/RouteErrorBoundary";
+import PasswordResetHashRedirect from "@/components/PasswordResetHashRedirect";
 
 const { Pages, Layout, mainPage } = pagesConfig;
 const mainPageKey = mainPage ?? Object.keys(Pages)[0];
@@ -115,19 +115,6 @@ const AuthenticatedApp = () => {
     "/set-password"
   ]);
   const isPublicRoute = publicPaths.has(location.pathname);
-
-  // Handle Supabase invite/recovery callbacks so users are taken to set-password instead of landing page.
-  useEffect(() => {
-    const hash = window.location.hash || "";
-    const params = new URLSearchParams(hash.startsWith("#") ? hash.slice(1) : hash);
-    const type = String(params.get("type") || "").toLowerCase();
-    const accessToken = params.get("access_token");
-    const isPasswordSetupFlow = type === "recovery" || type === "invite";
-    if (!isPasswordSetupFlow || !accessToken) return;
-    base44.auth.consumeRecoveryHash(hash);
-    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
-    navigate("/set-password", { replace: true });
-  }, [navigate]);
 
   // Public routes must not block on auth-me checks (e.g. Stripe success redirect).
   if (isLoadingPublicSettings || (!isPublicRoute && isLoadingAuth)) {
@@ -324,6 +311,7 @@ function App() {
     <AuthProvider>
       <QueryClientProvider client={queryClientInstance}>
         <Router>
+          <PasswordResetHashRedirect />
           <NavigationTracker />
           <RouteErrorBoundary>
             <AuthenticatedApp />

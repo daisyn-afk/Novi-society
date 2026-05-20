@@ -1,5 +1,11 @@
 import { createClient } from "@supabase/supabase-js";
 import { pool } from "../db.js";
+import {
+  ensureProviderUserRecord,
+  getUserPasswordSetupByAuthUserId,
+  isPasswordResetLinkConsumed,
+  markPasswordResetCompleted
+} from "../users/passwordSetup.js";
 
 const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabasePublishableKey = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
@@ -759,13 +765,44 @@ export async function setPasswordWithAccessToken({ accessToken, refreshToken, pa
     throw err;
   }
 
+  let authUserIdFromToken = null;
+  try {
+    const peek = await withMutedAuthJsFetchConsole(() => authClient.auth.getUser(safeToken));
+    authUserIdFromToken = peek?.data?.user?.id || null;
+  } catch {
+    authUserIdFromToken = null;
+  }
+
+  if (authUserIdFromToken) {
+    const setupRow = await getUserPasswordSetupByAuthUserId(authUserIdFromToken);
+    if (isPasswordResetLinkConsumed(setupRow)) {
+      const err = new Error(
+        "You have already created your password. Sign in with your email and password, or ask the NOVI team for a new reset email."
+      );
+      err.statusCode = 410;
+      err.code = "PASSWORD_RESET_LINK_USED";
+      throw err;
+    }
+  }
+
   const { data: sessionData, error: sessionError } = await authClient.auth.setSession({
     access_token: safeToken,
     refresh_token: safeRefreshToken
   });
   if (sessionError || !sessionData?.user?.id) {
-    const err = new Error(sessionError?.message || "Invalid or expired recovery session.");
-    err.statusCode = 401;
+    const message = String(sessionError?.message || "");
+    const lowered = message.toLowerCase();
+    const isExpired =
+      lowered.includes("expired") ||
+      lowered.includes("invalid") ||
+      lowered.includes("refresh");
+    const err = new Error(
+      isExpired
+        ? "This password reset link has expired or is invalid. Please request a new reset email from the NOVI team."
+        : message || "Invalid or expired recovery session."
+    );
+    err.statusCode = isExpired ? 410 : 401;
+    err.code = isExpired ? "PASSWORD_RESET_LINK_EXPIRED" : undefined;
     throw err;
   }
 
@@ -778,6 +815,18 @@ export async function setPasswordWithAccessToken({ accessToken, refreshToken, pa
     err.statusCode = 400;
     throw err;
   }
+
+  const userEmail = updatedData?.user?.email || sessionData.user.email;
+  const metaName = readNameFromAuthUser(sessionData.user || {});
+
+  await ensureProviderUserRecord({
+    authUserId,
+    email: userEmail,
+    firstName: metaName.firstName,
+    lastName: metaName.lastName
+  });
+
+  await markPasswordResetCompleted(authUserId, userEmail);
 
   const profile = await getUserRowByAuthUserId(authUserId);
   return {

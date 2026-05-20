@@ -78,10 +78,25 @@ export async function listPreOrders({ limit = 200 } = {}) {
   const safeLimit = Number.isFinite(Number(limit)) ? Math.min(Math.max(Number(limit), 1), 500) : 200;
   const selectColumns = await getSelectColumnsSql();
   const { rows } = await query(
-    `select ${selectColumns}
-     from public.pre_orders
-     order by created_at desc
-     limit $1`,
+    `select sub.*,
+            u.password_setup_status,
+            u.password_reset_email_sent_at,
+            u.password_reset_link_issued_at,
+            u.password_reset_completed_at,
+            exists (
+              select 1
+              from public.enrollments e
+              where lower(e.provider_email) = lower(sub.customer_email)
+                and (sub.course_id is null or e.course_id = sub.course_id)
+                and lower(coalesce(e.status, '')) in ('paid', 'confirmed', 'attended', 'completed')
+            ) as is_enrolled
+     from (
+       select ${selectColumns}
+       from public.pre_orders
+       order by created_at desc
+       limit $1
+     ) sub
+     left join public.users u on lower(u.email) = lower(sub.customer_email)`,
     [safeLimit]
   );
   return rows;
