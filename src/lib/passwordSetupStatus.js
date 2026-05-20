@@ -1,5 +1,8 @@
 /** Matches public.users.password_setup_status (see migration 20260520140000). */
 
+/** Hide admin badges / send-reset actions in UI; backend APIs remain available. */
+export const SHOW_ADMIN_PASSWORD_RESET_UI = false;
+
 export const PASSWORD_SETUP_STATUS = {
   PENDING: "password_reset_pending",
   COMPLETED: "password_created_successfully",

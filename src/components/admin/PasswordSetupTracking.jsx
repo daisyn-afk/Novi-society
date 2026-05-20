@@ -1,7 +1,8 @@
 import { CheckCircle2, Clock, Mail } from "lucide-react";
-import { PASSWORD_SETUP_STATUS } from "@/lib/passwordSetupStatus";
+import { PASSWORD_SETUP_STATUS, SHOW_ADMIN_PASSWORD_RESET_UI } from "@/lib/passwordSetupStatus";
 
 export function PasswordSetupStatusBadge({ status, showNotSent = false }) {
+  if (!SHOW_ADMIN_PASSWORD_RESET_UI) return null;
   if (status === PASSWORD_SETUP_STATUS.COMPLETED) {
     return (
       <span

@@ -5,8 +5,7 @@ import { useNavigate } from "react-router-dom";
 import { adminApiRequest } from "@/api/adminApiRequest";
 import { adminCoursesApi } from "@/api/adminCoursesApi";
 import { queryClientAdmincourses } from "@/lib/query-client";
-import { createPageUrl } from "@/utils";
-import { useAuth } from "@/lib/AuthContext";
+import { resolvePostCheckoutReturnPath } from "@/lib/checkoutReturnPath";
 
 const normalizeLandingCourse = (course) => ({
   ...course,
@@ -16,7 +15,6 @@ const normalizeLandingCourse = (course) => ({
 export default function PreOrderConfirmation() {
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const { isAuthenticated } = useAuth();
   const params = new URLSearchParams(window.location.search);
   const orderId = params.get("id");
   const sessionId = params.get("session_id");
@@ -118,7 +116,7 @@ export default function PreOrderConfirmation() {
             {error?.message || "Please refresh this page in a moment."}
           </p>
           <button
-            onClick={() => navigate(createPageUrl("LandingPage"))}
+            onClick={() => navigate(resolvePostCheckoutReturnPath({ returnTo: params.get("return_to") }))}
             className="px-5 py-2 rounded-xl"
             style={{ background: "#1e2535", color: "#fff" }}
           >
@@ -156,9 +154,9 @@ export default function PreOrderConfirmation() {
       </div>
     );
   }
-  const returnPath = isAuthenticated
-    ? createPageUrl("ProviderEnrollments")
-    : createPageUrl("NoviLanding");
+  const returnPath = resolvePostCheckoutReturnPath({
+    returnTo: params.get("return_to") || order?.checkout_return_to,
+  });
   return (
     <div className="min-h-screen flex items-center justify-center px-4 py-16" style={{ fontFamily: "'DM Sans', sans-serif", background: "#f5f3ef" }}>
       <div className="w-full max-w-2xl text-center">
