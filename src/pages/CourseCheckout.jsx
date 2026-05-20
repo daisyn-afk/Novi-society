@@ -9,6 +9,7 @@ import { format } from "date-fns";
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { courseCheckoutApi } from "@/api/courseCheckoutApi";
+import { redirectToStripeCheckout } from "@/lib/redirectToStripeCheckout";
 
 export default function CourseCheckout() {
   const params = new URLSearchParams(window.location.search);
@@ -49,11 +50,7 @@ export default function CourseCheckout() {
         terms_confirmed: true,
         refund_policy_confirmed: true,
       });
-      if (response?.checkout_url) {
-        window.location.href = response.checkout_url;
-      } else {
-        throw new Error("Stripe checkout URL was not returned.");
-      }
+      redirectToStripeCheckout(response?.checkout_url);
     },
   });
 
