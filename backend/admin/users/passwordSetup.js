@@ -1,0 +1,165 @@
+import { pool, query } from "../db.js";
+
+export const PASSWORD_SETUP_STATUS = {
+  PENDING: "password_reset_pending",
+  COMPLETED: "password_created_successfully"
+};
+
+export async function getUserPasswordSetupByEmail(email) {
+  const normalized = String(email || "").trim().toLowerCase();
+  if (!normalized) return null;
+  const { rows } = await query(
+    `select id, auth_user_id, email, password_setup_status,
+            password_reset_email_sent_at, password_reset_link_issued_at, password_reset_completed_at
+     from public.users
+     where lower(email) = lower($1)
+     limit 1`,
+    [normalized]
+  );
+  return rows[0] || null;
+}
+
+export async function getUserPasswordSetupByAuthUserId(authUserId) {
+  if (!authUserId) return null;
+  const { rows } = await query(
+    `select id, auth_user_id, email, password_setup_status,
+            password_reset_email_sent_at, password_reset_link_issued_at, password_reset_completed_at
+     from public.users
+     where auth_user_id = $1
+     limit 1`,
+    [authUserId]
+  );
+  return rows[0] || null;
+}
+
+/** True only after the user has actually set their password (not on first link click). */
+export function isPasswordResetLinkConsumed(userRow) {
+  return userRow?.password_setup_status === PASSWORD_SETUP_STATUS.COMPLETED;
+}
+
+export async function ensureProviderUserRecord({ authUserId, email, firstName, lastName }) {
+  const normalized = String(email || "").trim().toLowerCase();
+  if (!normalized) return null;
+  const mergedName = [firstName, lastName].filter(Boolean).join(" ").trim() || null;
+
+  const byEmail = await query(
+    `update public.users
+     set auth_user_id = coalesce(auth_user_id, $1),
+         first_name = coalesce(first_name, $3),
+         last_name = coalesce(last_name, $4),
+         full_name = coalesce(full_name, $5),
+         role = 'provider',
+         updated_at = now()
+     where lower(email) = lower($2)
+     returning id, auth_user_id, email, role, password_setup_status`,
+    [authUserId || null, normalized, firstName || null, lastName || null, mergedName]
+  );
+  if (byEmail.rows[0]) return byEmail.rows[0];
+
+  if (!authUserId) return null;
+
+  const inserted = await query(
+    `insert into public.users (
+       auth_user_id, email, first_name, last_name, full_name, role
+     ) values ($1, $2, $3, $4, $5, 'provider')
+     on conflict (auth_user_id)
+     do update set
+       email = excluded.email,
+       first_name = coalesce(public.users.first_name, excluded.first_name),
+       last_name = coalesce(public.users.last_name, excluded.last_name),
+       full_name = coalesce(public.users.full_name, excluded.full_name),
+       role = 'provider',
+       updated_at = now()
+     returning id, auth_user_id, email, role, password_setup_status`,
+    [authUserId, normalized, firstName || null, lastName || null, mergedName]
+  );
+  return inserted.rows[0] || null;
+}
+
+export async function markPasswordResetPending({ email, authUserId, firstName, lastName }) {
+  const normalized = String(email || "").trim().toLowerCase();
+  const client = await pool.connect();
+  try {
+    const now = new Date();
+    const existing = await client.query(
+      `select id, auth_user_id from public.users where lower(email) = lower($1) limit 1`,
+      [normalized]
+    );
+    if (existing.rows[0]?.id) {
+      const { rows } = await client.query(
+        `update public.users
+         set password_setup_status = $2,
+             password_reset_email_sent_at = $3,
+             password_reset_link_issued_at = $3,
+             password_reset_completed_at = null,
+             auth_user_id = coalesce(auth_user_id, $4),
+             first_name = coalesce(first_name, $5),
+             last_name = coalesce(last_name, $6),
+             role = 'provider',
+             updated_at = now()
+         where id = $1
+         returning id, email, password_setup_status, password_reset_email_sent_at,
+                   password_reset_link_issued_at, password_reset_completed_at`,
+        [
+          existing.rows[0].id,
+          PASSWORD_SETUP_STATUS.PENDING,
+          now,
+          authUserId || null,
+          firstName || null,
+          lastName || null
+        ]
+      );
+      return rows[0];
+    }
+
+    if (!authUserId) {
+      return null;
+    }
+
+    const mergedName = [firstName, lastName].filter(Boolean).join(" ").trim() || null;
+    const { rows } = await client.query(
+      `insert into public.users (
+         auth_user_id, email, first_name, last_name, full_name, role,
+         password_setup_status, password_reset_email_sent_at, password_reset_link_issued_at
+       ) values ($1, $2, $3, $4, $5, 'provider', $6, $7, $7)
+       on conflict (auth_user_id)
+       do update set
+         password_setup_status = excluded.password_setup_status,
+         password_reset_email_sent_at = excluded.password_reset_email_sent_at,
+         password_reset_link_issued_at = excluded.password_reset_link_issued_at,
+         password_reset_completed_at = null,
+         updated_at = now()
+       returning id, email, password_setup_status, password_reset_email_sent_at,
+                 password_reset_link_issued_at, password_reset_completed_at`,
+      [
+        authUserId,
+        normalized,
+        firstName || null,
+        lastName || null,
+        mergedName,
+        PASSWORD_SETUP_STATUS.PENDING,
+        now
+      ]
+    );
+    return rows[0];
+  } finally {
+    client.release();
+  }
+}
+
+export async function markPasswordResetCompleted(authUserId, email) {
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  if (!authUserId && !normalizedEmail) return null;
+
+  const { rows } = await query(
+    `update public.users
+     set password_setup_status = $2,
+         password_reset_completed_at = now(),
+         updated_at = now()
+     where ($1::uuid is not null and auth_user_id = $1::uuid)
+        or ($3 <> '' and lower(email) = lower($3))
+     returning id, email, password_setup_status, password_reset_completed_at`,
+    [authUserId || null, PASSWORD_SETUP_STATUS.COMPLETED, normalizedEmail]
+  );
+  return rows[0] || null;
+}

@@ -107,7 +107,7 @@ export default function AdminServiceTypes() {
   const [editingTier, setEditingTier] = useState(null); // null = list, number = editing tier index
   const [tierForm, setTierForm] = useState(EMPTY_TIER);
   const [tierNewArea, setTierNewArea] = useState("");
-  const [tierNewRule, setTierNewRule] = useState({ rule_name: "", rule_value: "", unit: "" });
+  const [tierNewRule, setTierNewRule] = useState({ rule_name: "", rule_value: "", unit: "", description: "" });
   const [uploadError, setUploadError] = useState("");
 
   const { data: services = [], isLoading } = useQuery({
@@ -531,12 +531,22 @@ export default function AdminServiceTypes() {
                   <Input value={newRule.unit} onChange={e => setNewRule(r => ({ ...r, unit: e.target.value }))} placeholder="Unit (units, ml...)" />
                   <Button type="button" variant="outline" onClick={addRule}>Add</Button>
                 </div>
+                <Input
+                  className="mb-2"
+                  value={newRule.description}
+                  onChange={e => setNewRule(r => ({ ...r, description: e.target.value }))}
+                  placeholder="Optional description"
+                  onKeyDown={e => e.key === "Enter" && addRule()}
+                />
                 <div className="space-y-1.5 min-h-[32px]">
                   {form.scope_rules?.length === 0 && <p className="text-xs text-slate-400">No rules added yet</p>}
                   {form.scope_rules?.map((r, i) => (
-                    <div key={i} className="flex items-center justify-between bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 text-xs">
-                      <span><strong className="text-slate-700">{r.rule_name}:</strong> <span className="text-slate-600">{r.rule_value} {r.unit}</span></span>
-                      <button onClick={() => removeRule(i)} className="text-slate-300 hover:text-red-500 ml-2 text-base leading-none">×</button>
+                    <div key={i} className="flex items-start justify-between gap-2 bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 text-xs">
+                      <div className="min-w-0 flex-1">
+                        <span><strong className="text-slate-700">{r.rule_name}:</strong> <span className="text-slate-600">{r.rule_value}{r.unit ? ` ${r.unit}` : ""}</span></span>
+                        {r.description?.trim() ? <p className="text-slate-500 mt-0.5">{r.description}</p> : null}
+                      </div>
+                      <button type="button" onClick={() => removeRule(i)} className="text-slate-300 hover:text-red-500 shrink-0 text-base leading-none">×</button>
                     </div>
                   ))}
                 </div>
@@ -641,16 +651,36 @@ export default function AdminServiceTypes() {
 
                   <div>
                     <label className="text-xs font-semibold text-slate-600 mb-1 block">Scope Rules for this Tier</label>
-                    <div className="grid grid-cols-3 gap-2 mb-2">
+                    <div className="grid grid-cols-4 gap-2 mb-2">
                       <Input value={tierNewRule.rule_name} onChange={e => setTierNewRule(r => ({ ...r, rule_name: e.target.value }))} placeholder="Rule name" />
-                      <Input value={tierNewRule.rule_value} onChange={e => setTierNewRule(r => ({ ...r, rule_value: e.target.value }))} placeholder="Value + unit" />
-                      <Button type="button" variant="outline" onClick={() => { if (tierNewRule.rule_name.trim()) { setTierForm(f => ({ ...f, scope_rules: [...(f.scope_rules||[]), { ...tierNewRule }] })); setTierNewRule({ rule_name: "", rule_value: "", unit: "" }); } }}>Add</Button>
+                      <Input value={tierNewRule.rule_value} onChange={e => setTierNewRule(r => ({ ...r, rule_value: e.target.value }))} placeholder="Value" />
+                      <Input value={tierNewRule.unit} onChange={e => setTierNewRule(r => ({ ...r, unit: e.target.value }))} placeholder="Unit" />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => {
+                          if (!tierNewRule.rule_name.trim()) return;
+                          setTierForm(f => ({ ...f, scope_rules: [...(f.scope_rules || []), { ...tierNewRule }] }));
+                          setTierNewRule({ rule_name: "", rule_value: "", unit: "", description: "" });
+                        }}
+                      >
+                        Add
+                      </Button>
                     </div>
+                    <Input
+                      className="mb-2"
+                      value={tierNewRule.description}
+                      onChange={e => setTierNewRule(r => ({ ...r, description: e.target.value }))}
+                      placeholder="Optional description"
+                    />
                     <div className="space-y-1">
                       {(tierForm.scope_rules || []).map((r, i) => (
-                        <div key={i} className="flex items-center justify-between bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 text-xs">
-                          <span><strong className="text-slate-700">{r.rule_name}:</strong> <span className="text-slate-600">{r.rule_value} {r.unit}</span></span>
-                          <button onClick={() => setTierForm(f => ({ ...f, scope_rules: f.scope_rules.filter((_, idx) => idx !== i) }))} className="text-slate-300 hover:text-red-500 ml-2 text-base">×</button>
+                        <div key={i} className="flex items-start justify-between gap-2 bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 text-xs">
+                          <div className="min-w-0 flex-1">
+                            <span><strong className="text-slate-700">{r.rule_name}:</strong> <span className="text-slate-600">{r.rule_value}{r.unit ? ` ${r.unit}` : ""}</span></span>
+                            {r.description?.trim() ? <p className="text-slate-500 mt-0.5">{r.description}</p> : null}
+                          </div>
+                          <button type="button" onClick={() => setTierForm(f => ({ ...f, scope_rules: f.scope_rules.filter((_, idx) => idx !== i) }))} className="text-slate-300 hover:text-red-500 shrink-0 text-base">×</button>
                         </div>
                       ))}
                     </div>
