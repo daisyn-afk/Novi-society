@@ -168,6 +168,28 @@ function normalizePaidEnrollmentStatus(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+/** landing = public home (/); provider = provider dashboard after portal checkout */
+function normalizeCheckoutReturnTo(value, fallback = "landing") {
+  const raw = String(value ?? fallback).trim().toLowerCase();
+  if (raw === "provider" || raw === "provider_dashboard") return "provider";
+  return "landing";
+}
+
+export async function enrichPreOrderWithReturnContext(preOrder, sessionId = null) {
+  if (!preOrder) return null;
+  const sid = sessionId || preOrder.stripe_session_id || null;
+  let checkout_return_to = "landing";
+  if (sid && stripe) {
+    try {
+      const session = await stripe.checkout.sessions.retrieve(String(sid));
+      checkout_return_to = normalizeCheckoutReturnTo(session?.metadata?.checkout_return_to);
+    } catch {
+      // keep default
+    }
+  }
+  return { ...preOrder, checkout_return_to };
+}
+
 export async function createCourseCheckout(payload, options = {}) {
   if (!stripe) throw new Error("STRIPE_SECRET_KEY is not configured.");
   const frontendBaseUrl = resolveFrontendBaseUrl(options?.requestOrigin);
@@ -279,8 +301,10 @@ async function runCourseCheckoutBusiness({
     promo_code,
     terms_confirmed,
     refund_policy_confirmed,
-    course_date
+    course_date,
+    checkout_return_to: checkoutReturnToRaw
   } = payload || {};
+  const checkoutReturnTo = normalizeCheckoutReturnTo(checkoutReturnToRaw, "landing");
 
   const client = await pool.connect();
   try {
@@ -488,16 +512,19 @@ async function runCourseCheckoutBusiness({
       course_end_time: String(course_end_time || ""),
       provider_email: String(normalizedCustomerEmail),
       provider_name: String(customer_name),
-      app_source: "novi-landing",
+      app_source: checkoutReturnTo === "provider" ? "provider-portal" : "novi-landing",
       app_base_url: frontendBaseUrl,
-      checkout_type: "course"
+      checkout_type: "course",
+      checkout_return_to: checkoutReturnTo
     };
 
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
       customer_email: normalizedCustomerEmail,
-      success_url: `${frontendBaseUrl}/PreOrderConfirmation?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${frontendBaseUrl}/`,
+      success_url: `${frontendBaseUrl}/PreOrderConfirmation?session_id={CHECKOUT_SESSION_ID}&return_to=${encodeURIComponent(checkoutReturnTo)}`,
+      cancel_url: checkoutReturnTo === "provider"
+        ? `${frontendBaseUrl}${encodeURI("/ProviderDashboard")}`
+        : `${frontendBaseUrl}/`,
       line_items: [
         {
           price_data: {

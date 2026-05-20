@@ -12,6 +12,7 @@ import { adminCoursesApi } from "@/api/adminCoursesApi";
 import { courseCheckoutApi } from "@/api/courseCheckoutApi";
 import { providerOnboardingApi } from "@/api/providerOnboardingApi";
 import { redirectToStripeCheckout } from "@/lib/redirectToStripeCheckout";
+import { CHECKOUT_RETURN_LANDING, stashCheckoutReturnTo } from "@/lib/checkoutReturnPath";
 import {
   effectiveAvailableSeats,
   isCourseFullySoldOut,
@@ -94,6 +95,7 @@ export default function NoviOfferingsPortal({ children }) {
   const [serviceCertUploading, setServiceCertUploading] = useState(false);
   const [serviceUploadError, setServiceUploadError] = useState("");
   const [isCheckingOut, setIsCheckingOut] = useState(false);
+  const [checkoutError, setCheckoutError] = useState(null);
   const selectedSessionEntry = resolveSelectedSessionEntry(selectedCourse, selectedCourseSession, selectedCourseDate);
   const selectedSessionIsSoldOut = Boolean(selectedSessionEntry && isSessionDateEntrySoldOut(selectedSessionEntry));
 
@@ -174,6 +176,7 @@ export default function NoviOfferingsPortal({ children }) {
     setSelectedCourseSession(null);
     setForm(BLANK_FORM);
     setPromoPreview(null);
+    setCheckoutError(null);
   };
 
   const closeCourseModal = () => {
@@ -184,6 +187,7 @@ export default function NoviOfferingsPortal({ children }) {
     setForm(BLANK_FORM);
     setPromoPreview(null);
     setIsCheckingOut(false);
+    setCheckoutError(null);
   };
 
   const promoMutation = useMutation({
@@ -225,9 +229,12 @@ export default function NoviOfferingsPortal({ children }) {
     }
 
     const fullName = `${form.first_name} ${form.last_name}`.trim();
+    setCheckoutError(null);
     setIsCheckingOut(true);
+    stashCheckoutReturnTo(CHECKOUT_RETURN_LANDING);
     try {
       const response = await courseCheckoutApi.createCheckout({
+        checkout_return_to: CHECKOUT_RETURN_LANDING,
         course_id: selectedCourse.id,
         course_date: selectedSessionEntry?.date || selectedCourseDate || null,
         course_session_id: selectedSessionEntry?.session_id || null,
@@ -245,6 +252,7 @@ export default function NoviOfferingsPortal({ children }) {
       redirectToStripeCheckout(response?.checkout_url);
     } catch (error) {
       setIsCheckingOut(false);
+      setCheckoutError(error);
       handleCheckoutError(error);
     }
   };
@@ -721,9 +729,9 @@ export default function NoviOfferingsPortal({ children }) {
                 )}
               </div>
 
-              {submitMutation.error && (
+              {checkoutError && (
                 <div className="px-4 py-3 rounded-xl" style={{ background: "rgba(218,106,99,0.1)", border: "1px solid rgba(218,106,99,0.25)" }}>
-                  <p className="text-sm font-semibold" style={{ color: "#DA6A63" }}>{submitMutation.error.message}</p>
+                  <p className="text-sm font-semibold" style={{ color: "#DA6A63" }}>{checkoutError.message}</p>
                 </div>
               )}
 
