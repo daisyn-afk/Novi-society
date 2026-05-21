@@ -217,11 +217,59 @@ export function createLovableProviderClient() {
           }
         };
       }
+      if (name === "PromoCode") {
+        return {
+          list: () => requestJson("/admin/promo-codes", { method: "GET" }),
+          filter: async (filters = {}) => {
+            const all = await requestJson("/admin/promo-codes", { method: "GET" });
+            const rows = Array.isArray(all) ? all : [];
+            const code = filters?.code ? String(filters.code).trim().toUpperCase() : "";
+            const requireActive = filters?.is_active === true;
+            return rows
+              .filter((row) => {
+                if (code && String(row?.code || "").trim().toUpperCase() !== code) return false;
+                if (requireActive && row?.active === false) return false;
+                return true;
+              })
+              .map((row) => ({
+                ...row,
+                is_active: row?.active !== false,
+                valid_from: row?.starts_at ?? row?.valid_from ?? null,
+                valid_until: row?.ends_at ?? row?.valid_until ?? null,
+                discount_type:
+                  String(row?.discount_type || "").toLowerCase() === "percent"
+                    ? "percentage"
+                    : row?.discount_type,
+              }));
+          },
+          get: createNotImplementedMethod("entities.PromoCode.get"),
+          create: createNotImplementedMethod("entities.PromoCode.create"),
+          update: createNotImplementedMethod("entities.PromoCode.update"),
+          delete: createNotImplementedMethod("entities.PromoCode.delete"),
+        };
+      }
       if (name === "PreOrder") {
         return {
           list: (_sort = "", limit = 200) => authRequest(`/admin/pre-orders?limit=${encodeURIComponent(String(limit || 200))}`, { method: "GET" }),
           get: (id) => requestJson(`/admin/checkout/pre-order?id=${encodeURIComponent(id)}`, { method: "GET" }),
-          create: createNotImplementedMethod("entities.PreOrder.create"),
+          create: async (payload = {}) => {
+            const result = await requestJson("/admin/checkout/service", {
+              method: "POST",
+              body: JSON.stringify({
+                customer_name: payload.customer_name,
+                customer_email: payload.customer_email,
+                phone: payload.phone || null,
+                order_type: payload.order_type || "service",
+                notes: payload.notes || null,
+                service_type_id: payload.service_type_id,
+                license_type: payload.license_type || null,
+                license_number: payload.license_number || null,
+                license_image_url: payload.license_image_url || null,
+                certification_document_url: payload.certification_document_url || null,
+              }),
+            });
+            return { id: result?.pre_order_id, ...result };
+          },
           update: (id, payload) => authRequest(`/admin/pre-orders/${encodeURIComponent(id)}`, {
             method: "PATCH",
             body: JSON.stringify(payload || {})
@@ -356,8 +404,10 @@ export function createLovableProviderClient() {
             const all = await authRequest("/admin/courses", { method: "GET" });
             const rows = Array.isArray(all) ? all : [];
             const type = filters?.type ? String(filters.type) : "";
+            const requireActive = filters?.is_active === true;
             return rows.filter((row) => {
               if (type && String(row?.type || "") !== type) return false;
+              if (requireActive && row?.is_active === false) return false;
               return true;
             });
           },
@@ -612,7 +662,8 @@ export function createLovableProviderClient() {
         const PAYMENT_FUNCTIONS = new Set([
           "createPreOrderCheckout",
           "createModelCheckout",
-          "createCheckoutSession"
+          "createCheckoutSession",
+          "createCourseCheckout",
         ]);
         const isPaymentFn = PAYMENT_FUNCTIONS.has(functionName);
         const clientTimestamp = isPaymentFn ? new Date().toISOString() : null;
@@ -634,6 +685,39 @@ export function createLovableProviderClient() {
               headers: paymentHeaders
             })
           };
+        }
+        if (functionName === "createCourseCheckout") {
+          const info = payload?.personal_info || {};
+          let promoCode = null;
+          if (payload?.promo_code_id) {
+            const promos = await requestJson("/admin/promo-codes", { method: "GET" });
+            const match = (Array.isArray(promos) ? promos : []).find(
+              (p) => String(p?.id) === String(payload.promo_code_id)
+            );
+            promoCode = match?.code || null;
+          }
+          const checkout = await requestJson("/admin/checkout/course", {
+            method: "POST",
+            body: JSON.stringify({
+              course_id: payload?.course_id,
+              course_date: payload?.course_date || null,
+              first_name: info.first_name,
+              last_name: info.last_name,
+              customer_email: info.email,
+              customer_name: `${info.first_name || ""} ${info.last_name || ""}`.trim(),
+              phone: info.phone || null,
+              terms_confirmed: true,
+              refund_policy_confirmed: true,
+              promo_code: promoCode,
+              checkout_return_to: "landing",
+              client_timestamp: clientTimestamp,
+            }),
+            headers: paymentHeaders,
+          });
+          return { data: { url: checkout?.checkout_url || null } };
+        }
+        if (functionName === "sendMdServiceConfirmationEmail") {
+          return { data: { success: true } };
         }
         if (functionName === "approvePreOrder") {
           return {
