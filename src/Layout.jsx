@@ -7,10 +7,11 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   LayoutDashboard, BookOpen, Award, FileText, Users,
   Calendar, Star, ShieldCheck, ClipboardList, Settings, Layers,
-  Menu, X, LogOut, User, Lock, Stethoscope, Sparkles, Clock, AlertTriangle, ShoppingBag, Mail, Rocket, TicketPercent
+  Menu, X, LogOut, User, Lock, Stethoscope, Sparkles, Clock, AlertTriangle, ShoppingBag, Mail, Rocket, TicketPercent, MessageSquare
 } from "lucide-react";
 import { useProviderAccess } from "@/components/useProviderAccess";
 import { providerOnboardingApi } from "@/api/providerOnboardingApi";
+import { mdMessagesApi } from "@/api/mdMessagesApi";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import NotificationBell from "@/components/NotificationBell";
 import {
@@ -49,12 +50,14 @@ const navByRole = {
     { label: "Supplier Marketplace", icon: ShoppingBag, page: "ProviderMarketplace" },
     { label: "Growth Studio", icon: Rocket, page: "ProviderLaunchPad" },
     { label: "My Practice", icon: Stethoscope, page: "ProviderPractice" },
+    { label: "Messages", icon: MessageSquare, page: "ProviderMessaging" },
     { label: "Profile", icon: User, page: "ProviderProfile" },
   ],
   medical_director: [
     { label: "Dashboard", icon: LayoutDashboard, page: "MDDashboard" },
     { label: "Provider Supervision", icon: Users, page: "MDProviderRelationships" },
     { label: "Treatment Records", icon: ClipboardList, page: "MDTreatmentRecords" },
+    { label: "Messages", icon: MessageSquare, page: "MDMessaging" },
     { label: "Compliance Logs", icon: ShieldCheck, page: "MDCompliance" },
     { label: "Certifications", icon: Award, page: "MDCertifications" },
     { label: "MD Profile", icon: User, page: "MDProfile" },
@@ -112,6 +115,23 @@ export default function Layout({ children, currentPageName }) {
   const navRole = role;
   const navItems = navByRole[navRole] || navByRole.provider;
   const isProviderUserReady = role === "provider" && Boolean(user?.id || user?.email);
+
+  // Sidebar unread message badge — shared query key ["msg-threads"] with messaging pages.
+  // Polling at 5s keeps the badge live without hammering the API.
+  const isMessagingRole = role === "provider" || role === "medical_director";
+  const { data: sidebarUnreadCount = 0 } = useQuery({
+    queryKey: ["msg-threads"],
+    queryFn: () => mdMessagesApi.getThreads(),
+    enabled: isSuccess && !!user && isMessagingRole,
+    refetchInterval: 5000,
+    staleTime: 4000,
+    refetchOnWindowFocus: true,
+    select: (threads) =>
+      (Array.isArray(threads) ? threads : []).reduce(
+        (sum, t) => sum + (Number(t.unread_count) || 0),
+        0
+      ),
+  });
 
   const { data: providerEnrollments = [] } = useQuery({
     queryKey: ["my-enrollments"],
@@ -347,6 +367,8 @@ export default function Layout({ children, currentPageName }) {
           {navItems.map(({ label, icon: Icon, page }) => {
             const isLocked = !isProviderUnlocked && !PROVIDER_FREE_PAGES.includes(page);
             const active = isActive(page);
+            const isMessagesPage = page === "MDMessaging" || page === "ProviderMessaging";
+            const showUnreadBadge = isMessagesPage && sidebarUnreadCount > 0;
             return (
               <Link
                 key={page}
@@ -356,6 +378,14 @@ export default function Layout({ children, currentPageName }) {
               >
                 <Icon className="w-[15px] h-[15px] flex-shrink-0" style={{ opacity: active ? 0.9 : 0.6 }} />
                 <span className="flex-1">{label}</span>
+                {showUnreadBadge && (
+                  <span
+                    className="flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold text-white flex-shrink-0"
+                    style={{ background: "rgba(218,106,99,0.9)" }}
+                  >
+                    {sidebarUnreadCount > 99 ? "99+" : sidebarUnreadCount}
+                  </span>
+                )}
                 {isLocked && <Lock className="w-3 h-3 opacity-30 flex-shrink-0" />}
               </Link>
             );
