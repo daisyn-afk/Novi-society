@@ -101,6 +101,190 @@ function getSupplierCoverUrl(mfr) {
   );
 }
 
+const SUPPLIER_CARD_HEIGHT = 280;
+
+function SupplierMarketplaceCard({
+  mfr,
+  applied,
+  appStatus,
+  onOpen,
+}) {
+  const photo = getSupplierCoverUrl(mfr);
+  const uploadedCover = hasUploadedCover(mfr);
+  const StatusIcon = appStatus?.icon;
+
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="group relative text-left overflow-hidden w-full"
+      style={{
+        borderRadius: 16,
+        boxShadow: "0 4px 20px rgba(30,37,53,0.14)",
+        height: SUPPLIER_CARD_HEIGHT,
+        transition: "transform 0.25s ease, box-shadow 0.25s ease",
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.transform = "translateY(-4px)";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.transform = "translateY(0)";
+      }}
+    >
+      <img
+        src={photo}
+        alt={`${mfr.name} cover`}
+        className="absolute inset-0 w-full h-full object-cover"
+        style={{ transition: "transform 0.5s ease" }}
+      />
+
+      {!uploadedCover && (
+        <div
+          className="absolute inset-0 pointer-events-none"
+          style={{ backdropFilter: "blur(1px)", WebkitBackdropFilter: "blur(1px)" }}
+        />
+      )}
+
+      {/* Strong bottom-weighted overlay so text stays readable on any cover */}
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          background:
+            "linear-gradient(180deg, rgba(8,10,20,0.45) 0%, rgba(8,10,20,0.55) 40%, rgba(8,10,20,0.97) 100%)",
+        }}
+      />
+
+      <div className="relative z-10 flex h-full flex-col p-4">
+        {/* Top row — category + badges (fixed height) */}
+        <div className="flex items-start justify-between gap-2 min-h-[28px]">
+          <span
+            className="text-xs font-semibold px-2.5 py-1 rounded-full shrink-0 max-w-[55%] truncate"
+            style={{
+              background: "rgba(255,255,255,0.16)",
+              color: "rgba(255,255,255,0.95)",
+              backdropFilter: "blur(12px)",
+              border: "1px solid rgba(255,255,255,0.2)",
+            }}
+            title={CATEGORY_LABELS[mfr.category]}
+          >
+            {CATEGORY_LABELS[mfr.category]}
+          </span>
+          <div className="flex flex-wrap items-center justify-end gap-1.5 shrink-0">
+            {mfr.is_featured ? (
+              <span
+                className="flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-full whitespace-nowrap"
+                style={{
+                  background: "rgba(200,230,60,0.22)",
+                  color: "#d4f04a",
+                  backdropFilter: "blur(12px)",
+                  border: "1px solid rgba(200,230,60,0.35)",
+                }}
+              >
+                <Star className="w-2.5 h-2.5 shrink-0" /> Featured
+              </span>
+            ) : null}
+            {mfr.fda_approved_us_products ? (
+              <span
+                className="text-xs font-bold px-2.5 py-1 rounded-full whitespace-nowrap"
+                style={{
+                  background: "rgba(255,255,255,0.14)",
+                  color: "rgba(255,255,255,0.95)",
+                  backdropFilter: "blur(12px)",
+                  border: "1px solid rgba(255,255,255,0.18)",
+                }}
+              >
+                FDA ✓
+              </span>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="flex-1 min-h-2" />
+
+        {/* Bottom content — anchored, never overlaps top */}
+        <div className="space-y-3">
+          <div className="flex items-end gap-3">
+            <SupplierLogo mfr={mfr} size={48} className="rounded-xl shrink-0" />
+            <p
+              className="flex-1 min-w-0 line-clamp-2 pb-0.5"
+              style={{
+                fontFamily: "'DM Serif Display', serif",
+                fontSize: 20,
+                color: "#fff",
+                lineHeight: 1.15,
+                fontWeight: 400,
+                textShadow: "0 1px 8px rgba(0,0,0,0.45)",
+              }}
+            >
+              {mfr.name}
+            </p>
+          </div>
+
+          {mfr.description ? (
+            <p
+              className="text-xs line-clamp-2"
+              style={{ color: "rgba(255,255,255,0.72)", lineHeight: 1.5 }}
+            >
+              {mfr.description}
+            </p>
+          ) : null}
+
+          {mfr.products?.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5 max-h-[52px] overflow-hidden">
+              {mfr.products.slice(0, 2).map((p, i) => (
+                <span
+                  key={i}
+                  className="text-xs px-2.5 py-0.5 rounded-full truncate max-w-full"
+                  style={{
+                    background: "rgba(255,255,255,0.12)",
+                    color: "rgba(255,255,255,0.85)",
+                    border: "1px solid rgba(255,255,255,0.15)",
+                  }}
+                >
+                  {p}
+                </span>
+              ))}
+              {mfr.products.length > 2 ? (
+                <span className="text-xs px-2 py-0.5" style={{ color: "rgba(255,255,255,0.5)" }}>
+                  +{mfr.products.length - 2}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+
+          {applied && appStatus ? (
+            <span
+              className="inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-full"
+              style={{ background: appStatus.bg, color: appStatus.color }}
+            >
+              {StatusIcon ? <StatusIcon className="w-3 h-3 shrink-0" /> : null}
+              {appStatus.label}
+            </span>
+          ) : (
+            <div className="flex items-center justify-between gap-2 pt-0.5">
+              <span
+                className="text-sm font-semibold px-4 py-2 rounded-full whitespace-nowrap"
+                style={{ background: "rgba(255,255,255,0.95)", color: "#1e2535" }}
+              >
+                Apply for Account
+              </span>
+              <div
+                className="w-9 h-9 rounded-full flex items-center justify-center shrink-0"
+                style={{
+                  background: "rgba(255,255,255,0.15)",
+                  border: "1px solid rgba(255,255,255,0.25)",
+                }}
+              >
+                <ChevronRight className="w-4 h-4" style={{ color: "#fff" }} />
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </button>
+  );
+}
+
 function SupplierLogo({ mfr, size = 44, className = "" }) {
   const logo = getSupplierLogoUrl(mfr);
   const col = CATEGORY_COLORS[mfr?.category] || CATEGORY_COLORS.other;
@@ -861,7 +1045,7 @@ export default function ProviderMarketplace() {
 
                 {/* Photo grid */}
                 {isLoading ? (
-                  <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">{[1,2,3,4,5,6].map(i => <div key={i} className="h-64 rounded-2xl animate-pulse" style={{ background: "rgba(255,255,255,0.5)" }} />)}</div>
+                  <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">{[1,2,3,4,5,6].map(i => <div key={i} className="rounded-2xl animate-pulse" style={{ background: "rgba(255,255,255,0.5)", height: SUPPLIER_CARD_HEIGHT }} />)}</div>
                 ) : filtered.length === 0 ? (
                   <div className="py-20 text-center rounded-2xl" style={{ background: "#fff", border: "1.5px solid rgba(30,37,53,0.07)" }}>
                     <Building2 className="w-10 h-10 mx-auto mb-3" style={{ color: "rgba(30,37,53,0.15)" }} />
@@ -869,108 +1053,19 @@ export default function ProviderMarketplace() {
                   </div>
                 ) : (
                   <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
-                    {filtered.map(mfr => {
-                      const col = CATEGORY_COLORS[mfr.category] || CATEGORY_COLORS.other;
+                    {filtered.map((mfr) => {
                       const applied = existingAppMap[mfr.id];
-                      const appStatus = applied ? (APP_STATUS_CONFIG[applied.status] || APP_STATUS_CONFIG.pending) : null;
-                      const photo = getSupplierCoverUrl(mfr);
-                      const uploadedCover = hasUploadedCover(mfr);
+                      const appStatus = applied
+                        ? APP_STATUS_CONFIG[applied.status] || APP_STATUS_CONFIG.pending
+                        : null;
                       return (
-                        <button key={mfr.id} onClick={() => openDetail(mfr)}
-                          className="group relative text-left overflow-hidden"
-                          style={{ borderRadius: 16, boxShadow: "0 4px 20px rgba(30,37,53,0.14)", height: mfr.is_featured ? 260 : 210, transition: "all 0.25s ease", display: "block", width: "100%" }}
-                          onMouseEnter={e => e.currentTarget.style.transform = "translateY(-4px)"}
-                          onMouseLeave={e => e.currentTarget.style.transform = "translateY(0)"}
-                        >
-                          {/* Cover photo */}
-                          <img
-                            src={photo}
-                            alt={`${mfr.name} cover`}
-                            className="absolute inset-0 w-full h-full object-cover"
-                            style={{ transition: "transform 0.5s ease" }}
-                            onMouseEnter={(e) => { e.currentTarget.style.transform = "scale(1.06)"; }}
-                            onMouseLeave={(e) => { e.currentTarget.style.transform = "scale(1)"; }}
-                          />
-
-                          {/* Soft blur only for stock fallback covers */}
-                          {!uploadedCover && (
-                            <div
-                              className="absolute inset-0"
-                              style={{ backdropFilter: "blur(1px)", WebkitBackdropFilter: "blur(1px)" }}
-                            />
-                          )}
-                          {/* Gradient overlay */}
-                          <div
-                            className="absolute inset-0"
-                            style={{
-                              background: uploadedCover
-                                ? "linear-gradient(180deg, rgba(8,10,20,0.1) 0%, rgba(8,10,20,0.45) 50%, rgba(8,10,20,0.92) 100%)"
-                                : "linear-gradient(180deg, rgba(8,10,20,0.25) 0%, rgba(8,10,20,0.55) 45%, rgba(8,10,20,0.94) 100%)",
-                            }}
-                          />
-
-                          {/* Top badges */}
-                          <div className="absolute top-3.5 left-3.5 right-3.5 flex items-center justify-between">
-                            <span className="text-xs font-semibold px-2.5 py-1 rounded-full" style={{ background: "rgba(255,255,255,0.14)", color: "rgba(255,255,255,0.9)", backdropFilter: "blur(12px)", border: "1px solid rgba(255,255,255,0.18)" }}>
-                              {CATEGORY_LABELS[mfr.category]}
-                            </span>
-                            <div className="flex gap-1.5">
-                              {mfr.is_featured && (
-                                <span className="flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-full"
-                                  style={{ background: "rgba(200,230,60,0.22)", color: "#d4f04a", backdropFilter: "blur(12px)", border: "1px solid rgba(200,230,60,0.35)" }}>
-                                  <Star className="w-2.5 h-2.5" /> Featured
-                                </span>
-                              )}
-                              {mfr.fda_approved_us_products && (
-                                <span className="text-xs font-bold px-2.5 py-1 rounded-full"
-                                  style={{ background: "rgba(255,255,255,0.14)", color: "rgba(255,255,255,0.9)", backdropFilter: "blur(12px)", border: "1px solid rgba(255,255,255,0.18)" }}>FDA ✓</span>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* Bottom content */}
-                          <div className="absolute bottom-0 left-0 right-0 p-5">
-                            <div className="flex items-end gap-3 mb-3">
-                              <SupplierLogo mfr={mfr} size={mfr.is_featured ? 52 : 44} />
-                              <p
-                                className="flex-1 min-w-0"
-                                style={{
-                                  fontFamily: "'DM Serif Display', serif",
-                                  fontSize: mfr.is_featured ? 22 : 18,
-                                  color: "#fff",
-                                  lineHeight: 1.2,
-                                  fontWeight: 400,
-                                }}
-                              >
-                                {mfr.name}
-                              </p>
-                            </div>
-                            {mfr.description && <p className="text-xs line-clamp-2 mb-4" style={{ color: "rgba(255,255,255,0.6)", lineHeight: 1.55 }}>{mfr.description}</p>}
-                            {mfr.products?.length > 0 && (
-                              <div className="flex flex-wrap gap-1.5 mb-4">
-                                {mfr.products.slice(0, 3).map((p, i) => (
-                                  <span key={i} className="text-xs px-2.5 py-0.5 rounded-full"
-                                    style={{ background: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.75)", border: "1px solid rgba(255,255,255,0.15)", backdropFilter: "blur(8px)" }}>{p}</span>
-                                ))}
-                                {mfr.products.length > 3 && <span className="text-xs px-2 py-0.5 rounded-full" style={{ color: "rgba(255,255,255,0.4)" }}>+{mfr.products.length - 3}</span>}
-                              </div>
-                            )}
-                            {applied ? (
-                              <span className="inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-full"
-                                style={{ background: appStatus.bg, color: appStatus.color }}>
-                                <appStatus.icon className="w-3 h-3" style={{ width: 12, height: 12 }} />{appStatus.label}
-                              </span>
-                            ) : (
-                              <div className="flex items-center justify-between">
-                                <span className="text-sm font-semibold px-5 py-2 rounded-full"
-                                  style={{ background: "rgba(255,255,255,0.95)", color: "#1e2535", backdropFilter: "blur(8px)" }}>Apply for Account</span>
-                                <div className="w-9 h-9 rounded-full flex items-center justify-center" style={{ background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.25)" }}>
-                                  <ChevronRight className="w-4 h-4" style={{ color: "#fff" }} />
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        </button>
+                        <SupplierMarketplaceCard
+                          key={mfr.id}
+                          mfr={mfr}
+                          applied={applied}
+                          appStatus={appStatus}
+                          onOpen={() => openDetail(mfr)}
+                        />
                       );
                     })}
                   </div>
