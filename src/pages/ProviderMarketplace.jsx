@@ -2,20 +2,17 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input"; 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import ProviderSalesLock from "@/components/ProviderSalesLock";
 import { useProviderAccess } from "@/components/useProviderAccess";
-import ProviderInventoryTab from "@/components/provider/ProviderInventoryTab";
 import RepContactDialog from "@/components/provider/RepContactDialog";
 import OrderRequestDialog from "@/components/provider/OrderRequestDialog";
-import SpendDashboard from "@/components/provider/SpendDashboard";
 import {
   Search, CheckCircle, Send, Building2, ChevronRight, Star, Globe, ExternalLink,
-  Sparkles, ShieldCheck, Zap, Award, Users, Shield, Package, ArrowLeft,
+  Sparkles, ShieldCheck, Zap, Award, Users, Package, ArrowLeft,
   Clock, CheckCircle2, XCircle, AlertCircle, Mail, MapPin, TrendingUp,
-  Tag, Layers, RefreshCw, Calendar, BarChart2
+  Tag, Layers, RefreshCw, Calendar
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
@@ -507,53 +504,25 @@ export default function ProviderMarketplace() {
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <p className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: "#7B8EC8", letterSpacing: "0.14em" }}>Provider Marketplace</p>
-          <h1 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 28, color: "#1e2535", lineHeight: 1.2 }}>Suppliers & Inventory</h1>
-          <p className="mt-1 text-sm" style={{ color: "rgba(30,37,53,0.55)", maxWidth: 480 }}>
-            Apply for supplier accounts and track your product inventory for compliance.
-          </p>
+          <h1 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 28, color: "#1e2535", lineHeight: 1.2 }}>Supplier Network</h1>
         </div>
-        {myApplications.length > 0 && (
-          <div className="flex gap-3">
-            {approvedCount > 0 && (
-              <div className="rounded-2xl px-4 py-3 text-center" style={{ background: "rgba(200,230,60,0.12)", border: "1px solid rgba(200,230,60,0.3)" }}>
-                <p className="text-lg font-bold" style={{ color: "#4a6b10" }}>{approvedCount}</p>
-                <p className="text-xs" style={{ color: "rgba(30,37,53,0.5)" }}>Active Accounts</p>
-              </div>
-            )}
-            {pendingCount > 0 && (
-              <div className="rounded-2xl px-4 py-3 text-center" style={{ background: "rgba(250,111,48,0.08)", border: "1px solid rgba(250,111,48,0.2)" }}>
-                <p className="text-lg font-bold" style={{ color: "#FA6F30" }}>{pendingCount}</p>
-                <p className="text-xs" style={{ color: "rgba(30,37,53,0.5)" }}>Pending</p>
-              </div>
-            )}
-          </div>
-        )}
+        <div className="rounded-2xl px-4 py-2 text-center" style={{ background: "rgba(200,230,60,0.12)", border: "1px solid rgba(200,230,60,0.3)" }}>
+          <p className="text-sm font-bold" style={{ color: "#4a6b10" }}>{approvedCount}/{manufacturers.length} active</p>
+        </div>
       </div>
 
       <Tabs defaultValue="suppliers">
         <TabsList className="mb-2 w-full overflow-x-auto flex" style={{ background: "rgba(255,255,255,0.6)", backdropFilter: "blur(12px)", border: "1px solid rgba(255,255,255,0.8)", borderRadius: 12 }}>
-          <TabsTrigger value="suppliers" className="gap-1.5 flex-1 text-xs sm:text-sm whitespace-nowrap"><Building2 className="w-3.5 h-3.5 hidden sm:block" /> Suppliers</TabsTrigger>
-          <TabsTrigger value="inventory" className="gap-1.5 flex-1 text-xs sm:text-sm whitespace-nowrap"><Package className="w-3.5 h-3.5 hidden sm:block" /> Inventory</TabsTrigger>
-          <TabsTrigger value="spend" className="gap-1.5 flex-1 text-xs sm:text-sm whitespace-nowrap"><BarChart2 className="w-3.5 h-3.5 hidden sm:block" /> Spend & Orders</TabsTrigger>
+          <TabsTrigger value="suppliers" className="gap-1.5 flex-1 text-xs sm:text-sm whitespace-nowrap"><Building2 className="w-3.5 h-3.5 hidden sm:block" /> Supplier Network</TabsTrigger>
           <TabsTrigger value="applications" className="gap-1.5 flex-1 text-xs sm:text-sm whitespace-nowrap">
-            <CheckCircle className="w-3.5 h-3.5 hidden sm:block" /> Applications
-            {myApplications.length > 0 && (
-              <span className="ml-1 text-xs font-bold w-4 h-4 rounded-full flex items-center justify-center" style={{ background: "rgba(250,111,48,0.15)", color: "#FA6F30" }}>{myApplications.length}</span>
+            <CheckCircle className="w-3.5 h-3.5 hidden sm:block" /> My Accounts
+            {approvedCount > 0 && (
+              <span className="ml-1 text-xs font-semibold" style={{ color: "rgba(30,37,53,0.5)" }}>· {approvedCount} Active</span>
             )}
           </TabsTrigger>
         </TabsList>
 
-        {/* ── INVENTORY TAB ── */}
-        <TabsContent value="inventory">
-          <ProviderInventoryTab me={me} myApplications={myApplications} manufacturers={manufacturers} />
-        </TabsContent>
-
-        {/* ── SPEND & ORDERS TAB ── */}
-        <TabsContent value="spend">
-          <SpendDashboard manufacturers={manufacturers} />
-        </TabsContent>
-
-        {/* ── APPLICATIONS TAB ── */}
+        {/* ── MY ACCOUNTS TAB ── */}
         <TabsContent value="applications">
           <div className="space-y-4">
             {myApplications.length === 0 ? (
@@ -794,7 +763,7 @@ export default function ProviderMarketplace() {
                       className="pl-9 h-10 text-sm w-full" style={{ background: "rgba(255,255,255,0.9)", border: "1.5px solid rgba(30,37,53,0.1)", borderRadius: 10 }} />
                   </div>
                   <div className="flex items-center gap-1.5 overflow-x-auto pb-1" style={{ scrollbarWidth: "none" }}>
-                    {[{ key: "all", label: "All" }, ...Object.keys(CATEGORY_LABELS).filter(c => grouped[c]?.length > 0).map(k => ({ key: k, label: CATEGORY_LABELS[k] }))].map(({ key, label }) => {
+                    {[{ key: "all", label: "All" }, ...Object.keys(CATEGORY_LABELS).map(k => ({ key: k, label: CATEGORY_LABELS[k] }))].map(({ key, label }) => {
                       const active = categoryFilter === key;
                       return (
                         <button key={key} onClick={() => setCategoryFilter(key)}
