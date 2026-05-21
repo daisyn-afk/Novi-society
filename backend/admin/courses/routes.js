@@ -12,7 +12,12 @@ export const coursesRouter = Router();
 
 coursesRouter.get("/", async (req, res, next) => {
   try {
-    const courses = await listCourses({ type: req.query.type });
+    const publicCatalog =
+      req.query.public === "1" ||
+      req.query.public === "true" ||
+      req.query.catalog === "public";
+    const courses = await listCourses({ type: req.query.type, publicCatalog });
+    res.set("Cache-Control", "no-store, max-age=0");
     res.json(courses);
   } catch (error) {
     next(error);
