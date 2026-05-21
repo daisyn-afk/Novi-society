@@ -66,6 +66,7 @@ import LandingPage from './pages/LandingPage';
 import MDCertifications from './pages/MDCertifications';
 import MDCompliance from './pages/MDCompliance';
 import MDDashboard from './pages/MDDashboard';
+import MDMessaging from './pages/MDMessaging';
 import MDProviderRelationships from './pages/MDProviderRelationships';
 import MDProviders from './pages/MDProviders';
 import MDProfile from './pages/MDProfile';
@@ -94,6 +95,7 @@ import ProviderProfile from './pages/ProviderProfile';
 import ProviderReviews from './pages/ProviderReviews';
 import ProviderScopeRules from './pages/ProviderScopeRules';
 import ProviderSubscription from './pages/ProviderSubscription';
+import ProviderMessaging from './pages/ProviderMessaging';
 import __Layout from './Layout.jsx';
 
 
@@ -118,6 +120,7 @@ export const PAGES = {
     "MDProfile": MDProfile,
     "MDCompliance": MDCompliance,
     "MDDashboard": MDDashboard,
+    "MDMessaging": MDMessaging,
     "MDProviderRelationships": MDProviderRelationships,
     "MDProviders": MDProviders,
     "MDServiceOfferings": MDServiceOfferings,
@@ -145,6 +148,7 @@ export const PAGES = {
     "ProviderReviews": ProviderReviews,
     "ProviderScopeRules": ProviderScopeRules,
     "ProviderSubscription": ProviderSubscription,
+    "ProviderMessaging": ProviderMessaging,
 }
 
 export const pagesConfig = {
