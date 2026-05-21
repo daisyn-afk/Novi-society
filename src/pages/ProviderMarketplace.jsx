@@ -51,6 +51,88 @@ const APP_STATUS_CONFIG = {
   more_info_needed: { label: "Info Needed", color: "#D4900A", bg: "rgba(255,180,50,0.1)", border: "rgba(255,180,50,0.2)", icon: AlertCircle },
 };
 
+const MFR_FALLBACK_COVERS = {
+  allergan: "https://images.unsplash.com/photo-1616394584738-fc6e612e71b9?w=1200&q=85",
+  galderma: "https://images.unsplash.com/photo-1522335789203-aabd1fc54bc9?w=1200&q=85",
+  merz: "https://images.unsplash.com/photo-1487412947147-5cebf100ffc2?w=1200&q=85",
+  revance: "https://images.unsplash.com/photo-1512290923902-8a9f81dc236c?w=1200&q=85",
+  solta: "https://images.unsplash.com/photo-1598300042247-d088f8ab3a91?w=1200&q=85",
+  inmode: "https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?w=1200&q=85",
+  hydrafacial: "https://images.unsplash.com/photo-1570172619644-dfd03ed5d881?w=1200&q=85",
+  skinmedica: "https://images.unsplash.com/photo-1556228578-8c89e6adf883?w=1200&q=85",
+  obagi: "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=1200&q=85",
+};
+
+const CATEGORY_FALLBACK_COVERS = {
+  injectables: "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=900&q=80",
+  fillers: "https://images.unsplash.com/photo-1631390012074-8ba0f5c2e14d?w=900&q=80",
+  devices: "https://images.unsplash.com/photo-1576671081837-49000212a370?w=900&q=80",
+  skincare: "https://images.unsplash.com/photo-1556228453-efd6c1ff04f6?w=900&q=80",
+  laser: "https://images.unsplash.com/photo-1612817288484-6f916006741a?w=900&q=80",
+  consumables: "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=900&q=80",
+  prp: "https://images.unsplash.com/photo-1559757175-0eb30cd8c063?w=900&q=80",
+  body_contouring: "https://images.unsplash.com/photo-1600334129128-685c5582fd35?w=900&q=80",
+  other: "https://images.unsplash.com/photo-1556228453-efd6c1ff04f6?w=900&q=80",
+};
+
+function isValidMediaUrl(url) {
+  const value = String(url || "").trim();
+  return /^https?:\/\//i.test(value);
+}
+
+function getSupplierLogoUrl(mfr) {
+  if (isValidMediaUrl(mfr?.logo_url)) return String(mfr.logo_url).trim();
+  return null;
+}
+
+function hasUploadedCover(mfr) {
+  return isValidMediaUrl(mfr?.cover_image_url);
+}
+
+function getSupplierCoverUrl(mfr) {
+  if (hasUploadedCover(mfr)) return String(mfr.cover_image_url).trim();
+  const mfrKey = Object.keys(MFR_FALLBACK_COVERS).find((k) =>
+    mfr?.name?.toLowerCase().includes(k)
+  );
+  return (
+    (mfrKey ? MFR_FALLBACK_COVERS[mfrKey] : null) ||
+    CATEGORY_FALLBACK_COVERS[mfr?.category] ||
+    CATEGORY_FALLBACK_COVERS.other
+  );
+}
+
+function SupplierLogo({ mfr, size = 44, className = "" }) {
+  const logo = getSupplierLogoUrl(mfr);
+  const col = CATEGORY_COLORS[mfr?.category] || CATEGORY_COLORS.other;
+  return (
+    <div
+      className={`flex items-center justify-center flex-shrink-0 overflow-hidden rounded-xl ${className}`}
+      style={{
+        width: size,
+        height: size,
+        background: "#fff",
+        border: "1px solid rgba(255,255,255,0.9)",
+        boxShadow: "0 2px 12px rgba(30,37,53,0.15)",
+      }}
+    >
+      {logo ? (
+        <img
+          src={logo}
+          alt={`${mfr?.name || "Supplier"} logo`}
+          className="w-full h-full object-contain p-1.5"
+        />
+      ) : (
+        <div
+          className="w-full h-full flex items-center justify-center"
+          style={{ background: col.bg }}
+        >
+          <Building2 style={{ color: col.color, width: size * 0.42, height: size * 0.42 }} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GlassCard({ children, className = "", style = {}, onClick }) {
   const base = {
     background: "rgba(255,255,255,0.72)",
@@ -93,34 +175,27 @@ function SupplierDetailView({ mfr, onBack, onApply, application, me, treatmentRe
       c.service_type_name?.toLowerCase().includes(mfrNameLower))
   );
 
-  const MFR_PHOTOS = {
-    "allergan": "https://images.unsplash.com/photo-1616394584738-fc6e612e71b9?w=1200&q=85",
-    "galderma": "https://images.unsplash.com/photo-1522335789203-aabd1fc54bc9?w=1200&q=85",
-    "merz": "https://images.unsplash.com/photo-1487412947147-5cebf100ffc2?w=1200&q=85",
-    "revance": "https://images.unsplash.com/photo-1512290923902-8a9f81dc236c?w=1200&q=85",
-    "solta": "https://images.unsplash.com/photo-1598300042247-d088f8ab3a91?w=1200&q=85",
-    "inmode": "https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?w=1200&q=85",
-    "hydrafacial": "https://images.unsplash.com/photo-1570172619644-dfd03ed5d881?w=1200&q=85",
-    "skinmedica": "https://images.unsplash.com/photo-1556228578-8c89e6adf883?w=1200&q=85",
-    "obagi": "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=1200&q=85",
-  };
-  const CATEGORY_PHOTOS = {
-    injectables: "https://images.unsplash.com/photo-1616394584738-fc6e612e71b9?w=1200&q=85",
-    fillers: "https://images.unsplash.com/photo-1522335789203-aabd1fc54bc9?w=1200&q=85",
-    devices: "https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?w=1200&q=85",
-    skincare: "https://images.unsplash.com/photo-1556228578-8c89e6adf883?w=1200&q=85",
-    laser: "https://images.unsplash.com/photo-1598300042247-d088f8ab3a91?w=1200&q=85",
-    other: "https://images.unsplash.com/photo-1487412947147-5cebf100ffc2?w=1200&q=85",
-  };
-  const mfrKey = Object.keys(MFR_PHOTOS).find(k => mfr.name?.toLowerCase().includes(k));
-  const heroPhoto = mfr.cover_image_url || (mfrKey ? MFR_PHOTOS[mfrKey] : null) || CATEGORY_PHOTOS[mfr.category] || CATEGORY_PHOTOS.other;
+  const heroPhoto = getSupplierCoverUrl(mfr);
+  const uploadedCover = hasUploadedCover(mfr);
 
   return (
     <div className="space-y-0">
       {/* Hero Banner */}
-      <div className="relative overflow-hidden" style={{ borderRadius: "20px 20px 0 0", height: 220 }}>
-        <img src={heroPhoto} alt={mfr.name} className="absolute inset-0 w-full h-full object-cover" style={{ filter: "blur(1px) brightness(0.75)" }} />
-        <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, rgba(8,10,20,0.2) 0%, rgba(8,10,20,0.75) 100%)" }} />
+      <div className="relative overflow-hidden" style={{ borderRadius: "20px 20px 0 0", height: 240 }}>
+        <img
+          src={heroPhoto}
+          alt={`${mfr.name} cover`}
+          className="absolute inset-0 w-full h-full object-cover"
+          style={uploadedCover ? undefined : { filter: "brightness(0.88)" }}
+        />
+        <div
+          className="absolute inset-0"
+          style={{
+            background: uploadedCover
+              ? "linear-gradient(180deg, rgba(8,10,20,0.15) 0%, rgba(8,10,20,0.55) 55%, rgba(8,10,20,0.88) 100%)"
+              : "linear-gradient(180deg, rgba(8,10,20,0.25) 0%, rgba(8,10,20,0.75) 100%)",
+          }}
+        />
         {/* Back button */}
         <button onClick={onBack} className="absolute top-4 left-5 flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full transition-opacity hover:opacity-80"
           style={{ background: "rgba(255,255,255,0.15)", color: "#fff", backdropFilter: "blur(12px)", border: "1px solid rgba(255,255,255,0.2)" }}>
@@ -139,13 +214,16 @@ function SupplierDetailView({ mfr, onBack, onApply, application, me, treatmentRe
               style={{ background: "rgba(255,255,255,0.15)", color: "#fff", backdropFilter: "blur(12px)", border: "1px solid rgba(255,255,255,0.2)" }}>FDA ✓</span>
           )}
         </div>
-        {/* Name over hero */}
-        <div className="absolute bottom-5 left-5 right-5">
-          <span className="text-xs font-semibold px-2.5 py-1 rounded-full mb-2 inline-block capitalize"
-            style={{ background: "rgba(255,255,255,0.15)", color: "rgba(255,255,255,0.85)", backdropFilter: "blur(8px)", border: "1px solid rgba(255,255,255,0.2)" }}>
-            {CATEGORY_LABELS[mfr.category]}
-          </span>
-          <h2 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 28, color: "#fff", lineHeight: 1.1, fontWeight: 400 }}>{mfr.name}</h2>
+        {/* Logo + name over hero */}
+        <div className="absolute bottom-5 left-5 right-5 flex items-end gap-4">
+          <SupplierLogo mfr={mfr} size={64} className="rounded-2xl" />
+          <div className="flex-1 min-w-0 pb-0.5">
+            <span className="text-xs font-semibold px-2.5 py-1 rounded-full mb-2 inline-block capitalize"
+              style={{ background: "rgba(255,255,255,0.15)", color: "rgba(255,255,255,0.9)", backdropFilter: "blur(8px)", border: "1px solid rgba(255,255,255,0.2)" }}>
+              {CATEGORY_LABELS[mfr.category]}
+            </span>
+            <h2 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 28, color: "#fff", lineHeight: 1.1, fontWeight: 400 }}>{mfr.name}</h2>
+          </div>
         </div>
       </div>
 
@@ -557,13 +635,16 @@ export default function ProviderMarketplace() {
                     <GlassCard key={app.id}>
                       <div className="p-5">
                         <div className="flex items-start gap-4">
-                          <div className="w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 overflow-hidden"
-                            style={{ background: col.bg, border: `1px solid ${col.border}` }}>
-                            {mfr?.logo_url
-                              ? <img src={mfr.logo_url} alt={mfr.name} className="w-full h-full object-contain p-1" />
-                              : <Building2 className="w-5 h-5" style={{ color: col.color }} />
-                            }
-                          </div>
+                          {mfr ? (
+                            <SupplierLogo mfr={mfr} size={44} />
+                          ) : (
+                            <div
+                              className="w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0"
+                              style={{ background: col.bg, border: `1px solid ${col.border}` }}
+                            >
+                              <Building2 className="w-5 h-5" style={{ color: col.color }} />
+                            </div>
+                          )}
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 flex-wrap">
                               <p className="font-bold" style={{ color: "#1e2535", fontFamily: "'DM Serif Display', serif" }}>{app.manufacturer_name}</p>
@@ -792,35 +873,8 @@ export default function ProviderMarketplace() {
                       const col = CATEGORY_COLORS[mfr.category] || CATEGORY_COLORS.other;
                       const applied = existingAppMap[mfr.id];
                       const appStatus = applied ? (APP_STATUS_CONFIG[applied.status] || APP_STATUS_CONFIG.pending) : null;
-                      const MFR_PHOTOS = {
-                        "allergan": "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=700&q=80",
-                        "galderma": "https://images.unsplash.com/photo-1631390012074-8ba0f5c2e14d?w=700&q=80",
-                        "merz": "https://images.unsplash.com/photo-1559181567-c3190bebb3e2?w=700&q=80",
-                        "revance": "https://images.unsplash.com/photo-1612817288484-6f916006741a?w=700&q=80",
-                        "solta": "https://images.unsplash.com/photo-1576671081837-49000212a370?w=700&q=80",
-                        "syneron": "https://images.unsplash.com/photo-1559757175-0eb30cd8c063?w=700&q=80",
-                        "inmode": "https://images.unsplash.com/photo-1576671081837-49000212a370?w=700&q=80",
-                        "sciton": "https://images.unsplash.com/photo-1612817288484-6f916006741a?w=700&q=80",
-                        "cutera": "https://images.unsplash.com/photo-1600334129128-685c5582fd35?w=700&q=80",
-                        "coolsculpting": "https://images.unsplash.com/photo-1560472354-b33ff0c44a43?w=700&q=80",
-                        "skinmedica": "https://images.unsplash.com/photo-1556228453-efd6c1ff04f6?w=700&q=80",
-                        "obagi": "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=700&q=80",
-                        "jan marini": "https://images.unsplash.com/photo-1608248597279-f99d160bfcbc?w=700&q=80",
-                        "hydrafacial": "https://images.unsplash.com/photo-1570172619644-dfd03ed5d881?w=700&q=80",
-                      };
-                      const CATEGORY_PHOTOS = {
-                        injectables: "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=700&q=80",
-                        fillers: "https://images.unsplash.com/photo-1631390012074-8ba0f5c2e14d?w=700&q=80",
-                        devices: "https://images.unsplash.com/photo-1576671081837-49000212a370?w=700&q=80",
-                        skincare: "https://images.unsplash.com/photo-1556228453-efd6c1ff04f6?w=700&q=80",
-                        laser: "https://images.unsplash.com/photo-1612817288484-6f916006741a?w=700&q=80",
-                        consumables: "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=700&q=80",
-                        prp: "https://images.unsplash.com/photo-1559757175-0eb30cd8c063?w=700&q=80",
-                        body_contouring: "https://images.unsplash.com/photo-1600334129128-685c5582fd35?w=700&q=80",
-                        other: "https://images.unsplash.com/photo-1556228453-efd6c1ff04f6?w=700&q=80",
-                      };
-                      const mfrKey = Object.keys(MFR_PHOTOS).find(k => mfr.name?.toLowerCase().includes(k));
-                      const photo = mfr.cover_image_url || (mfrKey ? MFR_PHOTOS[mfrKey] : null) || CATEGORY_PHOTOS[mfr.category] || CATEGORY_PHOTOS.other;
+                      const photo = getSupplierCoverUrl(mfr);
+                      const uploadedCover = hasUploadedCover(mfr);
                       return (
                         <button key={mfr.id} onClick={() => openDetail(mfr)}
                           className="group relative text-left overflow-hidden"
@@ -828,16 +882,32 @@ export default function ProviderMarketplace() {
                           onMouseEnter={e => e.currentTarget.style.transform = "translateY(-4px)"}
                           onMouseLeave={e => e.currentTarget.style.transform = "translateY(0)"}
                         >
-                          {/* Photo */}
-                          <img src={photo} alt={mfr.name} className="absolute inset-0 w-full h-full object-cover"
+                          {/* Cover photo */}
+                          <img
+                            src={photo}
+                            alt={`${mfr.name} cover`}
+                            className="absolute inset-0 w-full h-full object-cover"
                             style={{ transition: "transform 0.5s ease" }}
-                            onMouseEnter={e => e.currentTarget.style.transform = "scale(1.06)"}
-                            onMouseLeave={e => e.currentTarget.style.transform = "scale(1)"} />
+                            onMouseEnter={(e) => { e.currentTarget.style.transform = "scale(1.06)"; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.transform = "scale(1)"; }}
+                          />
 
-                          {/* Blur layer */}
-                          <div className="absolute inset-0" style={{ backdropFilter: "blur(2px)", WebkitBackdropFilter: "blur(2px)" }} />
+                          {/* Soft blur only for stock fallback covers */}
+                          {!uploadedCover && (
+                            <div
+                              className="absolute inset-0"
+                              style={{ backdropFilter: "blur(1px)", WebkitBackdropFilter: "blur(1px)" }}
+                            />
+                          )}
                           {/* Gradient overlay */}
-                          <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, rgba(8,10,20,0.25) 0%, rgba(8,10,20,0.55) 45%, rgba(8,10,20,0.94) 100%)" }} />
+                          <div
+                            className="absolute inset-0"
+                            style={{
+                              background: uploadedCover
+                                ? "linear-gradient(180deg, rgba(8,10,20,0.1) 0%, rgba(8,10,20,0.45) 50%, rgba(8,10,20,0.92) 100%)"
+                                : "linear-gradient(180deg, rgba(8,10,20,0.25) 0%, rgba(8,10,20,0.55) 45%, rgba(8,10,20,0.94) 100%)",
+                            }}
+                          />
 
                           {/* Top badges */}
                           <div className="absolute top-3.5 left-3.5 right-3.5 flex items-center justify-between">
@@ -860,7 +930,21 @@ export default function ProviderMarketplace() {
 
                           {/* Bottom content */}
                           <div className="absolute bottom-0 left-0 right-0 p-5">
-                            <p style={{ fontFamily: "'DM Serif Display', serif", fontSize: mfr.is_featured ? 22 : 18, color: "#fff", lineHeight: 1.2, marginBottom: 6, fontWeight: 400 }}>{mfr.name}</p>
+                            <div className="flex items-end gap-3 mb-3">
+                              <SupplierLogo mfr={mfr} size={mfr.is_featured ? 52 : 44} />
+                              <p
+                                className="flex-1 min-w-0"
+                                style={{
+                                  fontFamily: "'DM Serif Display', serif",
+                                  fontSize: mfr.is_featured ? 22 : 18,
+                                  color: "#fff",
+                                  lineHeight: 1.2,
+                                  fontWeight: 400,
+                                }}
+                              >
+                                {mfr.name}
+                              </p>
+                            </div>
                             {mfr.description && <p className="text-xs line-clamp-2 mb-4" style={{ color: "rgba(255,255,255,0.6)", lineHeight: 1.55 }}>{mfr.description}</p>}
                             {mfr.products?.length > 0 && (
                               <div className="flex flex-wrap gap-1.5 mb-4">
