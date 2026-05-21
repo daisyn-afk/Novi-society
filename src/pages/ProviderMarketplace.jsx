@@ -103,6 +103,13 @@ function getSupplierCoverUrl(mfr) {
 
 const SUPPLIER_CARD_HEIGHT = 280;
 
+const DEFAULT_NOVI_UNLOCK_BENEFITS = [
+  "Exclusive NOVI member pricing",
+  "Device financing programs",
+  "Clinical training & certification",
+  "Practice marketing support",
+];
+
 function SupplierMarketplaceCard({
   mfr,
   applied,
@@ -478,6 +485,35 @@ function SupplierDetailView({ mfr, onBack, onApply, application, me, treatmentRe
 
         <div className="h-px mx-6" style={{ background: "rgba(30,37,53,0.07)" }} />
 
+        {/* What You Unlock */}
+        <div className="mx-6 my-5 overflow-hidden rounded-2xl" style={{ border: "1px solid rgba(30,37,53,0.08)", boxShadow: "0 2px 12px rgba(30,37,53,0.06)" }}>
+          <div className="flex items-start justify-between gap-4 px-5 py-4" style={{ background: "linear-gradient(135deg, #1e2535 0%, #2a3355 100%)" }}>
+            <div>
+              <p className="text-xs font-black uppercase tracking-widest mb-1" style={{ color: "#C8E63C", letterSpacing: "0.14em" }}>
+                What You Unlock
+              </p>
+              <p style={{ fontFamily: "'DM Serif Display', serif", fontStyle: "italic", fontSize: 20, color: "#fff", lineHeight: 1.2 }}>
+                Exclusive NOVI benefits
+              </p>
+            </div>
+            <ShieldCheck className="w-5 h-5 flex-shrink-0 mt-1" style={{ color: "rgba(255,255,255,0.35)" }} />
+          </div>
+          <div className="px-5 py-4" style={{ background: "#fff" }}>
+            <div className="grid sm:grid-cols-2 gap-x-6 gap-y-2.5">
+              {DEFAULT_NOVI_UNLOCK_BENEFITS.map((item, i) => (
+                <div key={i} className="flex items-start gap-2">
+                  <div className="w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5" style={{ background: "rgba(200,230,60,0.2)" }}>
+                    <CheckCircle className="w-2.5 h-2.5" style={{ color: "#5a7a20" }} />
+                  </div>
+                  <p className="text-sm" style={{ color: "rgba(30,37,53,0.75)" }}>{item}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="h-px mx-6" style={{ background: "rgba(30,37,53,0.07)" }} />
+
         {/* NOVI Advantage */}
         <div className="px-6 py-5" style={{ background: "linear-gradient(135deg, #1e2535 0%, #2a3355 100%)", borderRadius: "0 0 16px 16px" }}>
           <p className="text-xs font-black uppercase tracking-widest mb-4 flex items-center gap-1.5" style={{ color: "#C8E63C", letterSpacing: "0.14em" }}>
@@ -630,7 +666,7 @@ function SupplierDetailView({ mfr, onBack, onApply, application, me, treatmentRe
       {!isApproved && !app && (
         <div className="flex gap-3 mt-4">
           <Button variant="outline" className="flex-1 h-12" onClick={onBack}>Cancel</Button>
-          <Button className="flex-1 h-12 gap-2 font-bold text-base" style={{ background: "linear-gradient(135deg, #FA6F30, #e05a20)", color: "#fff", borderRadius: 12, boxShadow: "0 4px 20px rgba(250,111,48,0.35)" }} onClick={onApply}>
+          <Button className="flex-1 h-12 gap-2 font-bold text-base" style={{ background: "linear-gradient(135deg, #1e2535, #2a3355)", color: "#fff", borderRadius: 12, boxShadow: "0 4px 20px rgba(30,37,53,0.25)" }} onClick={onApply}>
             <Send className="w-4 h-4" /> Apply for Account
           </Button>
         </div>
@@ -939,57 +975,69 @@ export default function ProviderMarketplace() {
                   ) : (
                     <GlassCard>
                       <div className="p-5 space-y-4">
-                        <div>
-                          <h3 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 18, color: "#1e2535" }}>Apply to {selectedManufacturer.name}</h3>
-                          <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.5)" }}>Your NOVI credentials are pre-filled — just confirm and submit.</p>
+                        <div className="text-center pb-1">
+                          <h3 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 22, color: "#1e2535" }}>
+                            Activate {selectedManufacturer.name}
+                          </h3>
+                          <p className="text-xs mt-1" style={{ color: "rgba(30,37,53,0.5)" }}>
+                            Your credentials will be forwarded automatically
+                          </p>
                         </div>
 
-                        <div className="rounded-xl px-3 py-2.5 flex items-center gap-2" style={{ background: "rgba(200,230,60,0.07)", border: "1px solid rgba(200,230,60,0.2)" }}>
-                          <Zap className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#5a7a20" }} />
-                          <p className="text-xs font-semibold" style={{ color: "rgba(30,37,53,0.7)" }}>Fields pre-filled from your NOVI profile — edit if needed before submitting.</p>
+                        <div className="rounded-xl px-4 py-3 space-y-2.5" style={{ background: "rgba(30,37,53,0.02)", border: "1px solid rgba(30,37,53,0.08)" }}>
+                          <p className="text-xs font-black uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.35)", letterSpacing: "0.12em" }}>
+                            Submitting on your behalf
+                          </p>
+                          {[
+                            { label: "Name", value: me?.full_name || "—" },
+                            {
+                              label: "License",
+                              value: [formData.license_type, formData.license_number, formData.license_state].filter(Boolean).join(" - ") || "—",
+                            },
+                            { label: "Supervising MD", value: formData.supervising_physician_name || "—" },
+                          ].map(({ label, value }) => (
+                            <div key={label} className="flex items-center gap-2.5">
+                              <CheckCircle className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#5a7a20" }} />
+                              <p className="text-sm" style={{ color: "rgba(30,37,53,0.75)" }}>
+                                <span className="font-semibold" style={{ color: "#1e2535" }}>{label}:</span> {value}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="rounded-xl px-3 py-2.5" style={{ background: "rgba(200,230,60,0.1)", border: "1px solid rgba(200,230,60,0.25)" }}>
+                          <p className="text-xs font-medium leading-relaxed" style={{ color: "rgba(30,37,53,0.7)" }}>
+                            NOVI-verified providers are prioritized — typically approved in 2–3 business days vs. 1–2 weeks standard.
+                          </p>
                         </div>
 
                         <div>
-                          <p className="text-xs font-bold uppercase tracking-wider mb-2" style={{ color: "rgba(30,37,53,0.35)" }}>Your NOVI credentials</p>
-                          <div className="space-y-2">
-                            <div className="grid grid-cols-2 gap-2">
-                              <div><label className="text-xs font-medium mb-1 block" style={{ color: "rgba(30,37,53,0.55)" }}>Full Name</label><Input value={me?.full_name || ""} disabled style={{ background: "rgba(30,37,53,0.03)" }} /></div>
-                              <div><label className="text-xs font-medium mb-1 block" style={{ color: "rgba(30,37,53,0.55)" }}>Email</label><Input value={me?.email || ""} disabled style={{ background: "rgba(30,37,53,0.03)" }} /></div>
-                              <div><label className="text-xs font-medium mb-1 block" style={{ color: "rgba(30,37,53,0.55)" }}>License Type</label><Input value={formData.license_type || ""} onChange={e => setFormData(d => ({ ...d, license_type: e.target.value }))} placeholder="RN, NP, PA..." /></div>
-                              <div><label className="text-xs font-medium mb-1 block" style={{ color: "rgba(30,37,53,0.55)" }}>License #</label><Input value={formData.license_number || ""} onChange={e => setFormData(d => ({ ...d, license_number: e.target.value }))} /></div>
-                              <div><label className="text-xs font-medium mb-1 block" style={{ color: "rgba(30,37,53,0.55)" }}>State</label><Input value={formData.license_state || ""} onChange={e => setFormData(d => ({ ...d, license_state: e.target.value }))} placeholder="TX" /></div>
-                              <div><label className="text-xs font-medium mb-1 block" style={{ color: "rgba(30,37,53,0.55)" }}>Supervising MD</label><Input value={formData.supervising_physician_name || ""} onChange={e => setFormData(d => ({ ...d, supervising_physician_name: e.target.value }))} /></div>
-                            </div>
-                            <div><label className="text-xs font-medium mb-1 block" style={{ color: "rgba(30,37,53,0.55)" }}>Practice / Business Name</label><Input value={formData.practice_name || ""} onChange={e => setFormData(d => ({ ...d, practice_name: e.target.value }))} placeholder="Your practice name" /></div>
-                            <div className="grid grid-cols-2 gap-2">
-                              <div><label className="text-xs font-medium mb-1 block" style={{ color: "rgba(30,37,53,0.55)" }}>Practice Address</label><Input value={formData.practice_address || ""} onChange={e => setFormData(d => ({ ...d, practice_address: e.target.value }))} /></div>
-                              <div><label className="text-xs font-medium mb-1 block" style={{ color: "rgba(30,37,53,0.55)" }}>Phone</label><Input value={formData.practice_phone || ""} onChange={e => setFormData(d => ({ ...d, practice_phone: e.target.value }))} /></div>
-                            </div>
-                            {selectedManufacturer.required_fields?.length > 0 && (
-                              <div className="space-y-2 pt-2">
-                                <div className="h-px" style={{ background: "rgba(30,37,53,0.07)" }} />
-                                <p className="text-xs font-bold uppercase tracking-wider" style={{ color: "rgba(30,37,53,0.35)" }}>Required by {selectedManufacturer.name}</p>
-                                {selectedManufacturer.required_fields.map((field, i) => (
-                                  <div key={i}>
-                                    <label className="text-xs font-medium mb-1 block" style={{ color: "rgba(30,37,53,0.55)" }}>{field}</label>
-                                    <Input value={formData.additional_fields?.[field] || ""} onChange={e => setFormData(d => ({ ...d, additional_fields: { ...(d.additional_fields || {}), [field]: e.target.value } }))} />
-                                  </div>
-                                ))}
-                              </div>
-                            )}
+                          <p className="text-xs font-black uppercase tracking-widest mb-2.5" style={{ color: "rgba(30,37,53,0.35)", letterSpacing: "0.12em" }}>
+                            What You Unlock
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            {DEFAULT_NOVI_UNLOCK_BENEFITS.map((item, i) => (
+                              <span
+                                key={i}
+                                className="text-xs font-medium px-3 py-1.5 rounded-full"
+                                style={{ background: "rgba(200,230,60,0.15)", color: "#4a6b10", border: "1px solid rgba(200,230,60,0.3)" }}
+                              >
+                                {item}
+                              </span>
+                            ))}
                           </div>
                         </div>
 
-                        <p className="text-xs px-3 py-2.5 rounded-xl" style={{ background: "rgba(123,142,200,0.08)", border: "1px solid rgba(123,142,200,0.15)", color: "rgba(30,37,53,0.6)" }}>
-                          Your info will be forwarded to the {selectedManufacturer.name} account team. A rep typically follows up within 3–5 business days.
-                        </p>
-
-                        <div className="flex gap-2">
-                          <Button variant="outline" className="flex-1" onClick={() => setViewMode("detail")}>Back</Button>
-                          <Button className="flex-1 gap-2 font-bold" style={{ background: "#1e2535", color: "#fff" }}
-                            onClick={() => submitMutation.mutate()} disabled={submitMutation.isPending}>
-                            <Send className="w-3.5 h-3.5" />
-                            {submitMutation.isPending ? "Submitting..." : "Submit Application"}
+                        <div className="flex gap-2 pt-1">
+                          <Button variant="outline" className="flex-1 h-11" onClick={() => setViewMode("detail")}>Cancel</Button>
+                          <Button
+                            className="flex-1 h-11 gap-2 font-bold"
+                            style={{ background: "#C8E63C", color: "#1a2540", borderRadius: 12 }}
+                            onClick={() => submitMutation.mutate()}
+                            disabled={submitMutation.isPending}
+                          >
+                            <Zap className="w-4 h-4" />
+                            {submitMutation.isPending ? "Activating..." : "Confirm & Activate"}
                           </Button>
                         </div>
                       </div>
