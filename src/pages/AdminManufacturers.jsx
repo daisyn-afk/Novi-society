@@ -38,6 +38,7 @@ export default function AdminManufacturers() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["manufacturers-admin"] });
+      qc.invalidateQueries({ queryKey: ["manufacturers"] });
       setDialogOpen(false);
       setEditing(null);
     },

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import {
@@ -84,9 +84,12 @@ const SECTIONS = [
 ];
 
 function mergeSupplier(initial) {
+  const src = initial || {};
   return {
     ...EMPTY_SUPPLIER,
-    ...(initial || {}),
+    ...src,
+    logo_url: src.logo_url ?? "",
+    cover_image_url: src.cover_image_url ?? "",
     products: initial?.products ?? [],
     benefits: initial?.benefits ?? [],
     selling_points: initial?.selling_points ?? [],
@@ -122,19 +125,35 @@ export default function SupplierFormDialog({
   const [form, setForm] = useState(() => mergeSupplier(initial));
   const [openSection, setOpenSection] = useState("display");
   const [uploadingKey, setUploadingKey] = useState(null);
+  const [pendingUploads, setPendingUploads] = useState(0);
+  const formRef = useRef(form);
+
+  // Reset form only when the dialog opens for a different supplier (or new),
+  // not on every parent re-render — otherwise in-flight logo/cover uploads get wiped.
+  const formSeed = open ? String(initial?.id ?? "__new__") : "__closed__";
 
   useEffect(() => {
-    if (open) {
-      setForm(mergeSupplier(initial));
-      setOpenSection("display");
-    }
-  }, [open, initial]);
+    if (!open) return;
+    setForm(mergeSupplier(initial));
+    setOpenSection("display");
+  }, [formSeed]);
 
-  const update = (patch) => setForm((prev) => ({ ...prev, ...patch }));
+  const update = (patch) => {
+    setForm((prev) => {
+      const next = { ...prev, ...patch };
+      formRef.current = next;
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    formRef.current = form;
+  }, [form]);
 
   const handleUploadFile = async (file, key) => {
     if (!onUploadFile) return "";
     setUploadingKey(key);
+    setPendingUploads((n) => n + 1);
     const uploadKind =
       typeof key === "string" && key.startsWith("contract_")
         ? "manufacturer_contract"
@@ -144,11 +163,17 @@ export default function SupplierFormDialog({
       return url || "";
     } finally {
       setUploadingKey(null);
+      setPendingUploads((n) => Math.max(0, n - 1));
     }
   };
 
   const editing = !!initial?.id;
-  const canSubmit = form.name.trim() && form.account_rep_email.trim() && !isSubmitting;
+  const uploadsInFlight = pendingUploads > 0 || Boolean(uploadingKey);
+  const canSubmit =
+    form.name.trim() &&
+    form.account_rep_email.trim() &&
+    !isSubmitting &&
+    !uploadsInFlight;
 
   const missingHint = useMemo(() => {
     if (!form.name.trim()) return "Supplier name required";
@@ -156,14 +181,18 @@ export default function SupplierFormDialog({
     return null;
   }, [form.name, form.account_rep_email]);
 
+  const buildPayload = (source) => ({
+    ...source,
+    logo_url: String(source.logo_url || "").trim(),
+    cover_image_url: String(source.cover_image_url || "").trim(),
+    required_fields: (source.custom_fields || [])
+      .filter((f) => f.required)
+      .map((f) => f.label),
+  });
+
   const handleSubmit = () => {
-    const payload = {
-      ...form,
-      required_fields: (form.custom_fields || [])
-        .filter((f) => f.required)
-        .map((f) => f.label),
-    };
-    onSubmit(payload);
+    if (uploadsInFlight) return;
+    onSubmit(buildPayload(formRef.current));
   };
 
   return (
@@ -199,7 +228,11 @@ export default function SupplierFormDialog({
         </div>
 
         <div className="flex items-center justify-between gap-3 px-6 py-3 border-t border-slate-100 bg-white">
-          <p className="text-xs text-slate-500">{missingHint || ""}</p>
+          <p className="text-xs text-slate-500">
+            {uploadsInFlight
+              ? "Wait for image uploads to finish…"
+              : missingHint || ""}
+          </p>
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => onOpenChange(false)}>
               Cancel

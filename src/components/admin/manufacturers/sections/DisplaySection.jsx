@@ -8,6 +8,13 @@ import ChipListEditor from "../shared/ChipListEditor";
 import { CATEGORIES, CATEGORY_LABELS } from "../constants";
 
 function UploadField({ label, value, onChange, onUpload, uploading, accept = ".png,.jpg,.jpeg,.svg,.webp" }) {
+  const handleFileChange = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || uploading) return;
+    await onUpload(file);
+  };
+
   return (
     <div>
       <FieldLabel className="mb-1">{label}</FieldLabel>
@@ -18,12 +25,16 @@ function UploadField({ label, value, onChange, onUpload, uploading, accept = ".p
             alt={label}
             className="w-14 h-14 rounded-lg object-cover border border-slate-200 bg-slate-50"
           />
-          <Button variant="outline" size="sm" onClick={() => onChange("")}>
+          <Button type="button" variant="outline" size="sm" onClick={() => onChange("")} disabled={uploading}>
             Remove
           </Button>
         </div>
       ) : (
-        <label className="flex items-center gap-2 cursor-pointer border border-dashed border-slate-300 rounded-lg px-3 py-2.5 hover:bg-slate-50 transition-all">
+        <label
+          className={`flex items-center gap-2 border border-dashed border-slate-300 rounded-lg px-3 py-2.5 transition-all ${
+            uploading ? "opacity-60 cursor-wait" : "cursor-pointer hover:bg-slate-50"
+          }`}
+        >
           <Upload className="w-4 h-4 text-slate-400" />
           <span className="text-sm text-slate-500">
             {uploading ? "Uploading..." : `Upload ${label.toLowerCase()}`}
@@ -33,10 +44,7 @@ function UploadField({ label, value, onChange, onUpload, uploading, accept = ".p
             className="hidden"
             accept={accept}
             disabled={uploading}
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) onUpload(file);
-            }}
+            onChange={handleFileChange}
           />
         </label>
       )}
@@ -46,8 +54,11 @@ function UploadField({ label, value, onChange, onUpload, uploading, accept = ".p
 
 export default function DisplaySection({ form, update, onUploadFile, uploadingKey }) {
   const handleUpload = async (key, file) => {
+    if (!onUploadFile) return;
     const url = await onUploadFile(file, key);
-    if (url) update({ [key]: url });
+    if (url) {
+      update({ [key]: url });
+    }
   };
 
   return (
