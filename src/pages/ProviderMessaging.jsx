@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { mdMessagesApi } from "@/api/mdMessagesApi";
@@ -31,6 +31,10 @@ function getInitials(name) {
   return parts[0].slice(0, 2).toUpperCase();
 }
 
+function computeThreadId(idA, idB) {
+  return [String(idA), String(idB)].sort().join("-");
+}
+
 const glassCard = {
   background: "rgba(255,255,255,0.72)",
   backdropFilter: "blur(18px)",
@@ -44,6 +48,7 @@ export default function ProviderMessaging() {
   const [activeThread, setActiveThread] = useState(null);
   const [replyText, setReplyText] = useState("");
   const messagesEndRef = useRef(null);
+  const prevMsgCountRef = useRef(0);
 
   const { data: me } = useQuery({
     queryKey: ["me"],
@@ -55,63 +60,144 @@ export default function ProviderMessaging() {
     queryKey: ["my-md-relationships"],
     queryFn: () => base44.entities.MedicalDirectorRelationship.list(),
     enabled: !!me,
+    staleTime: 30_000,
   });
 
-  const activeMDRelationships = relationships.filter((r) => r.status === "active");
+  const activeMDRelationships = useMemo(
+    () => relationships.filter((r) => r.status === "active"),
+    [relationships]
+  );
 
-  // Thread list with 3-second polling
+  // Thread list — shared query key ["msg-threads"] with Layout.jsx sidebar badge.
+  // staleTime prevents double-fetching when Layout already polled recently.
   const { data: threads = [], isLoading: threadsLoading } = useQuery({
-    queryKey: ["provider-message-threads"],
+    queryKey: ["msg-threads"],
     queryFn: () => mdMessagesApi.getThreads(),
     enabled: !!me,
-    refetchInterval: 3000,
+    refetchInterval: 5000,
+    staleTime: 4000,
+    refetchOnWindowFocus: true,
   });
 
-  // Messages for active thread with 3-second polling
+  // Messages for active thread — faster poll while user is actively reading.
   const { data: messages = [], isLoading: messagesLoading } = useQuery({
     queryKey: ["provider-messages", activeThread],
     queryFn: () => mdMessagesApi.getMessages(activeThread),
     enabled: !!activeThread,
     refetchInterval: 3000,
+    staleTime: 2000,
   });
 
-  // Mark messages as read when thread is opened
+  // Auto-scroll only when new messages arrive (count increases).
+  useEffect(() => {
+    if (messages.length > prevMsgCountRef.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+    prevMsgCountRef.current = messages.length;
+  }, [messages.length]);
+
+  // Mark as read — optimistic: immediately zero unread count in cache, then confirm.
   const markReadMutation = useMutation({
     mutationFn: (threadId) => mdMessagesApi.markRead(threadId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["provider-message-threads"] }),
+    onMutate: (threadId) => {
+      qc.setQueryData(["msg-threads"], (old) =>
+        (Array.isArray(old) ? old : []).map((t) =>
+          t.thread_id === threadId ? { ...t, unread_count: 0 } : t
+        )
+      );
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["msg-threads"] }),
   });
 
-  // Send message mutation
+  // Send message — optimistic: append to chat immediately, replace with real msg on success.
   const sendMutation = useMutation({
     mutationFn: (payload) => mdMessagesApi.sendMessage(payload),
-    onSuccess: (newMsg) => {
-      qc.invalidateQueries({ queryKey: ["provider-message-threads"] });
-      qc.invalidateQueries({ queryKey: ["provider-messages", newMsg.thread_id] });
+    onMutate: async (payload) => {
+      if (!me?.id) return;
+      const threadId = computeThreadId(me.id, payload.recipient_id);
+      const optimisticMsg = {
+        id: `optimistic-${Date.now()}`,
+        thread_id: threadId,
+        sender_id: me.id,
+        sender_email: me.email || null,
+        sender_name: payload.sender_name,
+        sender_role: payload.sender_role,
+        recipient_id: payload.recipient_id,
+        recipient_email: payload.recipient_email,
+        recipient_name: payload.recipient_name,
+        message: payload.message,
+        read_at: null,
+        created_at: new Date().toISOString(),
+      };
+
+      // Add optimistic message to the thread view
+      qc.setQueryData(["provider-messages", threadId], (old) => [
+        ...(Array.isArray(old) ? old : []),
+        optimisticMsg,
+      ]);
+
+      // Optimistically update the thread list preview
+      qc.setQueryData(["msg-threads"], (old) => {
+        const existing = (Array.isArray(old) ? old : []).find(
+          (t) => t.thread_id === threadId
+        );
+        if (existing) {
+          return (Array.isArray(old) ? old : []).map((t) =>
+            t.thread_id === threadId
+              ? { ...t, last_message: payload.message, last_message_at: optimisticMsg.created_at }
+              : t
+          );
+        }
+        return [
+          {
+            thread_id: threadId,
+            last_message: payload.message,
+            last_message_at: optimisticMsg.created_at,
+            unread_count: 0,
+            other_user_id: payload.recipient_id,
+            other_user_email: payload.recipient_email,
+            other_user_name: payload.recipient_name,
+            other_user_role: "medical_director",
+          },
+          ...(Array.isArray(old) ? old : []),
+        ];
+      });
+
+      return { optimisticMsg, threadId };
+    },
+    onSuccess: (newMsg, _payload, context) => {
+      // Replace the optimistic placeholder with the real message
+      if (context?.threadId) {
+        qc.setQueryData(["provider-messages", context.threadId], (old) =>
+          (Array.isArray(old) ? old : []).map((m) =>
+            m.id === context.optimisticMsg?.id ? newMsg : m
+          )
+        );
+      }
+      qc.invalidateQueries({ queryKey: ["msg-threads"] });
       setActiveThread(newMsg.thread_id);
       setReplyText("");
     },
+    onError: (_err, _payload, context) => {
+      // Roll back the optimistic message on failure
+      if (context?.threadId) {
+        qc.setQueryData(["provider-messages", context.threadId], (old) =>
+          (Array.isArray(old) ? old : []).filter(
+            (m) => m.id !== context.optimisticMsg?.id
+          )
+        );
+      }
+    },
   });
 
-  // Auto-scroll to bottom when messages change
-  useEffect(() => {
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [messages]);
-
-  // Mark read when thread opens
+  // Mark thread as read immediately when opened
   useEffect(() => {
     if (activeThread) {
       markReadMutation.mutate(activeThread);
     }
   }, [activeThread]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  function computeThreadId(idA, idB) {
-    return [String(idA), String(idB)].sort().join("-");
-  }
-
   function handleSelectMD(rel) {
-    // Thread ID is derived the same way as the backend: sorted join
     const threadId = computeThreadId(me.id, rel.medical_director_id);
     setActiveThread(threadId);
     setReplyText("");
@@ -119,14 +205,11 @@ export default function ProviderMessaging() {
 
   function handleSendReply() {
     if (!replyText.trim() || !activeThread || sendMutation.isPending) return;
-
-    // Find the MD from active relationships matching the current thread
     const rel = activeMDRelationships.find((r) => {
       const tid = computeThreadId(me.id, r.medical_director_id);
       return tid === activeThread;
     });
     if (!rel) return;
-
     sendMutation.mutate({
       recipient_id: rel.medical_director_id,
       recipient_email: rel.medical_director_email || "",
@@ -144,17 +227,20 @@ export default function ProviderMessaging() {
     }
   }
 
-  // For the left panel, merge relationship data with thread data to get unread counts
   function getThreadForMD(mdId) {
     if (!me) return null;
     const threadId = computeThreadId(me.id, mdId);
     return threads.find((t) => t.thread_id === threadId) || null;
   }
 
-  const activeMDRel = activeMDRelationships.find((r) => {
-    if (!me) return false;
-    return computeThreadId(me.id, r.medical_director_id) === activeThread;
-  });
+  const activeMDRel = useMemo(
+    () =>
+      activeMDRelationships.find((r) => {
+        if (!me) return false;
+        return computeThreadId(me.id, r.medical_director_id) === activeThread;
+      }),
+    [activeMDRelationships, me, activeThread]
+  );
 
   const isLoading = relsLoading || threadsLoading;
 
@@ -247,9 +333,7 @@ export default function ProviderMessaging() {
                       <div className="flex items-center justify-between gap-1">
                         <p
                           className="text-xs font-semibold truncate"
-                          style={{
-                            color: hasUnread ? "#1e2535" : "rgba(30,37,53,0.75)",
-                          }}
+                          style={{ color: hasUnread ? "#1e2535" : "rgba(30,37,53,0.75)" }}
                         >
                           {rel.medical_director_name ||
                             rel.medical_director_email ||
@@ -341,10 +425,12 @@ export default function ProviderMessaging() {
                 )}
                 {messages.map((msg) => {
                   const isMe = msg.sender_id === me?.id;
+                  const isOptimistic = String(msg.id).startsWith("optimistic-");
                   return (
                     <div
                       key={msg.id}
                       className={`flex ${isMe ? "justify-end" : "justify-start"}`}
+                      style={{ opacity: isOptimistic ? 0.65 : 1, transition: "opacity 0.2s" }}
                     >
                       <div
                         className="max-w-[70%] px-3 py-2 rounded-2xl text-sm leading-relaxed"
@@ -367,7 +453,7 @@ export default function ProviderMessaging() {
                           className="mt-1 text-right"
                           style={{ fontSize: 10, color: "rgba(30,37,53,0.4)" }}
                         >
-                          {formatMsgTime(msg.created_at)}
+                          {isOptimistic ? "Sending…" : formatMsgTime(msg.created_at)}
                         </p>
                       </div>
                     </div>
