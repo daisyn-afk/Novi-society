@@ -71,12 +71,12 @@ export async function syncScheduledCoursesSessionSeats(rows) {
   const countsByCourse = await loadEnrollmentCountsByDate(courseIds);
 
   const updates = [];
+  const reconciledById = new Map();
   for (const row of scheduled) {
-    const counts = countsByCourse.get(String(row.id));
-    if (!counts || counts.size === 0) continue;
-
+    const counts = countsByCourse.get(String(row.id)) || new Map();
     const sessionDates = parseSessionDatesField(row.session_dates);
     const next = reconcileSessionDatesWithEnrollmentCounts(sessionDates, counts);
+    reconciledById.set(String(row.id), next);
     if (JSON.stringify(next) !== JSON.stringify(sessionDates)) {
       updates.push({ id: row.id, session_dates: next });
     }
@@ -91,11 +91,8 @@ export async function syncScheduledCoursesSessionSeats(rows) {
     );
   }
 
-  if (updates.length === 0) return rows;
-
-  const updatesById = new Map(updates.map((u) => [String(u.id), u.session_dates]));
   return (rows || []).map((row) => {
-    const nextDates = updatesById.get(String(row.id));
+    const nextDates = reconciledById.get(String(row.id));
     return nextDates ? { ...row, session_dates: nextDates } : row;
   });
 }
