@@ -17,9 +17,11 @@ import {
   createManufacturerApplication,
   getManufacturerById
 } from "../manufacturers/repository.js";
+import { createManufacturerOrderRequest } from "../manufacturers/orderRequestsRepository.js";
 import {
   notifyAdminsOfManufacturerApplication,
-  notifyRepOfManufacturerApplication
+  notifyRepOfManufacturerApplication,
+  notifyRepOfContactRequest,
 } from "../manufacturers/notifications.js";
 
 export const functionsRouter = Router();
@@ -1945,6 +1947,52 @@ functionsRouter.post("/sendManufacturerInquiry", async (req, res, next) => {
     ]).catch(() => {});
 
     return res.status(201).json({ ok: true, application });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+functionsRouter.post("/sendRepContactEmail", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ ok: false, error: "Missing bearer token." });
+    const me = await getMeFromAccessToken(token);
+
+    const body = req.body || {};
+    const manufacturerId = String(body.manufacturer_id || "").trim();
+    if (!manufacturerId) {
+      return res.status(400).json({ ok: false, error: "manufacturer_id is required." });
+    }
+
+    const manufacturer = await getManufacturerById(manufacturerId);
+    if (!manufacturer) {
+      return res.status(404).json({ ok: false, error: "Manufacturer not found." });
+    }
+
+    const contactType = String(body.type || body.contact_type || "message").trim();
+    const orderRequest = await createManufacturerOrderRequest({
+      manufacturer_id: manufacturerId,
+      manufacturer_name: manufacturer.name,
+      provider_id: me?.id || null,
+      provider_email: me?.email || "",
+      provider_name: me?.full_name || "",
+      practice_name: me?.practice_name || "",
+      contact_type: contactType,
+      subject: body.subject || "",
+      message: body.message || "",
+      order_items: body.order_items || [],
+      rep_email: manufacturer.account_rep_email || "",
+    });
+
+    Promise.resolve(
+      notifyRepOfContactRequest({
+        orderRequest,
+        manufacturer,
+        providerEmail: me?.email || orderRequest.provider_email,
+      })
+    ).catch(() => {});
+
+    return res.status(201).json({ ok: true, order_request: orderRequest });
   } catch (error) {
     return next(error);
   }

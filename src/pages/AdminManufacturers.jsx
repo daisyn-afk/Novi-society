@@ -422,13 +422,14 @@ export default function AdminManufacturers() {
                 />
               </div>
               <span className="text-xs text-slate-500">
-                {allInventory.length} items across all providers
+                {allInventory.length} order line{allInventory.length !== 1 ? "s" : ""} across all providers
               </span>
             </div>
             {allInventory.length === 0 ? (
               <div className="text-center py-16 rounded-2xl bg-white border border-slate-100">
                 <Package className="w-10 h-10 mx-auto text-slate-200 mb-3" />
-                <p className="text-slate-400">No provider inventory logged yet.</p>
+                <p className="text-slate-400">No provider order requests yet.</p>
+                <p className="text-xs text-slate-400 mt-1">Orders submitted from the supplier marketplace will appear here.</p>
               </div>
             ) : (
               <div className="space-y-2">
@@ -437,28 +438,14 @@ export default function AdminManufacturers() {
                     (i) =>
                       !inventorySearch ||
                       i.provider_name?.toLowerCase().includes(inventorySearch.toLowerCase()) ||
-                      i.product_name?.toLowerCase().includes(inventorySearch.toLowerCase())
+                      i.product_name?.toLowerCase().includes(inventorySearch.toLowerCase()) ||
+                      i.manufacturer_name?.toLowerCase().includes(inventorySearch.toLowerCase())
                   )
-                  .map((item) => {
-                    const today = new Date();
-                    const isExpired =
-                      item.expiration_date && new Date(item.expiration_date) < today;
-                    const isExpiringSoon =
-                      item.expiration_date &&
-                      !isExpired &&
-                      new Date(item.expiration_date) <=
-                        new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
-                    return (
+                  .map((item) => (
                       <div
                         key={item.id}
                         className="rounded-xl bg-white border p-4 flex items-center gap-4"
-                        style={{
-                          borderColor: isExpired
-                            ? "rgba(218,106,99,0.4)"
-                            : isExpiringSoon
-                            ? "rgba(250,111,48,0.3)"
-                            : "#e5e7eb",
-                        }}
+                        style={{ borderColor: "#e5e7eb" }}
                       >
                         <div className="w-9 h-9 rounded-lg bg-slate-100 flex items-center justify-center flex-shrink-0">
                           <Package className="w-4 h-4 text-slate-400" />
@@ -473,38 +460,27 @@ export default function AdminManufacturers() {
                                 {item.manufacturer_name}
                               </span>
                             )}
-                            {isExpired && (
-                              <span className="text-xs font-bold px-2 py-0.5 bg-red-100 text-red-600 rounded-full">
-                                Expired
-                              </span>
-                            )}
-                            {isExpiringSoon && (
-                              <span className="text-xs font-bold px-2 py-0.5 bg-orange-100 text-orange-600 rounded-full">
-                                Expiring Soon
-                              </span>
-                            )}
+                            <span className="text-xs font-bold px-2 py-0.5 bg-orange-100 text-orange-600 rounded-full">
+                              Order Request
+                            </span>
                           </div>
                           <p className="text-xs text-slate-400 mt-0.5">
                             Provider:{" "}
-                            <strong className="text-slate-600">{item.provider_name}</strong>
-                            {item.batch_lot ? ` · Lot: ${item.batch_lot}` : ""}
-                            {item.expiration_date
-                              ? ` · Exp: ${new Date(item.expiration_date).toLocaleDateString()}`
+                            <strong className="text-slate-600">{item.provider_name || "—"}</strong>
+                            {item.notes ? ` · Note: ${item.notes}` : ""}
+                            {item.created_at
+                              ? ` · ${new Date(item.created_at).toLocaleDateString()}`
                               : ""}
                           </p>
                         </div>
                         <div className="text-right flex-shrink-0">
-                          <p
-                            className="font-bold text-lg"
-                            style={{ color: item.quantity <= 2 ? "#FA6F30" : "#1e2535" }}
-                          >
+                          <p className="font-bold text-lg" style={{ color: "#1e2535" }}>
                             {item.quantity}
                           </p>
-                          <p className="text-xs text-slate-400">{item.unit}</p>
+                          <p className="text-xs text-slate-400">{item.unit || "units"}</p>
                         </div>
                       </div>
-                    );
-                  })}
+                    ))}
               </div>
             )}
           </div>

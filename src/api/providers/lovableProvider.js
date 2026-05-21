@@ -251,6 +251,48 @@ export function createLovableProviderClient() {
           delete: createNotImplementedMethod("entities.ManufacturerApplication.delete")
         };
       }
+      if (name === "ProviderInventory") {
+        const buildInventoryQuery = (filters = {}) => {
+          const params = new URLSearchParams();
+          if (filters.provider_id) params.set("provider_id", String(filters.provider_id));
+          if (filters.manufacturer_id) params.set("manufacturer_id", String(filters.manufacturer_id));
+          const qs = params.toString();
+          return qs ? `?${qs}` : "";
+        };
+        return {
+          list: (_sort = "-created_date") =>
+            authRequest(`/admin/manufacturer-order-requests/inventory-lines${buildInventoryQuery({})}`, { method: "GET" }),
+          filter: (filters = {}, _sort = "-created_date") =>
+            authRequest(`/admin/manufacturer-order-requests/inventory-lines${buildInventoryQuery(filters)}`, { method: "GET" }),
+          get: createNotImplementedMethod("entities.ProviderInventory.get"),
+          create: createNotImplementedMethod("entities.ProviderInventory.create"),
+          update: createNotImplementedMethod("entities.ProviderInventory.update"),
+          delete: createNotImplementedMethod("entities.ProviderInventory.delete"),
+        };
+      }
+      if (name === "ManufacturerOrderRequest") {
+        const buildQuery = (filters = {}, sort = "-created_at") => {
+          const params = new URLSearchParams();
+          if (filters.provider_id) params.set("provider_id", String(filters.provider_id));
+          if (filters.manufacturer_id) params.set("manufacturer_id", String(filters.manufacturer_id));
+          if (filters.contact_type) params.set("contact_type", String(filters.contact_type));
+          if (sort) params.set("sort", String(sort));
+          const qs = params.toString();
+          return qs ? `?${qs}` : "";
+        };
+        return {
+          list: (sort = "-created_at") =>
+            authRequest(`/admin/manufacturer-order-requests${buildQuery({}, sort)}`, { method: "GET" }),
+          filter: (filters = {}, sort = "-created_at") =>
+            authRequest(`/admin/manufacturer-order-requests${buildQuery(filters, sort)}`, { method: "GET" }),
+          get: createNotImplementedMethod("entities.ManufacturerOrderRequest.get"),
+          create: createNotImplementedMethod(
+            "entities.ManufacturerOrderRequest.create (use functions.invoke('sendRepContactEmail') instead)"
+          ),
+          update: createNotImplementedMethod("entities.ManufacturerOrderRequest.update"),
+          delete: createNotImplementedMethod("entities.ManufacturerOrderRequest.delete"),
+        };
+      }
       if (name === "ServiceType") {
         return {
           list: () => authRequest("/admin/service-types", { method: "GET" }),

@@ -109,7 +109,7 @@ async function insertNotificationRow({
 async function sendResendEmail({ to, subject, html }) {
   if (!resendApiKey) return false;
   const recipient = String(to || "").trim();
-  if (!recipient) return false;
+  if (!recipient || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) return false;
   try {
     const response = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -262,4 +262,80 @@ export async function notifyRepOfManufacturerApplication({
       summaryLines: summary,
     }),
   });
+}
+
+function buildOrderItemLines(orderItems = []) {
+  return orderItems.map((item) => {
+    const qty = item.quantity ?? "—";
+    const unit = item.unit || "units";
+    const notes = item.notes ? ` (${item.notes})` : "";
+    return `${item.product_name}: ${qty} ${unit}${notes}`;
+  });
+}
+
+export async function notifyRepOfContactRequest({
+  orderRequest,
+  manufacturer,
+  providerEmail,
+}) {
+  const repEmail = String(
+    orderRequest?.rep_email || manufacturer?.account_rep_email || ""
+  ).trim();
+  if (!repEmail) return { repSent: false, providerSent: false };
+
+  const isOrder = orderRequest?.contact_type === "order";
+  const mfrName = manufacturer?.name || orderRequest?.manufacturer_name || "Supplier";
+  const providerName = orderRequest?.provider_name || "NOVI Provider";
+  const subject =
+    orderRequest?.subject ||
+    (isOrder
+      ? `Order Request — ${providerName} (${mfrName})`
+      : `Provider Message — ${providerName}`);
+
+  const summary = [
+    `Supplier: ${mfrName}`,
+    `Provider: ${providerName}`,
+    orderRequest?.provider_email ? `Provider email: ${orderRequest.provider_email}` : null,
+    orderRequest?.practice_name ? `Practice: ${orderRequest.practice_name}` : null,
+    isOrder ? `Request type: Product order` : `Request type: ${orderRequest?.contact_type || "message"}`,
+    ...(isOrder ? buildOrderItemLines(orderRequest?.order_items || []) : []),
+  ].filter(Boolean);
+
+  const intro = isOrder
+    ? `${providerName} submitted a product order request through NOVI. Items and notes are below — reply directly to confirm pricing and fulfillment.`
+    : `${providerName} sent a message through the NOVI supplier marketplace. Reply directly to follow up.`;
+
+  const messageBlock = orderRequest?.message
+    ? [`Message: ${orderRequest.message}`]
+    : [];
+
+  const repSent = await sendResendEmail({
+    to: repEmail,
+    subject,
+    html: buildEmailHtml({
+      greetingName: manufacturer?.account_rep_name
+        ? `Hi ${manufacturer.account_rep_name}`
+        : "Hi there",
+      title: subject,
+      intro,
+      summaryLines: [...summary, ...messageBlock],
+    }),
+  });
+
+  let providerSent = false;
+  const copyEmail = String(providerEmail || orderRequest?.provider_email || "").trim();
+  if (copyEmail) {
+    providerSent = await sendResendEmail({
+      to: copyEmail,
+      subject: `[Copy] ${subject}`,
+      html: buildEmailHtml({
+        greetingName: providerName ? `Hi ${providerName}` : "Hi there",
+        title: "Your request was sent",
+        intro: `A copy of your ${isOrder ? "order request" : "message"} to ${mfrName} is below. Their rep team typically responds within 3–5 business days.`,
+        summaryLines: [...summary, ...messageBlock],
+      }),
+    });
+  }
+
+  return { repSent, providerSent };
 }

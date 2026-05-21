@@ -96,14 +96,19 @@ export default function RepContactDialog({ open, onClose, manufacturer, me, init
   const send = async () => {
     if (!repEmail || !subject || !body) return;
     setSending(true);
-    await base44.functions.invoke("sendRepContactEmail", {
-      manufacturer_id: manufacturer?.id,
-      type,
-      subject,
-      message: body,
-    });
-    setSending(false);
-    setSent(true);
+    try {
+      await base44.functions.invoke("sendRepContactEmail", {
+        manufacturer_id: manufacturer?.id,
+        type,
+        subject,
+        message: body,
+      });
+      setSent(true);
+    } catch (err) {
+      window.alert(err?.message || "Could not send message. Please try again.");
+    } finally {
+      setSending(false);
+    }
   };
 
   return (

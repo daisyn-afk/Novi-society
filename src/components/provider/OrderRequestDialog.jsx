@@ -20,19 +20,31 @@ export default function OrderRequestDialog({ open, onClose, manufacturer, me }) 
   const updateItem = (i, field, value) => setItems(prev => prev.map((item, idx) => idx === i ? { ...item, [field]: value } : item));
 
   const handleSend = async () => {
-    const validItems = items.filter(i => i.product_name && i.quantity);
+    const validItems = items
+      .map((i) => ({
+        ...i,
+        product_name: i.product_name === "__other__" ? (i._customName || "").trim() : i.product_name,
+      }))
+      .filter((i) => i.product_name && i.quantity);
     if (!validItems.length) return;
     setSending(true);
-    await base44.functions.invoke("sendRepContactEmail", {
-      manufacturer_id: manufacturer.id,
-      type: "order",
-      subject: `Order Request — NOVI Provider ${me?.full_name || ""}`,
-      message: message || "Please see the order details below.",
-      order_items: validItems.map(i => ({ ...i, quantity: parseFloat(i.quantity) || 0 })),
-    });
-    qc.invalidateQueries({ queryKey: ["my-order-requests"] });
-    setSending(false);
-    setSent(true);
+    try {
+      await base44.functions.invoke("sendRepContactEmail", {
+        manufacturer_id: manufacturer.id,
+        type: "order",
+        subject: `Order Request — NOVI Provider ${me?.full_name || ""}`,
+        message: message || "Please see the order details below.",
+        order_items: validItems.map((i) => ({ ...i, quantity: parseFloat(i.quantity) || 0 })),
+      });
+      qc.invalidateQueries({ queryKey: ["my-order-requests"] });
+      qc.invalidateQueries({ queryKey: ["all-provider-inventory"] });
+      qc.invalidateQueries({ queryKey: ["manufacturer-order-inventory"] });
+      setSent(true);
+    } catch (err) {
+      window.alert(err?.message || "Could not send order request. Please try again.");
+    } finally {
+      setSending(false);
+    }
   };
 
   const handleClose = () => {

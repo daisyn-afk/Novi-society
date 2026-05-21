@@ -39,6 +39,7 @@ const { functionsRouter } = await import("./functions/routes.js");
 const { patientJourneyRouter } = await import("./patient-journey/routes.js");
 const { integrationsRouter } = await import("./integrations/routes.js");
 const { manufacturersRouter, manufacturerApplicationsRouter } = await import("./manufacturers/routes.js");
+const { manufacturerOrderRequestsRouter } = await import("./manufacturers/orderRequestsRoutes.js");
 
 export function createAdminApp() {
   const app = express();
@@ -80,6 +81,7 @@ export function createAdminApp() {
   app.use("/admin/integrations", integrationsRouter);
   app.use("/admin/manufacturers", manufacturersRouter);
   app.use("/admin/manufacturer-applications", manufacturerApplicationsRouter);
+  app.use("/admin/manufacturer-order-requests", manufacturerOrderRequestsRouter);
   app.use("/functions", functionsRouter);
 
   app.use((error, _req, res, _next) => {
