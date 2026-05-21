@@ -19,6 +19,7 @@ import {
   isCourseFullySoldOut,
   isSessionDateEntrySoldOut,
   normalizeScheduledSessionDatesEntries,
+  parseSessionDatesField,
 } from "@/lib/sessionDateSeats";
 import {
   Sparkles, ArrowRight, Check,
@@ -37,9 +38,7 @@ const BLANK_FORM = {
 
 const normalizeCourseRecord = (course) => ({
   ...course,
-  session_dates: normalizeScheduledSessionDatesEntries(
-    Array.isArray(course?.session_dates) ? course.session_dates : []
-  ),
+  session_dates: normalizeScheduledSessionDatesEntries(parseSessionDatesField(course?.session_dates)),
 });
 
 const resolveSelectedSessionEntry = (course, selectedSession, selectedDate) => {

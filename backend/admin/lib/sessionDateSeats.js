@@ -222,22 +222,35 @@ export function parseSessionDatesField(raw) {
   return [];
 }
 
+/** Resolve available seats for one session row (enrollment-aware, preserves stored inventory when no enrollments). */
+export function resolveAvailableSeatsForSessionEntry(entry, enrolled = 0) {
+  const max = inferredMaxSeats(entry);
+  if (max == null || max < 0) return entry;
+  const safeEnrolled = Math.max(0, Number(enrolled) || 0);
+  let available;
+  if (safeEnrolled > 0) {
+    available = Math.max(0, max - safeEnrolled);
+  } else {
+    const stored = parseSeatCount(entry?.available_seats);
+    available = stored != null ? Math.min(max, Math.max(0, stored)) : max;
+  }
+  return { ...entry, max_seats: max, available_seats: available };
+}
+
 /**
  * Recompute each session row's available_seats from paid enrollment counts per calendar day.
+ * When a date has no enrollments, stored available_seats from admin/checkout is preserved.
  */
 export function reconcileSessionDatesWithEnrollmentCounts(sessionDates, countsByDateKey) {
-  if (!Array.isArray(sessionDates) || !countsByDateKey) return sessionDates;
+  if (!Array.isArray(sessionDates)) return sessionDates;
+  const counts = countsByDateKey || new Map();
   return sessionDates.map((entry) => {
-    const max = inferredMaxSeats(entry);
-    if (max == null || max < 0) return entry;
     const keys = [...sessionEntryCalendarKeys(entry)];
-    if (keys.length === 0) return entry;
     let enrolled = 0;
     for (const k of keys) {
-      enrolled = Math.max(enrolled, Number(countsByDateKey.get(k) || 0));
+      enrolled = Math.max(enrolled, Number(counts.get(k) || 0));
     }
-    const available = Math.max(0, max - enrolled);
-    return { ...entry, max_seats: max, available_seats: available };
+    return resolveAvailableSeatsForSessionEntry(entry, enrolled);
   });
 }
 
@@ -259,8 +272,8 @@ export function normalizeScheduledSessionDatesEntries(sessionDates, previousSess
   const prevMap = new Map();
   const prevByDateMap = new Map();
   for (const p of previousSessionDates || []) {
-    if (!p?.date) continue;
-    const dateKey = toSessionDateKey(p.date);
+    if (!p?.date && !p?.session_date) continue;
+    const dateKey = toSessionDateKey(p.date || p.session_date);
     const k = `${p.session_id || ""}::${dateKey}`;
     prevMap.set(k, p);
     if (dateKey) {
@@ -274,7 +287,7 @@ export function normalizeScheduledSessionDatesEntries(sessionDates, previousSess
     if (maxSeats == null || maxSeats < 0) {
       return { ...entry };
     }
-    const entryDateKey = toSessionDateKey(entry.date);
+    const entryDateKey = toSessionDateKey(entry.date || entry.session_date);
     const k = `${entry.session_id || ""}::${entryDateKey}`;
     const exactPrev = prevMap.get(k);
     const sameDatePrevRows = (entryDateKey ? prevByDateMap.get(entryDateKey) : null) || [];

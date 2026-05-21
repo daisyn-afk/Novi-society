@@ -39,13 +39,66 @@ export function parseSeatCount(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+/** Parse JSONB/string session_dates from API (Vercel/pg may return a string). */
+export function parseSessionDatesField(raw) {
+  if (Array.isArray(raw)) return raw.map(coerceSessionDateSeatFields);
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.map(coerceSessionDateSeatFields) : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function coerceSessionDateSeatFields(entry) {
+  if (!entry || typeof entry !== "object") return entry;
+  const max = parseSeatCount(entry.max_seats);
+  const avail = parseSeatCount(entry.available_seats);
+  return {
+    ...entry,
+    ...(max != null ? { max_seats: max } : {}),
+    ...(avail != null ? { available_seats: avail } : {}),
+  };
+}
+
+/** Mirrors backend resolveAvailableSeatsForSessionEntry. */
+export function resolveAvailableSeatsForSessionEntry(entry, enrolled = 0) {
+  const max = inferredMaxSeats(entry);
+  if (max == null || max < 0) return entry;
+  const safeEnrolled = Math.max(0, Number(enrolled) || 0);
+  let available;
+  if (safeEnrolled > 0) {
+    available = Math.max(0, max - safeEnrolled);
+  } else {
+    const stored = parseSeatCount(entry?.available_seats);
+    available = stored != null ? Math.min(max, Math.max(0, stored)) : max;
+  }
+  return { ...entry, max_seats: max, available_seats: available };
+}
+
+export function reconcileSessionDatesWithEnrollmentCounts(sessionDates, countsByDateKey) {
+  if (!Array.isArray(sessionDates)) return sessionDates;
+  const counts = countsByDateKey || new Map();
+  return sessionDates.map((entry) => {
+    const keys = [...sessionEntryCalendarKeys(entry)];
+    let enrolled = 0;
+    for (const k of keys) {
+      enrolled = Math.max(enrolled, Number(counts.get(k) || 0));
+    }
+    return resolveAvailableSeatsForSessionEntry(entry, enrolled);
+  });
+}
+
 /** Aligns seat fields on each session date (must match backend/admin/lib/sessionDateSeats.js). */
 export function normalizeScheduledSessionDatesEntries(sessionDates, previousSessionDates) {
   const prevMap = new Map();
   const prevByDateMap = new Map();
   for (const p of previousSessionDates || []) {
-    if (!p?.date) continue;
-    const dateKey = toSessionDateKey(p.date);
+    if (!p?.date && !p?.session_date) continue;
+    const dateKey = toSessionDateKey(p.date || p.session_date);
     const k = `${p.session_id || ""}::${dateKey}`;
     prevMap.set(k, p);
     if (dateKey) {
@@ -59,7 +112,7 @@ export function normalizeScheduledSessionDatesEntries(sessionDates, previousSess
     if (maxSeats == null || maxSeats < 0) {
       return { ...entry };
     }
-    const entryDateKey = toSessionDateKey(entry.date);
+    const entryDateKey = toSessionDateKey(entry.date || entry.session_date);
     const k = `${entry.session_id || ""}::${entryDateKey}`;
     const exactPrev = prevMap.get(k);
     const sameDatePrevRows = (entryDateKey ? prevByDateMap.get(entryDateKey) : null) || [];
