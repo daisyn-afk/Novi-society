@@ -43,6 +43,7 @@ const CATEGORY_COLORS = {
 };
 
 const APP_STATUS_CONFIG = {
+  submitted: { label: "Pending Review", color: "#FA6F30", bg: "rgba(250,111,48,0.1)", border: "rgba(250,111,48,0.2)", icon: Clock },
   pending: { label: "Pending Review", color: "#FA6F30", bg: "rgba(250,111,48,0.1)", border: "rgba(250,111,48,0.2)", icon: Clock },
   under_review: { label: "Under Review", color: "#7B8EC8", bg: "rgba(123,142,200,0.1)", border: "rgba(123,142,200,0.2)", icon: RefreshCw },
   approved: { label: "Approved", color: "#4a6b10", bg: "rgba(200,230,60,0.15)", border: "rgba(200,230,60,0.3)", icon: CheckCircle2 },
@@ -496,7 +497,7 @@ export default function ProviderMarketplace() {
   const activeCategories = Object.keys(CATEGORY_LABELS).filter(c => grouped[c]?.length > 0);
 
   const approvedCount = myApplications.filter(a => a.status === "approved").length;
-  const pendingCount = myApplications.filter(a => ["pending", "under_review"].includes(a.status)).length;
+  const pendingCount = myApplications.filter(a => ["submitted", "pending", "under_review", "more_info_needed"].includes(a.status)).length;
 
   const pageContent = (
     <div className="max-w-5xl space-y-5">
@@ -586,7 +587,7 @@ export default function ProviderMarketplace() {
                         <div className="mt-4 flex items-center gap-0">
                           {[
                             { label: "Submitted", done: true },
-                            { label: "In Review", done: ["approved", "rejected", "more_info_needed", "under_review"].includes(app.status) },
+                            { label: "In Review", done: ["approved", "rejected", "more_info_needed", "under_review", "submitted"].includes(app.status) },
                             { label: "Decision", done: ["approved", "rejected"].includes(app.status) },
                             { label: "Active", done: app.status === "approved" },
                           ].map((step, i, arr) => (
@@ -618,7 +619,7 @@ export default function ProviderMarketplace() {
                             <p className="text-xs font-semibold" style={{ color: "rgba(30,37,53,0.75)" }}>The rep needs more info — check your email to respond.</p>
                           </div>
                         )}
-                        {["pending", "under_review"].includes(app.status) && (
+                        {["submitted", "pending", "under_review"].includes(app.status) && (
                           <div className="mt-3 px-3 py-2 rounded-xl flex items-center gap-2" style={{ background: "rgba(123,142,200,0.07)", border: "1px solid rgba(123,142,200,0.18)" }}>
                             <Clock className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#7B8EC8" }} />
                             <p className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>Typical response time: 3–5 business days. Check your email for updates.</p>

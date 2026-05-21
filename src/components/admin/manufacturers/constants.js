@@ -87,12 +87,22 @@ export const EMPTY_SUPPLIER = {
   is_active: true,
 };
 
+export const US_STATES = [
+  "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
+  "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
+  "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
+  "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
+  "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY", "DC",
+];
+
 export const EMPTY_NETWORK_TIER = {
   name: "",
   states: "",
   min_order_amount: "",
   contract_url: "",
+  contract_file_name: "",
   notes: "",
+  requires_contract_signature: false,
 };
 
 export const EMPTY_CUSTOM_FIELD = {

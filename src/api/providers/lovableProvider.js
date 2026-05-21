@@ -194,6 +194,63 @@ export function createLovableProviderClient() {
   const entityProxy = new Proxy({}, {
     get: (_, entityName) => {
       const name = String(entityName);
+      if (name === "Manufacturer") {
+        return {
+          list: () => authRequest("/admin/manufacturers", { method: "GET" }),
+          get: (id) => authRequest(`/admin/manufacturers/${encodeURIComponent(id)}`, { method: "GET" }),
+          create: (payload) => authRequest("/admin/manufacturers", {
+            method: "POST",
+            body: JSON.stringify(payload || {})
+          }),
+          update: (id, payload) => authRequest(`/admin/manufacturers/${encodeURIComponent(id)}`, {
+            method: "PUT",
+            body: JSON.stringify(payload || {})
+          }),
+          delete: (id) => authRequest(`/admin/manufacturers/${encodeURIComponent(id)}`, { method: "DELETE" }),
+          filter: (filters = {}) => {
+            const params = new URLSearchParams();
+            if (Object.hasOwn(filters, "is_active")) {
+              params.set("is_active", String(Boolean(filters.is_active)));
+            }
+            if (Object.hasOwn(filters, "is_featured")) {
+              params.set("is_featured", String(Boolean(filters.is_featured)));
+            }
+            if (filters.category) {
+              params.set("category", String(filters.category));
+            }
+            const qs = params.toString();
+            return authRequest(`/admin/manufacturers${qs ? `?${qs}` : ""}`, { method: "GET" });
+          }
+        };
+      }
+      if (name === "ManufacturerApplication") {
+        const buildQuery = (filters = {}, sort = "-submitted_at") => {
+          const params = new URLSearchParams();
+          if (filters.provider_id) params.set("provider_id", String(filters.provider_id));
+          if (filters.manufacturer_id) params.set("manufacturer_id", String(filters.manufacturer_id));
+          if (filters.status) params.set("status", String(filters.status));
+          if (sort) params.set("sort", String(sort));
+          const qs = params.toString();
+          return qs ? `?${qs}` : "";
+        };
+        return {
+          list: (sort = "-submitted_at") =>
+            authRequest(`/admin/manufacturer-applications${buildQuery({}, sort)}`, { method: "GET" }),
+          filter: (filters = {}, sort = "-submitted_at") =>
+            authRequest(`/admin/manufacturer-applications${buildQuery(filters, sort)}`, { method: "GET" }),
+          get: (id) =>
+            authRequest(`/admin/manufacturer-applications/${encodeURIComponent(id)}`, { method: "GET" }),
+          update: (id, payload) =>
+            authRequest(`/admin/manufacturer-applications/${encodeURIComponent(id)}`, {
+              method: "PATCH",
+              body: JSON.stringify(payload || {})
+            }),
+          create: createNotImplementedMethod(
+            "entities.ManufacturerApplication.create (use functions.invoke('sendManufacturerInquiry') instead)"
+          ),
+          delete: createNotImplementedMethod("entities.ManufacturerApplication.delete")
+        };
+      }
       if (name === "ServiceType") {
         return {
           list: () => authRequest("/admin/service-types", { method: "GET" }),
@@ -660,7 +717,13 @@ export function createLovableProviderClient() {
           const formData = new FormData();
           formData.append("file", file);
           const uploadPath =
-            kind === "patient_journey_selfie" ? "/admin/uploads/patient-selfie" : "/admin/uploads/license-photo";
+            kind === "patient_journey_selfie"
+              ? "/admin/uploads/patient-selfie"
+              : kind === "manufacturer_logo"
+                ? "/admin/uploads/manufacturer-logo"
+                : kind === "manufacturer_contract"
+                  ? "/admin/uploads/md-document"
+                  : "/admin/uploads/license-photo";
           const response = await fetch(`${ADMIN_API_BASE_URL}${toApiPath(uploadPath)}`, {
             method: "POST",
             headers: token ? { Authorization: `Bearer ${token}` } : {},

@@ -13,6 +13,14 @@ import {
   recordStripeWebhookEvent,
   PAYMENT_FLOW
 } from "../payments/service.js";
+import {
+  createManufacturerApplication,
+  getManufacturerById
+} from "../manufacturers/repository.js";
+import {
+  notifyAdminsOfManufacturerApplication,
+  notifyRepOfManufacturerApplication
+} from "../manufacturers/notifications.js";
 
 export const functionsRouter = Router();
 let certificationColumnsPromise = null;
@@ -1885,6 +1893,58 @@ functionsRouter.post("/promoteFromWaitlist", async (req, res, next) => {
       // best effort: promotion should still succeed even if email delivery fails
     }
     return res.json({ success: true, booking });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+functionsRouter.post("/sendManufacturerInquiry", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ ok: false, error: "Missing bearer token." });
+    const me = await getMeFromAccessToken(token);
+
+    const body = req.body || {};
+    const manufacturerId = String(body.manufacturer_id || "").trim();
+    if (!manufacturerId) {
+      return res.status(400).json({ ok: false, error: "manufacturer_id is required." });
+    }
+
+    const manufacturer = await getManufacturerById(manufacturerId);
+    if (!manufacturer) {
+      return res.status(404).json({ ok: false, error: "Manufacturer not found." });
+    }
+
+    const formData = body.form_data && typeof body.form_data === "object" ? body.form_data : {};
+
+    const application = await createManufacturerApplication({
+      manufacturer_id: manufacturerId,
+      manufacturer_name: manufacturer.name,
+      provider_id: me?.id || null,
+      provider_email: me?.email || formData.email || "",
+      provider_name: me?.full_name || formData.full_name || "",
+      practice_name: formData.practice_name || "",
+      practice_address: formData.practice_address || "",
+      practice_phone: formData.practice_phone || "",
+      license_type: formData.license_type || "",
+      license_number: formData.license_number || "",
+      license_state: formData.license_state || "",
+      supervising_physician_name: formData.supervising_physician_name || "",
+      supervising_physician_email: formData.supervising_physician_email || "",
+      additional_fields:
+        formData.additional_fields && typeof formData.additional_fields === "object"
+          ? formData.additional_fields
+          : {},
+    });
+
+    // Fire-and-forget notifications. Failures are logged inside the helpers
+    // and never block the submission flow.
+    Promise.allSettled([
+      notifyAdminsOfManufacturerApplication({ application, manufacturer }),
+      notifyRepOfManufacturerApplication({ application, manufacturer }),
+    ]).catch(() => {});
+
+    return res.status(201).json({ ok: true, application });
   } catch (error) {
     return next(error);
   }

@@ -68,9 +68,12 @@ export default function AdminManufacturers() {
     if (!next) setEditing(null);
   };
 
-  const uploadFile = async (file) => {
-    const result = await base44.integrations.Core.UploadFile({ file });
-    return result?.file_url || "";
+  const uploadFile = async (file, uploadKind = "manufacturer_logo") => {
+    const result = await base44.integrations.Core.UploadFile({
+      file,
+      kind: uploadKind,
+    });
+    return result?.file_url || result?.url || "";
   };
 
   const pendingApps = applications.filter((a) => a.status === "submitted");

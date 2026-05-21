@@ -22,7 +22,7 @@ import NetworkContractsSection from "./sections/NetworkContractsSection";
 import ApplicationFormBuilderSection from "./sections/ApplicationFormBuilderSection";
 import BusinessRulesSection from "./sections/BusinessRulesSection";
 
-import { EMPTY_SUPPLIER } from "./constants";
+import { EMPTY_SUPPLIER, EMPTY_NETWORK_TIER } from "./constants";
 
 const SECTIONS = [
   {
@@ -94,7 +94,11 @@ function mergeSupplier(initial) {
     roi_stats: initial?.roi_stats ?? [],
     standalone_access: initial?.standalone_access ?? [],
     novi_access: initial?.novi_access ?? [],
-    network_tiers: initial?.network_tiers ?? [],
+    network_tiers: (initial?.network_tiers ?? []).map((tier) => ({
+      ...EMPTY_NETWORK_TIER,
+      ...tier,
+      requires_contract_signature: tier?.requires_contract_signature === true,
+    })),
     custom_fields:
       initial?.custom_fields ??
       (initial?.required_fields || []).map((label) => ({
@@ -131,8 +135,12 @@ export default function SupplierFormDialog({
   const handleUploadFile = async (file, key) => {
     if (!onUploadFile) return "";
     setUploadingKey(key);
+    const uploadKind =
+      typeof key === "string" && key.startsWith("contract_")
+        ? "manufacturer_contract"
+        : "manufacturer_logo";
     try {
-      const url = await onUploadFile(file);
+      const url = await onUploadFile(file, uploadKind);
       return url || "";
     } finally {
       setUploadingKey(null);

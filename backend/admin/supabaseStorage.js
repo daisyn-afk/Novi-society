@@ -93,6 +93,40 @@ export async function uploadPatientJourneySelfie({ buffer, mimeType, extension, 
   };
 }
 
+export async function uploadManufacturerLogo({ buffer, mimeType, extension }) {
+  const client = getSupabaseClient();
+  const cleanExt = (extension || "bin").replace(/^\./, "");
+  const objectPath = `manufacturer-logos/${Date.now()}-${randomUUID()}.${cleanExt}`;
+
+  const { error: uploadError } = await uploadWithRetry({
+    client,
+    bucket: SUPABASE_STORAGE_BUCKET,
+    objectPath,
+    buffer,
+    mimeType,
+  });
+
+  if (uploadError) {
+    const err = new Error(`Supabase upload failed: ${uploadError.message}`);
+    err.statusCode = 502;
+    throw err;
+  }
+
+  const { data } = client.storage.from(SUPABASE_STORAGE_BUCKET).getPublicUrl(objectPath);
+  if (!data?.publicUrl) {
+    const err = new Error("Supabase upload succeeded but public URL could not be generated.");
+    err.statusCode = 502;
+    throw err;
+  }
+
+  return {
+    bucket: SUPABASE_STORAGE_BUCKET,
+    path: objectPath,
+    url: data.publicUrl,
+    file_url: data.publicUrl,
+  };
+}
+
 export async function uploadLicenseDocument({ buffer, mimeType, extension }) {
   const client = getSupabaseClient();
   const cleanExt = (extension || "bin").replace(/^\./, "");
