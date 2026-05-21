@@ -148,7 +148,7 @@ export const PAGES = {
 }
 
 export const pagesConfig = {
-    mainPage: "LandingPage",
+    mainPage: "NoviLanding",
     Pages: PAGES,
     Layout: __Layout,
 };
