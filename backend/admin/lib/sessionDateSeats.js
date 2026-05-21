@@ -52,34 +52,27 @@ function inferredMaxSeats(entry) {
 /** Bounds for decrement/checkout; allows legacy rows with missing max_seats but positive available_seats. */
 function seatBoundsForDecrement(entry) {
   const max = inferredMaxSeats(entry);
-  let avail = parseSeatCount(entry?.available_seats);
   if (max == null || max < 0) return null;
-  if (avail == null && max === 0) avail = 0;
-  if (avail == null || avail < 0) return null;
+  let avail = parseSeatCount(entry?.available_seats);
+  if (avail == null) avail = max;
+  if (avail < 0) return null;
   if (avail > max) return null;
   if (avail <= 0) return null;
   return { max, avail };
 }
 
 export function hasValidSessionSeatEntry(entry) {
-  const max = inferredMaxSeats(entry);
-  const avail = parseSeatCount(entry?.available_seats);
-  if (max == null || max < 0) return false;
-  if (avail == null || avail < 0) return false;
-  if (avail > max) return false;
-  return true;
+  return seatBoundsForDecrement(entry) != null;
 }
 
 export function effectiveAvailableSeats(entry) {
-  if (!hasValidSessionSeatEntry(entry)) return null;
-  const max = inferredMaxSeats(entry);
-  const avail = parseSeatCount(entry.available_seats);
-  return Math.min(max, avail);
+  const bounds = seatBoundsForDecrement(entry);
+  return bounds ? bounds.avail : null;
 }
 
 /** Missing/invalid seat fields or zero available → treated as sold out (not selectable). */
 export function isSessionDateEntrySoldOut(entry) {
-  return !hasValidSessionSeatEntry(entry) || effectiveAvailableSeats(entry) <= 0;
+  return seatBoundsForDecrement(entry) == null;
 }
 
 /** Calendar keys for a row (some rows set `date`, others `session_date`, or both). */
@@ -193,7 +186,7 @@ export function legacyCourseLevelSoldOut(course) {
 export function isCourseFullySoldOut(course, now = new Date()) {
   const upcoming = getUpcomingSessionEntries(course?.session_dates, now);
   if (upcoming.length === 0) return legacyCourseLevelSoldOut(course);
-  const anyBookable = upcoming.some((e) => hasValidSessionSeatEntry(e) && effectiveAvailableSeats(e) > 0);
+  const anyBookable = upcoming.some((e) => seatBoundsForDecrement(e) != null);
   return !anyBookable;
 }
 
