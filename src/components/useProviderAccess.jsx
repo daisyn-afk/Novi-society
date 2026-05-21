@@ -4,7 +4,8 @@
  *
  * Tiers (in order):
  *   "none"         → No license submitted → full sales lock, show apply CTA
- *   "pending"      → License submitted, awaiting admin approval → full sales lock, show pending banner
+ *   "rejected"     → License(s) submitted but all rejected, none pending → show rejection state + resubmit CTA
+ *   "pending"      → At least one license pending admin approval (and none verified) → show pending banner
  *   "courses_only" → License verified by admin → can browse/purchase/attend courses + upload external certs
  *   "md_eligible"  → Has at least one active NOVI cert (completed course) OR an admin-approved external cert
  *                    → can apply for MD Board subscription (unlocks the MD Coverage flow)
@@ -62,9 +63,14 @@ export function useProviderAccess() {
 
   // Step 1: Must have a verified license
   const hasVerifiedLicense = licenses.some(l => l.status === "verified");
+  const hasPendingLicense  = licenses.some(l => l.status === "pending_review");
+  const hasRejectedLicense = licenses.some(l => l.status === "rejected");
   const hasAnyLicense = licenses.length > 0;
 
   if (!hasAnyLicense) return { status: "none", isLoading: false };
+  // All submitted licenses are rejected with nothing pending — surface rejection state.
+  if (!hasVerifiedLicense && !hasPendingLicense && hasRejectedLicense)
+    return { status: "rejected", isLoading: false };
   if (!hasVerifiedLicense) return { status: "pending", isLoading: false };
 
   // Step 2: Check for active MD subscription → full access.
