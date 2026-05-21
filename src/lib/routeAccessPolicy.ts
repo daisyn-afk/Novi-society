@@ -56,6 +56,7 @@ export const ALLOWED_PAGES_BY_ROLE: Record<string, Set<string>> = {
     "ProviderSubscription",
     "ProviderCodeRedemption",
     "ProviderDashboardLockedPreview",
+    "ProviderMessaging",
   ]),
   medical_director: new Set([
     "MDDashboard",
@@ -66,6 +67,7 @@ export const ALLOWED_PAGES_BY_ROLE: Record<string, Set<string>> = {
     "MDProfile",
     "MDProviders",
     "MDServiceOfferings",
+    "MDMessaging",
   ]),
   patient: new Set([
     "PatientJourney",

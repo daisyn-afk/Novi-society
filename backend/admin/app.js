@@ -38,6 +38,7 @@ const { mdProfileRouter } = await import("./md-profile/routes.js");
 const { functionsRouter } = await import("./functions/routes.js");
 const { patientJourneyRouter } = await import("./patient-journey/routes.js");
 const { integrationsRouter } = await import("./integrations/routes.js");
+const { mdMessagesRouter } = await import("./md-messages/routes.js");
 
 export function createAdminApp() {
   const app = express();
@@ -77,6 +78,7 @@ export function createAdminApp() {
   app.use("/admin/md-profile", mdProfileRouter);
   app.use("/admin/patient-journey", patientJourneyRouter);
   app.use("/admin/integrations", integrationsRouter);
+  app.use("/admin/md-messages", mdMessagesRouter);
   app.use("/functions", functionsRouter);
 
   app.use((error, _req, res, _next) => {
