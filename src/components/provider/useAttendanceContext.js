@@ -26,16 +26,21 @@ export function useAttendanceContext() {
       const [byProviderIdResult, byEmailResult, preOrdersResult] = await Promise.allSettled([
         me?.id ? base44.entities.Enrollment.filter({ provider_id: me.id }, "-created_date") : Promise.resolve([]),
         me?.email ? base44.entities.Enrollment.filter({ provider_email: me.email }, "-created_date") : Promise.resolve([]),
-        base44.entities.PreOrder.list("-created_date", 500),
+        me?.email
+          ? base44.entities.PreOrder.list("-created_date", 500, { customer_email: me.email })
+          : Promise.resolve([]),
       ]);
       const byProviderId = byProviderIdResult.status === "fulfilled" ? (byProviderIdResult.value || []) : [];
       const byEmail = byEmailResult.status === "fulfilled" ? (byEmailResult.value || []) : [];
       const preOrders = preOrdersResult.status === "fulfilled" ? (preOrdersResult.value || []) : [];
-      const email = String(me?.email || "").toLowerCase();
-      const derivedFromPreOrders = preOrders
-        .filter((p) => normalizeStatus(p?.order_type) === "course")
-        .filter((p) => ["paid", "confirmed", "completed"].includes(normalizeStatus(p?.status)))
-        .filter((p) => String(p?.customer_email || "").toLowerCase() === email)
+      const email = String(me?.email || "").trim().toLowerCase();
+      const derivedFromPreOrders = email
+        ? preOrders
+          .filter((p) => normalizeStatus(p?.order_type) === "course")
+          .filter((p) => Boolean(p?.course_id))
+          .filter((p) => ["paid", "confirmed", "completed"].includes(normalizeStatus(p?.status)))
+          .filter((p) => String(p?.customer_email || "").trim().toLowerCase() === email)
+        : [];
         .map((p) => ({
           id: `preorder-${p.id}`,
           pre_order_id: p.id,

@@ -251,16 +251,21 @@ export default function ProviderCredentialsCoverage() {
       const [byProviderIdResult, byEmailResult, preOrdersResult] = await Promise.allSettled([
         u?.id ? base44.entities.Enrollment.filter({ provider_id: u.id }) : Promise.resolve([]),
         u?.email ? base44.entities.Enrollment.filter({ provider_email: u.email }) : Promise.resolve([]),
-        base44.entities.PreOrder.list("-created_date", 500),
+        u?.email
+          ? base44.entities.PreOrder.list("-created_date", 500, { customer_email: u.email })
+          : Promise.resolve([]),
       ]);
       const byProviderId = byProviderIdResult.status === "fulfilled" ? (byProviderIdResult.value || []) : [];
       const byEmail = byEmailResult.status === "fulfilled" ? (byEmailResult.value || []) : [];
       const preOrders = preOrdersResult.status === "fulfilled" ? (preOrdersResult.value || []) : [];
-      const email = String(u?.email || "").toLowerCase();
-      const derivedFromPreOrders = preOrders
-        .filter((p) => String(p?.order_type || "").toLowerCase() === "course")
-        .filter((p) => ["paid", "confirmed", "completed"].includes(String(p?.status || "").toLowerCase()))
-        .filter((p) => String(p?.customer_email || "").toLowerCase() === email)
+      const email = String(u?.email || "").trim().toLowerCase();
+      const derivedFromPreOrders = email
+        ? preOrders
+          .filter((p) => String(p?.order_type || "").toLowerCase() === "course")
+          .filter((p) => Boolean(p?.course_id))
+          .filter((p) => ["paid", "confirmed", "completed"].includes(String(p?.status || "").toLowerCase()))
+          .filter((p) => String(p?.customer_email || "").trim().toLowerCase() === email)
+        : [];
         .map((p) => ({
           id: `preorder-${p.id}`,
           pre_order_id: p.id,
