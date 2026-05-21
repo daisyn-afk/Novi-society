@@ -7,7 +7,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   LayoutDashboard, BookOpen, Award, FileText, Users,
   Calendar, Star, ShieldCheck, ClipboardList, Settings, Layers,
-  Menu, X, LogOut, User, Lock, Stethoscope, Sparkles, Clock, AlertTriangle, ShoppingBag, Mail, Rocket, TicketPercent
+  Menu, X, LogOut, User, Lock, Stethoscope, Sparkles, Clock, AlertTriangle, ShoppingBag, Mail, Rocket, TicketPercent, MessageSquare
 } from "lucide-react";
 import { useProviderAccess } from "@/components/useProviderAccess";
 import { providerOnboardingApi } from "@/api/providerOnboardingApi";
@@ -49,12 +49,14 @@ const navByRole = {
     { label: "Supplier Marketplace", icon: ShoppingBag, page: "ProviderMarketplace" },
     { label: "Growth Studio", icon: Rocket, page: "ProviderLaunchPad" },
     { label: "My Practice", icon: Stethoscope, page: "ProviderPractice" },
+    { label: "Messages", icon: MessageSquare, page: "ProviderMessaging" },
     { label: "Profile", icon: User, page: "ProviderProfile" },
   ],
   medical_director: [
     { label: "Dashboard", icon: LayoutDashboard, page: "MDDashboard" },
     { label: "Provider Supervision", icon: Users, page: "MDProviderRelationships" },
     { label: "Treatment Records", icon: ClipboardList, page: "MDTreatmentRecords" },
+    { label: "Messages", icon: MessageSquare, page: "MDMessaging" },
     { label: "Compliance Logs", icon: ShieldCheck, page: "MDCompliance" },
     { label: "Certifications", icon: Award, page: "MDCertifications" },
     { label: "MD Profile", icon: User, page: "MDProfile" },
