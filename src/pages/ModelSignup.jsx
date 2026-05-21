@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import NoviFooter from "@/components/NoviFooter";
 import { redirectToStripeCheckout } from "@/lib/redirectToStripeCheckout";
-import { normalizeScheduledSessionDatesEntries } from "@/lib/sessionDateSeats";
+import { normalizeScheduledSessionDatesEntries, parseSessionDatesField } from "@/lib/sessionDateSeats";
 
 const TIME_SLOTS = [
   { label: "2:00 PM", value: "14:00" },
@@ -133,9 +133,7 @@ export default function ModelSignup() {
         .filter((course) => course?.is_active !== false)
         .map((course) => ({
           ...course,
-          session_dates: normalizeScheduledSessionDatesEntries(
-            Array.isArray(course?.session_dates) ? course.session_dates : []
-          ),
+          session_dates: normalizeScheduledSessionDatesEntries(parseSessionDatesField(course?.session_dates)),
         }));
     }
   });
