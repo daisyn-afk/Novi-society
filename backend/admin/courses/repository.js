@@ -1,5 +1,9 @@
 import { query } from "../db.js";
-import { syncScheduledCoursesSessionSeats } from "./sessionSeatsSync.js";
+import {
+  normalizeScheduledSessionDatesEntries,
+  parseSessionDatesField,
+} from "../lib/sessionDateSeats.js";
+import { syncScheduledCourseSessionSeats, syncScheduledCoursesSessionSeats } from "./sessionSeatsSync.js";
 
 const COLUMNS = `
   id,
@@ -179,7 +183,11 @@ export async function listCourses({ type } = {}) {
     order by created_date desc
   `;
   const { rows } = await query(sql, values);
-  const withSyncedSeats = await syncScheduledCoursesSessionSeats(rows);
+  const normalizedRows = rows.map((row) => ({
+    ...row,
+    session_dates: normalizeScheduledSessionDatesEntries(parseSessionDatesField(row.session_dates)),
+  }));
+  const withSyncedSeats = await syncScheduledCoursesSessionSeats(normalizedRows);
   return applyTemplateMergeToRows(withSyncedSeats);
 }
 
@@ -190,7 +198,17 @@ export async function getCourseById(id) {
   );
   const course = rows[0] ?? null;
   if (!course) return null;
-  return mergeScheduledRowWithItsTemplate(course);
+  const syncedDates = await syncScheduledCourseSessionSeats(id);
+  const withSynced = syncedDates
+    ? {
+        ...course,
+        session_dates: normalizeScheduledSessionDatesEntries(syncedDates),
+      }
+    : {
+        ...course,
+        session_dates: normalizeScheduledSessionDatesEntries(parseSessionDatesField(course.session_dates)),
+      };
+  return mergeScheduledRowWithItsTemplate(withSynced);
 }
 
 export async function createCourse(payload, createdByEmail) {
