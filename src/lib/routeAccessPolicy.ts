@@ -86,6 +86,11 @@ export const SHARED_AUTH_PAGES = new Set([
   "NoviLanding",
   "ModelSignup",
   "ModelBookingLookup",
+  "PrivacyPolicy",
+  "TermsAndConditions",
+  "RefundPolicy",
+  "SMSTerms",
+  "ContactUs",
 ]);
 
 export function normalizeRole(role?: string | null) {

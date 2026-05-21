@@ -93,24 +93,29 @@ function inferredMaxSeats(entry) {
   return max;
 }
 
-export function hasValidSessionSeatEntry(entry) {
+/** Bookable inventory for a session row (mirrors backend seatBoundsForDecrement). */
+export function sessionSeatBoundsForBooking(entry) {
   const max = inferredMaxSeats(entry);
-  const avail = parseSeatCount(entry?.available_seats);
-  if (max == null || max < 0) return false;
-  if (avail == null || avail < 0) return false;
-  if (avail > max) return false;
-  return true;
+  if (max == null || max < 0) return null;
+  let avail = parseSeatCount(entry?.available_seats);
+  if (avail == null) avail = max;
+  if (avail < 0) return null;
+  if (avail > max) return null;
+  if (avail <= 0) return null;
+  return { max, avail };
+}
+
+export function hasValidSessionSeatEntry(entry) {
+  return sessionSeatBoundsForBooking(entry) != null;
 }
 
 export function effectiveAvailableSeats(entry) {
-  if (!hasValidSessionSeatEntry(entry)) return null;
-  const max = inferredMaxSeats(entry);
-  const avail = parseSeatCount(entry.available_seats);
-  return Math.min(max, avail);
+  const bounds = sessionSeatBoundsForBooking(entry);
+  return bounds ? bounds.avail : null;
 }
 
 export function isSessionDateEntrySoldOut(entry) {
-  return !hasValidSessionSeatEntry(entry) || effectiveAvailableSeats(entry) <= 0;
+  return sessionSeatBoundsForBooking(entry) == null;
 }
 
 export function sessionEntryCalendarKeys(entry) {
@@ -159,7 +164,7 @@ export function legacyCourseLevelSoldOut(course) {
 export function isCourseFullySoldOut(course, now = new Date()) {
   const upcoming = getUpcomingSessionEntries(course?.session_dates, now);
   if (upcoming.length === 0) return legacyCourseLevelSoldOut(course);
-  const anyBookable = upcoming.some((e) => hasValidSessionSeatEntry(e) && effectiveAvailableSeats(e) > 0);
+  const anyBookable = upcoming.some((e) => sessionSeatBoundsForBooking(e) != null);
   return !anyBookable;
 }
 
