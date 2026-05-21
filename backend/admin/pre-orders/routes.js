@@ -5,7 +5,10 @@ export const preOrdersRouter = Router();
 
 preOrdersRouter.get("/", async (req, res, next) => {
   try {
-    const rows = await listPreOrders({ limit: req.query?.limit || 200 });
+    const rows = await listPreOrders({
+      limit: req.query?.limit || 200,
+      customerEmail: req.query?.customer_email || "",
+    });
     res.json(rows);
   } catch (error) {
     next(error);
