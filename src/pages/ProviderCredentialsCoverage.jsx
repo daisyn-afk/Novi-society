@@ -265,19 +265,19 @@ export default function ProviderCredentialsCoverage() {
           .filter((p) => Boolean(p?.course_id))
           .filter((p) => ["paid", "confirmed", "completed"].includes(String(p?.status || "").toLowerCase()))
           .filter((p) => String(p?.customer_email || "").trim().toLowerCase() === email)
+          .map((p) => ({
+            id: `preorder-${p.id}`,
+            pre_order_id: p.id,
+            course_id: p.course_id,
+            provider_id: u?.id || null,
+            provider_email: p.customer_email || u?.email || null,
+            provider_name: p.customer_name || null,
+            status: String(p?.status || "").toLowerCase() === "completed" ? "attended" : String(p?.status || "").toLowerCase(),
+            session_date: p.course_date || p.session_date || null,
+            amount_paid: p.amount_paid,
+            created_date: p.created_date || p.created_at || null,
+          }))
         : [];
-        .map((p) => ({
-          id: `preorder-${p.id}`,
-          pre_order_id: p.id,
-          course_id: p.course_id,
-          provider_id: u?.id || null,
-          provider_email: p.customer_email || u?.email || null,
-          provider_name: p.customer_name || null,
-          status: String(p?.status || "").toLowerCase() === "completed" ? "attended" : String(p?.status || "").toLowerCase(),
-          session_date: p.course_date || p.session_date || null,
-          amount_paid: p.amount_paid,
-          created_date: p.created_date || p.created_at || null,
-        }));
       const map = new Map();
       [...byProviderId, ...byEmail, ...derivedFromPreOrders].forEach((row) => {
         const dedupeKey = row?.pre_order_id || row?.id || `${row?.course_id || ""}:${row?.session_date || ""}`;

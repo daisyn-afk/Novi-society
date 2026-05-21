@@ -103,17 +103,17 @@ export default function ProviderDashboard() {
           .filter((p) => Boolean(p?.course_id))
           .filter((p) => ["paid", "confirmed", "completed"].includes(String(p?.status || "").toLowerCase()))
           .filter((p) => String(p?.customer_email || "").trim().toLowerCase() === email)
+          .map((p) => ({
+            id: `preorder-${p.id}`,
+            pre_order_id: p.id,
+            course_id: p.course_id,
+            provider_id: u?.id || null,
+            provider_email: p.customer_email,
+            provider_name: p.customer_name,
+            status: p.status === "completed" ? "confirmed" : p.status,
+            created_date: p.created_date,
+          }))
         : [];
-        .map((p) => ({
-          id: `preorder-${p.id}`,
-          pre_order_id: p.id,
-          course_id: p.course_id,
-          provider_id: u?.id || null,
-          provider_email: p.customer_email,
-          provider_name: p.customer_name,
-          status: p.status === "completed" ? "confirmed" : p.status,
-          created_date: p.created_date,
-        }));
       return Array.from(new Map([...(byProviderId || []), ...(byEmail || []), ...derivedFromPreOrders].map((row) => [row.pre_order_id || row.id, row])).values());
     },
   });

@@ -40,19 +40,19 @@ export function useAttendanceContext() {
           .filter((p) => Boolean(p?.course_id))
           .filter((p) => ["paid", "confirmed", "completed"].includes(normalizeStatus(p?.status)))
           .filter((p) => String(p?.customer_email || "").trim().toLowerCase() === email)
+          .map((p) => ({
+            id: `preorder-${p.id}`,
+            pre_order_id: p.id,
+            course_id: p.course_id,
+            provider_id: me?.id || null,
+            provider_email: p.customer_email || me?.email || null,
+            provider_name: p.customer_name || null,
+            status: normalizeStatus(p?.status) === "completed" ? "attended" : normalizeStatus(p?.status),
+            session_date: p.course_date || p.session_date || null,
+            amount_paid: p.amount_paid,
+            created_date: p.created_date || p.created_at || null,
+          }))
         : [];
-        .map((p) => ({
-          id: `preorder-${p.id}`,
-          pre_order_id: p.id,
-          course_id: p.course_id,
-          provider_id: me?.id || null,
-          provider_email: p.customer_email || me?.email || null,
-          provider_name: p.customer_name || null,
-          status: normalizeStatus(p?.status) === "completed" ? "attended" : normalizeStatus(p?.status),
-          session_date: p.course_date || p.session_date || null,
-          amount_paid: p.amount_paid,
-          created_date: p.created_date || p.created_at || null,
-        }));
       const map = new Map();
       [...byProviderId, ...byEmail, ...derivedFromPreOrders].forEach((row) => {
         const key = row?.pre_order_id || row?.id || `${row?.course_id || ""}:${row?.session_date || ""}`;
