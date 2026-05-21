@@ -128,7 +128,7 @@ export default function NoviOfferingsPortal({ children }) {
   const { data: courses = [], isLoading: isLoadingCourses } = useQuery({
     queryKey: ["landing-courses"],
     queryFn: async () => {
-      const scheduledCourses = await adminCoursesApi.list("scheduled");
+      const scheduledCourses = await adminCoursesApi.list("scheduled", { publicCatalog: true });
       return (scheduledCourses || [])
         .filter((course) => course?.is_active !== false)
         .map(normalizeCourseRecord);

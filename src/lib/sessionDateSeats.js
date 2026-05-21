@@ -108,8 +108,13 @@ export function normalizeScheduledSessionDatesEntries(sessionDates, previousSess
     }
   }
   return (sessionDates || []).map((entry) => {
-    const maxSeats = parseSeatCount(entry?.max_seats);
+    let maxSeats = parseSeatCount(entry?.max_seats);
+    const availOnly = parseSeatCount(entry?.available_seats);
     if (maxSeats == null || maxSeats < 0) {
+      if (availOnly != null && availOnly >= 0) {
+        maxSeats = Math.max(availOnly, 1);
+        return { ...entry, max_seats: maxSeats, available_seats: Math.min(maxSeats, availOnly) };
+      }
       return { ...entry };
     }
     const entryDateKey = toSessionDateKey(entry.date || entry.session_date);
@@ -148,9 +153,21 @@ function inferredMaxSeats(entry) {
 
 /** Bookable inventory for a session row (mirrors backend seatBoundsForDecrement). */
 export function sessionSeatBoundsForBooking(entry) {
-  const max = inferredMaxSeats(entry);
-  if (max == null || max < 0) return null;
+  let max = inferredMaxSeats(entry);
   let avail = parseSeatCount(entry?.available_seats);
+
+  // Legacy/production rows saved before per-date seat fields were required.
+  if (max == null) {
+    if (avail != null && avail > 0) {
+      max = Math.max(avail, 1);
+    } else if (avail === 0) {
+      return null;
+    } else {
+      return { max: 1, avail: 1 };
+    }
+  }
+
+  if (max < 0) return null;
   if (avail == null) avail = max;
   if (avail < 0) return null;
   if (avail > max) return null;

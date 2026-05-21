@@ -168,7 +168,7 @@ async function mergeScheduledRowWithItsTemplate(course) {
   return tmpl ? mergeScheduledWithTemplate(course, tmpl) : course;
 }
 
-export async function listCourses({ type } = {}) {
+export async function listCourses({ type, publicCatalog = false } = {}) {
   const where = [];
   const values = [];
   if (type) {
@@ -187,7 +187,11 @@ export async function listCourses({ type } = {}) {
     ...row,
     session_dates: normalizeScheduledSessionDatesEntries(parseSessionDatesField(row.session_dates)),
   }));
-  const withSyncedSeats = await syncScheduledCoursesSessionSeats(normalizedRows);
+  // Public landing must use admin-configured seats only — enrollment sync on read
+  // can zero availability on production and persist back to the database.
+  const withSyncedSeats = publicCatalog
+    ? normalizedRows
+    : await syncScheduledCoursesSessionSeats(normalizedRows);
   return applyTemplateMergeToRows(withSyncedSeats);
 }
 

@@ -49,11 +49,22 @@ function inferredMaxSeats(entry) {
   return max;
 }
 
-/** Bounds for decrement/checkout; allows legacy rows with missing max_seats but positive available_seats. */
+/** Bounds for decrement/checkout; allows legacy rows with missing seat cap fields. */
 function seatBoundsForDecrement(entry) {
-  const max = inferredMaxSeats(entry);
-  if (max == null || max < 0) return null;
+  let max = inferredMaxSeats(entry);
   let avail = parseSeatCount(entry?.available_seats);
+
+  if (max == null) {
+    if (avail != null && avail > 0) {
+      max = Math.max(avail, 1);
+    } else if (avail === 0) {
+      return null;
+    } else {
+      return { max: 1, avail: 1 };
+    }
+  }
+
+  if (max < 0) return null;
   if (avail == null) avail = max;
   if (avail < 0) return null;
   if (avail > max) return null;
@@ -283,8 +294,13 @@ export function normalizeScheduledSessionDatesEntries(sessionDates, previousSess
     }
   }
   return (sessionDates || []).map((entry) => {
-    const maxSeats = parseSeatCount(entry?.max_seats);
+    let maxSeats = parseSeatCount(entry?.max_seats);
+    const availOnly = parseSeatCount(entry?.available_seats);
     if (maxSeats == null || maxSeats < 0) {
+      if (availOnly != null && availOnly >= 0) {
+        maxSeats = Math.max(availOnly, 1);
+        return { ...entry, max_seats: maxSeats, available_seats: Math.min(maxSeats, availOnly) };
+      }
       return { ...entry };
     }
     const entryDateKey = toSessionDateKey(entry.date || entry.session_date);
