@@ -12,7 +12,7 @@ import {
   Search, CheckCircle, Send, Building2, ChevronRight, Star, Globe, ExternalLink,
   Sparkles, ShieldCheck, Zap, Award, Users, Package, ArrowLeft,
   Clock, CheckCircle2, XCircle, AlertCircle, Mail, MapPin, TrendingUp,
-  Tag, Layers, RefreshCw, Calendar
+  Tag, Layers, RefreshCw, Calendar, Headphones
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
@@ -260,13 +260,32 @@ function SupplierMarketplaceCard({
           ) : null}
 
           {applied && appStatus ? (
-            <span
-              className="inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-full"
-              style={{ background: appStatus.bg, color: appStatus.color }}
-            >
-              {StatusIcon ? <StatusIcon className="w-3 h-3 shrink-0" /> : null}
-              {appStatus.label}
-            </span>
+            appStatus.label === "Approved" ? (
+              <span
+                className="inline-flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider px-3 py-1.5 rounded-full"
+                style={{
+                  background: "rgba(30,37,53,0.55)",
+                  color: "#C8E63C",
+                  border: "1px solid rgba(200,230,60,0.35)",
+                  backdropFilter: "blur(10px)",
+                  boxShadow: "0 2px 10px rgba(0,0,0,0.18)",
+                }}
+              >
+                <span
+                  className="w-1.5 h-1.5 rounded-full shrink-0"
+                  style={{ background: "#C8E63C", boxShadow: "0 0 6px rgba(200,230,60,0.75)" }}
+                />
+                Account Active
+              </span>
+            ) : (
+              <span
+                className="inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-full"
+                style={{ background: appStatus.bg, color: appStatus.color, border: `1px solid ${appStatus.border}` }}
+              >
+                {StatusIcon ? <StatusIcon className="w-3 h-3 shrink-0" /> : null}
+                {appStatus.label}
+              </span>
+            )
           ) : (
             <div className="flex items-center justify-between gap-2 pt-0.5">
               <span
@@ -339,7 +358,7 @@ function GlassCard({ children, className = "", style = {}, onClick }) {
     : <div className={className} style={base}>{children}</div>;
 }
 
-function ApprovedAccountHub({ mfr, me, className = "" }) {
+function ApprovedAccountHub({ mfr, me, className = "", layout = "default" }) {
   const [contactOpen, setContactOpen] = useState(false);
   const [contactType, setContactType] = useState("order");
   const [orderOpen, setOrderOpen] = useState(false);
@@ -358,39 +377,82 @@ function ApprovedAccountHub({ mfr, me, className = "" }) {
     );
   }
 
+  const actions = [
+    {
+      label: layout === "tiles" ? "Place Order" : "Place Order Request",
+      icon: Send,
+      color: "#FA6F30",
+      bg: "rgba(250,111,48,0.1)",
+      onClick: () => setOrderOpen(true),
+    },
+    {
+      label: "Schedule Call",
+      icon: Calendar,
+      color: "#7B8EC8",
+      bg: "rgba(123,142,200,0.1)",
+      onClick: () => { setContactType("call"); setContactOpen(true); },
+    },
+    {
+      label: "Message Rep",
+      icon: Mail,
+      color: "#2D6B7F",
+      bg: "rgba(45,107,127,0.1)",
+      onClick: () => { setContactType("message"); setContactOpen(true); },
+    },
+  ];
+
   return (
     <>
       <div className={className}>
-        <p className="text-xs font-black uppercase tracking-widest mb-3 flex items-center gap-1.5" style={{ color: "#4a6b10", letterSpacing: "0.13em" }}>
-          <CheckCircle2 className="w-3.5 h-3.5" /> Account Active — Contact Your Rep
-        </p>
-        <div className="flex flex-wrap gap-2 mb-4">
-          <button
-            type="button"
-            onClick={() => setOrderOpen(true)}
-            className="flex items-center gap-1.5 text-sm font-bold px-4 py-2.5 rounded-full transition-all hover:opacity-80"
-            style={{ background: "linear-gradient(135deg, #FA6F30, #e05a20)", color: "#fff", boxShadow: "0 4px 14px rgba(250,111,48,0.3)" }}
-          >
-            <Send className="w-4 h-4" /> Place Order Request
-          </button>
-          <button
-            type="button"
-            onClick={() => { setContactType("call"); setContactOpen(true); }}
-            className="flex items-center gap-1.5 text-sm font-bold px-4 py-2.5 rounded-full transition-all hover:opacity-80"
-            style={{ background: "rgba(123,142,200,0.15)", color: "#7B8EC8", border: "1px solid rgba(123,142,200,0.3)" }}
-          >
-            <Calendar className="w-4 h-4" /> Schedule Call
-          </button>
-          <button
-            type="button"
-            onClick={() => { setContactType("message"); setContactOpen(true); }}
-            className="flex items-center gap-1.5 text-sm font-bold px-4 py-2.5 rounded-full transition-all hover:opacity-80"
-            style={{ background: "rgba(45,107,127,0.12)", color: "#2D6B7F", border: "1px solid rgba(45,107,127,0.2)" }}
-          >
-            <Mail className="w-4 h-4" /> Message Rep
-          </button>
-        </div>
-        {(mfr.account_rep_name || mfr.account_rep_email) && (
+        {layout === "default" && (
+          <p className="text-xs font-black uppercase tracking-widest mb-3 flex items-center gap-1.5" style={{ color: "#4a6b10", letterSpacing: "0.13em" }}>
+            <CheckCircle2 className="w-3.5 h-3.5" /> Account Active — Contact Your Rep
+          </p>
+        )}
+
+        {layout === "tiles" ? (
+          <div className="grid grid-cols-3 gap-3">
+            {actions.map(({ label, icon: Icon, color, bg, onClick }) => (
+              <button
+                key={label}
+                type="button"
+                onClick={onClick}
+                className="flex flex-col items-center gap-2.5 px-3 py-4 rounded-xl transition-all hover:opacity-90"
+                style={{ background: "#fff", border: "1px solid rgba(30,37,53,0.1)", boxShadow: "0 1px 6px rgba(30,37,53,0.05)" }}
+              >
+                <div
+                  className="w-10 h-10 rounded-xl flex items-center justify-center"
+                  style={{ background: bg }}
+                >
+                  <Icon className="w-4 h-4" style={{ color }} />
+                </div>
+                <span className="text-xs font-semibold text-center leading-tight" style={{ color: "#1e2535" }}>
+                  {label}
+                </span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="flex flex-wrap gap-2 mb-4">
+            {actions.map(({ label, icon: Icon, color, bg, onClick }) => (
+              <button
+                key={label}
+                type="button"
+                onClick={onClick}
+                className="flex items-center gap-1.5 text-sm font-bold px-4 py-2.5 rounded-full transition-all hover:opacity-80"
+                style={
+                  label.startsWith("Place Order")
+                    ? { background: "linear-gradient(135deg, #FA6F30, #e05a20)", color: "#fff", boxShadow: "0 4px 14px rgba(250,111,48,0.3)" }
+                    : { background: bg, color, border: `1px solid ${color}33` }
+                }
+              >
+                <Icon className="w-4 h-4" /> {label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {layout === "default" && (mfr.account_rep_name || mfr.account_rep_email) && (
           <p className="text-xs" style={{ color: "rgba(30,37,53,0.45)" }}>
             Rep:{" "}
             {mfr.account_rep_name ? (
@@ -415,6 +477,214 @@ function ApprovedAccountHub({ mfr, me, className = "" }) {
         me={me}
       />
     </>
+  );
+}
+
+function ApprovedSupplierDetailView({
+  mfr,
+  me,
+  onBack,
+  brandRecords,
+  totalUnits,
+  usedLots,
+  lastUsed,
+  brandCerts,
+}) {
+  const col = CATEGORY_COLORS[mfr.category] || CATEGORY_COLORS.other;
+  const perks = mfr.benefits?.length > 0 ? mfr.benefits : DEFAULT_NOVI_UNLOCK_BENEFITS;
+
+  return (
+    <div className="space-y-4">
+      {/* Dark header */}
+      <div
+        className="rounded-2xl overflow-hidden"
+        style={{ background: "linear-gradient(160deg, #1e2535 0%, #2a3355 100%)", boxShadow: "0 8px 32px rgba(30,37,53,0.18)" }}
+      >
+        <div className="px-5 pt-4 pb-5">
+          <div className="flex items-center justify-between gap-3 mb-5">
+            <button
+              type="button"
+              onClick={onBack}
+              className="flex items-center gap-1.5 text-xs font-semibold transition-opacity hover:opacity-80"
+              style={{ color: "rgba(255,255,255,0.65)" }}
+            >
+              <ArrowLeft className="w-3.5 h-3.5" /> Back to Directory
+            </button>
+            <span
+              className="inline-flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider px-3 py-1.5 rounded-full"
+              style={{ background: "rgba(200,230,60,0.12)", color: "#C8E63C", border: "1px solid rgba(200,230,60,0.3)" }}
+            >
+              <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: "#C8E63C", boxShadow: "0 0 6px rgba(200,230,60,0.7)" }} />
+              Account Active
+            </span>
+          </div>
+
+          <div className="flex items-center gap-4 mb-6">
+            <SupplierLogo mfr={mfr} size={56} className="rounded-xl" />
+            <div className="min-w-0">
+              <h2
+                className="truncate"
+                style={{ fontFamily: "'DM Serif Display', serif", fontSize: 26, color: "#fff", lineHeight: 1.15, fontWeight: 400 }}
+              >
+                {mfr.name}
+              </h2>
+              <span
+                className="inline-block text-xs font-semibold px-2.5 py-0.5 rounded-full mt-1.5 capitalize"
+                style={{ background: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.75)", border: "1px solid rgba(255,255,255,0.15)" }}
+              >
+                {CATEGORY_LABELS[mfr.category]}
+              </span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 gap-3">
+            {[
+              { label: "Treatments", value: brandRecords.length || "—" },
+              { label: "Units Used", value: totalUnits || "—" },
+              { label: "Lots Tracked", value: usedLots.size || "—" },
+            ].map(({ label, value }) => (
+              <div key={label} className="text-center py-2">
+                <p className="text-lg font-bold" style={{ color: "#fff" }}>{value}</p>
+                <p className="text-[10px] font-semibold uppercase tracking-widest mt-0.5" style={{ color: "rgba(255,255,255,0.4)", letterSpacing: "0.12em" }}>
+                  {label}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Action tiles */}
+      <ApprovedAccountHub mfr={mfr} me={me} layout="tiles" />
+
+      {/* Account rep */}
+      {(mfr.account_rep_name || mfr.account_rep_email) && (
+        <div
+          className="flex items-center gap-3 px-4 py-3.5 rounded-xl"
+          style={{ background: "rgba(255,255,255,0.85)", border: "1px solid rgba(30,37,53,0.08)" }}
+        >
+          <div
+            className="w-9 h-9 rounded-full flex items-center justify-center shrink-0"
+            style={{ background: "rgba(123,142,200,0.15)" }}
+          >
+            <Headphones className="w-4 h-4" style={{ color: "#7B8EC8" }} />
+          </div>
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.4)", letterSpacing: "0.12em" }}>
+              Your Account Rep
+            </p>
+            {mfr.account_rep_name && (
+              <p className="text-sm font-semibold truncate" style={{ color: "#1e2535" }}>{mfr.account_rep_name}</p>
+            )}
+            {mfr.account_rep_email && (
+              <p className="text-xs truncate" style={{ color: "rgba(30,37,53,0.5)" }}>{mfr.account_rep_email}</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Usage activity */}
+      <GlassCard style={{ borderRadius: 16 }}>
+        <div className="p-5">
+          <p className="text-xs font-black uppercase tracking-widest mb-4" style={{ color: "#7B8EC8", letterSpacing: "0.14em" }}>
+            Usage Activity
+          </p>
+          {brandRecords.length === 0 ? (
+            <div className="text-center py-6">
+              <TrendingUp className="w-8 h-8 mx-auto mb-2" style={{ color: "rgba(30,37,53,0.15)" }} />
+              <p className="text-sm font-semibold" style={{ color: "rgba(30,37,53,0.55)" }}>No treatments logged yet</p>
+              <p className="text-xs mt-1 max-w-xs mx-auto leading-relaxed" style={{ color: "rgba(30,37,53,0.4)" }}>
+                As you document treatment records using this supplier&apos;s products, your usage data will appear here automatically.
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-3 gap-3 mb-3">
+                {[
+                  { label: "Treatments", value: brandRecords.length },
+                  { label: "Units Used", value: totalUnits },
+                  { label: "Lot #s Tracked", value: usedLots.size },
+                ].map(({ label, value }) => (
+                  <div key={label} className="rounded-xl px-3 py-2.5 text-center" style={{ background: "rgba(200,230,60,0.08)", border: "1px solid rgba(200,230,60,0.2)" }}>
+                    <p className="font-bold text-lg" style={{ color: "#1e2535" }}>{value}</p>
+                    <p className="text-xs" style={{ color: "rgba(30,37,53,0.45)" }}>{label}</p>
+                  </div>
+                ))}
+              </div>
+              {lastUsed && (
+                <p className="text-xs" style={{ color: "rgba(30,37,53,0.4)" }}>
+                  Last used: {format(new Date(lastUsed), "MMM d, yyyy")}
+                </p>
+              )}
+              {brandCerts.length > 0 && (
+                <div className="flex items-center gap-1.5 mt-2">
+                  <ShieldCheck className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#4a6b10" }} />
+                  <p className="text-xs font-semibold" style={{ color: "#4a6b10" }}>
+                    {brandCerts.length} NOVI certification{brandCerts.length > 1 ? "s" : ""} for this brand&apos;s products
+                  </p>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </GlassCard>
+
+      {/* Product portfolio */}
+      <GlassCard style={{ borderRadius: 16 }}>
+        <div className="p-5">
+          <div className="flex items-center justify-between gap-2 mb-4">
+            <p className="text-xs font-black uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.35)", letterSpacing: "0.14em" }}>
+              Product Portfolio
+            </p>
+            {mfr.products?.length > 0 && (
+              <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full" style={{ background: col.bg, color: col.color, border: `1px solid ${col.border}` }}>
+                {mfr.products.length} product{mfr.products.length !== 1 ? "s" : ""}
+              </span>
+            )}
+          </div>
+
+          {mfr.products?.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5 mb-5">
+              {mfr.products.map((p, i) => (
+                <span
+                  key={i}
+                  className="text-xs px-3 py-1 rounded-full font-medium"
+                  style={{ background: col.bg, color: col.color, border: `1px solid ${col.border}` }}
+                >
+                  {p}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs mb-5" style={{ color: "rgba(30,37,53,0.4)" }}>No products listed.</p>
+          )}
+
+          <p className="text-xs font-black uppercase tracking-widest mb-3" style={{ color: "rgba(30,37,53,0.35)", letterSpacing: "0.14em" }}>
+            Key Benefits
+          </p>
+          <div className="space-y-2 mb-4">
+            {perks.map((b, i) => (
+              <div key={i} className="flex items-start gap-2">
+                <CheckCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" style={{ color: "#5a7a20" }} />
+                <p className="text-sm" style={{ color: "rgba(30,37,53,0.7)" }}>{b}</p>
+              </div>
+            ))}
+          </div>
+
+          {mfr.website_url && (
+            <a
+              href={mfr.website_url}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 text-xs font-semibold hover:underline"
+              style={{ color: "#7B8EC8" }}
+            >
+              <Globe className="w-3.5 h-3.5" /> Visit Website <ExternalLink className="w-3 h-3" />
+            </a>
+          )}
+        </div>
+      </GlassCard>
+    </div>
   );
 }
 
@@ -444,6 +714,21 @@ function SupplierDetailView({ mfr, onBack, onApply, application, me, treatmentRe
 
   const heroPhoto = getSupplierCoverUrl(mfr);
   const uploadedCover = hasUploadedCover(mfr);
+
+  if (isApproved) {
+    return (
+      <ApprovedSupplierDetailView
+        mfr={mfr}
+        me={me}
+        onBack={onBack}
+        brandRecords={brandRecords}
+        totalUnits={totalUnits}
+        usedLots={usedLots}
+        lastUsed={lastUsed}
+        brandCerts={brandCerts}
+      />
+    );
+  }
 
   return (
     <div className="space-y-0">
@@ -615,51 +900,6 @@ function SupplierDetailView({ mfr, onBack, onApply, application, me, treatmentRe
           </div>
         </div>
       </div>
-
-      {/* Approved Account Hub CTA strip */}
-      {isApproved && (
-        <div className="mt-4 space-y-4">
-          <GlassCard style={{ borderRadius: 16 }}>
-            <div className="p-5">
-              <ApprovedAccountHub mfr={mfr} me={me} />
-            </div>
-          </GlassCard>
-
-          {/* Auto-tracked usage */}
-          <GlassCard style={{ borderRadius: 16 }}>
-            <div className="p-5">
-              <p className="text-xs font-black uppercase tracking-widest mb-3 flex items-center gap-1.5" style={{ color: "#4a6b10", letterSpacing: "0.13em" }}>
-                <TrendingUp className="w-3.5 h-3.5" /> Auto-Tracked Usage (from NOVI records)
-              </p>
-              {brandRecords.length === 0 ? (
-                <p className="text-xs" style={{ color: "rgba(30,37,53,0.4)" }}>No treatment records linked to this supplier yet. Usage will auto-populate as you log treatments.</p>
-              ) : (
-                <>
-                  <div className="grid grid-cols-3 gap-3 mb-3">
-                    {[
-                      { label: "Treatments", value: brandRecords.length },
-                      { label: "Units Used", value: totalUnits },
-                      { label: "Lot #s Tracked", value: usedLots.size },
-                    ].map(({ label, value }) => (
-                      <div key={label} className="rounded-xl px-3 py-2.5 text-center" style={{ background: "rgba(200,230,60,0.08)", border: "1px solid rgba(200,230,60,0.2)" }}>
-                        <p className="font-bold text-lg" style={{ color: "#1e2535" }}>{value}</p>
-                        <p className="text-xs" style={{ color: "rgba(30,37,53,0.45)" }}>{label}</p>
-                      </div>
-                    ))}
-                  </div>
-                  {lastUsed && <p className="text-xs" style={{ color: "rgba(30,37,53,0.4)" }}>Last used: {format(new Date(lastUsed), "MMM d, yyyy")}</p>}
-                  {brandCerts.length > 0 && (
-                    <div className="flex items-center gap-1.5 mt-2">
-                      <ShieldCheck className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#4a6b10" }} />
-                      <p className="text-xs font-semibold" style={{ color: "#4a6b10" }}>{brandCerts.length} NOVI certification{brandCerts.length > 1 ? "s" : ""} for this brand's products</p>
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          </GlassCard>
-        </div>
-      )}
 
       {/* Non-approved: Application status or CTA */}
       {!isApproved && app && (
@@ -907,11 +1147,21 @@ export default function ProviderMarketplace() {
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 flex-wrap">
                               <p className="font-bold" style={{ color: "#1e2535", fontFamily: "'DM Serif Display', serif" }}>{app.manufacturer_name}</p>
-                              <span className="text-xs font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1"
-                                style={{ background: statusCfg.bg, color: statusCfg.color, border: `1px solid ${statusCfg.border}` }}>
-                                <StatusIcon className="w-3 h-3" style={{ width: 12, height: 12 }} />
-                                {statusCfg.label}
-                              </span>
+                              {app.status === "approved" ? (
+                                <span
+                                  className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full"
+                                  style={{ background: "rgba(200,230,60,0.15)", color: "#4a6b10", border: "1px solid rgba(200,230,60,0.35)" }}
+                                >
+                                  <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: "#5a7a20" }} />
+                                  Account Active
+                                </span>
+                              ) : (
+                                <span className="text-xs font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1"
+                                  style={{ background: statusCfg.bg, color: statusCfg.color, border: `1px solid ${statusCfg.border}` }}>
+                                  <StatusIcon className="w-3 h-3" style={{ width: 12, height: 12 }} />
+                                  {statusCfg.label}
+                                </span>
+                              )}
                             </div>
                             {mfr && <p className="text-xs mt-0.5 capitalize" style={{ color: "rgba(30,37,53,0.45)" }}>{CATEGORY_LABELS[mfr.category]}</p>}
                           </div>
