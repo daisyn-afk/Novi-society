@@ -13,6 +13,13 @@ import {
   CATEGORY_LABELS,
 } from "@/components/admin/manufacturers/constants";
 
+const PENDING_APPLICATION_STATUSES = new Set([
+  "submitted",
+  "pending",
+  "under_review",
+  "more_info_needed",
+]);
+
 export default function AdminManufacturers() {
   const qc = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -54,6 +61,15 @@ export default function AdminManufacturers() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["manufacturers-admin"] }),
   });
 
+  const updateApplicationMutation = useMutation({
+    mutationFn: ({ id, status }) =>
+      base44.entities.ManufacturerApplication.update(id, { status }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["manufacturer-applications-admin"] });
+      qc.invalidateQueries({ queryKey: ["my-manufacturer-applications"] });
+    },
+  });
+
   const openNew = () => {
     setEditing(null);
     setDialogOpen(true);
@@ -77,7 +93,7 @@ export default function AdminManufacturers() {
     return result?.file_url || result?.url || "";
   };
 
-  const pendingApps = applications.filter((a) => a.status === "submitted");
+  const pendingApps = applications.filter((a) => PENDING_APPLICATION_STATUSES.has(a.status));
 
   const { data: allInventory = [] } = useQuery({
     queryKey: ["all-provider-inventory"],
@@ -342,21 +358,35 @@ export default function AdminManufacturers() {
                         {app.submitted_at ? new Date(app.submitted_at).toLocaleDateString() : "—"}
                       </p>
                     </div>
-                    <div className="flex gap-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() =>
-                          base44.entities.ManufacturerApplication.update(app.id, {
-                            status: "approved",
-                          }).then(() =>
-                            qc.invalidateQueries({ queryKey: ["manufacturer-applications-admin"] })
-                          )
-                        }
-                      >
-                        Approve
-                      </Button>
-                    </div>
+                    {PENDING_APPLICATION_STATUSES.has(app.status) ? (
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="text-red-600 border-red-200 hover:bg-red-50"
+                          disabled={updateApplicationMutation.isPending}
+                          onClick={() =>
+                            updateApplicationMutation.mutate({ id: app.id, status: "rejected" })
+                          }
+                        >
+                          Reject
+                        </Button>
+                        <Button
+                          size="sm"
+                          style={{ background: "#C8E63C", color: "#1a2540" }}
+                          disabled={updateApplicationMutation.isPending}
+                          onClick={() =>
+                            updateApplicationMutation.mutate({ id: app.id, status: "approved" })
+                          }
+                        >
+                          Approve
+                        </Button>
+                      </div>
+                    ) : app.reviewed_at ? (
+                      <p className="text-xs text-slate-400 whitespace-nowrap">
+                        Reviewed {new Date(app.reviewed_at).toLocaleDateString()}
+                      </p>
+                    ) : null}
                   </div>
                   {app.additional_fields && Object.keys(app.additional_fields).length > 0 && (
                     <div className="mt-3 pt-3 border-t border-slate-100">

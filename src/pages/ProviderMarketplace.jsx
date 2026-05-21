@@ -339,11 +339,87 @@ function GlassCard({ children, className = "", style = {}, onClick }) {
     : <div className={className} style={base}>{children}</div>;
 }
 
-// ─── Supplier Detail Panel ───────────────────────────────────────────────────
-function SupplierDetailView({ mfr, onBack, onApply, application, me, treatmentRecords = [], certifications = [] }) {
+function ApprovedAccountHub({ mfr, me, className = "" }) {
   const [contactOpen, setContactOpen] = useState(false);
   const [contactType, setContactType] = useState("order");
   const [orderOpen, setOrderOpen] = useState(false);
+
+  if (!mfr) {
+    return (
+      <div
+        className={`px-3 py-2.5 rounded-xl flex items-center gap-2 ${className}`}
+        style={{ background: "rgba(200,230,60,0.1)", border: "1px solid rgba(200,230,60,0.25)" }}
+      >
+        <CheckCircle2 className="w-4 h-4 flex-shrink-0" style={{ color: "#4a6b10" }} />
+        <p className="text-xs font-semibold" style={{ color: "rgba(30,37,53,0.75)" }}>
+          Account active — a rep should have reached out via email to complete setup.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className={className}>
+        <p className="text-xs font-black uppercase tracking-widest mb-3 flex items-center gap-1.5" style={{ color: "#4a6b10", letterSpacing: "0.13em" }}>
+          <CheckCircle2 className="w-3.5 h-3.5" /> Account Active — Contact Your Rep
+        </p>
+        <div className="flex flex-wrap gap-2 mb-4">
+          <button
+            type="button"
+            onClick={() => setOrderOpen(true)}
+            className="flex items-center gap-1.5 text-sm font-bold px-4 py-2.5 rounded-full transition-all hover:opacity-80"
+            style={{ background: "linear-gradient(135deg, #FA6F30, #e05a20)", color: "#fff", boxShadow: "0 4px 14px rgba(250,111,48,0.3)" }}
+          >
+            <Send className="w-4 h-4" /> Place Order Request
+          </button>
+          <button
+            type="button"
+            onClick={() => { setContactType("call"); setContactOpen(true); }}
+            className="flex items-center gap-1.5 text-sm font-bold px-4 py-2.5 rounded-full transition-all hover:opacity-80"
+            style={{ background: "rgba(123,142,200,0.15)", color: "#7B8EC8", border: "1px solid rgba(123,142,200,0.3)" }}
+          >
+            <Calendar className="w-4 h-4" /> Schedule Call
+          </button>
+          <button
+            type="button"
+            onClick={() => { setContactType("message"); setContactOpen(true); }}
+            className="flex items-center gap-1.5 text-sm font-bold px-4 py-2.5 rounded-full transition-all hover:opacity-80"
+            style={{ background: "rgba(45,107,127,0.12)", color: "#2D6B7F", border: "1px solid rgba(45,107,127,0.2)" }}
+          >
+            <Mail className="w-4 h-4" /> Message Rep
+          </button>
+        </div>
+        {(mfr.account_rep_name || mfr.account_rep_email) && (
+          <p className="text-xs" style={{ color: "rgba(30,37,53,0.45)" }}>
+            Rep:{" "}
+            {mfr.account_rep_name ? (
+              <strong style={{ color: "rgba(30,37,53,0.7)" }}>{mfr.account_rep_name}</strong>
+            ) : null}
+            {mfr.account_rep_name && mfr.account_rep_email ? " · " : null}
+            {mfr.account_rep_email || null}
+          </p>
+        )}
+      </div>
+      <RepContactDialog
+        open={contactOpen}
+        onClose={() => setContactOpen(false)}
+        manufacturer={mfr}
+        me={me}
+        initialType={contactType}
+      />
+      <OrderRequestDialog
+        open={orderOpen}
+        onClose={() => setOrderOpen(false)}
+        manufacturer={mfr}
+        me={me}
+      />
+    </>
+  );
+}
+
+// ─── Supplier Detail Panel ───────────────────────────────────────────────────
+function SupplierDetailView({ mfr, onBack, onApply, application, me, treatmentRecords = [], certifications = [] }) {
   const col = CATEGORY_COLORS[mfr.category] || CATEGORY_COLORS.other;
   const app = application;
   const statusCfg = app ? (APP_STATUS_CONFIG[app.status] || APP_STATUS_CONFIG.pending) : null;
@@ -543,32 +619,9 @@ function SupplierDetailView({ mfr, onBack, onApply, application, me, treatmentRe
       {/* Approved Account Hub CTA strip */}
       {isApproved && (
         <div className="mt-4 space-y-4">
-          {/* Rep contact */}
           <GlassCard style={{ borderRadius: 16 }}>
             <div className="p-5">
-              <p className="text-xs font-black uppercase tracking-widest mb-3 flex items-center gap-1.5" style={{ color: "#4a6b10", letterSpacing: "0.13em" }}>
-                <CheckCircle2 className="w-3.5 h-3.5" /> Account Active — Contact Your Rep
-              </p>
-              <div className="flex flex-wrap gap-2 mb-4">
-                <button onClick={() => setOrderOpen(true)}
-                  className="flex items-center gap-1.5 text-sm font-bold px-4 py-2.5 rounded-full transition-all hover:opacity-80"
-                  style={{ background: "linear-gradient(135deg, #FA6F30, #e05a20)", color: "#fff", boxShadow: "0 4px 14px rgba(250,111,48,0.3)" }}>
-                  <Send className="w-4 h-4" /> Place Order Request
-                </button>
-                <button onClick={() => { setContactType("call"); setContactOpen(true); }}
-                  className="flex items-center gap-1.5 text-sm font-bold px-4 py-2.5 rounded-full transition-all hover:opacity-80"
-                  style={{ background: "rgba(123,142,200,0.15)", color: "#7B8EC8", border: "1px solid rgba(123,142,200,0.3)" }}>
-                  <Calendar className="w-4 h-4" /> Schedule Call
-                </button>
-                <button onClick={() => { setContactType("message"); setContactOpen(true); }}
-                  className="flex items-center gap-1.5 text-sm font-bold px-4 py-2.5 rounded-full transition-all hover:opacity-80"
-                  style={{ background: "rgba(45,107,127,0.12)", color: "#2D6B7F", border: "1px solid rgba(45,107,127,0.2)" }}>
-                  <Mail className="w-4 h-4" /> Message Rep
-                </button>
-              </div>
-              {mfr.account_rep_name && (
-                <p className="text-xs" style={{ color: "rgba(30,37,53,0.45)" }}>Rep: <strong style={{ color: "rgba(30,37,53,0.7)" }}>{mfr.account_rep_name}</strong> · {mfr.account_rep_email}</p>
-              )}
+              <ApprovedAccountHub mfr={mfr} me={me} />
             </div>
           </GlassCard>
 
@@ -605,20 +658,6 @@ function SupplierDetailView({ mfr, onBack, onApply, application, me, treatmentRe
               )}
             </div>
           </GlassCard>
-
-          <RepContactDialog
-            open={contactOpen}
-            onClose={() => setContactOpen(false)}
-            manufacturer={mfr}
-            me={me}
-            initialType={contactType}
-          />
-          <OrderRequestDialog
-            open={orderOpen}
-            onClose={() => setOrderOpen(false)}
-            manufacturer={mfr}
-            me={me}
-          />
         </div>
       )}
 
@@ -884,47 +923,54 @@ export default function ProviderMarketplace() {
                           </div>
                         </div>
 
-                        {/* Progress timeline */}
-                        <div className="mt-4 flex items-center gap-0">
-                          {[
-                            { label: "Submitted", done: true },
-                            { label: "In Review", done: ["approved", "rejected", "more_info_needed", "under_review", "submitted"].includes(app.status) },
-                            { label: "Decision", done: ["approved", "rejected"].includes(app.status) },
-                            { label: "Active", done: app.status === "approved" },
-                          ].map((step, i, arr) => (
-                            <div key={i} className="flex items-center flex-1">
-                              <div className="flex flex-col items-center flex-shrink-0">
-                                <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold"
-                                  style={{ background: step.done ? "rgba(200,230,60,0.2)" : "rgba(30,37,53,0.07)", border: step.done ? "1.5px solid rgba(200,230,60,0.5)" : "1.5px solid rgba(30,37,53,0.12)", color: step.done ? "#4a6b10" : "rgba(30,37,53,0.3)" }}>
-                                  {step.done ? <CheckCircle className="w-3.5 h-3.5" style={{ color: "#4a6b10" }} /> : (i + 1)}
+                        {app.status === "approved" ? (
+                          <div className="mt-4 pt-4" style={{ borderTop: "1px solid rgba(30,37,53,0.07)" }}>
+                            <ApprovedAccountHub mfr={mfr} me={me} />
+                          </div>
+                        ) : (
+                          <>
+                            {/* Progress timeline */}
+                            <div className="mt-4 flex items-center gap-0">
+                              {[
+                                { label: "Submitted", done: true },
+                                { label: "In Review", done: ["approved", "rejected", "more_info_needed", "under_review", "submitted"].includes(app.status) },
+                                { label: "Decision", done: ["approved", "rejected"].includes(app.status) },
+                                { label: "Active", done: app.status === "approved" },
+                              ].map((step, i, arr) => (
+                                <div key={i} className="flex items-center flex-1">
+                                  <div className="flex flex-col items-center flex-shrink-0">
+                                    <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold"
+                                      style={{ background: step.done ? "rgba(200,230,60,0.2)" : "rgba(30,37,53,0.07)", border: step.done ? "1.5px solid rgba(200,230,60,0.5)" : "1.5px solid rgba(30,37,53,0.12)", color: step.done ? "#4a6b10" : "rgba(30,37,53,0.3)" }}>
+                                      {step.done ? <CheckCircle className="w-3.5 h-3.5" style={{ color: "#4a6b10" }} /> : (i + 1)}
+                                    </div>
+                                    <p className="text-xs mt-1 whitespace-nowrap" style={{ color: step.done ? "rgba(30,37,53,0.7)" : "rgba(30,37,53,0.3)", fontWeight: step.done ? 500 : 400, fontSize: 10 }}>{step.label}</p>
+                                  </div>
+                                  {i < arr.length - 1 && (
+                                    <div className="flex-1 h-px mx-1 mb-4" style={{ background: step.done ? "rgba(200,230,60,0.4)" : "rgba(30,37,53,0.1)" }} />
+                                  )}
                                 </div>
-                                <p className="text-xs mt-1 whitespace-nowrap" style={{ color: step.done ? "rgba(30,37,53,0.7)" : "rgba(30,37,53,0.3)", fontWeight: step.done ? 500 : 400, fontSize: 10 }}>{step.label}</p>
-                              </div>
-                              {i < arr.length - 1 && (
-                                <div className="flex-1 h-px mx-1 mb-4" style={{ background: step.done ? "rgba(200,230,60,0.4)" : "rgba(30,37,53,0.1)" }} />
-                              )}
+                              ))}
                             </div>
-                          ))}
-                        </div>
 
-                        {/* Status-specific message */}
-                        {app.status === "approved" && (
-                          <div className="mt-3 px-3 py-2.5 rounded-xl flex items-center gap-2" style={{ background: "rgba(200,230,60,0.1)", border: "1px solid rgba(200,230,60,0.25)" }}>
-                            <CheckCircle2 className="w-4 h-4 flex-shrink-0" style={{ color: "#4a6b10" }} />
-                            <p className="text-xs font-semibold" style={{ color: "rgba(30,37,53,0.75)" }}>Account active — a rep should have reached out via email to complete setup.</p>
-                          </div>
-                        )}
-                        {app.status === "more_info_needed" && (
-                          <div className="mt-3 px-3 py-2.5 rounded-xl flex items-center gap-2" style={{ background: "rgba(255,180,50,0.1)", border: "1px solid rgba(255,180,50,0.25)" }}>
-                            <AlertCircle className="w-4 h-4 flex-shrink-0" style={{ color: "#D4900A" }} />
-                            <p className="text-xs font-semibold" style={{ color: "rgba(30,37,53,0.75)" }}>The rep needs more info — check your email to respond.</p>
-                          </div>
-                        )}
-                        {["submitted", "pending", "under_review"].includes(app.status) && (
-                          <div className="mt-3 px-3 py-2 rounded-xl flex items-center gap-2" style={{ background: "rgba(123,142,200,0.07)", border: "1px solid rgba(123,142,200,0.18)" }}>
-                            <Clock className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#7B8EC8" }} />
-                            <p className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>Typical response time: 3–5 business days. Check your email for updates.</p>
-                          </div>
+                            {app.status === "more_info_needed" && (
+                              <div className="mt-3 px-3 py-2.5 rounded-xl flex items-center gap-2" style={{ background: "rgba(255,180,50,0.1)", border: "1px solid rgba(255,180,50,0.25)" }}>
+                                <AlertCircle className="w-4 h-4 flex-shrink-0" style={{ color: "#D4900A" }} />
+                                <p className="text-xs font-semibold" style={{ color: "rgba(30,37,53,0.75)" }}>The rep needs more info — check your email to respond.</p>
+                              </div>
+                            )}
+                            {["submitted", "pending", "under_review"].includes(app.status) && (
+                              <div className="mt-3 px-3 py-2 rounded-xl flex items-center gap-2" style={{ background: "rgba(123,142,200,0.07)", border: "1px solid rgba(123,142,200,0.18)" }}>
+                                <Clock className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#7B8EC8" }} />
+                                <p className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>Typical response time: 3–5 business days. Check your email for updates.</p>
+                              </div>
+                            )}
+                            {app.status === "rejected" && (
+                              <div className="mt-3 px-3 py-2.5 rounded-xl flex items-center gap-2" style={{ background: "rgba(218,106,99,0.1)", border: "1px solid rgba(218,106,99,0.25)" }}>
+                                <XCircle className="w-4 h-4 flex-shrink-0" style={{ color: "#DA6A63" }} />
+                                <p className="text-xs font-semibold" style={{ color: "rgba(30,37,53,0.75)" }}>This application was not approved. Contact support if you have questions.</p>
+                              </div>
+                            )}
+                          </>
                         )}
                       </div>
                     </GlassCard>
