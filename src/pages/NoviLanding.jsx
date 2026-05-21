@@ -94,7 +94,7 @@ export default function NoviLanding() {
         padding: "80px 24px",
         position: "relative",
       }}>
-        {isAuthenticated && dashboardPath && (
+        {isAuthenticated && dashboardPath ? (
           <Button
             variant="outline"
             className="rounded-full text-sm font-semibold px-5 py-2.5"
@@ -109,6 +109,22 @@ export default function NoviLanding() {
             onClick={() => { window.location.href = dashboardPath; }}
           >
             Go to Dashboard
+          </Button>
+        ) : (
+          <Button
+            variant="outline"
+            className="rounded-full text-sm font-semibold px-5 py-2.5"
+            style={{
+              position: "absolute",
+              top: 20,
+              right: 20,
+              background: "rgba(255,255,255,0.14)",
+              border: "1.5px solid rgba(255,255,255,0.35)",
+              color: "#fff",
+            }}
+            onClick={() => { window.location.href = "/admin"; }}
+          >
+            Login
           </Button>
         )}
         <div className="max-w-4xl mx-auto text-center">

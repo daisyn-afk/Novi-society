@@ -159,7 +159,7 @@ const AuthenticatedApp = () => {
               <MainPage />
             </LayoutWrapper>
           ) : (
-            <Navigate to="/LandingPage" replace />
+            <Navigate to="/NoviLanding" replace />
           )
         }
       />
