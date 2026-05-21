@@ -72,7 +72,7 @@ export default function AdminCourseStyling() {
     setFormData(prev => ({ ...prev, [field]: value }));
   };
 
-  // Initialize form when config loads
+  // Initialize form when config lfoads
   if (!formData.course_image_url && config.course_image_url) {
     setFormData(config);
   }
