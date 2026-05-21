@@ -74,9 +74,16 @@ async function getSelectColumnsSql() {
   `;
 }
 
-export async function listPreOrders({ limit = 200 } = {}) {
+export async function listPreOrders({ limit = 200, customerEmail = "" } = {}) {
   const safeLimit = Number.isFinite(Number(limit)) ? Math.min(Math.max(Number(limit), 1), 500) : 200;
+  const email = String(customerEmail || "").trim().toLowerCase();
   const selectColumns = await getSelectColumnsSql();
+
+  const params = [safeLimit];
+  const innerWhereSql = email
+    ? (() => { params.push(email); return `where lower(customer_email) = $${params.length}`; })()
+    : "";
+
   const { rows } = await query(
     `select sub.*,
             u.password_setup_status,
@@ -93,11 +100,12 @@ export async function listPreOrders({ limit = 200 } = {}) {
      from (
        select ${selectColumns}
        from public.pre_orders
+       ${innerWhereSql}
        order by created_at desc
        limit $1
      ) sub
      left join public.users u on lower(u.email) = lower(sub.customer_email)`,
-    [safeLimit]
+    params
   );
   return rows;
 }

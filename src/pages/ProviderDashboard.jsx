@@ -89,26 +89,31 @@ export default function ProviderDashboard() {
       const [byProviderIdResult, byEmailResult, preOrdersResult] = await Promise.allSettled([
         u?.id ? base44.entities.Enrollment.filter({ provider_id: u.id }) : Promise.resolve([]),
         u?.email ? base44.entities.Enrollment.filter({ provider_email: u.email }) : Promise.resolve([]),
-        base44.entities.PreOrder.list("-created_date", 500),
+        u?.email
+          ? base44.entities.PreOrder.list("-created_date", 500, { customer_email: u.email })
+          : Promise.resolve([]),
       ]);
       const byProviderId = byProviderIdResult.status === "fulfilled" ? (byProviderIdResult.value || []) : [];
       const byEmail = byEmailResult.status === "fulfilled" ? (byEmailResult.value || []) : [];
       const preOrders = preOrdersResult.status === "fulfilled" ? (preOrdersResult.value || []) : [];
-      const email = String(u?.email || "").toLowerCase();
-      const derivedFromPreOrders = preOrders
-        .filter((p) => p?.order_type === "course")
-        .filter((p) => ["paid", "confirmed", "completed"].includes(String(p?.status || "").toLowerCase()))
-        .filter((p) => String(p?.customer_email || "").toLowerCase() === email)
-        .map((p) => ({
-          id: `preorder-${p.id}`,
-          pre_order_id: p.id,
-          course_id: p.course_id,
-          provider_id: u?.id || null,
-          provider_email: p.customer_email,
-          provider_name: p.customer_name,
-          status: p.status === "completed" ? "confirmed" : p.status,
-          created_date: p.created_date,
-        }));
+      const email = String(u?.email || "").trim().toLowerCase();
+      const derivedFromPreOrders = email
+        ? preOrders
+          .filter((p) => p?.order_type === "course")
+          .filter((p) => Boolean(p?.course_id))
+          .filter((p) => ["paid", "confirmed", "completed"].includes(String(p?.status || "").toLowerCase()))
+          .filter((p) => String(p?.customer_email || "").trim().toLowerCase() === email)
+          .map((p) => ({
+            id: `preorder-${p.id}`,
+            pre_order_id: p.id,
+            course_id: p.course_id,
+            provider_id: u?.id || null,
+            provider_email: p.customer_email,
+            provider_name: p.customer_name,
+            status: p.status === "completed" ? "confirmed" : p.status,
+            created_date: p.created_date,
+          }))
+        : [];
       return Array.from(new Map([...(byProviderId || []), ...(byEmail || []), ...derivedFromPreOrders].map((row) => [row.pre_order_id || row.id, row])).values());
     },
   });
@@ -146,6 +151,7 @@ export default function ProviderDashboard() {
 
   // ── Credentials
   const pendingLicenses = myLicenses.filter(l => l.status === "pending_review");
+  const rejectedLicenses = myLicenses.filter(l => l.status === "rejected");
   const verifiedLicenses = myLicenses.filter(l => l.status === "verified");
   const activeCerts = myCerts.filter(c => c.status === "active");
   const expiringLicenses = myLicenses.filter(l => {
@@ -204,7 +210,7 @@ export default function ProviderDashboard() {
   // ── Provider path steps
   const noviSteps = [
     { label: "Upload License", done: myLicenses.length > 0, page: "ProviderCredentialsCoverage", urgent: myLicenses.length === 0 },
-    { label: "License Verified", done: hasVerifiedLicense, page: "ProviderCredentialsCoverage", pending: pendingLicenses.length > 0 },
+    { label: "License Verified", done: hasVerifiedLicense, page: "ProviderCredentialsCoverage", pending: pendingLicenses.length > 0, rejected: rejectedLicenses.length > 0 && !hasVerifiedLicense && pendingLicenses.length === 0 },
     { label: "Enroll in Course", done: hasEnrollment, page: "ProviderEnrollments", urgent: hasVerifiedLicense && !hasEnrollment },
     { label: "Complete Course", done: hasCompletedCourse, page: "ProviderEnrollments" },
     { label: "Get Certified", done: hasCert, page: "ProviderCredentialsCoverage" },
@@ -229,7 +235,11 @@ export default function ProviderDashboard() {
   if (unansweredReviews.length > 0) todayTasks.push({ icon: MessageSquare, color: "#7B8EC8", title: `${unansweredReviews.length} review${unansweredReviews.length > 1 ? "s" : ""} awaiting your response`, sub: "Responding boosts your profile ranking", to: createPageUrl("ProviderPractice") });
   if (draftRecords.length > 0) todayTasks.push({ icon: FileText, color: "#FA6F30", title: `${draftRecords.length} draft treatment record${draftRecords.length > 1 ? "s" : ""}`, sub: "Submit for MD review", to: createPageUrl("ProviderPractice") });
   if (hasCert && !hasMDCoverage) todayTasks.push({ icon: Zap, color: "#C8E63C", title: "Activate MD Coverage — you're certified!", sub: "One step away from seeing patients", to: createPageUrl("ProviderCredentialsCoverage"), urgent: true });
-  if (!hasVerifiedLicense) todayTasks.push({ icon: ShieldCheck, color: "#DA6A63", title: "Upload your license to unlock the platform", sub: "Required to enroll in courses & see patients", to: createPageUrl("ProviderCredentialsCoverage"), urgent: true });
+  if (!hasVerifiedLicense && rejectedLicenses.length > 0 && pendingLicenses.length === 0) {
+    todayTasks.push({ icon: ShieldCheck, color: "#DA6A63", title: "License rejected — review and resubmit", sub: "Check the rejection reason in Credentials and upload corrected documents", to: createPageUrl("ProviderCredentialsCoverage"), urgent: true });
+  } else if (!hasVerifiedLicense) {
+    todayTasks.push({ icon: ShieldCheck, color: "#DA6A63", title: "Upload your license to unlock the platform", sub: "Required to enroll in courses & see patients", to: createPageUrl("ProviderCredentialsCoverage"), urgent: true });
+  }
   else if (hasVerifiedLicense && !hasEnrollment) todayTasks.push({ icon: BookOpen, color: "#C8E63C", title: "Enroll in a NOVI course", sub: "Get certified and activate MD coverage", to: createPageUrl("ProviderEnrollments") });
   if (expiringLicenses.length > 0) todayTasks.push({ icon: Clock, color: "#FA6F30", title: `${expiringLicenses.length} license expiring soon`, sub: "Renew to stay compliant", to: createPageUrl("ProviderCredentialsCoverage") });
   if (tomorrowAppts.length > 0) todayTasks.push({ icon: Calendar, color: "#7B8EC8", title: `${tomorrowAppts.length} appointment${tomorrowAppts.length > 1 ? "s" : ""} tomorrow`, sub: tomorrowAppts.map(a => a.patient_name || "Patient").join(", "), to: createPageUrl("ProviderPractice") });
@@ -498,7 +508,7 @@ export default function ProviderDashboard() {
               </div>
               <p className="text-2xl font-bold" style={{ color: "#1e2535", fontFamily: "'DM Serif Display', serif" }}>{myLicenses.length}</p>
               <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.5)" }}>
-                {verifiedLicenses.length} verified{pendingLicenses.length > 0 ? ` · ${pendingLicenses.length} pending` : ""}
+                {verifiedLicenses.length} verified{pendingLicenses.length > 0 ? ` · ${pendingLicenses.length} pending` : ""}{rejectedLicenses.length > 0 ? ` · ${rejectedLicenses.length} rejected` : ""}
                 {expiringLicenses.length > 0 ? ` · ${expiringLicenses.length} expiring soon` : ""}
               </p>
             </div>
@@ -560,10 +570,11 @@ export default function ProviderDashboard() {
                   <Link key={i} to={createPageUrl(step.page)}>
                     <div className="flex items-center gap-3 px-3 py-2 rounded-xl transition-all hover:bg-white/20"
                       style={step.urgent ? { background: "rgba(250,111,48,0.08)", border: "1px solid rgba(250,111,48,0.18)" } : {}}>
-                      <div style={{ width: 22, height: 22, borderRadius: "50%", flexShrink: 0, background: step.done ? "#C8E63C" : step.pending ? "#FA6F30" : step.urgent ? "rgba(250,111,48,0.12)" : "rgba(30,37,53,0.07)", border: step.done ? "none" : step.urgent ? "1px solid rgba(250,111,48,0.35)" : "1px solid rgba(30,37,53,0.1)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        {step.done ? <CheckCircle className="w-3.5 h-3.5" style={{ color: "#1a2540" }} /> : <span style={{ fontSize: 9, fontWeight: 700, color: step.urgent ? "#FA6F30" : "rgba(30,37,53,0.3)" }}>{i + 1}</span>}
+                      <div style={{ width: 22, height: 22, borderRadius: "50%", flexShrink: 0, background: step.done ? "#C8E63C" : step.rejected ? "rgba(218,106,99,0.15)" : step.pending ? "#FA6F30" : step.urgent ? "rgba(250,111,48,0.12)" : "rgba(30,37,53,0.07)", border: step.done ? "none" : step.rejected ? "1px solid rgba(218,106,99,0.45)" : step.urgent ? "1px solid rgba(250,111,48,0.35)" : "1px solid rgba(30,37,53,0.1)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        {step.done ? <CheckCircle className="w-3.5 h-3.5" style={{ color: "#1a2540" }} /> : <span style={{ fontSize: 9, fontWeight: 700, color: step.rejected ? "#DA6A63" : step.urgent ? "#FA6F30" : "rgba(30,37,53,0.3)" }}>{i + 1}</span>}
                       </div>
-                      <span style={{ fontSize: 13, color: step.done ? "#1e2535" : step.urgent ? "#1e2535" : "rgba(30,37,53,0.38)", fontWeight: step.done || step.urgent ? 600 : 400 }}>{step.label}</span>
+                      <span style={{ fontSize: 13, color: step.done ? "#1e2535" : step.rejected ? "#DA6A63" : step.urgent ? "#1e2535" : "rgba(30,37,53,0.38)", fontWeight: step.done || step.urgent || step.rejected ? 600 : 400 }}>{step.label}</span>
+                      {step.rejected && !step.done && <span className="ml-auto text-xs px-2 py-0.5 rounded-full" style={{ background: "rgba(218,106,99,0.12)", color: "#DA6A63" }}>Rejected</span>}
                       {step.pending && !step.done && <span className="ml-auto text-xs px-2 py-0.5 rounded-full" style={{ background: "rgba(250,111,48,0.12)", color: "#FA6F30" }}>Pending</span>}
                       {step.urgent && <ChevronRight className="ml-auto w-3.5 h-3.5 flex-shrink-0" style={{ color: "#FA6F30" }} />}
                     </div>

@@ -250,7 +250,12 @@ export function createLovableProviderClient() {
       }
       if (name === "PreOrder") {
         return {
-          list: (_sort = "", limit = 200) => authRequest(`/admin/pre-orders?limit=${encodeURIComponent(String(limit || 200))}`, { method: "GET" }),
+          list: (_sort = "", limit = 200, opts = {}) => {
+            const params = new URLSearchParams({ limit: String(limit || 200) });
+            const emailParam = String(opts?.customer_email || "").trim();
+            if (emailParam) params.set("customer_email", emailParam);
+            return authRequest(`/admin/pre-orders?${params.toString()}`, { method: "GET" });
+          },
           get: (id) => requestJson(`/admin/checkout/pre-order?id=${encodeURIComponent(id)}`, { method: "GET" }),
           create: async (payload = {}) => {
             const result = await requestJson("/admin/checkout/service", {
