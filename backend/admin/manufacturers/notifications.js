@@ -142,24 +142,90 @@ async function sendResendEmail({ to, subject, html }) {
   }
 }
 
+const ADDITIONAL_FIELD_LABELS = {
+  provider_id: "NOVI Provider ID",
+  phone: "Phone",
+  practice_address_full: "Practice address",
+  specialty: "Specialty",
+  city: "City",
+  state: "State",
+  npi: "NPI",
+  dea_number: "DEA number",
+  md_coverage: "MD Board coverage",
+  verified_licenses_summary: "Verified licenses",
+  certifications_summary: "Certifications",
+};
+
+const SKIP_ADDITIONAL_KEYS = new Set([
+  "md_coverage_details",
+  "verified_licenses",
+  "certifications",
+  "supervising_md_details",
+]);
+
+function formatAdditionalValue(value) {
+  if (value === null || value === undefined || value === "") return null;
+  if (Array.isArray(value)) {
+    if (value.length === 0) return null;
+    if (typeof value[0] === "object") {
+      return value
+        .map((item) =>
+          Object.entries(item || {})
+            .filter(([, v]) => v !== null && v !== undefined && v !== "")
+            .map(([k, v]) => `${k}: ${v}`)
+            .join(", ")
+        )
+        .filter(Boolean)
+        .join("; ");
+    }
+    return value.join(", ");
+  }
+  if (typeof value === "object") {
+    return Object.entries(value)
+      .filter(([, v]) => v !== null && v !== undefined && v !== "")
+      .map(([k, v]) => `${k}: ${v}`)
+      .join(", ");
+  }
+  return String(value);
+}
+
 function buildSummaryBullets({ application, manufacturer }) {
+  const additional = application?.additional_fields || {};
+  const providerId =
+    application?.provider_id || additional.provider_id || null;
+
   const lines = [
     `Supplier: ${manufacturer?.name || application?.manufacturer_name || "Unknown"}`,
+    providerId ? `NOVI Provider ID: ${providerId}` : null,
     `Provider: ${application?.provider_name || application?.provider_email || "Unknown"}`,
     application?.provider_email ? `Provider email: ${application.provider_email}` : null,
     application?.practice_name ? `Practice: ${application.practice_name}` : null,
+    application?.practice_phone ? `Phone: ${application.practice_phone}` : null,
+    application?.practice_address ? `Practice address: ${application.practice_address}` : null,
     application?.license_type || application?.license_number
-      ? `License: ${[application.license_type, application.license_number, application.license_state].filter(Boolean).join(" / ")}`
+      ? `Primary license: ${[application.license_type, application.license_number, application.license_state].filter(Boolean).join(" / ")}`
       : null,
+    additional.verified_licenses_summary
+      ? `All verified licenses: ${additional.verified_licenses_summary}`
+      : null,
+    additional.md_coverage ? `MD Board coverage: ${additional.md_coverage}` : null,
     application?.supervising_physician_name
       ? `Supervising MD: ${application.supervising_physician_name}${application.supervising_physician_email ? ` (${application.supervising_physician_email})` : ""}`
       : null,
+    additional.certifications_summary
+      ? `Certifications: ${additional.certifications_summary}`
+      : null,
   ].filter(Boolean);
 
-  const additional = application?.additional_fields || {};
   for (const [key, value] of Object.entries(additional)) {
-    if (value === null || value === undefined || value === "") continue;
-    lines.push(`${key}: ${value}`);
+    if (SKIP_ADDITIONAL_KEYS.has(key)) continue;
+    if (["provider_id", "md_coverage", "verified_licenses_summary", "certifications_summary"].includes(key)) {
+      continue;
+    }
+    const formatted = formatAdditionalValue(value);
+    if (!formatted) continue;
+    const label = ADDITIONAL_FIELD_LABELS[key] || key.replace(/_/g, " ");
+    lines.push(`${label}: ${formatted}`);
   }
   return lines;
 }

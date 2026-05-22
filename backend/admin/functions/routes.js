@@ -23,6 +23,7 @@ import {
   notifyRepOfManufacturerApplication,
   notifyRepOfContactRequest,
 } from "../manufacturers/notifications.js";
+import { buildManufacturerApplicationPayload } from "../manufacturers/providerApplicationContext.js";
 
 export const functionsRouter = Router();
 let certificationColumnsPromise = null;
@@ -1918,25 +1919,23 @@ functionsRouter.post("/sendManufacturerInquiry", async (req, res, next) => {
     }
 
     const formData = body.form_data && typeof body.form_data === "object" ? body.form_data : {};
+    const enriched = await buildManufacturerApplicationPayload({ me, formData });
 
     const application = await createManufacturerApplication({
       manufacturer_id: manufacturerId,
       manufacturer_name: manufacturer.name,
       provider_id: me?.id || null,
-      provider_email: me?.email || formData.email || "",
-      provider_name: me?.full_name || formData.full_name || "",
-      practice_name: formData.practice_name || "",
-      practice_address: formData.practice_address || "",
-      practice_phone: formData.practice_phone || "",
-      license_type: formData.license_type || "",
-      license_number: formData.license_number || "",
-      license_state: formData.license_state || "",
-      supervising_physician_name: formData.supervising_physician_name || "",
-      supervising_physician_email: formData.supervising_physician_email || "",
-      additional_fields:
-        formData.additional_fields && typeof formData.additional_fields === "object"
-          ? formData.additional_fields
-          : {},
+      provider_email: enriched.provider_email,
+      provider_name: enriched.provider_name,
+      practice_name: enriched.practice_name,
+      practice_address: enriched.practice_address,
+      practice_phone: enriched.practice_phone,
+      license_type: enriched.license_type,
+      license_number: enriched.license_number,
+      license_state: enriched.license_state,
+      supervising_physician_name: enriched.supervising_physician_name,
+      supervising_physician_email: enriched.supervising_physician_email,
+      additional_fields: enriched.additional_fields,
     });
 
     // Fire-and-forget notifications. Failures are logged inside the helpers

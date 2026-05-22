@@ -1007,6 +1007,15 @@ export default function ProviderMarketplace() {
     enabled: !!me,
   });
 
+  const { data: mdSubs = [] } = useQuery({
+    queryKey: ["my-md-subscriptions-mktplace"],
+    queryFn: async () => {
+      const u = await base44.auth.me();
+      return base44.entities.MDSubscription.filter({ provider_id: u.id });
+    },
+    enabled: !!me,
+  });
+
   const { data: myApplications = [] } = useQuery({
     queryKey: ["my-manufacturer-applications"],
     queryFn: async () => {
@@ -1047,6 +1056,13 @@ export default function ProviderMarketplace() {
 
   const verifiedLicense = licenses[0] || {};
   const mdRel = mdRels[0] || {};
+  const activeMdSubs = mdSubs.filter((sub) => sub.status === "active");
+
+  const formatPracticeAddress = () =>
+    [me?.address_line1, me?.address_line2, [me?.city, me?.state].filter(Boolean).join(", "), me?.zip]
+      .filter(Boolean)
+      .join(" ")
+      .trim();
 
   const openDetail = (mfr) => {
     setSelectedManufacturer(mfr);
@@ -1061,10 +1077,20 @@ export default function ProviderMarketplace() {
       license_state: verifiedLicense.issuing_state || "",
       supervising_physician_name: mdRel.medical_director_name || "NOVI Board of Medical Directors",
       supervising_physician_email: mdRel.medical_director_email || "",
-      practice_name: me?.practice_name || "",
-      practice_address: me?.address || "",
+      practice_name: me?.practice_name || me?.full_name || "",
+      practice_address: formatPracticeAddress() || me?.address || "",
       practice_phone: me?.phone || "",
-      additional_fields: {},
+      additional_fields: {
+        md_coverage:
+          activeMdSubs.length > 0
+            ? activeMdSubs.map((sub) => sub.service_type_name).filter(Boolean).join("; ")
+            : "",
+        certifications_summary: certifications
+          .filter((cert) => cert.status === "active")
+          .map((cert) => cert.certification_name || cert.course_title)
+          .filter(Boolean)
+          .join("; "),
+      },
     });
     setViewMode("apply");
   };
@@ -1306,6 +1332,10 @@ export default function ProviderMarketplace() {
                             {
                               label: "License",
                               value: [formData.license_type, formData.license_number, formData.license_state].filter(Boolean).join(" - ") || "—",
+                            },
+                            {
+                              label: "MD Coverage",
+                              value: formData.additional_fields?.md_coverage || activeMdSubs.map((sub) => sub.service_type_name).filter(Boolean).join(", ") || "—",
                             },
                             { label: "Supervising MD", value: formData.supervising_physician_name || "—" },
                           ].map(({ label, value }) => (
