@@ -130,7 +130,7 @@ export default function PracticeProfileTab({ form, setForm, me, onSave, saving, 
   };
 
   return (
-    <div className="space-y-5 max-w-4xl">
+    <div className="space-y-5 w-full">
 
       {/* ── Profile Preview ── */}
       <GlassCard>
@@ -145,7 +145,7 @@ export default function PracticeProfileTab({ form, setForm, me, onSave, saving, 
           </button>
         </div>
         <div className="px-6 py-5">
-          <div className="flex items-start gap-5">
+          <div className="flex items-start gap-5 w-full">
             {/* Avatar with upload */}
             <div className="relative flex-shrink-0">
               <div className="w-20 h-20 rounded-2xl overflow-hidden flex items-center justify-center text-2xl font-bold text-white"

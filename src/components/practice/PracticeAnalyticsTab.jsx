@@ -227,7 +227,7 @@ export default function PracticeAnalyticsTab({ appointments, reviews }) {
   // ── Empty state ──
   if (total === 0) {
     return (
-      <div className="rounded-2xl p-10 text-center" style={GLASS}>
+      <div className="rounded-2xl p-10 text-center w-full" style={GLASS}>
         <div className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4" style={{ background: "rgba(123,142,200,0.12)" }}>
           <BarChart2 className="w-7 h-7" style={{ color: "#7B8EC8" }} />
         </div>
@@ -249,7 +249,7 @@ export default function PracticeAnalyticsTab({ appointments, reviews }) {
   });
 
   return (
-    <div className="space-y-3 max-w-3xl">
+    <div className="space-y-3 w-full">
 
       {/* ── Practice Health Score ── */}
       <div className="rounded-2xl overflow-hidden" style={{ background: "linear-gradient(135deg, #1e2535 0%, #2a3550 100%)", boxShadow: "0 4px 24px rgba(30,37,53,0.15)" }}>

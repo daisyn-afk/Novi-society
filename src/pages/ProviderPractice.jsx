@@ -9,7 +9,9 @@ import PracticeTreatmentsTab from "@/components/practice/PracticeTreatmentsTab.j
 import PracticeAppointmentsTab from "@/components/practice/PracticeAppointmentsTab.jsx";
 import PracticePatientsTab from "@/components/practice/PracticePatientsTab.jsx";
 import PracticeAnalyticsTab from "@/components/practice/PracticeAnalyticsTab.jsx";
-import { Stethoscope, Sparkles, Calendar, Users, AlertTriangle, Star, MessageSquare, CheckCircle, TrendingUp, Rocket, ArrowRight } from "lucide-react";
+import { Stethoscope, Sparkles, Calendar, Users, AlertTriangle, Star, MessageSquare, CheckCircle, TrendingUp, Rocket, ArrowRight, FileText } from "lucide-react";
+import LogTreatmentPickerDialog from "@/components/practice/LogTreatmentPickerDialog.jsx";
+import TreatmentDocumentDialog from "@/components/practice/TreatmentDocumentDialog.jsx";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { format } from "date-fns";
@@ -31,6 +33,8 @@ export default function ProviderPractice() {
   const [replyingTo, setReplyingTo] = useState(null);
   const [replyText, setReplyText] = useState("");
   const [activeTab, setActiveTab] = useState("profile");
+  const [logPickerOpen, setLogPickerOpen] = useState(false);
+  const [docDialog, setDocDialog] = useState({ open: false, appt: null, existing: null });
   const [form, setForm] = useState({
     practice_name: "", bio: "", city: "", state: "", phone: "",
     consultation_fee: "", accepts_new_patients: true, avatar_url: "",
@@ -157,15 +161,25 @@ export default function ProviderPractice() {
   ];
 
   const practiceContent = (
-    <div className="max-w-5xl mx-auto">
+    <div className="max-w-5xl mx-auto w-full">
 
       {/* Header */}
-      <div className="mb-6">
-        <p className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: "#DA6A63" }}>Provider</p>
-        <h1 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 30, color: "#1e2535", lineHeight: 1.15 }}>My Practice</h1>
-        <p className="mt-1 text-sm" style={{ color: "rgba(30,37,53,0.5)" }}>
-          Everything you need to run your practice, all in one place.
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-6">
+        <div className="min-w-0">
+          <p className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: "#DA6A63" }}>Provider</p>
+          <h1 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 30, color: "#1e2535", lineHeight: 1.15 }}>My Practice</h1>
+          <p className="mt-1 text-sm" style={{ color: "rgba(30,37,53,0.5)" }}>
+            Everything you need to run your practice, all in one place.
+          </p>
+        </div>
+        <Button
+          className="gap-2 rounded-xl font-bold flex-shrink-0 self-start sm:self-center"
+          style={{ background: "#FA6F30", color: "#fff" }}
+          onClick={() => setLogPickerOpen(true)}
+        >
+          <FileText className="w-4 h-4" />
+          Log Treatment
+        </Button>
       </div>
 
       {flaggedRecords.length > 0 && (
@@ -184,15 +198,15 @@ export default function ProviderPractice() {
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
 
-        {/* Icon nav grid */}
-        <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 mb-6">
+        {/* Icon nav — equal width tabs fill the row */}
+        <div className="flex flex-wrap gap-2 mb-6 w-full">
           {NAV_ITEMS.map(({ value, label, icon: Icon, desc, badge, badgeRed }) => {
             const isActive = activeTab === value;
             return (
               <button
                 key={value}
                 onClick={() => setActiveTab(value)}
-                className="relative flex flex-col items-center justify-center gap-1.5 px-2 py-3.5 rounded-2xl text-center transition-all cursor-pointer outline-none"
+                className="relative flex flex-[1_1_calc(33.333%-0.34rem)] sm:flex-1 min-w-0 flex-col items-center justify-center gap-1.5 px-2 py-3.5 rounded-2xl text-center transition-all cursor-pointer outline-none"
                 style={{
                   background: isActive ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.5)",
                   border: isActive ? "2px solid rgba(200,230,60,0.5)" : "1.5px solid rgba(30,37,53,0.07)",
@@ -226,7 +240,7 @@ export default function ProviderPractice() {
           <PracticePatientsTab patients={patients} appointments={appointments} />
         </TabsContent>
         <TabsContent value="performance" className="pt-1">
-          <div className="space-y-8 max-w-3xl">
+          <div className="space-y-8 w-full">
             {/* Launch Pad nudge when no appointments */}
             {appointments.length === 0 && (
               <div className="rounded-2xl overflow-hidden" style={{ background: "linear-gradient(135deg, #1e2535 0%, #2a3550 100%)", boxShadow: "0 4px 24px rgba(30,37,53,0.15)" }}>
@@ -337,6 +351,22 @@ export default function ProviderPractice() {
           </div>
         </TabsContent>
       </Tabs>
+
+      <LogTreatmentPickerDialog
+        open={logPickerOpen}
+        onClose={() => setLogPickerOpen(false)}
+        patients={patients}
+        appointments={appointments}
+        treatmentRecords={treatmentRecords}
+        onStartDocumenting={(appt, existing) => setDocDialog({ open: true, appt, existing })}
+      />
+
+      <TreatmentDocumentDialog
+        open={docDialog.open}
+        onClose={() => setDocDialog({ open: false, appt: null, existing: null })}
+        appointment={docDialog.appt}
+        existingRecord={docDialog.existing}
+      />
     </div>
   );
 
