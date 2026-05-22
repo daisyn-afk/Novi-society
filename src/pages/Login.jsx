@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { base44 } from "@/api/base44Client";
-import { getDashboardPathForRole } from "@/lib/routeAccessPolicy";
 import { useAuth } from "@/lib/AuthContext";
 import { readSkipExploreFlag, clearSkipExploreFlag } from "@/lib/providerSignupIntent";
+import { getPostAuthRedirectPath } from "@/lib/providerOnboardingState";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -40,7 +40,8 @@ export default function Login() {
         if (!hasSession) return;
         const currentUser = await base44.auth.me();
         const next = getNextPath();
-        navigate(next || getDashboardPathForRole(currentUser?.role), { replace: true });
+        const redirectPath = await getPostAuthRedirectPath({ user: currentUser, nextPath: next });
+        navigate(redirectPath, { replace: true });
       } catch {
         // No active user session; stay on login page.
       }
@@ -66,18 +67,20 @@ export default function Login() {
         email: form.email,
         password: form.password
       });
-      const currentUser = await base44.auth.me();
-      setAuthenticatedSession(currentUser);
+      let currentUser = await base44.auth.me();
       if (readSkipExploreFlag()) {
         try {
           await base44.auth.updateMe({ role: "provider" });
+          currentUser = await base44.auth.me();
         } catch {
           /* ignore */
         }
         clearSkipExploreFlag();
       }
+      setAuthenticatedSession(currentUser);
       const next = getNextPath();
-      navigate(next || getDashboardPathForRole(currentUser?.role), { replace: true });
+      const redirectPath = await getPostAuthRedirectPath({ user: currentUser, nextPath: next });
+      navigate(redirectPath, { replace: true });
     } catch (e) {
       setFormError(e?.message || "Unable to login. Please check your credentials.");
     } finally {
