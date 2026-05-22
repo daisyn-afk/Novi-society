@@ -1941,14 +1941,6 @@ functionsRouter.post("/sendManufacturerInquiry", async (req, res, next) => {
 
     // Fire-and-forget notifications. Failures are logged inside the helpers
     // and never block the submission flow.
-    console.info("[email] manufacturer_application_dispatch", {
-      scope: "functions/sendManufacturerInquiry",
-      application_id: application.id,
-      manufacturer_id: manufacturer.id,
-      manufacturer_name: manufacturer.name,
-      has_rep_email: Boolean(manufacturer.account_rep_email),
-      provider_id: me?.id || null,
-    });
     Promise.allSettled([
       notifyAdminsOfManufacturerApplication({ application, manufacturer }),
       notifyRepOfManufacturerApplication({ application, manufacturer }),
@@ -2005,25 +1997,15 @@ functionsRouter.post("/sendRepContactEmail", async (req, res, next) => {
       rep_email: repContact.rep_email,
     });
 
-    console.info("[email] contact_request_dispatch", {
-      scope: "functions/sendRepContactEmail",
-      order_request_id: orderRequest.id,
-      manufacturer_id: manufacturer.id,
-      manufacturer_name: manufacturer.name,
-      contact_type: contactType,
-      rep_source: repContact.source,
-      provider_id: me?.id || null,
-      item_count: Array.isArray(orderRequest.order_items)
-        ? orderRequest.order_items.length
-        : 0,
-    });
-    notifyRepOfContactRequest({
-      orderRequest,
-      manufacturer,
-      providerEmail: me?.email || orderRequest.provider_email,
-      providerPhone: me?.phone || "",
-      savedRep: repContact,
-    }).catch((err) => {
+    Promise.resolve(
+      notifyRepOfContactRequest({
+        orderRequest,
+        manufacturer,
+        providerEmail: me?.email || orderRequest.provider_email,
+        providerPhone: me?.phone || "",
+        savedRep: repContact,
+      })
+    ).catch((err) => {
       console.error("[email] contact_request_notify_threw", {
         order_request_id: orderRequest.id,
         error_message: err?.message || String(err),
