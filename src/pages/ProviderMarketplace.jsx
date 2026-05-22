@@ -110,6 +110,40 @@ const DEFAULT_NOVI_UNLOCK_BENEFITS = [
   "Practice marketing support",
 ];
 
+const ACTIVATE_ACCESS_TRUST_ITEMS = ["No paperwork", "Pre-approved", "Fast approval"];
+
+function ActivateAccessCTA({ onClick, disabled = false, loading = false, variant = "light", className = "" }) {
+  const trustColor = variant === "dark" ? "rgba(255,255,255,0.45)" : "rgba(30,37,53,0.45)";
+
+  return (
+    <div className={className}>
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled || loading}
+        className="w-full flex items-center justify-center gap-2 py-3.5 px-6 font-bold text-base transition-opacity hover:opacity-90 disabled:opacity-60"
+        style={{
+          background: "#C8E63C",
+          color: "#1e2535",
+          borderRadius: 9999,
+          boxShadow: "0 4px 16px rgba(200, 230, 60, 0.35)",
+        }}
+      >
+        <Zap className="w-4 h-4 shrink-0" fill="#1e2535" style={{ color: "#1e2535" }} />
+        {loading ? "Activating..." : "Activate Access — It's Free"}
+      </button>
+      <div className="flex items-center justify-center flex-wrap gap-x-5 gap-y-1.5 mt-3">
+        {ACTIVATE_ACCESS_TRUST_ITEMS.map((item) => (
+          <span key={item} className="flex items-center gap-1.5 text-xs" style={{ color: trustColor }}>
+            <CheckCircle className="w-3 h-3 shrink-0" style={{ color: "#5a7a20" }} />
+            {item}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function SupplierMarketplaceCard({
   mfr,
   applied,
@@ -782,6 +816,10 @@ function SupplierDetailView({ mfr, onBack, onApply, application, me, treatmentRe
               <Globe className="w-3.5 h-3.5" /> {mfr.website_url} <ExternalLink className="w-3 h-3" />
             </a>
           )}
+
+          {!app && (
+            <ActivateAccessCTA onClick={onApply} className="mt-5" />
+          )}
         </div>
 
         <div className="h-px mx-6" style={{ background: "rgba(30,37,53,0.07)" }} />
@@ -919,11 +957,14 @@ function SupplierDetailView({ mfr, onBack, onApply, application, me, treatmentRe
       )}
 
       {!isApproved && !app && (
-        <div className="flex gap-3 mt-4">
-          <Button variant="outline" className="flex-1 h-12" onClick={onBack}>Cancel</Button>
-          <Button className="flex-1 h-12 gap-2 font-bold text-base" style={{ background: "linear-gradient(135deg, #1e2535, #2a3355)", color: "#fff", borderRadius: 12, boxShadow: "0 4px 20px rgba(30,37,53,0.25)" }} onClick={onApply}>
-            <Send className="w-4 h-4" /> Apply for Account
-          </Button>
+        <div className="mt-4 rounded-2xl overflow-hidden px-6 py-8 text-center" style={{ background: "linear-gradient(135deg, #1e2535 0%, #2a3355 100%)", boxShadow: "0 8px 32px rgba(30,37,53,0.12)" }}>
+          <p className="text-xs font-black uppercase tracking-widest mb-2" style={{ color: "#C8E63C", letterSpacing: "0.14em" }}>
+            Ready to get started?
+          </p>
+          <p className="mb-6" style={{ fontFamily: "'DM Serif Display', serif", fontStyle: "italic", fontSize: 24, color: "#fff", lineHeight: 1.25 }}>
+            Get access to {mfr.name} through NOVI
+          </p>
+          <ActivateAccessCTA onClick={onApply} variant="dark" />
         </div>
       )}
     </div>
@@ -1302,15 +1343,21 @@ export default function ProviderMarketplace() {
 
                         <div className="flex gap-2 pt-1">
                           <Button variant="outline" className="flex-1 h-11" onClick={() => setViewMode("detail")}>Cancel</Button>
-                          <Button
-                            className="flex-1 h-11 gap-2 font-bold"
-                            style={{ background: "#C8E63C", color: "#1a2540", borderRadius: 12 }}
+                          <button
+                            type="button"
+                            className="flex-1 h-11 flex items-center justify-center gap-2 font-bold text-sm transition-opacity hover:opacity-90 disabled:opacity-60"
+                            style={{
+                              background: "#C8E63C",
+                              color: "#1e2535",
+                              borderRadius: 9999,
+                              boxShadow: "0 4px 16px rgba(200, 230, 60, 0.35)",
+                            }}
                             onClick={() => submitMutation.mutate()}
                             disabled={submitMutation.isPending}
                           >
-                            <Zap className="w-4 h-4" />
-                            {submitMutation.isPending ? "Activating..." : "Confirm & Activate"}
-                          </Button>
+                            <Zap className="w-4 h-4 shrink-0" fill="#1e2535" style={{ color: "#1e2535" }} />
+                            {submitMutation.isPending ? "Activating..." : "Activate Access — It's Free"}
+                          </button>
                         </div>
                       </div>
                     </GlassCard>
