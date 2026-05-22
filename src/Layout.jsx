@@ -70,9 +70,12 @@ const navByRole = {
     { label: "Profile", icon: User, page: "PatientProfile" },
   ],
   staff: [
-    { label: "Dashboard", icon: LayoutDashboard, page: "AdminDashboard" },
-    { label: "Enrollments", icon: ClipboardList, page: "AdminEnrollments" },
-    { label: "Providers", icon: Users, page: "AdminProviders" },
+    { label: "Dashboard",              icon: LayoutDashboard, page: "StaffDashboard"   },
+    { label: "Enrollments",            icon: ClipboardList,   page: "StaffEnrollments" },
+    { label: "Provider Lookup",        icon: Users,           page: "StaffProviders"   },
+    { label: "Model Sign-ups",         icon: Users,           page: "StaffModelSignups"},
+    { label: "Pre-Order Applications", icon: ClipboardList,   page: "StaffPreOrders"   },
+    { label: "Compliance Logs",        icon: ShieldCheck,     page: "StaffCompliance"  },
   ],
 };
 
@@ -113,7 +116,11 @@ export default function Layout({ children, currentPageName }) {
 
   const role = normalizeRole(user?.role || "provider");
   const navRole = role;
-  const navItems = navByRole[navRole] || navByRole.provider;
+  const navItems = navRole === "staff"
+    ? navByRole.staff.filter(({ page }) =>
+        page === "StaffDashboard" || user?.permissions?.[page] === true
+      )
+    : (navByRole[navRole] || navByRole.provider);
   const isProviderUserReady = role === "provider" && Boolean(user?.id || user?.email);
 
   // Sidebar unread message badge — shared query key ["msg-threads"] with messaging pages.

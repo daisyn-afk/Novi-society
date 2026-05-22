@@ -96,6 +96,12 @@ import ProviderReviews from './pages/ProviderReviews';
 import ProviderScopeRules from './pages/ProviderScopeRules';
 import ProviderSubscription from './pages/ProviderSubscription';
 import ProviderMessaging from './pages/ProviderMessaging';
+import StaffDashboard from './pages/StaffDashboard';
+import StaffEnrollments from './pages/StaffEnrollments';
+import StaffProviders from './pages/StaffProviders';
+import StaffModelSignups from './pages/StaffModelSignups';
+import StaffPreOrders from './pages/StaffPreOrders';
+import StaffCompliance from './pages/StaffCompliance';
 import __Layout from './Layout.jsx';
 
 
@@ -149,6 +155,12 @@ export const PAGES = {
     "ProviderScopeRules": ProviderScopeRules,
     "ProviderSubscription": ProviderSubscription,
     "ProviderMessaging": ProviderMessaging,
+    "StaffDashboard": StaffDashboard,
+    "StaffEnrollments": StaffEnrollments,
+    "StaffProviders": StaffProviders,
+    "StaffModelSignups": StaffModelSignups,
+    "StaffPreOrders": StaffPreOrders,
+    "StaffCompliance": StaffCompliance,
 }
 
 export const pagesConfig = {

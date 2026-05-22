@@ -1,7 +1,9 @@
 import { Router } from "express";
 import { listPreOrders, updatePreOrderStatus, patchPreOrder } from "./repository.js";
+import { requireAuth } from "../auth/helpers.js";
 
 export const preOrdersRouter = Router();
+preOrdersRouter.use(requireAuth);
 
 preOrdersRouter.get("/", async (req, res, next) => {
   try {

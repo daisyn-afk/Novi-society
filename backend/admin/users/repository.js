@@ -10,7 +10,7 @@ const adminClient = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
     })
   : null;
 
-const ALLOWED_ROLES = ["provider", "patient", "medical_director", "admin"];
+const ALLOWED_ROLES = ["provider", "patient", "medical_director", "admin", "staff"];
 
 const SELECT_COLUMNS = `
   id,
@@ -22,7 +22,8 @@ const SELECT_COLUMNS = `
   last_name,
   full_name,
   role,
-  is_active
+  is_active,
+  permissions
 `;
 
 function ensureAdminClient() {
@@ -124,6 +125,13 @@ async function getUserByEmail(email) {
   return rows[0] || null;
 }
 
+function normalizeStaffPermissions(role, permissions) {
+  if (role !== "staff") return null;
+  const base = permissions && typeof permissions === "object" ? { ...permissions } : {};
+  base.StaffDashboard = true;
+  return base;
+}
+
 export async function createUser(payload) {
   ensureAdminClient();
   const email = String(payload?.email || "").trim().toLowerCase();
@@ -132,6 +140,7 @@ export async function createUser(payload) {
   const lastName = String(payload?.last_name || "").trim();
   const role = normalizeRole(payload?.role);
   const isActive = payload?.is_active !== false;
+  const permissions = normalizeStaffPermissions(role, payload?.permissions);
 
   if (!email) {
     const err = new Error("email is required.");
@@ -174,8 +183,8 @@ export async function createUser(payload) {
   try {
     const { rows } = await query(
       `insert into public.users (
-         auth_user_id, email, first_name, last_name, full_name, role, is_active
-       ) values ($1, $2, $3, $4, $5, $6, $7)
+         auth_user_id, email, first_name, last_name, full_name, role, is_active, permissions
+       ) values ($1, $2, $3, $4, $5, $6, $7, $8)
        returning ${SELECT_COLUMNS}`,
       [
         authUserId,
@@ -184,7 +193,8 @@ export async function createUser(payload) {
         lastName || null,
         buildFullName(firstName, lastName),
         role,
-        isActive
+        isActive,
+        permissions !== null ? JSON.stringify(permissions) : null
       ]
     );
     return rows[0];
@@ -221,6 +231,12 @@ export async function updateUser(id, payload) {
     ? payload.is_active !== false
     : current.is_active;
   const nextFullName = buildFullName(nextFirstName, nextLastName);
+
+  const nextPermissions = Object.prototype.hasOwnProperty.call(payload || {}, "permissions")
+    ? normalizeStaffPermissions(nextRole, payload.permissions)
+    : nextRole === "staff"
+      ? normalizeStaffPermissions(nextRole, current.permissions)
+      : null;
 
   if (current.auth_user_id) {
     const updates = {};
@@ -267,10 +283,12 @@ export async function updateUser(id, payload) {
            full_name = $5,
            role = $6,
            is_active = $7,
+           permissions = $8,
            updated_at = now()
      where id = $1
      returning ${SELECT_COLUMNS}`,
-    [id, nextEmail, nextFirstName, nextLastName, nextFullName, nextRole, nextIsActive]
+    [id, nextEmail, nextFirstName, nextLastName, nextFullName, nextRole, nextIsActive,
+      nextPermissions !== null ? JSON.stringify(nextPermissions) : null]
   );
   return rows[0] || null;
 }

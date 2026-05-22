@@ -9,7 +9,7 @@ export const DASHBOARD_BY_ROLE: Record<string, string> = {
   provider: "ProviderDashboard",
   patient: "PatientJourney",
   medical_director: "MDDashboard",
-  staff: "AdminDashboard",
+  staff: "StaffDashboard",
 };
 
 export const ALLOWED_PAGES_BY_ROLE: Record<string, Set<string>> = {
@@ -77,8 +77,25 @@ export const ALLOWED_PAGES_BY_ROLE: Record<string, Set<string>> = {
     "PatientProfile",
     "PatientOnboarding",
   ]),
-  staff: new Set(["AdminDashboard", "AdminEnrollments", "AdminProviders", "AdminModelSignups"]),
+  staff: new Set([
+    "StaffDashboard",
+    "StaffEnrollments",
+    "StaffProviders",
+    "StaffModelSignups",
+    "StaffPreOrders",
+    "StaffCompliance",
+  ]),
 };
+
+// Canonical list of modules that can be individually granted to staff users.
+// StaffDashboard is always granted and is excluded from the toggle UI.
+export const STAFF_MODULE_CATALOG: Array<{ key: string; label: string; group: string }> = [
+  { key: "StaffEnrollments",  label: "Enrollments",            group: "Operations" },
+  { key: "StaffProviders",    label: "Provider Lookup",        group: "Operations" },
+  { key: "StaffModelSignups", label: "Model Sign-ups",         group: "Operations" },
+  { key: "StaffPreOrders",    label: "Pre-Order Applications", group: "Operations" },
+  { key: "StaffCompliance",   label: "Compliance Logs",        group: "Management" },
+];
 
 export const SHARED_AUTH_PAGES = new Set([
   "Onboarding",
@@ -108,12 +125,22 @@ export function getDashboardPathForRole(role?: string | null) {
   return createPageUrl(getDashboardPageForRole(role));
 }
 
-export function isPageAllowedForRole(pageName: string, role?: string | null) {
+export function isPageAllowedForRole(
+  pageName: string,
+  role?: string | null,
+  permissions?: Record<string, boolean> | null
+) {
   const normalizedRole = normalizeRole(role);
   if (!normalizedRole) {
     return SHARED_AUTH_PAGES.has(pageName);
   }
   if (SHARED_AUTH_PAGES.has(pageName)) return true;
+
+  if (normalizedRole === "staff") {
+    if (pageName === "StaffDashboard") return true;
+    return permissions?.[pageName] === true;
+  }
+
   const allowedPages = ALLOWED_PAGES_BY_ROLE[normalizedRole];
   return allowedPages ? allowedPages.has(pageName) : false;
 }
