@@ -21,6 +21,7 @@ import {
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { format } from "date-fns";
+import { buildSupplierUsageStats } from "@/lib/supplierUsage";
 
 const CATEGORY_LABELS = {
   injectables: "Injectables",
@@ -925,18 +926,8 @@ function SupplierDetailView({ mfr, onBack, onApply, application, me, treatmentRe
   const statusCfg = app ? (APP_STATUS_CONFIG[app.status] || APP_STATUS_CONFIG.pending) : null;
   const isApproved = app?.status === "approved";
 
-  // Auto-calculate brand usage from treatment records
   const mfrNameLower = mfr.name?.toLowerCase() || "";
-  const brandRecords = treatmentRecords.filter(r =>
-    r.products_used?.some(p => p.product_name?.toLowerCase().includes(mfrNameLower) ||
-      (mfr?.products || []).some(mp => p.product_name?.toLowerCase().includes(mp.toLowerCase())))
-  );
-  const totalUnits = brandRecords.reduce((sum, r) => sum + (r.units_used || 0), 0);
-  const lastUsed = brandRecords.length > 0
-    ? brandRecords.sort((a, b) => new Date(b.treatment_date) - new Date(a.treatment_date))[0]?.treatment_date
-    : null;
-  const usedLots = new Set();
-  brandRecords.forEach(r => r.products_used?.forEach(p => { if (p.batch_lot) usedLots.add(p.batch_lot); }));
+  const { brandRecords, totalUnits, usedLots, lastUsed } = buildSupplierUsageStats(treatmentRecords, mfr);
   const brandCerts = certifications.filter(c =>
     (mfr?.products || []).some(p => c.certification_name?.toLowerCase().includes(p.toLowerCase()) ||
       c.service_type_name?.toLowerCase().includes(mfrNameLower))
