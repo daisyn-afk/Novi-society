@@ -58,9 +58,8 @@ export default function StaffModelSignups() {
   const { data: signupsRaw, isLoading, isError: signupsError, error: signupsErrorObj } = useQuery({
     queryKey: ["staff-model-signups"],
     queryFn: async () => {
-      const rows = await adminApiRequest("/admin/pre-orders?limit=500");
-      const list = Array.isArray(rows) ? rows : [];
-      return list.filter(row => String(row?.order_type || "").toLowerCase() === "model");
+      const rows = await adminApiRequest("/admin/pre-orders?limit=500&order_type=model");
+      return Array.isArray(rows) ? rows : [];
     },
   });
 

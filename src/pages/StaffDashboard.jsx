@@ -47,23 +47,29 @@ export default function StaffDashboard() {
     queryFn: () => base44.auth.me(),
     retry: false,
   });
+  const canViewPreOrders = user?.permissions?.StaffPreOrders === true;
+  const canViewModelSignups = user?.permissions?.StaffModelSignups === true;
+  const canViewEnrollments = user?.permissions?.StaffEnrollments === true;
 
   const { data: preOrdersRaw = [] } = useQuery({
     queryKey: ["staff-dash-preorders"],
-    queryFn: () => base44.entities.PreOrder.list("-created_date", 200),
+    queryFn: () => base44.entities.PreOrder.list("-created_date", 200, { order_type: "course" }),
+    enabled: canViewPreOrders,
   });
 
   const { data: modelSignupsRaw = [] } = useQuery({
     queryKey: ["staff-dash-models"],
     queryFn: async () => {
-      const rows = await adminApiRequest("/admin/pre-orders?limit=300");
-      return Array.isArray(rows) ? rows.filter(r => String(r?.order_type || "").toLowerCase() === "model") : [];
+      const rows = await adminApiRequest("/admin/pre-orders?limit=300&order_type=model");
+      return Array.isArray(rows) ? rows : [];
     },
+    enabled: canViewModelSignups,
   });
 
   const { data: enrollmentsRaw = [] } = useQuery({
     queryKey: ["staff-dash-enrollments"],
     queryFn: () => base44.entities.Enrollment.list("-created_date"),
+    enabled: canViewEnrollments,
   });
 
   const pendingApplications = useMemo(
@@ -114,7 +120,7 @@ export default function StaffDashboard() {
 
       <div className="grid lg:grid-cols-2 gap-6">
         {/* Pending applications queue */}
-        {user?.permissions?.StaffPreOrders !== false && (
+        {canViewPreOrders && (
           <div className="rounded-2xl p-5 space-y-3" style={{ background: "rgba(255,255,255,0.5)", border: "1px solid rgba(0,0,0,0.07)" }}>
             <div className="flex items-center justify-between">
               <h2 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 17, color: "#1e2535" }}>Pending Applications</h2>
@@ -144,7 +150,7 @@ export default function StaffDashboard() {
         )}
 
         {/* Models pending GFE */}
-        {user?.permissions?.StaffModelSignups !== false && (
+        {canViewModelSignups && (
           <div className="rounded-2xl p-5 space-y-3" style={{ background: "rgba(255,255,255,0.5)", border: "1px solid rgba(0,0,0,0.07)" }}>
             <div className="flex items-center justify-between">
               <h2 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 17, color: "#1e2535" }}>GFE Not Sent</h2>

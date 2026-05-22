@@ -168,7 +168,7 @@ export default function StaffPreOrders() {
 
   const { data: preOrders = [], isLoading } = useQuery({
     queryKey: ["staff-pre-orders"],
-    queryFn: () => base44.entities.PreOrder.list("-created_date", 200),
+    queryFn: () => base44.entities.PreOrder.list("-created_date", 200, { order_type: "course" }),
   });
 
   const actionMutation = useMutation({

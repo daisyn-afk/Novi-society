@@ -91,31 +91,11 @@ export default function StaffEnrollments() {
     queryFn: () => adminCoursesApi.list(),
   });
 
-  const { data: preOrders = [] } = useQuery({
-    queryKey: ["pre-orders-enrollments"],
-    queryFn: () => base44.entities.PreOrder.list("-created_date", 300),
-  });
-
   const courseMap = useMemo(() => Object.fromEntries(courses.map(c => [c.id, c])), [courses]);
 
   const paidEnrollments = useMemo(() => {
-    const direct = enrollments.filter(e => e.status === "paid" || e.status === "confirmed");
-    const existingPreOrderIds = new Set(direct.map(e => e.pre_order_id).filter(Boolean));
-    const derived = preOrders
-      .filter(p => p.order_type === "course" && (p.status === "paid" || p.status === "confirmed" || p.status === "completed"))
-      .filter(p => !existingPreOrderIds.has(p.id))
-      .map(p => ({
-        id: `preorder-${p.id}`,
-        pre_order_id: p.id,
-        course_id: p.course_id,
-        provider_name: p.customer_name,
-        provider_email: p.customer_email,
-        status: p.status === "completed" ? "confirmed" : p.status,
-        session_date: p.course_date,
-        created_date: p.created_date,
-      }));
-    return [...direct, ...derived];
-  }, [enrollments, preOrders]);
+    return enrollments.filter(e => e.status === "paid" || e.status === "confirmed");
+  }, [enrollments]);
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
