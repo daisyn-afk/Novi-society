@@ -37,7 +37,6 @@ export default function ProviderEnrollments() {
   const attendance = useAttendanceContext();
   const qc = useQueryClient();
   const navigate = useNavigate();
-  const enrollmentCacheSnapshot = qc.getQueryData(["my-enrollments"]);
   const getCurrentUser = React.useCallback(
     () =>
       qc.ensureQueryData({
@@ -74,7 +73,9 @@ export default function ProviderEnrollments() {
       const [byProviderIdResult, byEmailResult, preOrdersResult] = await Promise.allSettled([
         me?.id ? base44.entities.Enrollment.filter({ provider_id: me.id }, "-created_date") : Promise.resolve([]),
         me?.email ? base44.entities.Enrollment.filter({ provider_email: me.email }, "-created_date") : Promise.resolve([]),
-        base44.entities.PreOrder.list("-created_date", 500),
+        me?.email
+          ? base44.entities.PreOrder.list("-created_date", 500, { customer_email: me.email })
+          : Promise.resolve([]),
       ]);
       const byProviderId = byProviderIdResult.status === "fulfilled" ? (byProviderIdResult.value || []) : [];
       const byEmail = byEmailResult.status === "fulfilled" ? (byEmailResult.value || []) : [];
@@ -82,11 +83,14 @@ export default function ProviderEnrollments() {
         throw preOrdersResult.reason || new Error("Unable to load pre-order dates.");
       }
       const preOrders = preOrdersResult.value || [];
-      const email = String(me?.email || "").toLowerCase();
-      const paidPreOrders = preOrders
-        .filter((p) => p?.order_type === "course")
-        .filter((p) => ["paid", "confirmed", "completed"].includes(String(p?.status || "").toLowerCase()))
-        .filter((p) => String(p?.customer_email || "").toLowerCase() === email);
+      const email = String(me?.email || "").trim().toLowerCase();
+      const paidPreOrders = email
+        ? preOrders
+            .filter((p) => p?.order_type === "course")
+            .filter((p) => Boolean(p?.course_id))
+            .filter((p) => ["paid", "confirmed", "completed"].includes(String(p?.status || "").toLowerCase()))
+            .filter((p) => String(p?.customer_email || "").trim().toLowerCase() === email)
+        : [];
       const byPreOrderId = new Map(
         [...byProviderId, ...byEmail]
           .filter((row) => row?.pre_order_id)
@@ -121,11 +125,8 @@ export default function ProviderEnrollments() {
       );
     },
     retry: 3,
-    // Respect cache freshness so we can render instantly from cache.
     refetchOnMount: true,
-    // Use the Layout-cached enrollment snapshot immediately on first paint.
-    placeholderData: (previousData) =>
-      previousData ?? qc.getQueryData(["my-enrollments"]),
+    placeholderData: (previousData) => previousData,
   });
 
   const { data: sessions = [] } = useQuery({
@@ -195,9 +196,7 @@ export default function ProviderEnrollments() {
   const activeSubServiceIds = new Set(myMDSubs.filter(s => s.status === "active").map(s => s.service_type_id));
   const activeEnrollments = myEnrollments.filter(e => e.status !== "cancelled");
   const enrolledCourseIds = new Set(activeEnrollments.map(e => e.course_id));
-  const shouldShowEnrollmentStatusLoading =
-    !hasFetchedEnrollments &&
-    !Array.isArray(enrollmentCacheSnapshot);
+  const shouldShowEnrollmentStatusLoading = !hasFetchedEnrollments;
 
   const todayEnrollment = activeEnrollments.find(e => {
     const course = courseMap[e.course_id];
@@ -374,11 +373,8 @@ export default function ProviderEnrollments() {
             ) : activeEnrollments.length === 0 ? (
               <div className="text-center py-20 rounded-3xl" style={{ background: "rgba(255,255,255,0.1)" }}>
                 <BookOpen className="w-12 h-12 mx-auto mb-3 opacity-30 text-white" />
-                <p className="font-semibold text-white/70 mb-1">No active enrollments yet</p>
-                <p className="text-sm text-white/40 mb-5">Find a course and enroll to get started.</p>
-                <p className="text-xs mb-5" style={{ color: "rgba(255,255,255,0.45)" }}>
-                  Debug: enrollments={myEnrollments.length}, active={activeEnrollments.length}, courses={courses.length}
-                </p>
+                <p className="font-semibold text-white/70 mb-1">You have not enrolled in any courses yet</p>
+                <p className="text-sm text-white/40 mb-6">Enroll in a NOVI course to unlock MD coverage and grow your skills.</p>
                 <button onClick={() => setActiveTab("browse")} className="px-6 py-2.5 rounded-xl text-sm font-bold text-white" style={{ background: "#FA6F30" }}>
                   Browse Courses →
                 </button>

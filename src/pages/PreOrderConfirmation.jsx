@@ -54,7 +54,7 @@ export default function PreOrderConfirmation() {
 
     const syncSeatCaches = () => {
       const landingQueryFn = async () => {
-        const scheduledCourses = await adminCoursesApi.list("scheduled");
+        const scheduledCourses = await adminCoursesApi.list("scheduled", { publicCatalog: true });
         return (scheduledCourses || [])
           .filter((course) => course?.is_active !== false)
           .map(normalizeLandingCourse);

@@ -5,6 +5,7 @@
  *
  * Access tiers (ascending):
  *   "none"         → no license submitted
+ *   "rejected"     → license(s) submitted but all rejected, none pending review
  *   "pending"      → license submitted, awaiting admin approval
  *   "courses_only" → license verified; can browse/buy/attend courses + upload external certs
  *   "md_eligible"  → has an active cert; can apply for MD subscription
@@ -20,7 +21,7 @@ import {
   Stethoscope, Users, Activity, FileText, Zap
 } from "lucide-react";
 
-const TIER_ORDER = ["none", "pending", "courses_only", "md_eligible", "full"];
+const TIER_ORDER = ["none", "rejected", "pending", "courses_only", "md_eligible", "full"];
 
 function tierRank(tier) {
   return TIER_ORDER.indexOf(tier);
@@ -129,6 +130,19 @@ function LockMessage({ currentStatus, feature }) {
       </div>
     );
   }
+  if (currentStatus === "rejected") {
+    return (
+      <div className="flex items-center gap-3 px-5 py-3.5 rounded-2xl mb-6" style={{ background: "rgba(218,106,99,0.18)", border: "1px solid rgba(218,106,99,0.45)" }}>
+        <Lock className="w-5 h-5 flex-shrink-0" style={{ color: "#DA6A63" }} />
+        <div>
+          <p className="font-bold text-white text-sm">License Not Approved</p>
+          <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.65)" }}>
+            Your license submission was not approved. Review the reason and resubmit corrected documents to continue.
+          </p>
+        </div>
+      </div>
+    );
+  }
   if (currentStatus === "pending") {
     return (
       <div className="flex items-center gap-3 px-5 py-3.5 rounded-2xl mb-6" style={{ background: "rgba(250,111,48,0.18)", border: "1px solid rgba(250,111,48,0.4)" }}>
@@ -180,6 +194,18 @@ function LockCTA({ currentStatus }) {
         <button className="w-full py-3.5 px-4 rounded-2xl font-bold text-sm text-white flex items-center justify-center transition-all hover:opacity-90" style={{ background: "linear-gradient(135deg, #FA6F30, #DA6A63)" }}>
           <span className="inline-flex items-center justify-center gap-2 max-w-full text-center leading-snug">
             <span>Apply Now — It Takes 2 Minutes</span>
+            <ArrowRight className="h-4 w-4 shrink-0" aria-hidden />
+          </span>
+        </button>
+      </Link>
+    );
+  }
+  if (currentStatus === "rejected") {
+    return (
+      <Link to={createPageUrl("ProviderCredentialsCoverage") + "?tab=licenses"}>
+        <button className="w-full py-3.5 px-4 rounded-2xl font-bold text-sm text-white flex items-center justify-center transition-all hover:opacity-90" style={{ background: "linear-gradient(135deg, #DA6A63, #FA6F30)" }}>
+          <span className="inline-flex items-center justify-center gap-2 max-w-full text-center leading-snug">
+            <span>Review Rejection &amp; Resubmit License</span>
             <ArrowRight className="h-4 w-4 shrink-0" aria-hidden />
           </span>
         </button>

@@ -15,8 +15,11 @@ import { redirectToStripeCheckout } from "@/lib/redirectToStripeCheckout";
 import { CHECKOUT_RETURN_LANDING, stashCheckoutReturnTo } from "@/lib/checkoutReturnPath";
 import {
   effectiveAvailableSeats,
+  getUpcomingSessionEntries,
   isCourseFullySoldOut,
   isSessionDateEntrySoldOut,
+  normalizeScheduledSessionDatesEntries,
+  parseSessionDatesField,
 } from "@/lib/sessionDateSeats";
 import {
   Sparkles, ArrowRight, Check,
@@ -35,17 +38,21 @@ const BLANK_FORM = {
 
 const normalizeCourseRecord = (course) => ({
   ...course,
-  session_dates: Array.isArray(course?.session_dates) ? course.session_dates : [],
+  session_dates: normalizeScheduledSessionDatesEntries(parseSessionDatesField(course?.session_dates)),
 });
 
 const resolveSelectedSessionEntry = (course, selectedSession, selectedDate) => {
   const sessions = Array.isArray(course?.session_dates) ? course.session_dates : [];
   if (sessions.length === 0) return null;
 
-  const date = selectedSession?.date || selectedDate || null;
+  const date = selectedSession?.date || selectedSession?.session_date || selectedDate || null;
   if (!date) return null;
+  const dateKey = String(date).split("T")[0];
 
-  const sameDate = sessions.filter((s) => s?.date === date);
+  const sameDate = sessions.filter((s) => {
+    const raw = s?.date || s?.session_date;
+    return raw && String(raw).split("T")[0] === dateKey;
+  });
   if (sameDate.length === 0) return null;
 
   if (selectedSession?.session_id) {
@@ -121,11 +128,13 @@ export default function NoviOfferingsPortal({ children }) {
   const { data: courses = [], isLoading: isLoadingCourses } = useQuery({
     queryKey: ["landing-courses"],
     queryFn: async () => {
-      const scheduledCourses = await adminCoursesApi.list("scheduled");
+      const scheduledCourses = await adminCoursesApi.list("scheduled", { publicCatalog: true });
       return (scheduledCourses || [])
         .filter((course) => course?.is_active !== false)
         .map(normalizeCourseRecord);
     },
+    staleTime: 0,
+    refetchOnMount: "always",
   });
 
   useEffect(() => {
@@ -169,8 +178,9 @@ export default function NoviOfferingsPortal({ children }) {
   };
 
   const openCourseModal = (course) => {
-    if (isCourseFullySoldOut(course)) return;
-    setSelectedCourse(course);
+    const fresh = courses.find((c) => c.id === course?.id) ?? course;
+    if (isCourseFullySoldOut(fresh)) return;
+    setSelectedCourse(fresh);
     setCourseStep("dates");
     setSelectedCourseDate(null);
     setSelectedCourseSession(null);
@@ -434,21 +444,17 @@ export default function NoviOfferingsPortal({ children }) {
 
               <div>
                 <h4 className="font-bold mb-3 text-sm uppercase tracking-wide" style={{ color: "rgba(30,37,53,0.5)" }}>
-                  {(() => {
-                    const t = new Date();
-                    t.setHours(0, 0, 0, 0);
-                    return (selectedCourse.session_dates?.filter((s) => s.date && new Date(s.date.split("T")[0] + "T12:00:00") >= t).length > 0
-                      ? "Select an Available Date"
-                      : "Available Dates");
-                  })()}
+                  {getUpcomingSessionEntries(selectedCourse.session_dates).length > 0
+                    ? "Select an Available Date"
+                    : "Available Dates"}
                 </h4>
 
                 {(() => {
-                  const today = new Date();
-                  today.setHours(0, 0, 0, 0);
-                  const upcomingDates = (selectedCourse.session_dates || [])
-                    .filter((s) => s.date && new Date(s.date.split("T")[0] + "T12:00:00") >= today)
-                    .sort((a, b) => new Date(a.date) - new Date(b.date));
+                  const upcomingDates = getUpcomingSessionEntries(selectedCourse.session_dates).sort(
+                    (a, b) =>
+                      new Date(String(a?.date || a?.session_date || "").split("T")[0] + "T12:00:00") -
+                      new Date(String(b?.date || b?.session_date || "").split("T")[0] + "T12:00:00")
+                  );
 
                   if (upcomingDates.length === 0) {
                     return (
@@ -478,14 +484,16 @@ export default function NoviOfferingsPortal({ children }) {
                             aria-disabled={dateSoldOut}
                             onClick={() => {
                               if (!dateSoldOut) {
-                                setSelectedCourseDate(session.date);
+                                const dateKey = session.date || session.session_date;
+                                setSelectedCourseDate(dateKey);
                                 setSelectedCourseSession(session);
                               }
                             }}
                             onKeyDown={(e) => {
                               if (!dateSoldOut && (e.key === "Enter" || e.key === " ")) {
                                 e.preventDefault();
-                                setSelectedCourseDate(session.date);
+                                const dateKey = session.date || session.session_date;
+                                setSelectedCourseDate(dateKey);
                                 setSelectedCourseSession(session);
                               }
                             }}
@@ -505,7 +513,7 @@ export default function NoviOfferingsPortal({ children }) {
                                   </p>
                                 )}
                                 <p className="font-semibold text-sm" style={{ color: dateSoldOut ? muted : strong }}>
-                                  {new Date(session.date).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
+                                  {new Date(String(session.date || session.session_date || "").split("T")[0] + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
                                 </p>
                                 {(session.start_time || session.end_time) && (
                                   <p className="text-xs mt-0.5" style={{ color: dateSoldOut ? muted : "rgba(30,37,53,0.5)" }}>
@@ -547,28 +555,15 @@ export default function NoviOfferingsPortal({ children }) {
                 className="w-full py-5 text-base font-bold rounded-xl"
                 style={{ background: "#C8E63C", color: "#1a2540" }}
                 onClick={() => setCourseStep("info")}
-                disabled={(() => {
-                  const t = new Date();
-                  t.setHours(0, 0, 0, 0);
-                  const upcoming = selectedCourse.session_dates?.filter((s) => s.date && new Date(s.date.split("T")[0] + "T12:00:00") >= t) || [];
-                  const needDate = upcoming.length > 0;
-                  return (
-                    isCourseFullySoldOut(selectedCourse) ||
-                    (needDate && !selectedCourseSession) ||
-                    Boolean(selectedSessionIsSoldOut)
-                  );
-                })()}
+                disabled={
+                  isCourseFullySoldOut(selectedCourse) ||
+                  (getUpcomingSessionEntries(selectedCourse.session_dates).length > 0 && !selectedCourseSession) ||
+                  Boolean(selectedSessionIsSoldOut)
+                }
               >
                 Continue <ArrowRight className="ml-2 w-4 h-4" />
               </Button>
-              {(() => {
-                const t = new Date();
-                t.setHours(0, 0, 0, 0);
-                return (
-                  selectedCourse.session_dates?.filter((s) => s.date && new Date(s.date.split("T")[0] + "T12:00:00") >= t).length > 0 &&
-                  !selectedCourseSession
-                );
-              })() && (
+              {getUpcomingSessionEntries(selectedCourse.session_dates).length > 0 && !selectedCourseSession && (
                 <p className="text-center text-xs" style={{ color: "rgba(30,37,53,0.4)" }}>
                   Please select a date to continue
                 </p>

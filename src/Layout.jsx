@@ -7,10 +7,11 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   LayoutDashboard, BookOpen, Award, FileText, Users,
   Calendar, Star, ShieldCheck, ClipboardList, Settings, Layers,
-  Menu, X, LogOut, User, Lock, Stethoscope, Sparkles, Clock, AlertTriangle, ShoppingBag, Mail, Rocket, TicketPercent
+  Menu, X, LogOut, User, Lock, Stethoscope, Sparkles, Clock, AlertTriangle, ShoppingBag, Mail, Rocket, TicketPercent, MessageSquare
 } from "lucide-react";
 import { useProviderAccess } from "@/components/useProviderAccess";
 import { providerOnboardingApi } from "@/api/providerOnboardingApi";
+import { mdMessagesApi } from "@/api/mdMessagesApi";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import NotificationBell from "@/components/NotificationBell";
 import {
@@ -49,12 +50,14 @@ const navByRole = {
     { label: "Supplier Marketplace", icon: ShoppingBag, page: "ProviderMarketplace" },
     { label: "Growth Studio", icon: Rocket, page: "ProviderLaunchPad" },
     { label: "My Practice", icon: Stethoscope, page: "ProviderPractice" },
+    { label: "Messages", icon: MessageSquare, page: "ProviderMessaging" },
     { label: "Profile", icon: User, page: "ProviderProfile" },
   ],
   medical_director: [
     { label: "Dashboard", icon: LayoutDashboard, page: "MDDashboard" },
     { label: "Provider Supervision", icon: Users, page: "MDProviderRelationships" },
     { label: "Treatment Records", icon: ClipboardList, page: "MDTreatmentRecords" },
+    { label: "Messages", icon: MessageSquare, page: "MDMessaging" },
     { label: "Compliance Logs", icon: ShieldCheck, page: "MDCompliance" },
     { label: "Certifications", icon: Award, page: "MDCertifications" },
     { label: "MD Profile", icon: User, page: "MDProfile" },
@@ -73,7 +76,7 @@ const navByRole = {
   ],
 };
 
-const BARE_PAGES = ["Onboarding", "ProviderGettingStarted", "LandingPage", "ProviderApplication", "NoviLanding", "ModelSignup", "ModelBookingLookup"];
+const BARE_PAGES = ["Onboarding", "ProviderGettingStarted", "LandingPage", "ProviderApplication", "NoviLanding", "ModelSignup", "ModelBookingLookup", "PrivacyPolicy", "TermsAndConditions", "RefundPolicy", "SMSTerms", "ContactUs"];
 const PROVIDER_FREE_PAGES = ["ProviderDashboard", "CourseCatalog", "ProviderProfile", "ProviderGettingStarted"];
 
 export default function Layout({ children, currentPageName }) {
@@ -113,6 +116,23 @@ export default function Layout({ children, currentPageName }) {
   const navItems = navByRole[navRole] || navByRole.provider;
   const isProviderUserReady = role === "provider" && Boolean(user?.id || user?.email);
 
+  // Sidebar unread message badge — shared query key ["msg-threads"] with messaging pages.
+  // Polling at 5s keeps the badge live without hammering the API.
+  const isMessagingRole = role === "provider" || role === "medical_director";
+  const { data: sidebarUnreadCount = 0 } = useQuery({
+    queryKey: ["msg-threads"],
+    queryFn: () => mdMessagesApi.getThreads(),
+    enabled: isSuccess && !!user && isMessagingRole,
+    refetchInterval: 5000,
+    staleTime: 4000,
+    refetchOnWindowFocus: true,
+    select: (threads) =>
+      (Array.isArray(threads) ? threads : []).reduce(
+        (sum, t) => sum + (Number(t.unread_count) || 0),
+        0
+      ),
+  });
+
   const { data: providerEnrollments = [] } = useQuery({
     queryKey: ["my-enrollments"],
     queryFn: async () => {
@@ -124,26 +144,31 @@ export default function Layout({ children, currentPageName }) {
       const [byProviderIdResult, byEmailResult, preOrdersResult] = await Promise.allSettled([
         me?.id ? base44.entities.Enrollment.filter({ provider_id: me.id }) : Promise.resolve([]),
         me?.email ? base44.entities.Enrollment.filter({ provider_email: me.email }) : Promise.resolve([]),
-        base44.entities.PreOrder.list("-created_date", 500),
+        me?.email
+          ? base44.entities.PreOrder.list("-created_date", 500, { customer_email: me.email })
+          : Promise.resolve([]),
       ]);
       const byProviderId = byProviderIdResult.status === "fulfilled" ? (byProviderIdResult.value || []) : [];
       const byEmail = byEmailResult.status === "fulfilled" ? (byEmailResult.value || []) : [];
       const preOrders = preOrdersResult.status === "fulfilled" ? (preOrdersResult.value || []) : [];
-      const email = String(me?.email || "").toLowerCase();
-      const derivedFromPreOrders = preOrders
-        .filter((p) => p?.order_type === "course")
-        .filter((p) => ["paid", "confirmed", "completed"].includes(String(p?.status || "").toLowerCase()))
-        .filter((p) => String(p?.customer_email || "").toLowerCase() === email)
-        .map((p) => ({
-          id: `preorder-${p.id}`,
-          pre_order_id: p.id,
-          course_id: p.course_id,
-          provider_id: me?.id || null,
-          provider_email: p.customer_email,
-          provider_name: p.customer_name,
-          status: p.status === "completed" ? "confirmed" : p.status,
-          created_date: p.created_date,
-        }));
+      const email = String(me?.email || "").trim().toLowerCase();
+      const derivedFromPreOrders = email
+        ? preOrders
+            .filter((p) => p?.order_type === "course")
+            .filter((p) => Boolean(p?.course_id))
+            .filter((p) => ["paid", "confirmed", "completed"].includes(String(p?.status || "").toLowerCase()))
+            .filter((p) => String(p?.customer_email || "").trim().toLowerCase() === email)
+            .map((p) => ({
+              id: `preorder-${p.id}`,
+              pre_order_id: p.id,
+              course_id: p.course_id,
+              provider_id: me?.id || null,
+              provider_email: p.customer_email,
+              provider_name: p.customer_name,
+              status: p.status === "completed" ? "confirmed" : p.status,
+              created_date: p.created_date,
+            }))
+        : [];
       return Array.from(new Map([...(byProviderId || []), ...(byEmail || []), ...derivedFromPreOrders].map((row) => [row.pre_order_id || row.id, row])).values());
     },
     enabled: isProviderUserReady,
@@ -347,6 +372,8 @@ export default function Layout({ children, currentPageName }) {
           {navItems.map(({ label, icon: Icon, page }) => {
             const isLocked = !isProviderUnlocked && !PROVIDER_FREE_PAGES.includes(page);
             const active = isActive(page);
+            const isMessagesPage = page === "MDMessaging" || page === "ProviderMessaging";
+            const showUnreadBadge = isMessagesPage && sidebarUnreadCount > 0;
             return (
               <Link
                 key={page}
@@ -356,6 +383,14 @@ export default function Layout({ children, currentPageName }) {
               >
                 <Icon className="w-[15px] h-[15px] flex-shrink-0" style={{ opacity: active ? 0.9 : 0.6 }} />
                 <span className="flex-1">{label}</span>
+                {showUnreadBadge && (
+                  <span
+                    className="flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold text-white flex-shrink-0"
+                    style={{ background: "rgba(218,106,99,0.9)" }}
+                  >
+                    {sidebarUnreadCount > 99 ? "99+" : sidebarUnreadCount}
+                  </span>
+                )}
                 {isLocked && <Lock className="w-3 h-3 opacity-30 flex-shrink-0" />}
               </Link>
             );

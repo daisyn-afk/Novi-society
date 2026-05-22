@@ -294,6 +294,7 @@ export default function Admincourses() {
     },
     onSettled: () => {
       qc.invalidateQueries({ queryKey: ["courses", "admin-api-scheduled"] });
+      qc.invalidateQueries({ queryKey: ["landing-courses"] });
     },
   });
   const removeScheduled = useMutation({
@@ -316,6 +317,7 @@ export default function Admincourses() {
     },
     onSettled: () => {
       qc.invalidateQueries({ queryKey: ["courses", "admin-api-scheduled"] });
+      qc.invalidateQueries({ queryKey: ["landing-courses"] });
     },
   });
 

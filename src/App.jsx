@@ -34,6 +34,11 @@ import ModelSignup from './pages/ModelSignup';
 import ModelBookingLookup from './pages/ModelBookingLookup';
 import ThankYou from './pages/ThankYou';
 import RequestInformation from './pages/RequestInformation';
+import PrivacyPolicy from './pages/PrivacyPolicy';
+import TermsAndConditions from './pages/TermsAndConditions';
+import RefundPolicy from './pages/RefundPolicy';
+import SMSTerms from './pages/SMSTerms';
+import ContactUs from './pages/ContactUs';
 import { base44 } from "@/api/base44Client";
 import { getDashboardPathForRole, normalizeRole, isPageAllowedForRole } from "@/lib/routeAccessPolicy";
 import RouteErrorBoundary from "@/components/RouteErrorBoundary";
@@ -112,7 +117,12 @@ const AuthenticatedApp = () => {
     "/request-information",
     "/login",
     "/signup",
-    "/set-password"
+    "/set-password",
+    "/PrivacyPolicy",
+    "/TermsAndConditions",
+    "/RefundPolicy",
+    "/SMSTerms",
+    "/ContactUs",
   ]);
   const isPublicRoute = publicPaths.has(location.pathname);
 
@@ -208,6 +218,11 @@ const AuthenticatedApp = () => {
       <Route path="/signup" element={<Signup />} />
       <Route path="/set-password" element={<SetPassword />} />
       <Route path="/forbidden" element={<Forbidden />} />
+      <Route path="/PrivacyPolicy" element={<LayoutWrapper currentPageName="PrivacyPolicy"><PrivacyPolicy /></LayoutWrapper>} />
+      <Route path="/TermsAndConditions" element={<LayoutWrapper currentPageName="TermsAndConditions"><TermsAndConditions /></LayoutWrapper>} />
+      <Route path="/RefundPolicy" element={<LayoutWrapper currentPageName="RefundPolicy"><RefundPolicy /></LayoutWrapper>} />
+      <Route path="/SMSTerms" element={<LayoutWrapper currentPageName="SMSTerms"><SMSTerms /></LayoutWrapper>} />
+      <Route path="/ContactUs" element={<LayoutWrapper currentPageName="ContactUs"><ContactUs /></LayoutWrapper>} />
       <Route path="/AdminPreOrders" element={
         <RequireRoleRoute pageKey="AdminPreOrders">
           <LayoutWrapper currentPageName="AdminPreOrders">

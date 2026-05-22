@@ -109,6 +109,33 @@ function clearAuthSession() {
   window.localStorage.removeItem(REFRESH_TOKEN_KEY);
 }
 
+function sortEntityRows(rows, sortSpec = "") {
+  if (!sortSpec || !Array.isArray(rows)) return rows || [];
+  const desc = sortSpec.startsWith("-");
+  const rawField = desc ? sortSpec.slice(1) : sortSpec;
+  const dateFieldMap = { created_date: "created_at", updated_date: "updated_at" };
+  const field = dateFieldMap[rawField] || rawField;
+  return [...rows].sort((a, b) => {
+    const av = a[field] ?? "";
+    const bv = b[field] ?? "";
+    if (av < bv) return desc ? 1 : -1;
+    if (av > bv) return desc ? -1 : 1;
+    return 0;
+  });
+}
+
+function buildEntityQuery(filters = {}, limit) {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters || {})) {
+    if (value != null && String(value).trim() !== "") {
+      params.set(key, String(value));
+    }
+  }
+  if (limit) params.set("limit", String(limit));
+  const qs = params.toString();
+  return qs ? `?${qs}` : "";
+}
+
 function parseRecoveryHash(rawHash) {
   const source = typeof rawHash === "string" ? rawHash : "";
   const hash = source.startsWith("#") ? source.slice(1) : source;
@@ -341,11 +368,64 @@ export function createLovableProviderClient() {
           }
         };
       }
+      if (name === "PromoCode") {
+        return {
+          list: () => requestJson("/admin/promo-codes", { method: "GET" }),
+          filter: async (filters = {}) => {
+            const all = await requestJson("/admin/promo-codes", { method: "GET" });
+            const rows = Array.isArray(all) ? all : [];
+            const code = filters?.code ? String(filters.code).trim().toUpperCase() : "";
+            const requireActive = filters?.is_active === true;
+            return rows
+              .filter((row) => {
+                if (code && String(row?.code || "").trim().toUpperCase() !== code) return false;
+                if (requireActive && row?.active === false) return false;
+                return true;
+              })
+              .map((row) => ({
+                ...row,
+                is_active: row?.active !== false,
+                valid_from: row?.starts_at ?? row?.valid_from ?? null,
+                valid_until: row?.ends_at ?? row?.valid_until ?? null,
+                discount_type:
+                  String(row?.discount_type || "").toLowerCase() === "percent"
+                    ? "percentage"
+                    : row?.discount_type,
+              }));
+          },
+          get: createNotImplementedMethod("entities.PromoCode.get"),
+          create: createNotImplementedMethod("entities.PromoCode.create"),
+          update: createNotImplementedMethod("entities.PromoCode.update"),
+          delete: createNotImplementedMethod("entities.PromoCode.delete"),
+        };
+      }
       if (name === "PreOrder") {
         return {
-          list: (_sort = "", limit = 200) => authRequest(`/admin/pre-orders?limit=${encodeURIComponent(String(limit || 200))}`, { method: "GET" }),
+          list: (_sort = "", limit = 200, opts = {}) => {
+            const params = new URLSearchParams({ limit: String(limit || 200) });
+            const emailParam = String(opts?.customer_email || "").trim();
+            if (emailParam) params.set("customer_email", emailParam);
+            return authRequest(`/admin/pre-orders?${params.toString()}`, { method: "GET" });
+          },
           get: (id) => requestJson(`/admin/checkout/pre-order?id=${encodeURIComponent(id)}`, { method: "GET" }),
-          create: createNotImplementedMethod("entities.PreOrder.create"),
+          create: async (payload = {}) => {
+            const result = await requestJson("/admin/checkout/service", {
+              method: "POST",
+              body: JSON.stringify({
+                customer_name: payload.customer_name,
+                customer_email: payload.customer_email,
+                phone: payload.phone || null,
+                order_type: payload.order_type || "service",
+                notes: payload.notes || null,
+                service_type_id: payload.service_type_id,
+                license_type: payload.license_type || null,
+                license_number: payload.license_number || null,
+                license_image_url: payload.license_image_url || null,
+                certification_document_url: payload.certification_document_url || null,
+              }),
+            });
+            return { id: result?.pre_order_id, ...result };
+          },
           update: (id, payload) => authRequest(`/admin/pre-orders/${encodeURIComponent(id)}`, {
             method: "PATCH",
             body: JSON.stringify(payload || {})
@@ -480,8 +560,10 @@ export function createLovableProviderClient() {
             const all = await authRequest("/admin/courses", { method: "GET" });
             const rows = Array.isArray(all) ? all : [];
             const type = filters?.type ? String(filters.type) : "";
+            const requireActive = filters?.is_active === true;
             return rows.filter((row) => {
               if (type && String(row?.type || "") !== type) return false;
+              if (requireActive && row?.is_active === false) return false;
               return true;
             });
           },
@@ -611,13 +693,43 @@ export function createLovableProviderClient() {
         };
       }
       if (name === "Appointment") {
+        const fetchAppointments = async (filters = {}, sort = "", limit) => {
+          const qs = buildEntityQuery(filters, limit);
+          const rows = await authRequest(`/admin/appointments${qs}`, { method: "GET" });
+          return sortEntityRows(Array.isArray(rows) ? rows : [], sort);
+        };
         return {
-          list: async () => [],
-          filter: async () => [],
+          list: (sort, limit) => fetchAppointments({}, sort, limit),
+          filter: fetchAppointments,
+          create: (payload) =>
+            authRequest("/admin/appointments", { method: "POST", body: JSON.stringify(payload || {}) }),
+          update: (id, payload) =>
+            authRequest(`/admin/appointments/${encodeURIComponent(id)}`, {
+              method: "PATCH",
+              body: JSON.stringify(payload || {}),
+            }),
           get: createNotImplementedMethod("entities.Appointment.get"),
-          create: createNotImplementedMethod("entities.Appointment.create"),
-          update: createNotImplementedMethod("entities.Appointment.update"),
           delete: createNotImplementedMethod("entities.Appointment.delete")
+        };
+      }
+      if (name === "TreatmentRecord") {
+        const fetchTreatmentRecords = async (filters = {}, sort = "", limit) => {
+          const qs = buildEntityQuery(filters, limit);
+          const rows = await authRequest(`/admin/treatment-records${qs}`, { method: "GET" });
+          return sortEntityRows(Array.isArray(rows) ? rows : [], sort);
+        };
+        return {
+          list: (sort, limit) => fetchTreatmentRecords({}, sort, limit),
+          filter: fetchTreatmentRecords,
+          create: (payload) =>
+            authRequest("/admin/treatment-records", { method: "POST", body: JSON.stringify(payload || {}) }),
+          update: (id, payload) =>
+            authRequest(`/admin/treatment-records/${encodeURIComponent(id)}`, {
+              method: "PATCH",
+              body: JSON.stringify(payload || {}),
+            }),
+          get: createNotImplementedMethod("entities.TreatmentRecord.get"),
+          delete: createNotImplementedMethod("entities.TreatmentRecord.delete")
         };
       }
       if (name === "PatientJourney") {
@@ -736,7 +848,8 @@ export function createLovableProviderClient() {
         const PAYMENT_FUNCTIONS = new Set([
           "createPreOrderCheckout",
           "createModelCheckout",
-          "createCheckoutSession"
+          "createCheckoutSession",
+          "createCourseCheckout",
         ]);
         const isPaymentFn = PAYMENT_FUNCTIONS.has(functionName);
         const clientTimestamp = isPaymentFn ? new Date().toISOString() : null;
@@ -758,6 +871,39 @@ export function createLovableProviderClient() {
               headers: paymentHeaders
             })
           };
+        }
+        if (functionName === "createCourseCheckout") {
+          const info = payload?.personal_info || {};
+          let promoCode = null;
+          if (payload?.promo_code_id) {
+            const promos = await requestJson("/admin/promo-codes", { method: "GET" });
+            const match = (Array.isArray(promos) ? promos : []).find(
+              (p) => String(p?.id) === String(payload.promo_code_id)
+            );
+            promoCode = match?.code || null;
+          }
+          const checkout = await requestJson("/admin/checkout/course", {
+            method: "POST",
+            body: JSON.stringify({
+              course_id: payload?.course_id,
+              course_date: payload?.course_date || null,
+              first_name: info.first_name,
+              last_name: info.last_name,
+              customer_email: info.email,
+              customer_name: `${info.first_name || ""} ${info.last_name || ""}`.trim(),
+              phone: info.phone || null,
+              terms_confirmed: true,
+              refund_policy_confirmed: true,
+              promo_code: promoCode,
+              checkout_return_to: "landing",
+              client_timestamp: clientTimestamp,
+            }),
+            headers: paymentHeaders,
+          });
+          return { data: { url: checkout?.checkout_url || null } };
+        }
+        if (functionName === "sendMdServiceConfirmationEmail") {
+          return { data: { success: true } };
         }
         if (functionName === "approvePreOrder") {
           return {

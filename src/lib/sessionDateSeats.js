@@ -39,13 +39,66 @@ export function parseSeatCount(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+/** Parse JSONB/string session_dates from API (Vercel/pg may return a string). */
+export function parseSessionDatesField(raw) {
+  if (Array.isArray(raw)) return raw.map(coerceSessionDateSeatFields);
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.map(coerceSessionDateSeatFields) : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function coerceSessionDateSeatFields(entry) {
+  if (!entry || typeof entry !== "object") return entry;
+  const max = parseSeatCount(entry.max_seats);
+  const avail = parseSeatCount(entry.available_seats);
+  return {
+    ...entry,
+    ...(max != null ? { max_seats: max } : {}),
+    ...(avail != null ? { available_seats: avail } : {}),
+  };
+}
+
+/** Mirrors backend resolveAvailableSeatsForSessionEntry. */
+export function resolveAvailableSeatsForSessionEntry(entry, enrolled = 0) {
+  const max = inferredMaxSeats(entry);
+  if (max == null || max < 0) return entry;
+  const safeEnrolled = Math.max(0, Number(enrolled) || 0);
+  let available;
+  if (safeEnrolled > 0) {
+    available = Math.max(0, max - safeEnrolled);
+  } else {
+    const stored = parseSeatCount(entry?.available_seats);
+    available = stored != null ? Math.min(max, Math.max(0, stored)) : max;
+  }
+  return { ...entry, max_seats: max, available_seats: available };
+}
+
+export function reconcileSessionDatesWithEnrollmentCounts(sessionDates, countsByDateKey) {
+  if (!Array.isArray(sessionDates)) return sessionDates;
+  const counts = countsByDateKey || new Map();
+  return sessionDates.map((entry) => {
+    const keys = [...sessionEntryCalendarKeys(entry)];
+    let enrolled = 0;
+    for (const k of keys) {
+      enrolled = Math.max(enrolled, Number(counts.get(k) || 0));
+    }
+    return resolveAvailableSeatsForSessionEntry(entry, enrolled);
+  });
+}
+
 /** Aligns seat fields on each session date (must match backend/admin/lib/sessionDateSeats.js). */
 export function normalizeScheduledSessionDatesEntries(sessionDates, previousSessionDates) {
   const prevMap = new Map();
   const prevByDateMap = new Map();
   for (const p of previousSessionDates || []) {
-    if (!p?.date) continue;
-    const dateKey = toSessionDateKey(p.date);
+    if (!p?.date && !p?.session_date) continue;
+    const dateKey = toSessionDateKey(p.date || p.session_date);
     const k = `${p.session_id || ""}::${dateKey}`;
     prevMap.set(k, p);
     if (dateKey) {
@@ -55,11 +108,16 @@ export function normalizeScheduledSessionDatesEntries(sessionDates, previousSess
     }
   }
   return (sessionDates || []).map((entry) => {
-    const maxSeats = parseSeatCount(entry?.max_seats);
+    let maxSeats = parseSeatCount(entry?.max_seats);
+    const availOnly = parseSeatCount(entry?.available_seats);
     if (maxSeats == null || maxSeats < 0) {
+      if (availOnly != null && availOnly >= 0) {
+        maxSeats = Math.max(availOnly, 1);
+        return { ...entry, max_seats: maxSeats, available_seats: Math.min(maxSeats, availOnly) };
+      }
       return { ...entry };
     }
-    const entryDateKey = toSessionDateKey(entry.date);
+    const entryDateKey = toSessionDateKey(entry.date || entry.session_date);
     const k = `${entry.session_id || ""}::${entryDateKey}`;
     const exactPrev = prevMap.get(k);
     const sameDatePrevRows = (entryDateKey ? prevByDateMap.get(entryDateKey) : null) || [];
@@ -93,24 +151,41 @@ function inferredMaxSeats(entry) {
   return max;
 }
 
+/** Bookable inventory for a session row (mirrors backend seatBoundsForDecrement). */
+export function sessionSeatBoundsForBooking(entry) {
+  let max = inferredMaxSeats(entry);
+  let avail = parseSeatCount(entry?.available_seats);
+
+  // Legacy/production rows saved before per-date seat fields were required.
+  if (max == null) {
+    if (avail != null && avail > 0) {
+      max = Math.max(avail, 1);
+    } else if (avail === 0) {
+      return null;
+    } else {
+      return { max: 1, avail: 1 };
+    }
+  }
+
+  if (max < 0) return null;
+  if (avail == null) avail = max;
+  if (avail < 0) return null;
+  if (avail > max) return null;
+  if (avail <= 0) return null;
+  return { max, avail };
+}
+
 export function hasValidSessionSeatEntry(entry) {
-  const max = inferredMaxSeats(entry);
-  const avail = parseSeatCount(entry?.available_seats);
-  if (max == null || max < 0) return false;
-  if (avail == null || avail < 0) return false;
-  if (avail > max) return false;
-  return true;
+  return sessionSeatBoundsForBooking(entry) != null;
 }
 
 export function effectiveAvailableSeats(entry) {
-  if (!hasValidSessionSeatEntry(entry)) return null;
-  const max = inferredMaxSeats(entry);
-  const avail = parseSeatCount(entry.available_seats);
-  return Math.min(max, avail);
+  const bounds = sessionSeatBoundsForBooking(entry);
+  return bounds ? bounds.avail : null;
 }
 
 export function isSessionDateEntrySoldOut(entry) {
-  return !hasValidSessionSeatEntry(entry) || effectiveAvailableSeats(entry) <= 0;
+  return sessionSeatBoundsForBooking(entry) == null;
 }
 
 export function sessionEntryCalendarKeys(entry) {
@@ -159,7 +234,7 @@ export function legacyCourseLevelSoldOut(course) {
 export function isCourseFullySoldOut(course, now = new Date()) {
   const upcoming = getUpcomingSessionEntries(course?.session_dates, now);
   if (upcoming.length === 0) return legacyCourseLevelSoldOut(course);
-  const anyBookable = upcoming.some((e) => hasValidSessionSeatEntry(e) && effectiveAvailableSeats(e) > 0);
+  const anyBookable = upcoming.some((e) => sessionSeatBoundsForBooking(e) != null);
   return !anyBookable;
 }
 
