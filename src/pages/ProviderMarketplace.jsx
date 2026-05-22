@@ -21,7 +21,7 @@ import {
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { format } from "date-fns";
-import { buildSupplierUsageStats } from "@/lib/supplierUsage";
+import { buildSupplierUsageStats, buildMonthlyTreatmentCounts, buildRecentTreatmentLines, formatTreatmentCountLabel } from "@/lib/supplierUsage";
 
 const CATEGORY_LABELS = {
   injectables: "Injectables",
@@ -703,6 +703,111 @@ function MyAccountCard({ app, mfr, me, savedRep }) {
   );
 }
 
+function UsageActivityCard({ brandRecords, totalUnits, usedLots, manufacturer }) {
+  const monthlyCounts = buildMonthlyTreatmentCounts(brandRecords);
+  const recentLines = buildRecentTreatmentLines(brandRecords, manufacturer);
+  const treatmentCount = brandRecords.length;
+
+  return (
+    <GlassCard style={{ borderRadius: 16 }}>
+      <div className="p-5">
+        <div className="flex items-center justify-between gap-3 mb-5">
+          <p className="text-xs font-black uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.35)", letterSpacing: "0.14em" }}>
+            Usage Activity
+          </p>
+          {treatmentCount > 0 && (
+            <span
+              className="text-[11px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap"
+              style={{ background: "rgba(200,230,60,0.15)", color: "#4a6b10", border: "1px solid rgba(200,230,60,0.25)" }}
+            >
+              {formatTreatmentCountLabel(treatmentCount)}
+            </span>
+          )}
+        </div>
+
+        {treatmentCount === 0 ? (
+          <div className="text-center py-6">
+            <TrendingUp className="w-8 h-8 mx-auto mb-2" style={{ color: "rgba(30,37,53,0.15)" }} />
+            <p className="text-sm font-semibold" style={{ color: "rgba(30,37,53,0.55)" }}>No treatments logged yet</p>
+            <p className="text-xs mt-1 max-w-xs mx-auto leading-relaxed" style={{ color: "rgba(30,37,53,0.4)" }}>
+              As you document treatment records using this supplier&apos;s products, your usage data will appear here automatically.
+            </p>
+          </div>
+        ) : (
+          <>
+            <p className="text-[10px] font-bold uppercase tracking-widest mb-3" style={{ color: "rgba(30,37,53,0.35)", letterSpacing: "0.12em" }}>
+              Monthly Treatments
+            </p>
+            <div className="grid grid-cols-3 gap-2 mb-5">
+              {monthlyCounts.map((month) => (
+                <div key={month.key} className="text-center">
+                  <div className="flex justify-center mb-2.5 px-3">
+                    <div
+                      className="rounded-full w-full max-w-[72px]"
+                      style={{
+                        background: month.count > 0 ? "#FA6F30" : "rgba(30,37,53,0.12)",
+                        height: month.count > 0 ? 4 : 2,
+                        marginTop: month.count > 0 ? 0 : 1,
+                      }}
+                    />
+                  </div>
+                  <p className="text-xs font-medium" style={{ color: "rgba(30,37,53,0.55)" }}>{month.label}</p>
+                </div>
+              ))}
+            </div>
+
+            <div
+              className="grid grid-cols-3 mb-5"
+              style={{ borderTop: "1px solid rgba(30,37,53,0.08)", borderBottom: "1px solid rgba(30,37,53,0.08)" }}
+            >
+              {[
+                { label: "Total Treatments", value: treatmentCount },
+                { label: "Units Used", value: totalUnits },
+                { label: "Lots Tracked", value: usedLots.size },
+              ].map(({ label, value }, index) => (
+                <div
+                  key={label}
+                  className="py-4 text-center"
+                  style={index > 0 ? { borderLeft: "1px solid rgba(30,37,53,0.08)" } : undefined}
+                >
+                  <p className="text-2xl font-bold leading-none" style={{ color: "#1e2535" }}>{value}</p>
+                  <p className="text-[10px] font-bold uppercase tracking-widest mt-2" style={{ color: "rgba(30,37,53,0.35)", letterSpacing: "0.1em" }}>
+                    {label}
+                  </p>
+                </div>
+              ))}
+            </div>
+
+            <p className="text-[10px] font-bold uppercase tracking-widest mb-3" style={{ color: "rgba(30,37,53,0.35)", letterSpacing: "0.12em" }}>
+              Recent Treatments
+            </p>
+            <div className="space-y-3">
+              {recentLines.map((line) => (
+                <div key={line.id} className="flex items-start justify-between gap-4">
+                  <div className="flex items-start gap-2.5 min-w-0">
+                    <span className="w-2 h-2 rounded-full shrink-0 mt-1.5" style={{ background: "#FA6F30" }} />
+                    <p className="text-sm font-medium leading-snug" style={{ color: "#1e2535" }}>{line.product_name}</p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="text-sm font-semibold whitespace-nowrap" style={{ color: "#1e2535" }}>
+                      {line.units} {line.unit_label}
+                    </p>
+                    {line.treatment_date && (
+                      <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.4)" }}>
+                        {format(new Date(line.treatment_date), "MMM d")}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </GlassCard>
+  );
+}
+
 function ApprovedSupplierDetailView({
   mfr,
   me,
@@ -710,8 +815,6 @@ function ApprovedSupplierDetailView({
   brandRecords,
   totalUnits,
   usedLots,
-  lastUsed,
-  brandCerts,
 }) {
   const col = CATEGORY_COLORS[mfr.category] || CATEGORY_COLORS.other;
   const perks = mfr.benefits?.length > 0 ? mfr.benefits : DEFAULT_NOVI_UNLOCK_BENEFITS;
@@ -815,50 +918,12 @@ function ApprovedSupplierDetailView({
       )}
 
       {/* Usage activity */}
-      <GlassCard style={{ borderRadius: 16 }}>
-        <div className="p-5">
-          <p className="text-xs font-black uppercase tracking-widest mb-4" style={{ color: "#7B8EC8", letterSpacing: "0.14em" }}>
-            Usage Activity
-          </p>
-          {brandRecords.length === 0 ? (
-            <div className="text-center py-6">
-              <TrendingUp className="w-8 h-8 mx-auto mb-2" style={{ color: "rgba(30,37,53,0.15)" }} />
-              <p className="text-sm font-semibold" style={{ color: "rgba(30,37,53,0.55)" }}>No treatments logged yet</p>
-              <p className="text-xs mt-1 max-w-xs mx-auto leading-relaxed" style={{ color: "rgba(30,37,53,0.4)" }}>
-                As you document treatment records using this supplier&apos;s products, your usage data will appear here automatically.
-              </p>
-            </div>
-          ) : (
-            <>
-              <div className="grid grid-cols-3 gap-3 mb-3">
-                {[
-                  { label: "Treatments", value: brandRecords.length },
-                  { label: "Units Used", value: totalUnits },
-                  { label: "Lot #s Tracked", value: usedLots.size },
-                ].map(({ label, value }) => (
-                  <div key={label} className="rounded-xl px-3 py-2.5 text-center" style={{ background: "rgba(200,230,60,0.08)", border: "1px solid rgba(200,230,60,0.2)" }}>
-                    <p className="font-bold text-lg" style={{ color: "#1e2535" }}>{value}</p>
-                    <p className="text-xs" style={{ color: "rgba(30,37,53,0.45)" }}>{label}</p>
-                  </div>
-                ))}
-              </div>
-              {lastUsed && (
-                <p className="text-xs" style={{ color: "rgba(30,37,53,0.4)" }}>
-                  Last used: {format(new Date(lastUsed), "MMM d, yyyy")}
-                </p>
-              )}
-              {brandCerts.length > 0 && (
-                <div className="flex items-center gap-1.5 mt-2">
-                  <ShieldCheck className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#4a6b10" }} />
-                  <p className="text-xs font-semibold" style={{ color: "#4a6b10" }}>
-                    {brandCerts.length} NOVI certification{brandCerts.length > 1 ? "s" : ""} for this brand&apos;s products
-                  </p>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      </GlassCard>
+      <UsageActivityCard
+        brandRecords={brandRecords}
+        totalUnits={totalUnits}
+        usedLots={usedLots}
+        manufacturer={mfr}
+      />
 
       {/* Product portfolio */}
       <GlassCard style={{ borderRadius: 16 }}>
@@ -926,12 +991,7 @@ function SupplierDetailView({ mfr, onBack, onApply, application, me, treatmentRe
   const statusCfg = app ? (APP_STATUS_CONFIG[app.status] || APP_STATUS_CONFIG.pending) : null;
   const isApproved = app?.status === "approved";
 
-  const mfrNameLower = mfr.name?.toLowerCase() || "";
-  const { brandRecords, totalUnits, usedLots, lastUsed } = buildSupplierUsageStats(treatmentRecords, mfr);
-  const brandCerts = certifications.filter(c =>
-    (mfr?.products || []).some(p => c.certification_name?.toLowerCase().includes(p.toLowerCase()) ||
-      c.service_type_name?.toLowerCase().includes(mfrNameLower))
-  );
+  const { brandRecords, totalUnits, usedLots } = buildSupplierUsageStats(treatmentRecords, mfr);
 
   const heroPhoto = getSupplierCoverUrl(mfr);
   const uploadedCover = hasUploadedCover(mfr);
@@ -945,8 +1005,6 @@ function SupplierDetailView({ mfr, onBack, onApply, application, me, treatmentRe
         brandRecords={brandRecords}
         totalUnits={totalUnits}
         usedLots={usedLots}
-        lastUsed={lastUsed}
-        brandCerts={brandCerts}
       />
     );
   }

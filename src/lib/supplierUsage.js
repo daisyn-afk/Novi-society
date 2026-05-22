@@ -1,4 +1,9 @@
 const SUBMITTED_STATUS = "submitted";
+const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function monthKey(date) {
+  return `${date.getFullYear()}-${date.getMonth()}`;
+}
 
 export function normalizeProductName(value) {
   return String(value || "").trim().toLowerCase();
@@ -81,6 +86,56 @@ export function unitsUsedForManufacturer(record, manufacturer) {
   return 0;
 }
 
+export function buildMonthlyTreatmentCounts(brandRecords = [], monthCount = 3) {
+  const now = new Date();
+  const months = [];
+
+  for (let offset = monthCount - 1; offset >= 0; offset -= 1) {
+    const date = new Date(now.getFullYear(), now.getMonth() - offset, 1);
+    months.push({
+      key: monthKey(date),
+      label: MONTH_SHORT[date.getMonth()],
+      count: 0,
+    });
+  }
+
+  brandRecords.forEach((record) => {
+    if (!record.treatment_date) return;
+    const date = new Date(record.treatment_date);
+    if (Number.isNaN(date.getTime())) return;
+    const bucket = months.find((month) => month.key === monthKey(date));
+    if (bucket) bucket.count += 1;
+  });
+
+  return months;
+}
+
+export function buildRecentTreatmentLines(brandRecords = [], manufacturer, limit = 5) {
+  const lines = [];
+
+  brandRecords.forEach((record) => {
+    const matching = matchingProductsForManufacturer(record, manufacturer);
+    matching.forEach((product) => {
+      const amount = Number(product.amount);
+      const units = Number.isFinite(amount) && amount > 0
+        ? amount
+        : (matching.length === 1 ? Number(record.units_used) || 0 : 0);
+
+      lines.push({
+        id: `${record.id}-${product.product_name}`,
+        product_name: product.product_name,
+        units,
+        unit_label: record.units_label || "units",
+        treatment_date: record.treatment_date,
+      });
+    });
+  });
+
+  return lines
+    .sort((a, b) => new Date(b.treatment_date) - new Date(a.treatment_date))
+    .slice(0, limit);
+}
+
 export function buildSupplierUsageStats(treatmentRecords = [], manufacturer) {
   const brandRecords = treatmentRecords.filter((record) => recordUsesManufacturer(record, manufacturer));
   const usedLots = new Set();
@@ -104,6 +159,11 @@ export function buildSupplierUsageStats(treatmentRecords = [], manufacturer) {
     : null;
 
   return { brandRecords, totalUnits, usedLots, lastUsed };
+}
+
+export function formatTreatmentCountLabel(count = 0) {
+  if (count === 1) return "1 treatment logged";
+  return `${count} treatments logged`;
 }
 
 export function getInventoryProductSelectValue(product, inventoryOptions = []) {
