@@ -1426,7 +1426,6 @@ export default function ProviderMarketplace() {
                 me={me}
                 myApplications={approvedApplications}
                 manufacturers={manufacturers}
-                inventoryOnly
               />
             ) : approvedApplications.length === 0 ? (
               <GlassCard className="py-16 text-center">

@@ -40,6 +40,7 @@ export default function OrderRequestDialog({ open, onClose, manufacturer, me, sa
         order_items: validItems.map((i) => ({ ...i, quantity: parseFloat(i.quantity) || 0 })),
       });
       qc.invalidateQueries({ queryKey: ["my-order-requests"] });
+      qc.invalidateQueries({ queryKey: ["my-inventory"] });
       qc.invalidateQueries({ queryKey: ["all-provider-inventory"] });
       qc.invalidateQueries({ queryKey: ["manufacturer-order-inventory"] });
       setSent(true);
