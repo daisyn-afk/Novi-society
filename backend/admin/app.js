@@ -39,6 +39,8 @@ const { functionsRouter } = await import("./functions/routes.js");
 const { patientJourneyRouter } = await import("./patient-journey/routes.js");
 const { integrationsRouter } = await import("./integrations/routes.js");
 const { mdMessagesRouter } = await import("./md-messages/routes.js");
+const { appointmentsRouter } = await import("./appointments/routes.js");
+const { treatmentRecordsRouter } = await import("./treatment-records/routes.js");
 
 export function createAdminApp() {
   const app = express();
@@ -79,6 +81,8 @@ export function createAdminApp() {
   app.use("/admin/patient-journey", patientJourneyRouter);
   app.use("/admin/integrations", integrationsRouter);
   app.use("/admin/md-messages", mdMessagesRouter);
+  app.use("/admin/appointments", appointmentsRouter);
+  app.use("/admin/treatment-records", treatmentRecordsRouter);
   app.use("/functions", functionsRouter);
 
   app.use((error, _req, res, _next) => {
