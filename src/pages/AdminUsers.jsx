@@ -419,7 +419,7 @@ export default function AdminUsers() {
           }
         }}
       >
-        <DialogContent className="max-w-xl">
+        <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editing ? `Edit ${editing.email}` : "Create User"}</DialogTitle>
           </DialogHeader>
@@ -522,39 +522,41 @@ export default function AdminUsers() {
                     Select the modules this staff user can access. Dashboard is always included.
                   </p>
                 </div>
-                {Array.from(
-                  new Set(STAFF_MODULE_CATALOG.map((m) => m.group))
-                ).map((group) => (
-                  <div key={group}>
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
-                      {group}
-                    </p>
-                    <div className="grid grid-cols-2 gap-x-4 gap-y-2">
-                      {STAFF_MODULE_CATALOG.filter((m) => m.group === group).map((module) => (
-                        <label
-                          key={module.key}
-                          className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer select-none"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={form.permissions?.[module.key] === true}
-                            onChange={(e) =>
-                              setForm((f) => ({
-                                ...f,
-                                permissions: {
-                                  ...f.permissions,
-                                  [module.key]: e.target.checked
-                                }
-                              }))
-                            }
-                            className="rounded"
-                          />
-                          <span>{module.label}</span>
-                        </label>
-                      ))}
+                <div className="space-y-3">
+                  {Array.from(
+                    new Set(STAFF_MODULE_CATALOG.map((m) => m.group))
+                  ).map((group) => (
+                    <div key={group}>
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
+                        {group}
+                      </p>
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                        {STAFF_MODULE_CATALOG.filter((m) => m.group === group).map((module) => (
+                          <label
+                            key={module.key}
+                            className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer select-none"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={form.permissions?.[module.key] === true}
+                              onChange={(e) =>
+                                setForm((f) => ({
+                                  ...f,
+                                  permissions: {
+                                    ...f.permissions,
+                                    [module.key]: e.target.checked
+                                  }
+                                }))
+                              }
+                              className="rounded"
+                            />
+                            <span>{module.label}</span>
+                          </label>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
             )}
 

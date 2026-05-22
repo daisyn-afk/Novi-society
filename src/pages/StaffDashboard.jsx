@@ -8,11 +8,20 @@ import { ClipboardList, Users, Clock, CheckCircle2, AlertCircle, ArrowRight } fr
 import { STAFF_MODULE_CATALOG } from "@/lib/routeAccessPolicy";
 
 const MODULE_ICONS = {
-  StaffEnrollments:  ClipboardList,
-  StaffProviders:    Users,
-  StaffModelSignups: Users,
-  StaffPreOrders:    ClipboardList,
-  StaffCompliance:   AlertCircle,
+  AdminUsers:          Users,
+  AdminPreOrders:      ClipboardList,
+  admincourses:        ClipboardList,
+  AdminEnrollments:    ClipboardList,
+  AdminProviders:      Users,
+  AdminLicenses:       AlertCircle,
+  AdminServiceTypes:   AlertCircle,
+  AdminPromoCodes:     CheckCircle2,
+  AdminManufacturers:  Users,
+  AdminEmailTemplates: Clock,
+  AdminLaunchPad:      CheckCircle2,
+  AdminWizardConfig:   AlertCircle,
+  AdminCompliance:     AlertCircle,
+  AdminModelSignups:   Users,
 };
 
 function StatCard({ label, value, color, icon: Icon }) {
@@ -47,9 +56,9 @@ export default function StaffDashboard() {
     queryFn: () => base44.auth.me(),
     retry: false,
   });
-  const canViewPreOrders = user?.permissions?.StaffPreOrders === true;
-  const canViewModelSignups = user?.permissions?.StaffModelSignups === true;
-  const canViewEnrollments = user?.permissions?.StaffEnrollments === true;
+  const canViewPreOrders = user?.permissions?.AdminPreOrders === true;
+  const canViewModelSignups = user?.permissions?.AdminModelSignups === true;
+  const canViewEnrollments = user?.permissions?.AdminEnrollments === true;
 
   const { data: preOrdersRaw = [] } = useQuery({
     queryKey: ["staff-dash-preorders"],
@@ -124,7 +133,7 @@ export default function StaffDashboard() {
           <div className="rounded-2xl p-5 space-y-3" style={{ background: "rgba(255,255,255,0.5)", border: "1px solid rgba(0,0,0,0.07)" }}>
             <div className="flex items-center justify-between">
               <h2 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 17, color: "#1e2535" }}>Pending Applications</h2>
-              <Link to={createPageUrl("StaffPreOrders")} className="flex items-center gap-1 text-xs font-semibold" style={{ color: "#7B8EC8" }}>
+              <Link to={createPageUrl("AdminPreOrders")} className="flex items-center gap-1 text-xs font-semibold" style={{ color: "#7B8EC8" }}>
                 View all <ArrowRight className="w-3.5 h-3.5" />
               </Link>
             </div>
@@ -154,7 +163,7 @@ export default function StaffDashboard() {
           <div className="rounded-2xl p-5 space-y-3" style={{ background: "rgba(255,255,255,0.5)", border: "1px solid rgba(0,0,0,0.07)" }}>
             <div className="flex items-center justify-between">
               <h2 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 17, color: "#1e2535" }}>GFE Not Sent</h2>
-              <Link to={createPageUrl("StaffModelSignups")} className="flex items-center gap-1 text-xs font-semibold" style={{ color: "#7B8EC8" }}>
+              <Link to={createPageUrl("AdminModelSignups")} className="flex items-center gap-1 text-xs font-semibold" style={{ color: "#7B8EC8" }}>
                 View all <ArrowRight className="w-3.5 h-3.5" />
               </Link>
             </div>

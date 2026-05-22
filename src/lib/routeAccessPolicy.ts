@@ -89,12 +89,22 @@ export const ALLOWED_PAGES_BY_ROLE: Record<string, Set<string>> = {
 
 // Canonical list of modules that can be individually granted to staff users.
 // StaffDashboard is always granted and is excluded from the toggle UI.
+// These modules mirror the admin sidebar options.
 export const STAFF_MODULE_CATALOG: Array<{ key: string; label: string; group: string }> = [
-  { key: "StaffEnrollments",  label: "Enrollments",            group: "Operations" },
-  { key: "StaffProviders",    label: "Provider Lookup",        group: "Operations" },
-  { key: "StaffModelSignups", label: "Model Sign-ups",         group: "Operations" },
-  { key: "StaffPreOrders",    label: "Pre-Order Applications", group: "Operations" },
-  { key: "StaffCompliance",   label: "Compliance Logs",        group: "Management" },
+  { key: "AdminUsers",          label: "Users",                      group: "Core" },
+  { key: "AdminPreOrders",      label: "Pre-Order Applications",     group: "Operations" },
+  { key: "admincourses",        label: "Courses",                    group: "Operations" },
+  { key: "AdminEnrollments",    label: "Enrollments",                group: "Operations" },
+  { key: "AdminProviders",      label: "Providers",                  group: "Operations" },
+  { key: "AdminLicenses",       label: "Licenses & Certifications",  group: "Operations" },
+  { key: "AdminServiceTypes",   label: "Service Types",              group: "Configuration" },
+  { key: "AdminPromoCodes",     label: "Promo Codes",                group: "Growth" },
+  { key: "AdminManufacturers",  label: "Manufacturer Marketplace",   group: "Growth" },
+  { key: "AdminEmailTemplates", label: "Email Automation",           group: "Growth" },
+  { key: "AdminLaunchPad",      label: "Growth Studio Editor",       group: "Growth" },
+  { key: "AdminWizardConfig",   label: "Wizard Configuration",       group: "Configuration" },
+  { key: "AdminCompliance",     label: "Compliance & Reviews",       group: "Compliance" },
+  { key: "AdminModelSignups",   label: "Model sign-ups",             group: "Operations" },
 ];
 
 export const SHARED_AUTH_PAGES = new Set([
