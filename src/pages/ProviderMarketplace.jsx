@@ -12,7 +12,7 @@ import {
   Search, CheckCircle, Send, Building2, ChevronRight, Star, Globe, ExternalLink,
   Sparkles, ShieldCheck, Zap, Award, Users, Package, ArrowLeft,
   Clock, CheckCircle2, XCircle, AlertCircle, Mail, MapPin, TrendingUp,
-  Tag, Layers, RefreshCw, Calendar, Headphones
+  Tag, Layers, RefreshCw, Calendar, Headphones, Bookmark
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
@@ -101,7 +101,7 @@ function getSupplierCoverUrl(mfr) {
   );
 }
 
-const SUPPLIER_CARD_HEIGHT = 280;
+const SUPPLIER_CARD_HEIGHT = 320;
 
 const DEFAULT_NOVI_UNLOCK_BENEFITS = [
   "Exclusive NOVI member pricing",
@@ -117,212 +117,181 @@ function SupplierMarketplaceCard({
   onOpen,
 }) {
   const photo = getSupplierCoverUrl(mfr);
-  const uploadedCover = hasUploadedCover(mfr);
+  const isApproved = applied?.status === "approved";
+  const isApplied = !!applied;
   const StatusIcon = appStatus?.icon;
 
   return (
-    <button
-      type="button"
+    <article
+      role="button"
+      tabIndex={0}
       onClick={onOpen}
-      className="group relative text-left overflow-hidden w-full"
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+      className="group text-left overflow-hidden w-full bg-white cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-[rgba(30,37,53,0.35)] focus-visible:ring-offset-2"
       style={{
         borderRadius: 16,
         boxShadow: "0 4px 20px rgba(30,37,53,0.14)",
-        height: SUPPLIER_CARD_HEIGHT,
         transition: "transform 0.25s ease, box-shadow 0.25s ease",
       }}
       onMouseEnter={(e) => {
         e.currentTarget.style.transform = "translateY(-4px)";
+        e.currentTarget.style.boxShadow = "0 8px 28px rgba(30,37,53,0.18)";
       }}
       onMouseLeave={(e) => {
         e.currentTarget.style.transform = "translateY(0)";
+        e.currentTarget.style.boxShadow = "0 4px 20px rgba(30,37,53,0.14)";
       }}
     >
-      <img
-        src={photo}
-        alt={`${mfr.name} cover`}
-        className="absolute inset-0 w-full h-full object-cover"
-        style={{ transition: "transform 0.5s ease" }}
-      />
-
-      {!uploadedCover && (
-        <div
-          className="absolute inset-0 pointer-events-none"
-          style={{ backdropFilter: "blur(1px)", WebkitBackdropFilter: "blur(1px)" }}
+      <div className="relative h-[148px] overflow-hidden">
+        <img
+          src={photo}
+          alt={`${mfr.name} cover`}
+          className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
         />
-      )}
 
-      {/* Strong bottom-weighted overlay so text stays readable on any cover */}
-      <div
-        className="absolute inset-0 pointer-events-none"
-        style={{
-          background:
-            "linear-gradient(180deg, rgba(8,10,20,0.45) 0%, rgba(8,10,20,0.55) 40%, rgba(8,10,20,0.97) 100%)",
-        }}
-      />
-
-      <div className="relative z-10 flex h-full flex-col p-4">
-        {/* Top row — category + badges (fixed height) */}
-        <div className="flex items-start justify-between gap-2 min-h-[28px]">
+        {isApproved ? (
           <span
-            className="text-xs font-semibold px-2.5 py-1 rounded-full shrink-0 max-w-[55%] truncate"
+            className="absolute top-3 left-3 w-2.5 h-2.5 rounded-full"
             style={{
-              background: "rgba(255,255,255,0.16)",
-              color: "rgba(255,255,255,0.95)",
-              backdropFilter: "blur(12px)",
-              border: "1px solid rgba(255,255,255,0.2)",
+              background: "#5a7a20",
+              boxShadow: "0 0 0 2px rgba(255,255,255,0.85)",
             }}
-            title={CATEGORY_LABELS[mfr.category]}
-          >
-            {CATEGORY_LABELS[mfr.category]}
-          </span>
-          <div className="flex flex-wrap items-center justify-end gap-1.5 shrink-0">
-            {mfr.is_featured ? (
-              <span
-                className="flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-full whitespace-nowrap"
-                style={{
-                  background: "rgba(200,230,60,0.22)",
-                  color: "#d4f04a",
-                  backdropFilter: "blur(12px)",
-                  border: "1px solid rgba(200,230,60,0.35)",
-                }}
-              >
-                <Star className="w-2.5 h-2.5 shrink-0" /> Featured
-              </span>
-            ) : null}
-            {mfr.fda_approved_us_products ? (
-              <span
-                className="text-xs font-bold px-2.5 py-1 rounded-full whitespace-nowrap"
-                style={{
-                  background: "rgba(255,255,255,0.14)",
-                  color: "rgba(255,255,255,0.95)",
-                  backdropFilter: "blur(12px)",
-                  border: "1px solid rgba(255,255,255,0.18)",
-                }}
-              >
-                FDA ✓
-              </span>
-            ) : null}
-          </div>
-        </div>
+          />
+        ) : null}
 
-        <div className="flex-1 min-h-2" />
+        <button
+          type="button"
+          aria-label="Save supplier"
+          onClick={(e) => e.stopPropagation()}
+          className="absolute top-3 right-3 w-8 h-8 rounded-full flex items-center justify-center transition-colors hover:bg-white"
+          style={{
+            background: "rgba(255,255,255,0.82)",
+            border: "1px solid rgba(30,37,53,0.08)",
+          }}
+        >
+          <Bookmark className="w-3.5 h-3.5" style={{ color: "rgba(30,37,53,0.45)" }} />
+        </button>
 
-        {/* Bottom content — anchored, never overlaps top */}
-        <div className="space-y-3">
-          <div className="flex items-end gap-3">
-            <SupplierLogo mfr={mfr} size={48} className="rounded-xl shrink-0" />
+        <span
+          className="absolute bottom-3 left-3 text-[11px] font-semibold px-2.5 py-1 rounded-full max-w-[75%] truncate"
+          style={{
+            background: "rgba(30,37,53,0.78)",
+            color: "#fff",
+            backdropFilter: "blur(8px)",
+          }}
+          title={CATEGORY_LABELS[mfr.category]}
+        >
+          {CATEGORY_LABELS[mfr.category]}
+        </span>
+      </div>
+
+      <div className="p-4">
+        <div className="flex items-start gap-3 mb-3.5">
+          <SupplierLogo mfr={mfr} size={40} variant="card" className="rounded-[10px] shrink-0" />
+          <div className="flex-1 min-w-0 pt-0.5">
             <p
-              className="flex-1 min-w-0 line-clamp-2 pb-0.5"
+              className="line-clamp-2 leading-tight"
               style={{
                 fontFamily: "'DM Serif Display', serif",
-                fontSize: 20,
-                color: "#fff",
-                lineHeight: 1.15,
+                fontSize: 17,
+                color: "#1e2535",
                 fontWeight: 400,
-                textShadow: "0 1px 8px rgba(0,0,0,0.45)",
               }}
             >
               {mfr.name}
             </p>
+            {mfr.products?.length > 0 ? (
+              <p
+                className="text-xs mt-1 line-clamp-2 leading-relaxed"
+                style={{ color: "rgba(30,37,53,0.45)" }}
+              >
+                {mfr.products.slice(0, 3).join(" · ")}
+                {mfr.products.length > 3 ? ` · +${mfr.products.length - 3}` : ""}
+              </p>
+            ) : mfr.description ? (
+              <p
+                className="text-xs mt-1 line-clamp-2 leading-relaxed"
+                style={{ color: "rgba(30,37,53,0.45)" }}
+              >
+                {mfr.description}
+              </p>
+            ) : null}
           </div>
-
-          {mfr.description ? (
-            <p
-              className="text-xs line-clamp-2"
-              style={{ color: "rgba(255,255,255,0.72)", lineHeight: 1.5 }}
-            >
-              {mfr.description}
-            </p>
-          ) : null}
-
-          {mfr.products?.length > 0 ? (
-            <div className="flex flex-wrap gap-1.5 max-h-[52px] overflow-hidden">
-              {mfr.products.slice(0, 2).map((p, i) => (
-                <span
-                  key={i}
-                  className="text-xs px-2.5 py-0.5 rounded-full truncate max-w-full"
-                  style={{
-                    background: "rgba(255,255,255,0.12)",
-                    color: "rgba(255,255,255,0.85)",
-                    border: "1px solid rgba(255,255,255,0.15)",
-                  }}
-                >
-                  {p}
-                </span>
-              ))}
-              {mfr.products.length > 2 ? (
-                <span className="text-xs px-2 py-0.5" style={{ color: "rgba(255,255,255,0.5)" }}>
-                  +{mfr.products.length - 2}
-                </span>
-              ) : null}
-            </div>
-          ) : null}
-
-          {applied && appStatus ? (
-            appStatus.label === "Approved" ? (
-              <span
-                className="inline-flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider px-3 py-1.5 rounded-full"
-                style={{
-                  background: "rgba(30,37,53,0.55)",
-                  color: "#C8E63C",
-                  border: "1px solid rgba(200,230,60,0.35)",
-                  backdropFilter: "blur(10px)",
-                  boxShadow: "0 2px 10px rgba(0,0,0,0.18)",
-                }}
-              >
-                <span
-                  className="w-1.5 h-1.5 rounded-full shrink-0"
-                  style={{ background: "#C8E63C", boxShadow: "0 0 6px rgba(200,230,60,0.75)" }}
-                />
-                Account Active
-              </span>
-            ) : (
-              <span
-                className="inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-full"
-                style={{ background: appStatus.bg, color: appStatus.color, border: `1px solid ${appStatus.border}` }}
-              >
-                {StatusIcon ? <StatusIcon className="w-3 h-3 shrink-0" /> : null}
-                {appStatus.label}
-              </span>
-            )
-          ) : (
-            <div className="flex items-center justify-between gap-2 pt-0.5">
-              <span
-                className="text-sm font-semibold px-4 py-2 rounded-full whitespace-nowrap"
-                style={{ background: "rgba(255,255,255,0.95)", color: "#1e2535" }}
-              >
-                Apply for Account
-              </span>
-              <div
-                className="w-9 h-9 rounded-full flex items-center justify-center shrink-0"
-                style={{
-                  background: "rgba(255,255,255,0.15)",
-                  border: "1px solid rgba(255,255,255,0.25)",
-                }}
-              >
-                <ChevronRight className="w-4 h-4" style={{ color: "#fff" }} />
-              </div>
-            </div>
-          )}
         </div>
+
+        {isApproved ? (
+          <div
+            className="flex items-center justify-center gap-2 py-2.5 rounded-xl"
+            style={{
+              background: "rgba(200,230,60,0.12)",
+              border: "1px solid rgba(200,230,60,0.35)",
+            }}
+          >
+            <span
+              className="w-1.5 h-1.5 rounded-full shrink-0"
+              style={{ background: "#5a7a20" }}
+            />
+            <span className="text-sm font-semibold" style={{ color: "#4a6b10" }}>
+              Approved
+            </span>
+          </div>
+        ) : isApplied && appStatus ? (
+          <div
+            className="flex items-center justify-center gap-2 py-2.5 rounded-xl"
+            style={{
+              background: appStatus.bg,
+              border: `1px solid ${appStatus.border}`,
+            }}
+          >
+            {StatusIcon ? (
+              <StatusIcon className="w-3.5 h-3.5 shrink-0" style={{ color: appStatus.color }} />
+            ) : null}
+            <span className="text-sm font-semibold" style={{ color: appStatus.color }}>
+              {appStatus.label}
+            </span>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpen();
+            }}
+            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl transition-opacity hover:opacity-90"
+            style={{ background: "#1e2535" }}
+          >
+            <Zap className="w-4 h-4 shrink-0" style={{ color: "#C8E63C" }} fill="#C8E63C" />
+            <span className="text-sm font-bold tracking-wide" style={{ color: "#C8E63C" }}>
+              Activate Access
+            </span>
+          </button>
+        )}
       </div>
-    </button>
+    </article>
   );
 }
 
-function SupplierLogo({ mfr, size = 44, className = "" }) {
+function SupplierLogo({ mfr, size = 44, className = "", variant = "default" }) {
   const logo = getSupplierLogoUrl(mfr);
   const col = CATEGORY_COLORS[mfr?.category] || CATEGORY_COLORS.other;
+  const initial = mfr?.name?.trim()?.[0]?.toUpperCase() || "S";
+  const isCard = variant === "card";
+
   return (
     <div
-      className={`flex items-center justify-center flex-shrink-0 overflow-hidden rounded-xl ${className}`}
+      className={`flex items-center justify-center flex-shrink-0 overflow-hidden ${className}`}
       style={{
         width: size,
         height: size,
-        background: "#fff",
-        border: "1px solid rgba(255,255,255,0.9)",
-        boxShadow: "0 2px 12px rgba(30,37,53,0.15)",
+        background: isCard && !logo ? col.bg : "#fff",
+        border: isCard ? `1px solid ${col.border}` : "1px solid rgba(255,255,255,0.9)",
+        boxShadow: isCard ? "none" : "0 2px 12px rgba(30,37,53,0.15)",
+        borderRadius: isCard ? 10 : undefined,
       }}
     >
       {logo ? (
@@ -331,6 +300,13 @@ function SupplierLogo({ mfr, size = 44, className = "" }) {
           alt={`${mfr?.name || "Supplier"} logo`}
           className="w-full h-full object-contain p-1.5"
         />
+      ) : isCard ? (
+        <span
+          className="font-bold select-none"
+          style={{ color: col.color, fontSize: size * 0.42 }}
+        >
+          {initial}
+        </span>
       ) : (
         <div
           className="w-full h-full flex items-center justify-center"
