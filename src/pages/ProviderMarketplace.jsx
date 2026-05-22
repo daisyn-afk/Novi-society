@@ -8,6 +8,7 @@ import ProviderSalesLock from "@/components/ProviderSalesLock";
 import { useProviderAccess } from "@/components/useProviderAccess";
 import RepContactDialog from "@/components/provider/RepContactDialog";
 import OrderRequestDialog from "@/components/provider/OrderRequestDialog";
+import SaveRepContactForm, { resolveRepDisplay } from "@/components/provider/SaveRepContactForm";
 import {
   Search, CheckCircle, Send, Building2, ChevronRight, Star, Globe, ExternalLink,
   Sparkles, ShieldCheck, Zap, Award, Users, Package, ArrowLeft,
@@ -373,6 +374,13 @@ function ApprovedAccountHub({ mfr, me, className = "", layout = "default" }) {
   const [contactType, setContactType] = useState("order");
   const [orderOpen, setOrderOpen] = useState(false);
 
+  const { data: savedRep } = useQuery({
+    queryKey: ["provider-manufacturer-rep", mfr?.id],
+    queryFn: () => base44.entities.ProviderManufacturerRep.lookup({ manufacturer_id: mfr.id }),
+    enabled: !!mfr?.id,
+  });
+  const rep = resolveRepDisplay(savedRep, mfr);
+
   if (!mfr) {
     return (
       <div
@@ -462,14 +470,15 @@ function ApprovedAccountHub({ mfr, me, className = "", layout = "default" }) {
           </div>
         )}
 
-        {layout === "default" && (mfr.account_rep_name || mfr.account_rep_email) && (
+        {layout === "default" && rep.rep_email && (
           <p className="text-xs" style={{ color: "rgba(30,37,53,0.45)" }}>
             Rep:{" "}
-            {mfr.account_rep_name ? (
-              <strong style={{ color: "rgba(30,37,53,0.7)" }}>{mfr.account_rep_name}</strong>
+            {rep.rep_name ? (
+              <strong style={{ color: "rgba(30,37,53,0.7)" }}>{rep.rep_name}</strong>
             ) : null}
-            {mfr.account_rep_name && mfr.account_rep_email ? " · " : null}
-            {mfr.account_rep_email || null}
+            {rep.rep_name && rep.rep_email ? " · " : null}
+            {rep.rep_email}
+            {rep.rep_phone ? ` · ${rep.rep_phone}` : null}
           </p>
         )}
       </div>
@@ -479,12 +488,14 @@ function ApprovedAccountHub({ mfr, me, className = "", layout = "default" }) {
         manufacturer={mfr}
         me={me}
         initialType={contactType}
+        savedRep={savedRep}
       />
       <OrderRequestDialog
         open={orderOpen}
         onClose={() => setOrderOpen(false)}
         manufacturer={mfr}
         me={me}
+        savedRep={savedRep}
       />
     </>
   );
@@ -502,6 +513,13 @@ function ApprovedSupplierDetailView({
 }) {
   const col = CATEGORY_COLORS[mfr.category] || CATEGORY_COLORS.other;
   const perks = mfr.benefits?.length > 0 ? mfr.benefits : DEFAULT_NOVI_UNLOCK_BENEFITS;
+
+  const { data: savedRep } = useQuery({
+    queryKey: ["provider-manufacturer-rep", mfr?.id],
+    queryFn: () => base44.entities.ProviderManufacturerRep.lookup({ manufacturer_id: mfr.id }),
+    enabled: !!mfr?.id,
+  });
+  const rep = resolveRepDisplay(savedRep, mfr);
 
   return (
     <div className="space-y-4">
@@ -568,7 +586,7 @@ function ApprovedSupplierDetailView({
       <ApprovedAccountHub mfr={mfr} me={me} layout="tiles" />
 
       {/* Account rep */}
-      {(mfr.account_rep_name || mfr.account_rep_email) && (
+      {rep.rep_email && (
         <div
           className="flex items-center gap-3 px-4 py-3.5 rounded-xl"
           style={{ background: "rgba(255,255,255,0.85)", border: "1px solid rgba(30,37,53,0.08)" }}
@@ -583,12 +601,13 @@ function ApprovedSupplierDetailView({
             <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.4)", letterSpacing: "0.12em" }}>
               Your Account Rep
             </p>
-            {mfr.account_rep_name && (
-              <p className="text-sm font-semibold truncate" style={{ color: "#1e2535" }}>{mfr.account_rep_name}</p>
+            {rep.rep_name && (
+              <p className="text-sm font-semibold truncate" style={{ color: "#1e2535" }}>{rep.rep_name}</p>
             )}
-            {mfr.account_rep_email && (
-              <p className="text-xs truncate" style={{ color: "rgba(30,37,53,0.5)" }}>{mfr.account_rep_email}</p>
-            )}
+            <p className="text-xs truncate" style={{ color: "rgba(30,37,53,0.5)" }}>{rep.rep_email}</p>
+            {rep.rep_phone ? (
+              <p className="text-xs truncate" style={{ color: "rgba(30,37,53,0.45)" }}>{rep.rep_phone}</p>
+            ) : null}
           </div>
         </div>
       )}
@@ -980,6 +999,8 @@ export default function ProviderMarketplace() {
   const [viewMode, setViewMode] = useState("directory"); // "directory" | "detail" | "apply"
   const [formData, setFormData] = useState({});
   const [submitted, setSubmitted] = useState(false);
+  const [lastApplication, setLastApplication] = useState(null);
+  const [editingRepMfrId, setEditingRepMfrId] = useState(null);
   const qc = useQueryClient();
 
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => base44.auth.me() });
@@ -1043,13 +1064,20 @@ export default function ProviderMarketplace() {
     enabled: !!me,
   });
 
+  const { data: savedReps = [] } = useQuery({
+    queryKey: ["provider-manufacturer-reps"],
+    queryFn: () => base44.entities.ProviderManufacturerRep.list(),
+    enabled: !!me,
+  });
+
   const submitMutation = useMutation({
     mutationFn: () => base44.functions.invoke("sendManufacturerInquiry", {
       manufacturer_id: selectedManufacturer.id,
       form_data: formData,
     }),
-    onSuccess: () => {
+    onSuccess: (res) => {
       setSubmitted(true);
+      setLastApplication(res?.data?.application || null);
       qc.invalidateQueries({ queryKey: ["my-manufacturer-applications"] });
     },
   });
@@ -1114,6 +1142,7 @@ export default function ProviderMarketplace() {
   }, {});
 
   const existingAppMap = Object.fromEntries(myApplications.map(a => [a.manufacturer_id, a]));
+  const savedRepByMfrId = Object.fromEntries(savedReps.map((r) => [r.manufacturer_id, r]));
   const activeCategories = Object.keys(CATEGORY_LABELS).filter(c => grouped[c]?.length > 0);
 
   const approvedCount = myApplications.filter(a => a.status === "approved").length;
@@ -1173,6 +1202,8 @@ export default function ProviderMarketplace() {
                   const col = mfr ? (CATEGORY_COLORS[mfr.category] || CATEGORY_COLORS.other) : CATEGORY_COLORS.other;
                   const statusCfg = APP_STATUS_CONFIG[app.status] || APP_STATUS_CONFIG.pending;
                   const StatusIcon = statusCfg.icon;
+                  const savedRep = savedRepByMfrId[app.manufacturer_id];
+                  const rep = resolveRepDisplay(savedRep, mfr);
                   return (
                     <GlassCard key={app.id}>
                       <div className="p-5">
@@ -1217,8 +1248,40 @@ export default function ProviderMarketplace() {
                         </div>
 
                         {app.status === "approved" ? (
-                          <div className="mt-4 pt-4" style={{ borderTop: "1px solid rgba(30,37,53,0.07)" }}>
+                          <div className="mt-4 pt-4 space-y-4" style={{ borderTop: "1px solid rgba(30,37,53,0.07)" }}>
                             <ApprovedAccountHub mfr={mfr} me={me} />
+                            {editingRepMfrId === app.manufacturer_id ? (
+                              <SaveRepContactForm
+                                compact
+                                showSkip={false}
+                                manufacturer={mfr}
+                                applicationId={app.id}
+                                initialRep={savedRep}
+                                onSaved={() => setEditingRepMfrId(null)}
+                              />
+                            ) : (
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="min-w-0">
+                                  {savedRep?.rep_email ? (
+                                    <p className="text-xs" style={{ color: "rgba(30,37,53,0.55)" }}>
+                                      Rep on file: <strong>{rep.rep_name || "Your Rep"}</strong> · {rep.rep_email}
+                                    </p>
+                                  ) : (
+                                    <p className="text-xs" style={{ color: "rgba(30,37,53,0.5)" }}>Add your rep contact for orders and messages.</p>
+                                  )}
+                                </div>
+                                {mfr && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingRepMfrId(app.manufacturer_id)}
+                                    className="text-xs font-bold px-3 py-1.5 rounded-full shrink-0"
+                                    style={{ background: "rgba(123,142,200,0.12)", color: "#7B8EC8", border: "1px solid rgba(123,142,200,0.25)" }}
+                                  >
+                                    {savedRep?.rep_email ? "Edit rep" : "Add rep"}
+                                  </button>
+                                )}
+                              </div>
+                            )}
                           </div>
                         ) : (
                           <>
@@ -1263,6 +1326,47 @@ export default function ProviderMarketplace() {
                                 <p className="text-xs font-semibold" style={{ color: "rgba(30,37,53,0.75)" }}>This application was not approved. Contact support if you have questions.</p>
                               </div>
                             )}
+
+                            <div className="mt-4 pt-4" style={{ borderTop: "1px solid rgba(30,37,53,0.07)" }}>
+                              {editingRepMfrId === app.manufacturer_id ? (
+                                <SaveRepContactForm
+                                  compact
+                                  showSkip={false}
+                                  manufacturer={mfr}
+                                  applicationId={app.id}
+                                  initialRep={savedRep}
+                                  onSaved={() => setEditingRepMfrId(null)}
+                                />
+                              ) : (
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0">
+                                    <p className="text-[10px] font-bold uppercase tracking-widest mb-1" style={{ color: "rgba(30,37,53,0.4)", letterSpacing: "0.12em" }}>
+                                      Rep Contact
+                                    </p>
+                                    {savedRep?.rep_email ? (
+                                      <>
+                                        <p className="text-sm font-semibold" style={{ color: "#1e2535" }}>{rep.rep_name || "Your Rep"}</p>
+                                        <p className="text-xs" style={{ color: "rgba(30,37,53,0.55)" }}>{rep.rep_email}{rep.rep_phone ? ` · ${rep.rep_phone}` : ""}</p>
+                                      </>
+                                    ) : (
+                                      <p className="text-xs" style={{ color: "rgba(30,37,53,0.5)" }}>
+                                        Save your rep&apos;s contact info for orders and messages through NOVI.
+                                      </p>
+                                    )}
+                                  </div>
+                                  {mfr && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditingRepMfrId(app.manufacturer_id)}
+                                      className="text-xs font-bold px-3 py-1.5 rounded-full shrink-0"
+                                      style={{ background: "rgba(123,142,200,0.12)", color: "#7B8EC8", border: "1px solid rgba(123,142,200,0.25)" }}
+                                    >
+                                      {savedRep?.rep_email ? "Edit" : "Add rep"}
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </div>
                           </>
                         )}
                       </div>
@@ -1289,26 +1393,49 @@ export default function ProviderMarketplace() {
 
                   {submitted ? (
                     <GlassCard>
-                      <div className="text-center py-10 px-6">
-                        <div className="w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-4" style={{ background: "rgba(200,230,60,0.2)" }}>
-                          <CheckCircle className="w-7 h-7" style={{ color: "#5a7a20" }} />
+                      <div className="py-8 px-6">
+                        <div className="text-center mb-6">
+                          <div className="w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-4" style={{ background: "rgba(200,230,60,0.2)" }}>
+                            <CheckCircle className="w-7 h-7" style={{ color: "#5a7a20" }} />
+                          </div>
+                          <h2 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 22, color: "#1e2535" }}>Account Activated!</h2>
+                          <p className="text-sm mt-2" style={{ color: "rgba(30,37,53,0.6)", maxWidth: 380, margin: "8px auto 0" }}>
+                            Your <strong>{selectedManufacturer?.name}</strong> credentials have been sent to their rep team — expect outreach within 1–2 business days.
+                          </p>
                         </div>
-                        <h2 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 22, color: "#1e2535" }}>Application Submitted!</h2>
-                        <p className="text-sm mt-2 mb-5" style={{ color: "rgba(30,37,53,0.6)", maxWidth: 340, margin: "8px auto 20px" }}>
-                          Your application to <strong>{selectedManufacturer?.name}</strong> is on its way. A rep will reach out within 3–5 business days.
-                        </p>
-                        <div className="rounded-xl px-4 py-3 mb-5 text-left space-y-2 max-w-sm mx-auto"
-                          style={{ background: "rgba(200,230,60,0.08)", border: "1px solid rgba(200,230,60,0.2)" }}>
-                          {["Application sent to manufacturer rep team", "They'll review your credentials and reach out by email", "Expect a response within 3–5 business days"].map((s, i) => (
-                            <div key={i} className="flex items-start gap-2">
-                              <CheckCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" style={{ color: "#5a7a20" }} />
-                              <p className="text-xs" style={{ color: "rgba(30,37,53,0.65)" }}>{s}</p>
-                            </div>
-                          ))}
+
+                        <SaveRepContactForm
+                          manufacturer={selectedManufacturer}
+                          applicationId={lastApplication?.id}
+                          onSaved={() => {
+                            setTimeout(() => {
+                              setViewMode("directory");
+                              setSelectedManufacturer(null);
+                              setSubmitted(false);
+                              setLastApplication(null);
+                            }, 1200);
+                          }}
+                          onSkip={() => {
+                            setViewMode("directory");
+                            setSelectedManufacturer(null);
+                            setSubmitted(false);
+                            setLastApplication(null);
+                          }}
+                        />
+
+                        <div className="mt-6 text-center">
+                          <Button
+                            variant="outline"
+                            onClick={() => {
+                              setViewMode("directory");
+                              setSelectedManufacturer(null);
+                              setSubmitted(false);
+                              setLastApplication(null);
+                            }}
+                          >
+                            Back to Marketplace
+                          </Button>
                         </div>
-                        <Button onClick={() => { setViewMode("directory"); setSelectedManufacturer(null); setSubmitted(false); }} style={{ background: "#1e2535", color: "#fff" }}>
-                          Back to Marketplace
-                        </Button>
                       </div>
                     </GlassCard>
                   ) : (

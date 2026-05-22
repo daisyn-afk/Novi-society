@@ -39,6 +39,12 @@ function SupplierAccountCard({ app, mfr, treatmentRecords = [], certifications =
   const [expanded, setExpanded] = useState(false);
   const [contactOpen, setContactOpen] = useState(false);
   const [contactType, setContactType] = useState("order");
+
+  const { data: savedRep } = useQuery({
+    queryKey: ["provider-manufacturer-rep", mfr?.id],
+    queryFn: () => base44.entities.ProviderManufacturerRep.lookup({ manufacturer_id: mfr.id }),
+    enabled: !!mfr?.id,
+  });
   const col = mfr ? (CATEGORY_COLORS[mfr.category] || CATEGORY_COLORS.other) : CATEGORY_COLORS.other;
   const statusCfg = STATUS_CONFIG[app.status] || STATUS_CONFIG.pending;
   const StatusIcon = statusCfg.icon;
@@ -192,6 +198,7 @@ function SupplierAccountCard({ app, mfr, treatmentRecords = [], certifications =
         manufacturer={mfr}
         me={me}
         initialType={contactType}
+        savedRep={savedRep}
       />
 
       {/* Pending nudge */}

@@ -17,6 +17,7 @@ import {
   createManufacturerApplication,
   getManufacturerById
 } from "../manufacturers/repository.js";
+import { resolveRepContactForProvider } from "../manufacturers/providerManufacturerRepsRepository.js";
 import { createManufacturerOrderRequest } from "../manufacturers/orderRequestsRepository.js";
 import {
   notifyAdminsOfManufacturerApplication,
@@ -1940,6 +1941,14 @@ functionsRouter.post("/sendManufacturerInquiry", async (req, res, next) => {
 
     // Fire-and-forget notifications. Failures are logged inside the helpers
     // and never block the submission flow.
+    console.info("[email] manufacturer_application_dispatch", {
+      scope: "functions/sendManufacturerInquiry",
+      application_id: application.id,
+      manufacturer_id: manufacturer.id,
+      manufacturer_name: manufacturer.name,
+      has_rep_email: Boolean(manufacturer.account_rep_email),
+      provider_id: me?.id || null,
+    });
     Promise.allSettled([
       notifyAdminsOfManufacturerApplication({ application, manufacturer }),
       notifyRepOfManufacturerApplication({ application, manufacturer }),
@@ -1969,27 +1978,57 @@ functionsRouter.post("/sendRepContactEmail", async (req, res, next) => {
     }
 
     const contactType = String(body.type || body.contact_type || "message").trim();
+    const repContact = await resolveRepContactForProvider({
+      providerId: me?.id,
+      manufacturerId,
+      manufacturer,
+    });
+
+    if (!repContact.rep_email) {
+      return res.status(400).json({
+        ok: false,
+        error: "No rep email on file. Save your rep contact info or ask admin to configure application routing.",
+      });
+    }
+
     const orderRequest = await createManufacturerOrderRequest({
       manufacturer_id: manufacturerId,
       manufacturer_name: manufacturer.name,
       provider_id: me?.id || null,
       provider_email: me?.email || "",
       provider_name: me?.full_name || "",
-      practice_name: me?.practice_name || "",
+      practice_name: body.practice_name || me?.full_name || "",
       contact_type: contactType,
       subject: body.subject || "",
       message: body.message || "",
       order_items: body.order_items || [],
-      rep_email: manufacturer.account_rep_email || "",
+      rep_email: repContact.rep_email,
     });
 
-    Promise.resolve(
-      notifyRepOfContactRequest({
-        orderRequest,
-        manufacturer,
-        providerEmail: me?.email || orderRequest.provider_email,
-      })
-    ).catch(() => {});
+    console.info("[email] contact_request_dispatch", {
+      scope: "functions/sendRepContactEmail",
+      order_request_id: orderRequest.id,
+      manufacturer_id: manufacturer.id,
+      manufacturer_name: manufacturer.name,
+      contact_type: contactType,
+      rep_source: repContact.source,
+      provider_id: me?.id || null,
+      item_count: Array.isArray(orderRequest.order_items)
+        ? orderRequest.order_items.length
+        : 0,
+    });
+    notifyRepOfContactRequest({
+      orderRequest,
+      manufacturer,
+      providerEmail: me?.email || orderRequest.provider_email,
+      providerPhone: me?.phone || "",
+      savedRep: repContact,
+    }).catch((err) => {
+      console.error("[email] contact_request_notify_threw", {
+        order_request_id: orderRequest.id,
+        error_message: err?.message || String(err),
+      });
+    });
 
     return res.status(201).json({ ok: true, order_request: orderRequest });
   } catch (error) {

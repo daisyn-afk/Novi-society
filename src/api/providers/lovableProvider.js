@@ -270,6 +270,31 @@ export function createLovableProviderClient() {
           delete: createNotImplementedMethod("entities.ProviderInventory.delete"),
         };
       }
+      if (name === "ProviderManufacturerRep") {
+        const buildRepQuery = (filters = {}) => {
+          const params = new URLSearchParams();
+          if (filters.manufacturer_id) params.set("manufacturer_id", String(filters.manufacturer_id));
+          if (filters.provider_id) params.set("provider_id", String(filters.provider_id));
+          const qs = params.toString();
+          return qs ? `?${qs}` : "";
+        };
+        return {
+          list: () => authRequest("/admin/provider-manufacturer-reps", { method: "GET" }),
+          filter: (filters = {}) =>
+            authRequest(`/admin/provider-manufacturer-reps${buildRepQuery(filters)}`, { method: "GET" }),
+          lookup: (filters = {}) =>
+            authRequest(`/admin/provider-manufacturer-reps/lookup${buildRepQuery(filters)}`, { method: "GET" }),
+          upsert: (payload) =>
+            authRequest("/admin/provider-manufacturer-reps", {
+              method: "PUT",
+              body: JSON.stringify(payload || {}),
+            }),
+          get: createNotImplementedMethod("entities.ProviderManufacturerRep.get"),
+          create: createNotImplementedMethod("entities.ProviderManufacturerRep.create (use upsert instead)"),
+          update: createNotImplementedMethod("entities.ProviderManufacturerRep.update (use upsert instead)"),
+          delete: createNotImplementedMethod("entities.ProviderManufacturerRep.delete"),
+        };
+      }
       if (name === "ManufacturerOrderRequest") {
         const buildQuery = (filters = {}, sort = "-created_at") => {
           const params = new URLSearchParams();

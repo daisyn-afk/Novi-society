@@ -3,6 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Button } from "@/components/ui/button";
 import { base44 } from "@/api/base44Client";
 import { Mail, Calendar, Send, CheckCircle } from "lucide-react";
+import { resolveRepDisplay } from "@/components/provider/SaveRepContactForm";
 
 const TEMPLATES = {
   order: {
@@ -69,7 +70,7 @@ ${me?.full_name || ""}`,
   },
 };
 
-export default function RepContactDialog({ open, onClose, manufacturer, me, initialType }) {
+export default function RepContactDialog({ open, onClose, manufacturer, me, initialType, savedRep = null }) {
   const [type, setType] = useState(initialType || "order");
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
@@ -77,8 +78,9 @@ export default function RepContactDialog({ open, onClose, manufacturer, me, init
   const [sending, setSending] = useState(false);
 
   const mfrName = manufacturer?.name || "Supplier";
-  const repEmail = manufacturer?.account_rep_email;
-  const repName = manufacturer?.account_rep_name;
+  const rep = resolveRepDisplay(savedRep, manufacturer);
+  const repEmail = rep.rep_email;
+  const repName = rep.rep_name;
 
   const selectType = (t) => {
     setType(t);

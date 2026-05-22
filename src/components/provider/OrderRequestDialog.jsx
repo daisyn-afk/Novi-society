@@ -3,10 +3,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { base44 } from "@/api/base44Client";
-import { Plus, Trash2, Send, CheckCircle, Package } from "lucide-react";
+import { Plus, Trash2, Send, CheckCircle } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
+import { resolveRepDisplay } from "@/components/provider/SaveRepContactForm";
 
-export default function OrderRequestDialog({ open, onClose, manufacturer, me }) {
+export default function OrderRequestDialog({ open, onClose, manufacturer, me, savedRep = null }) {
   const qc = useQueryClient();
   const [items, setItems] = useState([{ product_name: "", quantity: "", unit: "units", notes: "" }]);
   const [message, setMessage] = useState("");
@@ -14,6 +15,8 @@ export default function OrderRequestDialog({ open, onClose, manufacturer, me }) 
   const [sent, setSent] = useState(false);
 
   const mfrProducts = manufacturer?.products || [];
+  const rep = resolveRepDisplay(savedRep, manufacturer);
+  const hasRepEmail = !!rep.rep_email;
 
   const addItem = () => setItems(prev => [...prev, { product_name: "", quantity: "", unit: "units", notes: "" }]);
   const removeItem = (i) => setItems(prev => prev.filter((_, idx) => idx !== i));
@@ -70,26 +73,25 @@ export default function OrderRequestDialog({ open, onClose, manufacturer, me }) 
             </div>
             <p className="font-bold text-lg" style={{ fontFamily: "'DM Serif Display', serif", color: "#1e2535" }}>Order Request Sent!</p>
             <p className="text-sm mt-1 mb-2" style={{ color: "rgba(30,37,53,0.55)" }}>
-              Sent to {manufacturer?.account_rep_email}. A copy was sent to your email.
+              Sent to {rep.rep_email}. A copy was sent to your email.
             </p>
             <p className="text-xs mb-5" style={{ color: "rgba(30,37,53,0.4)" }}>
-              Your order was logged in NOVI and includes your usage stats, certs, and license info.
+              Your order details and basic contact info were included — no license or MD coverage attachments.
             </p>
             <Button onClick={handleClose} style={{ background: "#1e2535", color: "#fff" }}>Done</Button>
           </div>
         ) : (
           <div className="space-y-4">
             {/* Rep info */}
-            {manufacturer?.account_rep_email && (
+            {hasRepEmail && (
               <div className="px-3 py-2.5 rounded-xl text-xs" style={{ background: "rgba(250,111,48,0.06)", border: "1px solid rgba(250,111,48,0.2)", color: "rgba(30,37,53,0.6)" }}>
-                Sending to: <strong style={{ color: "#FA6F30" }}>{manufacturer.account_rep_name || "Account Rep"}</strong> · {manufacturer.account_rep_email}
+                Sending to: <strong style={{ color: "#FA6F30" }}>{rep.rep_name}</strong> · {rep.rep_email}
               </div>
             )}
 
-            {/* NOVI auto-data notice */}
             <div className="px-3 py-2.5 rounded-xl text-xs flex items-start gap-2" style={{ background: "rgba(200,230,60,0.07)", border: "1px solid rgba(200,230,60,0.2)" }}>
               <CheckCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" style={{ color: "#5a7a20" }} />
-              <p style={{ color: "rgba(30,37,53,0.65)" }}>Your license, certifications, MD oversight, and usage stats for this supplier will be automatically included in the email.</p>
+              <p style={{ color: "rgba(30,37,53,0.65)" }}>Your name, email, phone, practice, and order lines will be sent — credentials were shared when you activated access.</p>
             </div>
 
             {/* Order items */}
@@ -149,11 +151,11 @@ export default function OrderRequestDialog({ open, onClose, manufacturer, me }) 
 
             <div className="flex gap-2">
               <Button variant="outline" className="flex-1" onClick={handleClose}>Cancel</Button>
-              <Button className="flex-1 gap-2 font-bold" disabled={sending || !items.some(i => i.product_name && i.quantity)}
+              <Button className="flex-1 gap-2 font-bold" disabled={sending || !items.some(i => i.product_name && i.quantity) || !hasRepEmail}
                 style={{ background: "linear-gradient(135deg, #FA6F30, #e05a20)", color: "#fff" }}
                 onClick={handleSend}>
                 <Send className="w-3.5 h-3.5" />
-                {sending ? "Sending..." : !manufacturer?.account_rep_email ? "No rep email on file" : "Send Order Request"}
+                {sending ? "Sending..." : !hasRepEmail ? "No rep email on file" : "Send Order Request"}
               </Button>
             </div>
           </div>

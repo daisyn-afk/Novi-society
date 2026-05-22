@@ -7,6 +7,26 @@ const appBaseUrl = process.env.APP_BASE_URL || "http://localhost:5173";
 const noviEmailLogoUrl =
   process.env.NOVI_EMAIL_LOGO_URL || `${appBaseUrl}/novi-email-logo.png`;
 
+// One-time warning if Resend is not configured. Without this, every send
+// would silently return false and ops would have no signal that mail is off.
+if (!resendApiKey) {
+  console.warn(
+    "[manufacturer-notifications] RESEND_API_KEY is not set — all manufacturer notification emails will be skipped."
+  );
+}
+
+function logEmailEvent(level, event, fields = {}) {
+  const payload = {
+    scope: "manufacturer-notifications",
+    event,
+    timestamp: new Date().toISOString(),
+    ...fields,
+  };
+  const writer =
+    level === "error" ? console.error : level === "warn" ? console.warn : console.info;
+  writer(`[email] ${event}`, payload);
+}
+
 let notificationTablePromise = null;
 let notificationColumnsByTablePromise = null;
 
@@ -106,10 +126,26 @@ async function insertNotificationRow({
     .catch(() => {});
 }
 
-async function sendResendEmail({ to, subject, html }) {
-  if (!resendApiKey) return false;
+async function sendResendEmail({ to, subject, html, logContext = {} }) {
+  const baseFields = {
+    to: to || null,
+    subject: subject || null,
+    from: resendFromEmail,
+    ...logContext,
+  };
+
+  if (!resendApiKey) {
+    logEmailEvent("warn", "send_skipped_no_api_key", baseFields);
+    return false;
+  }
+
   const recipient = String(to || "").trim();
-  if (!recipient || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) return false;
+  if (!recipient || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) {
+    logEmailEvent("warn", "send_skipped_invalid_recipient", baseFields);
+    return false;
+  }
+
+  const startedAt = Date.now();
   try {
     const response = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -124,20 +160,40 @@ async function sendResendEmail({ to, subject, html }) {
         html,
       }),
     });
+
+    const durationMs = Date.now() - startedAt;
     if (!response.ok) {
       const body = await response.text().catch(() => "");
-      // eslint-disable-next-line no-console
-      console.error(
-        "[manufacturer-notifications] email send failed:",
-        response.status,
-        body
-      );
+      logEmailEvent("error", "send_failed", {
+        ...baseFields,
+        status: response.status,
+        duration_ms: durationMs,
+        response_body: body?.slice(0, 500) || null,
+      });
       return false;
     }
+
+    let providerMessageId = null;
+    try {
+      const parsed = await response.clone().json();
+      providerMessageId = parsed?.id || null;
+    } catch {
+      providerMessageId = null;
+    }
+
+    logEmailEvent("info", "send_succeeded", {
+      ...baseFields,
+      status: response.status,
+      duration_ms: durationMs,
+      resend_message_id: providerMessageId,
+    });
     return true;
   } catch (error) {
-    // eslint-disable-next-line no-console
-    console.error("[manufacturer-notifications] email request failed:", error);
+    logEmailEvent("error", "send_threw", {
+      ...baseFields,
+      duration_ms: Date.now() - startedAt,
+      error_message: error?.message || String(error),
+    });
     return false;
   }
 }
@@ -269,8 +325,24 @@ export async function notifyAdminsOfManufacturerApplication({
   application,
   manufacturer,
 }) {
+  const baseContext = {
+    channel: "manufacturer_application_admin",
+    application_id: application?.id || null,
+    manufacturer_id: manufacturer?.id || application?.manufacturer_id || null,
+    manufacturer_name: manufacturer?.name || application?.manufacturer_name || null,
+    provider_id: application?.provider_id || null,
+  };
+
   const admins = await listAdminRecipients();
-  if (!admins.length) return;
+  if (!admins.length) {
+    logEmailEvent("warn", "notify_skipped_no_admins", baseContext);
+    return;
+  }
+
+  logEmailEvent("info", "notify_started", {
+    ...baseContext,
+    admin_count: admins.length,
+  });
 
   const summary = buildSummaryBullets({ application, manufacturer });
   const subject = `New supplier application: ${manufacturer?.name || "Unknown"}`;
@@ -289,7 +361,14 @@ export async function notifyAdminsOfManufacturerApplication({
       linkPage: `AdminManufacturers?focus_application=${encodeURIComponent(application?.id || "")}`,
     });
 
-    if (!adminEmail) continue;
+    if (!adminEmail) {
+      logEmailEvent("warn", "send_skipped_admin_missing_email", {
+        ...baseContext,
+        admin_user_id: adminUserId,
+      });
+      continue;
+    }
+
     await sendResendEmail({
       to: adminEmail,
       subject,
@@ -301,6 +380,7 @@ export async function notifyAdminsOfManufacturerApplication({
         ctaLabel: "Open admin portal",
         ctaUrl: adminCtaUrl,
       }),
+      logContext: { ...baseContext, admin_user_id: adminUserId },
     });
   }
 }
@@ -309,8 +389,24 @@ export async function notifyRepOfManufacturerApplication({
   application,
   manufacturer,
 }) {
+  const baseContext = {
+    channel: "manufacturer_application_rep",
+    application_id: application?.id || null,
+    manufacturer_id: manufacturer?.id || application?.manufacturer_id || null,
+    manufacturer_name: manufacturer?.name || application?.manufacturer_name || null,
+    provider_id: application?.provider_id || null,
+    rep_source: "manufacturer_routing",
+  };
+
   const repEmail = String(manufacturer?.account_rep_email || "").trim();
-  if (!repEmail) return;
+  if (!repEmail) {
+    // High-signal: application is created but no rep email is on file.
+    // Without this log, admins/ops can't tell why no rep was notified.
+    logEmailEvent("warn", "notify_skipped_no_rep_email", baseContext);
+    return;
+  }
+
+  logEmailEvent("info", "notify_started", baseContext);
 
   const summary = buildSummaryBullets({ application, manufacturer });
   const subject = `New NOVI provider application for ${manufacturer?.name || "your account"}`;
@@ -327,6 +423,7 @@ export async function notifyRepOfManufacturerApplication({
       intro: `A verified NOVI provider has applied to open an account with ${manufacturer?.name || "your brand"}. Their credentials, license, and practice details are below — reply directly to follow up.`,
       summaryLines: summary,
     }),
+    logContext: baseContext,
   });
 }
 
@@ -343,11 +440,42 @@ export async function notifyRepOfContactRequest({
   orderRequest,
   manufacturer,
   providerEmail,
+  providerPhone = "",
+  savedRep = null,
 }) {
+  const repSource = savedRep?.rep_email
+    ? "provider_saved"
+    : orderRequest?.rep_email
+      ? "order_request"
+      : manufacturer?.account_rep_email
+        ? "manufacturer_routing"
+        : "none";
+
+  const baseContext = {
+    channel: "manufacturer_contact_request",
+    contact_type: orderRequest?.contact_type || "message",
+    order_request_id: orderRequest?.id || null,
+    manufacturer_id: manufacturer?.id || orderRequest?.manufacturer_id || null,
+    manufacturer_name: manufacturer?.name || orderRequest?.manufacturer_name || null,
+    provider_id: orderRequest?.provider_id || null,
+    rep_source: repSource,
+    item_count: Array.isArray(orderRequest?.order_items)
+      ? orderRequest.order_items.length
+      : 0,
+  };
+
   const repEmail = String(
-    orderRequest?.rep_email || manufacturer?.account_rep_email || ""
+    orderRequest?.rep_email || savedRep?.rep_email || manufacturer?.account_rep_email || ""
   ).trim();
-  if (!repEmail) return { repSent: false, providerSent: false };
+  if (!repEmail) {
+    logEmailEvent("warn", "notify_skipped_no_rep_email", baseContext);
+    return { repSent: false, providerSent: false };
+  }
+
+  logEmailEvent("info", "notify_started", baseContext);
+
+  const repGreetingName =
+    savedRep?.rep_name || manufacturer?.account_rep_name || "there";
 
   const isOrder = orderRequest?.contact_type === "order";
   const mfrName = manufacturer?.name || orderRequest?.manufacturer_name || "Supplier";
@@ -358,17 +486,30 @@ export async function notifyRepOfContactRequest({
       ? `Order Request — ${providerName} (${mfrName})`
       : `Provider Message — ${providerName}`);
 
-  const summary = [
+  const basicProviderLines = [
     `Supplier: ${mfrName}`,
     `Provider: ${providerName}`,
     orderRequest?.provider_email ? `Provider email: ${orderRequest.provider_email}` : null,
+    providerPhone ? `Phone: ${providerPhone}` : null,
     orderRequest?.practice_name ? `Practice: ${orderRequest.practice_name}` : null,
-    isOrder ? `Request type: Product order` : `Request type: ${orderRequest?.contact_type || "message"}`,
-    ...(isOrder ? buildOrderItemLines(orderRequest?.order_items || []) : []),
   ].filter(Boolean);
 
+  const summary = isOrder
+    ? [
+        ...basicProviderLines,
+        "Request type: Product order",
+        ...(buildOrderItemLines(orderRequest?.order_items || []).length
+          ? ["Order items:"]
+          : []),
+        ...buildOrderItemLines(orderRequest?.order_items || []),
+      ]
+    : [
+        ...basicProviderLines,
+        `Request type: ${orderRequest?.contact_type || "message"}`,
+      ];
+
   const intro = isOrder
-    ? `${providerName} submitted a product order request through NOVI. Items and notes are below — reply directly to confirm pricing and fulfillment.`
+    ? `${providerName} submitted a product order request through NOVI. Basic contact details and order lines are below — reply directly to confirm pricing and fulfillment.`
     : `${providerName} sent a message through the NOVI supplier marketplace. Reply directly to follow up.`;
 
   const messageBlock = orderRequest?.message
@@ -379,13 +520,12 @@ export async function notifyRepOfContactRequest({
     to: repEmail,
     subject,
     html: buildEmailHtml({
-      greetingName: manufacturer?.account_rep_name
-        ? `Hi ${manufacturer.account_rep_name}`
-        : "Hi there",
+      greetingName: repGreetingName ? `Hi ${repGreetingName}` : "Hi there",
       title: subject,
       intro,
       summaryLines: [...summary, ...messageBlock],
     }),
+    logContext: { ...baseContext, recipient_role: "rep" },
   });
 
   let providerSent = false;
@@ -400,8 +540,17 @@ export async function notifyRepOfContactRequest({
         intro: `A copy of your ${isOrder ? "order request" : "message"} to ${mfrName} is below. Their rep team typically responds within 3–5 business days.`,
         summaryLines: [...summary, ...messageBlock],
       }),
+      logContext: { ...baseContext, recipient_role: "provider_copy" },
     });
+  } else {
+    logEmailEvent("warn", "send_skipped_provider_copy_no_email", baseContext);
   }
+
+  logEmailEvent("info", "notify_finished", {
+    ...baseContext,
+    rep_sent: repSent,
+    provider_copy_sent: providerSent,
+  });
 
   return { repSent, providerSent };
 }
