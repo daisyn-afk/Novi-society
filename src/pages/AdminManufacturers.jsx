@@ -388,21 +388,6 @@ export default function AdminManufacturers() {
                       </p>
                     ) : null}
                   </div>
-                  {app.additional_fields && Object.keys(app.additional_fields).length > 0 && (
-                    <div className="mt-3 pt-3 border-t border-slate-100">
-                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">
-                        Additional Fields
-                      </p>
-                      <div className="flex flex-wrap gap-3">
-                        {Object.entries(app.additional_fields).map(([k, v]) => (
-                          <div key={k} className="text-xs">
-                            <span className="font-semibold text-slate-600">{k}:</span>{" "}
-                            <span className="text-slate-700">{v}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
                 </div>
               ))}
             </div>
@@ -460,9 +445,6 @@ export default function AdminManufacturers() {
                                 {item.manufacturer_name}
                               </span>
                             )}
-                            <span className="text-xs font-bold px-2 py-0.5 bg-orange-100 text-orange-600 rounded-full">
-                              Order Request
-                            </span>
                           </div>
                           <p className="text-xs text-slate-400 mt-0.5">
                             Provider:{" "}

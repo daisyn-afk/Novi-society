@@ -11,9 +11,12 @@ export default function SaveRepContactForm({
   initialRep = null,
   onSaved = null,
   onSkip = null,
+  onCancel = null,
   showSkip = true,
   compact = false,
+  variant = "default",
 }) {
+  const isModal = variant === "modal";
   const qc = useQueryClient();
   const [repName, setRepName] = useState(initialRep?.rep_name || "");
   const [repEmail, setRepEmail] = useState(initialRep?.rep_email || "");
@@ -30,16 +33,20 @@ export default function SaveRepContactForm({
         rep_phone: repPhone.trim(),
       }),
     onSuccess: (row) => {
-      setSaved(true);
       qc.invalidateQueries({ queryKey: ["provider-manufacturer-reps"] });
       qc.invalidateQueries({ queryKey: ["provider-manufacturer-rep", manufacturer?.id] });
+      if (isModal) {
+        onSaved?.(row);
+        return;
+      }
+      setSaved(true);
       onSaved?.(row);
     },
   });
 
   const canSave = repEmail.trim().length > 3 && repEmail.includes("@");
 
-  if (saved) {
+  if (saved && !isModal) {
     return (
       <div className="text-center py-4">
         <CheckCircle className="w-8 h-8 mx-auto mb-2" style={{ color: "#5a7a20" }} />
@@ -52,8 +59,8 @@ export default function SaveRepContactForm({
   }
 
   return (
-    <div className={compact ? "space-y-3" : "space-y-4"}>
-      {!compact && (
+    <div className={isModal ? "space-y-4" : compact ? "space-y-3" : "space-y-4"}>
+      {!compact && !isModal && (
         <div className="text-center">
           <h3 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 20, color: "#1e2535" }}>
             Save Your Rep&apos;s Contact Info
@@ -61,15 +68,17 @@ export default function SaveRepContactForm({
         </div>
       )}
 
-      <div
-        className="flex items-start gap-2 px-3 py-2.5 rounded-xl text-xs leading-relaxed"
-        style={{ background: "rgba(123,142,200,0.08)", border: "1px solid rgba(123,142,200,0.18)", color: "rgba(30,37,53,0.65)" }}
-      >
-        <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" style={{ color: "#7B8EC8" }} />
-        <span>
-          Once your rep reaches out, save their details here so you can order and communicate directly through NOVI.
-        </span>
-      </div>
+      {!isModal && (
+        <div
+          className="flex items-start gap-2 px-3 py-2.5 rounded-xl text-xs leading-relaxed"
+          style={{ background: "rgba(123,142,200,0.08)", border: "1px solid rgba(123,142,200,0.18)", color: "rgba(30,37,53,0.65)" }}
+        >
+          <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" style={{ color: "#7B8EC8" }} />
+          <span>
+            Once your rep reaches out, save their details here so you can order and communicate directly through NOVI.
+          </span>
+        </div>
+      )}
 
       <div className="space-y-3">
         <div>
@@ -94,7 +103,9 @@ export default function SaveRepContactForm({
           />
         </div>
         <div>
-          <label className="text-xs font-semibold mb-1 block" style={{ color: "rgba(30,37,53,0.55)" }}>Rep Phone (optional)</label>
+          <label className="text-xs font-semibold mb-1 block" style={{ color: "rgba(30,37,53,0.55)" }}>
+            Rep Phone{!isModal && " (optional)"}
+          </label>
           <Input
             value={repPhone}
             onChange={(e) => setRepPhone(e.target.value)}
@@ -108,14 +119,37 @@ export default function SaveRepContactForm({
         <p className="text-xs text-red-600">{saveMutation.error?.message || "Could not save rep contact."}</p>
       )}
 
-      <Button
-        className="w-full h-11 font-bold"
-        style={{ background: "#C8E63C", color: "#1e2535" }}
-        disabled={!canSave || saveMutation.isPending}
-        onClick={() => saveMutation.mutate()}
-      >
-        {saveMutation.isPending ? "Saving..." : "Save Rep Info"}
-      </Button>
+      {isModal ? (
+        <div className="flex gap-2 pt-1">
+          <Button
+            type="button"
+            variant="outline"
+            className="flex-1 h-11"
+            onClick={() => onCancel?.()}
+            disabled={saveMutation.isPending}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            className="flex-1 h-11 font-bold"
+            style={{ background: "#1e2535", color: "#fff" }}
+            disabled={!canSave || saveMutation.isPending}
+            onClick={() => saveMutation.mutate()}
+          >
+            {saveMutation.isPending ? "Saving..." : "Save Rep Info"}
+          </Button>
+        </div>
+      ) : (
+        <Button
+          className="w-full h-11 font-bold"
+          style={{ background: "#C8E63C", color: "#1e2535" }}
+          disabled={!canSave || saveMutation.isPending}
+          onClick={() => saveMutation.mutate()}
+        >
+          {saveMutation.isPending ? "Saving..." : "Save Rep Info"}
+        </Button>
+      )}
 
       {showSkip && onSkip && (
         <button

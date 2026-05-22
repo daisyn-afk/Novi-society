@@ -7,13 +7,16 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import ProviderSalesLock from "@/components/ProviderSalesLock";
 import { useProviderAccess } from "@/components/useProviderAccess";
 import RepContactDialog from "@/components/provider/RepContactDialog";
+import RepInfoModal from "@/components/provider/RepInfoModal";
 import OrderRequestDialog from "@/components/provider/OrderRequestDialog";
 import SaveRepContactForm, { resolveRepDisplay } from "@/components/provider/SaveRepContactForm";
+import ProviderInventoryTab from "@/components/provider/ProviderInventoryTab";
 import {
   Search, CheckCircle, Send, Building2, ChevronRight, Star, Globe, ExternalLink,
   Sparkles, ShieldCheck, Zap, Award, Users, Package, ArrowLeft,
   Clock, CheckCircle2, XCircle, AlertCircle, Mail, MapPin, TrendingUp,
-  Tag, Layers, RefreshCw, Calendar, Headphones, Bookmark
+  Tag, Layers, RefreshCw, Calendar, Headphones, Bookmark,
+  Pencil, User, DollarSign,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
@@ -112,6 +115,33 @@ const DEFAULT_NOVI_UNLOCK_BENEFITS = [
 ];
 
 const ACTIVATE_ACCESS_TRUST_ITEMS = ["No paperwork", "Pre-approved", "Fast approval"];
+
+const EST_MONTHLY_UNIT_COST = 12;
+
+function estimateMonthlySpendFromTreatments(treatmentRecords = []) {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 30);
+  const recent = treatmentRecords.filter(
+    (r) => r.treatment_date && new Date(r.treatment_date) >= cutoff
+  );
+  const units = recent.reduce((sum, r) => sum + (Number(r.units_used) || 0), 0);
+  const productLines = recent.reduce(
+    (sum, r) => sum + (r.products_used?.filter((p) => p.product_name)?.length || 0),
+    0
+  );
+  if (units > 0) return Math.round(units * EST_MONTHLY_UNIT_COST);
+  if (productLines > 0) return Math.round(productLines * EST_MONTHLY_UNIT_COST);
+  return 0;
+}
+
+function getSavedRepContact(savedRep) {
+  if (!savedRep?.rep_email) return null;
+  return {
+    rep_name: savedRep.rep_name?.trim() || "",
+    rep_email: savedRep.rep_email,
+    rep_phone: savedRep.rep_phone?.trim() || "",
+  };
+}
 
 function ActivateAccessCTA({ onClick, disabled = false, loading = false, variant = "light", className = "" }) {
   const trustColor = variant === "dark" ? "rgba(255,255,255,0.45)" : "rgba(30,37,53,0.45)";
@@ -497,6 +527,177 @@ function ApprovedAccountHub({ mfr, me, className = "", layout = "default" }) {
         me={me}
         savedRep={savedRep}
       />
+    </>
+  );
+}
+
+function MyAccountCard({ app, mfr, me, savedRep }) {
+  const [contactOpen, setContactOpen] = useState(false);
+  const [contactType, setContactType] = useState("order");
+  const [orderOpen, setOrderOpen] = useState(false);
+  const [repModalOpen, setRepModalOpen] = useState(false);
+
+  const repContact = getSavedRepContact(savedRep);
+  const activityDate = app.approved_at || app.submitted_at;
+  const displayDate = activityDate ? format(new Date(activityDate), "MMM d") : "—";
+
+  const actionBtnStyle = (color) => ({
+    background: "#fff",
+    border: "1px solid rgba(30,37,53,0.12)",
+    color,
+    boxShadow: "0 1px 4px rgba(30,37,53,0.04)",
+  });
+
+  return (
+    <>
+      <GlassCard style={{ borderRadius: 16, overflow: "hidden" }}>
+        <div className="p-4 sm:p-5">
+          <div className="flex items-start gap-3">
+            {mfr ? (
+              <SupplierLogo mfr={mfr} size={44} variant="card" className="rounded-xl" />
+            ) : (
+              <div
+                className="w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0"
+                style={{ background: "rgba(30,37,53,0.06)", border: "1px solid rgba(30,37,53,0.1)" }}
+              >
+                <Building2 className="w-5 h-5" style={{ color: "rgba(30,37,53,0.4)" }} />
+              </div>
+            )}
+            <div className="flex-1 min-w-0">
+              <p
+                className="font-bold truncate leading-tight"
+                style={{ fontFamily: "'DM Serif Display', serif", fontSize: 17, color: "#1e2535" }}
+              >
+                {app.manufacturer_name || mfr?.name}
+              </p>
+              {mfr && (
+                <p className="text-xs mt-0.5 capitalize" style={{ color: "rgba(30,37,53,0.45)" }}>
+                  {CATEGORY_LABELS[mfr.category]}
+                </p>
+              )}
+            </div>
+            <span
+              className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full shrink-0"
+              style={{ background: "rgba(200,230,60,0.15)", color: "#4a6b10", border: "1px solid rgba(200,230,60,0.35)" }}
+            >
+              <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: "#5a7a20" }} />
+              Active
+            </span>
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setOrderOpen(true)}
+              className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg transition-opacity hover:opacity-85"
+              style={actionBtnStyle("#FA6F30")}
+            >
+              <Send className="w-3.5 h-3.5" style={{ color: "#FA6F30" }} /> Order
+            </button>
+            <button
+              type="button"
+              onClick={() => { setContactType("call"); setContactOpen(true); }}
+              className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg transition-opacity hover:opacity-85"
+              style={actionBtnStyle("#7B8EC8")}
+            >
+              <Calendar className="w-3.5 h-3.5" style={{ color: "#7B8EC8" }} /> Schedule
+            </button>
+            <button
+              type="button"
+              onClick={() => { setContactType("message"); setContactOpen(true); }}
+              className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg transition-opacity hover:opacity-85"
+              style={actionBtnStyle("#2D6B7F")}
+            >
+              <Mail className="w-3.5 h-3.5" style={{ color: "#2D6B7F" }} /> Message
+            </button>
+            <div className="ml-auto flex items-center gap-1 text-xs font-medium shrink-0" style={{ color: "rgba(30,37,53,0.4)" }}>
+              {displayDate}
+              <ChevronRight className="w-3.5 h-3.5" />
+            </div>
+          </div>
+
+          {mfr && (
+            <button
+              type="button"
+              onClick={() => setRepModalOpen(true)}
+              className="mt-3 w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-opacity hover:opacity-90"
+              style={
+                repContact
+                  ? { background: "rgba(30,37,53,0.04)", border: "1px solid rgba(30,37,53,0.08)" }
+                  : { background: "rgba(250,111,48,0.08)", border: "1px solid rgba(250,111,48,0.2)" }
+              }
+            >
+              {repContact ? (
+                <>
+                  <div
+                    className="w-8 h-8 rounded-full flex items-center justify-center shrink-0"
+                    style={{ background: "rgba(123,142,200,0.15)" }}
+                  >
+                    <User className="w-4 h-4" style={{ color: "#7B8EC8" }} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold truncate" style={{ color: "#1e2535" }}>
+                      {repContact.rep_name || "Your Rep"}
+                    </p>
+                    <p className="text-xs truncate" style={{ color: "rgba(30,37,53,0.5)" }}>
+                      {repContact.rep_email}
+                      {repContact.rep_phone ? ` · ${repContact.rep_phone}` : ""}
+                    </p>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <AlertCircle className="w-4 h-4 shrink-0" style={{ color: "#FA6F30" }} />
+                  <p className="flex-1 text-xs font-medium" style={{ color: "rgba(30,37,53,0.65)" }}>
+                    Add your assigned rep&apos;s contact info
+                  </p>
+                </>
+              )}
+              <Pencil className="w-3.5 h-3.5 shrink-0" style={{ color: "rgba(30,37,53,0.35)" }} />
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={() => {
+              if (window.confirm(`Deactivate your ${app.manufacturer_name} account? Contact NOVI support if you need help.`)) {
+                window.alert("To deactivate this account, please contact NOVI support or your manufacturer rep.");
+              }
+            }}
+            className="mt-3 text-[11px] font-semibold transition-opacity hover:opacity-70"
+            style={{ color: "#DA6A63" }}
+          >
+            Deactivate Account
+          </button>
+        </div>
+      </GlassCard>
+
+      {mfr && (
+        <>
+          <RepContactDialog
+            open={contactOpen}
+            onClose={() => setContactOpen(false)}
+            manufacturer={mfr}
+            me={me}
+            initialType={contactType}
+            savedRep={savedRep}
+          />
+          <OrderRequestDialog
+            open={orderOpen}
+            onClose={() => setOrderOpen(false)}
+            manufacturer={mfr}
+            me={me}
+            savedRep={savedRep}
+          />
+          <RepInfoModal
+            open={repModalOpen}
+            onClose={() => setRepModalOpen(false)}
+            manufacturer={mfr}
+            applicationId={app.id}
+            initialRep={savedRep}
+          />
+        </>
+      )}
     </>
   );
 }
@@ -1000,7 +1201,7 @@ export default function ProviderMarketplace() {
   const [formData, setFormData] = useState({});
   const [submitted, setSubmitted] = useState(false);
   const [lastApplication, setLastApplication] = useState(null);
-  const [editingRepMfrId, setEditingRepMfrId] = useState(null);
+  const [myAccountsSubview, setMyAccountsSubview] = useState("accounts");
   const qc = useQueryClient();
 
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => base44.auth.me() });
@@ -1147,6 +1348,13 @@ export default function ProviderMarketplace() {
 
   const approvedCount = myApplications.filter(a => a.status === "approved").length;
   const pendingCount = myApplications.filter(a => ["submitted", "pending", "under_review", "more_info_needed"].includes(a.status)).length;
+  const approvedApplications = myApplications
+    .filter((a) => a.status === "approved")
+    .sort((a, b) => (a.manufacturer_name || "").localeCompare(b.manufacturer_name || ""));
+  const estMonthlySpend = estimateMonthlySpendFromTreatments(treatmentRecords);
+  const activeProgressPct = manufacturers.length
+    ? Math.min(100, Math.round((approvedCount / manufacturers.length) * 100))
+    : 0;
 
   const pageContent = (
     <div className="max-w-5xl space-y-5">
@@ -1156,8 +1364,19 @@ export default function ProviderMarketplace() {
           <p className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: "#7B8EC8", letterSpacing: "0.14em" }}>Provider Marketplace</p>
           <h1 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 28, color: "#1e2535", lineHeight: 1.2 }}>Supplier Network</h1>
         </div>
-        <div className="rounded-2xl px-4 py-2 text-center" style={{ background: "rgba(200,230,60,0.12)", border: "1px solid rgba(200,230,60,0.3)" }}>
-          <p className="text-sm font-bold" style={{ color: "#4a6b10" }}>{approvedCount}/{manufacturers.length} active</p>
+        <div className="flex flex-col items-end gap-1.5 min-w-[120px]">
+          <p className="text-sm font-bold whitespace-nowrap" style={{ color: "#4a6b10" }}>
+            {approvedCount}/{manufacturers.length} active
+          </p>
+          <div
+            className="w-full h-1.5 rounded-full overflow-hidden"
+            style={{ background: "rgba(30,37,53,0.08)", maxWidth: 140 }}
+          >
+            <div
+              className="h-full rounded-full transition-all"
+              style={{ width: `${activeProgressPct}%`, background: "#C8E63C" }}
+            />
+          </div>
         </div>
       </div>
 
@@ -1175,204 +1394,104 @@ export default function ProviderMarketplace() {
         {/* ── MY ACCOUNTS TAB ── */}
         <TabsContent value="applications">
           <div className="space-y-4">
-            {myApplications.length === 0 ? (
+            <div
+              className="inline-flex p-1 rounded-xl"
+              style={{ background: "rgba(30,37,53,0.06)", border: "1px solid rgba(30,37,53,0.08)" }}
+            >
+              {[
+                { key: "accounts", label: "Accounts" },
+                { key: "inventory", label: "Inventory" },
+              ].map(({ key, label }) => {
+                const active = myAccountsSubview === key;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setMyAccountsSubview(key)}
+                    className="px-4 py-2 rounded-lg text-sm font-semibold transition-all"
+                    style={{
+                      background: active ? "#fff" : "transparent",
+                      color: active ? "#1e2535" : "rgba(30,37,53,0.5)",
+                      boxShadow: active ? "0 1px 6px rgba(30,37,53,0.08)" : "none",
+                    }}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {myAccountsSubview === "inventory" ? (
+              <ProviderInventoryTab
+                me={me}
+                myApplications={approvedApplications}
+                manufacturers={manufacturers}
+                inventoryOnly
+              />
+            ) : approvedApplications.length === 0 ? (
               <GlassCard className="py-16 text-center">
                 <Package className="w-10 h-10 mx-auto mb-3" style={{ color: "rgba(30,37,53,0.2)" }} />
-                <p className="font-semibold" style={{ color: "#1e2535" }}>No applications yet</p>
-                <p className="text-xs mt-1 mb-4" style={{ color: "rgba(30,37,53,0.5)" }}>Apply to a supplier from the directory to get started.</p>
+                <p className="font-semibold" style={{ color: "#1e2535" }}>No active accounts yet</p>
+                <p className="text-xs mt-1 mb-4" style={{ color: "rgba(30,37,53,0.5)" }}>
+                  {pendingCount > 0
+                    ? `${pendingCount} application${pendingCount > 1 ? "s" : ""} awaiting approval.`
+                    : "Apply to a supplier from the directory to get started."}
+                </p>
               </GlassCard>
             ) : (
               <>
-                {/* Summary strip */}
-                <div className="grid grid-cols-3 gap-3">
-                  {[
-                    { label: "Total Applied", value: myApplications.length, color: "#7B8EC8", bg: "rgba(123,142,200,0.1)" },
-                    { label: "Active Accounts", value: approvedCount, color: "#4a6b10", bg: "rgba(200,230,60,0.12)" },
-                    { label: "Awaiting Response", value: pendingCount, color: "#FA6F30", bg: "rgba(250,111,48,0.08)" },
-                  ].map(({ label, value, color, bg }) => (
-                    <div key={label} className="rounded-2xl px-4 py-4 text-center" style={{ background: bg, border: `1px solid ${color}33` }}>
-                      <p className="text-2xl font-bold" style={{ color }}>{value}</p>
-                      <p className="text-xs mt-0.5 font-semibold" style={{ color: "rgba(30,37,53,0.55)" }}>{label}</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="rounded-2xl p-4 flex items-center gap-3" style={{ background: "rgba(255,255,255,0.85)", border: "1px solid rgba(30,37,53,0.08)", boxShadow: "0 1px 8px rgba(30,37,53,0.04)" }}>
+                    <div
+                      className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+                      style={{ background: "rgba(200,230,60,0.15)", border: "1px solid rgba(200,230,60,0.3)" }}
+                    >
+                      <CheckCircle className="w-5 h-5" style={{ color: "#4a6b10" }} />
                     </div>
-                  ))}
+                    <div>
+                      <p className="text-xs font-semibold" style={{ color: "rgba(30,37,53,0.45)" }}>Active Accounts</p>
+                      <p className="text-2xl font-bold leading-tight mt-0.5" style={{ color: "#1e2535" }}>
+                        {approvedCount}
+                      </p>
+                      <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.5)" }}>
+                        {myApplications.length} total applied
+                      </p>
+                    </div>
+                  </div>
+                  <div className="rounded-2xl p-4 flex items-center gap-3" style={{ background: "rgba(255,255,255,0.85)", border: "1px solid rgba(30,37,53,0.08)", boxShadow: "0 1px 8px rgba(30,37,53,0.04)" }}>
+                    <div
+                      className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+                      style={{ background: "rgba(123,142,200,0.12)", border: "1px solid rgba(123,142,200,0.25)" }}
+                    >
+                      <DollarSign className="w-5 h-5" style={{ color: "#7B8EC8" }} />
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold" style={{ color: "rgba(30,37,53,0.45)" }}>Est. Monthly</p>
+                      <p className="text-2xl font-bold leading-tight mt-0.5" style={{ color: "#1e2535" }}>
+                        {estMonthlySpend > 0 ? `$${estMonthlySpend.toLocaleString()}` : "—"}
+                      </p>
+                      <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.5)" }}>
+                        based on treatment logs
+                      </p>
+                    </div>
+                  </div>
                 </div>
 
-                {myApplications.map(app => {
-                  const mfr = manufacturers.find(m => m.id === app.manufacturer_id);
-                  const col = mfr ? (CATEGORY_COLORS[mfr.category] || CATEGORY_COLORS.other) : CATEGORY_COLORS.other;
-                  const statusCfg = APP_STATUS_CONFIG[app.status] || APP_STATUS_CONFIG.pending;
-                  const StatusIcon = statusCfg.icon;
-                  const savedRep = savedRepByMfrId[app.manufacturer_id];
-                  const rep = resolveRepDisplay(savedRep, mfr);
-                  return (
-                    <GlassCard key={app.id}>
-                      <div className="p-5">
-                        <div className="flex items-start gap-4">
-                          {mfr ? (
-                            <SupplierLogo mfr={mfr} size={44} />
-                          ) : (
-                            <div
-                              className="w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0"
-                              style={{ background: col.bg, border: `1px solid ${col.border}` }}
-                            >
-                              <Building2 className="w-5 h-5" style={{ color: col.color }} />
-                            </div>
-                          )}
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <p className="font-bold" style={{ color: "#1e2535", fontFamily: "'DM Serif Display', serif" }}>{app.manufacturer_name}</p>
-                              {app.status === "approved" ? (
-                                <span
-                                  className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full"
-                                  style={{ background: "rgba(200,230,60,0.15)", color: "#4a6b10", border: "1px solid rgba(200,230,60,0.35)" }}
-                                >
-                                  <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: "#5a7a20" }} />
-                                  Account Active
-                                </span>
-                              ) : (
-                                <span className="text-xs font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1"
-                                  style={{ background: statusCfg.bg, color: statusCfg.color, border: `1px solid ${statusCfg.border}` }}>
-                                  <StatusIcon className="w-3 h-3" style={{ width: 12, height: 12 }} />
-                                  {statusCfg.label}
-                                </span>
-                              )}
-                            </div>
-                            {mfr && <p className="text-xs mt-0.5 capitalize" style={{ color: "rgba(30,37,53,0.45)" }}>{CATEGORY_LABELS[mfr.category]}</p>}
-                          </div>
-                          <div className="text-right flex-shrink-0">
-                            <p className="text-xs" style={{ color: "rgba(30,37,53,0.4)" }}>Submitted</p>
-                            <p className="text-xs font-semibold" style={{ color: "#1e2535" }}>
-                              {app.submitted_at ? format(new Date(app.submitted_at), "MMM d, yyyy") : "—"}
-                            </p>
-                          </div>
-                        </div>
-
-                        {app.status === "approved" ? (
-                          <div className="mt-4 pt-4 space-y-4" style={{ borderTop: "1px solid rgba(30,37,53,0.07)" }}>
-                            <ApprovedAccountHub mfr={mfr} me={me} />
-                            {editingRepMfrId === app.manufacturer_id ? (
-                              <SaveRepContactForm
-                                compact
-                                showSkip={false}
-                                manufacturer={mfr}
-                                applicationId={app.id}
-                                initialRep={savedRep}
-                                onSaved={() => setEditingRepMfrId(null)}
-                              />
-                            ) : (
-                              <div className="flex items-center justify-between gap-3">
-                                <div className="min-w-0">
-                                  {savedRep?.rep_email ? (
-                                    <p className="text-xs" style={{ color: "rgba(30,37,53,0.55)" }}>
-                                      Rep on file: <strong>{rep.rep_name || "Your Rep"}</strong> · {rep.rep_email}
-                                    </p>
-                                  ) : (
-                                    <p className="text-xs" style={{ color: "rgba(30,37,53,0.5)" }}>Add your rep contact for orders and messages.</p>
-                                  )}
-                                </div>
-                                {mfr && (
-                                  <button
-                                    type="button"
-                                    onClick={() => setEditingRepMfrId(app.manufacturer_id)}
-                                    className="text-xs font-bold px-3 py-1.5 rounded-full shrink-0"
-                                    style={{ background: "rgba(123,142,200,0.12)", color: "#7B8EC8", border: "1px solid rgba(123,142,200,0.25)" }}
-                                  >
-                                    {savedRep?.rep_email ? "Edit rep" : "Add rep"}
-                                  </button>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        ) : (
-                          <>
-                            {/* Progress timeline */}
-                            <div className="mt-4 flex items-center gap-0">
-                              {[
-                                { label: "Submitted", done: true },
-                                { label: "In Review", done: ["approved", "rejected", "more_info_needed", "under_review", "submitted"].includes(app.status) },
-                                { label: "Decision", done: ["approved", "rejected"].includes(app.status) },
-                                { label: "Active", done: app.status === "approved" },
-                              ].map((step, i, arr) => (
-                                <div key={i} className="flex items-center flex-1">
-                                  <div className="flex flex-col items-center flex-shrink-0">
-                                    <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold"
-                                      style={{ background: step.done ? "rgba(200,230,60,0.2)" : "rgba(30,37,53,0.07)", border: step.done ? "1.5px solid rgba(200,230,60,0.5)" : "1.5px solid rgba(30,37,53,0.12)", color: step.done ? "#4a6b10" : "rgba(30,37,53,0.3)" }}>
-                                      {step.done ? <CheckCircle className="w-3.5 h-3.5" style={{ color: "#4a6b10" }} /> : (i + 1)}
-                                    </div>
-                                    <p className="text-xs mt-1 whitespace-nowrap" style={{ color: step.done ? "rgba(30,37,53,0.7)" : "rgba(30,37,53,0.3)", fontWeight: step.done ? 500 : 400, fontSize: 10 }}>{step.label}</p>
-                                  </div>
-                                  {i < arr.length - 1 && (
-                                    <div className="flex-1 h-px mx-1 mb-4" style={{ background: step.done ? "rgba(200,230,60,0.4)" : "rgba(30,37,53,0.1)" }} />
-                                  )}
-                                </div>
-                              ))}
-                            </div>
-
-                            {app.status === "more_info_needed" && (
-                              <div className="mt-3 px-3 py-2.5 rounded-xl flex items-center gap-2" style={{ background: "rgba(255,180,50,0.1)", border: "1px solid rgba(255,180,50,0.25)" }}>
-                                <AlertCircle className="w-4 h-4 flex-shrink-0" style={{ color: "#D4900A" }} />
-                                <p className="text-xs font-semibold" style={{ color: "rgba(30,37,53,0.75)" }}>The rep needs more info — check your email to respond.</p>
-                              </div>
-                            )}
-                            {["submitted", "pending", "under_review"].includes(app.status) && (
-                              <div className="mt-3 px-3 py-2 rounded-xl flex items-center gap-2" style={{ background: "rgba(123,142,200,0.07)", border: "1px solid rgba(123,142,200,0.18)" }}>
-                                <Clock className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#7B8EC8" }} />
-                                <p className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>Typical response time: 3–5 business days. Check your email for updates.</p>
-                              </div>
-                            )}
-                            {app.status === "rejected" && (
-                              <div className="mt-3 px-3 py-2.5 rounded-xl flex items-center gap-2" style={{ background: "rgba(218,106,99,0.1)", border: "1px solid rgba(218,106,99,0.25)" }}>
-                                <XCircle className="w-4 h-4 flex-shrink-0" style={{ color: "#DA6A63" }} />
-                                <p className="text-xs font-semibold" style={{ color: "rgba(30,37,53,0.75)" }}>This application was not approved. Contact support if you have questions.</p>
-                              </div>
-                            )}
-
-                            <div className="mt-4 pt-4" style={{ borderTop: "1px solid rgba(30,37,53,0.07)" }}>
-                              {editingRepMfrId === app.manufacturer_id ? (
-                                <SaveRepContactForm
-                                  compact
-                                  showSkip={false}
-                                  manufacturer={mfr}
-                                  applicationId={app.id}
-                                  initialRep={savedRep}
-                                  onSaved={() => setEditingRepMfrId(null)}
-                                />
-                              ) : (
-                                <div className="flex items-start justify-between gap-3">
-                                  <div className="min-w-0">
-                                    <p className="text-[10px] font-bold uppercase tracking-widest mb-1" style={{ color: "rgba(30,37,53,0.4)", letterSpacing: "0.12em" }}>
-                                      Rep Contact
-                                    </p>
-                                    {savedRep?.rep_email ? (
-                                      <>
-                                        <p className="text-sm font-semibold" style={{ color: "#1e2535" }}>{rep.rep_name || "Your Rep"}</p>
-                                        <p className="text-xs" style={{ color: "rgba(30,37,53,0.55)" }}>{rep.rep_email}{rep.rep_phone ? ` · ${rep.rep_phone}` : ""}</p>
-                                      </>
-                                    ) : (
-                                      <p className="text-xs" style={{ color: "rgba(30,37,53,0.5)" }}>
-                                        Save your rep&apos;s contact info for orders and messages through NOVI.
-                                      </p>
-                                    )}
-                                  </div>
-                                  {mfr && (
-                                    <button
-                                      type="button"
-                                      onClick={() => setEditingRepMfrId(app.manufacturer_id)}
-                                      className="text-xs font-bold px-3 py-1.5 rounded-full shrink-0"
-                                      style={{ background: "rgba(123,142,200,0.12)", color: "#7B8EC8", border: "1px solid rgba(123,142,200,0.25)" }}
-                                    >
-                                      {savedRep?.rep_email ? "Edit" : "Add rep"}
-                                    </button>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    </GlassCard>
-                  );
-                })}
+                <div className="space-y-3">
+                  {approvedApplications.map((app) => {
+                    const mfr = manufacturers.find((m) => m.id === app.manufacturer_id);
+                    const savedRep = savedRepByMfrId[app.manufacturer_id];
+                    return (
+                      <MyAccountCard
+                        key={app.id}
+                        app={app}
+                        mfr={mfr}
+                        me={me}
+                        savedRep={savedRep}
+                      />
+                    );
+                  })}
+                </div>
               </>
             )}
           </div>

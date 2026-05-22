@@ -217,7 +217,12 @@ const EMPTY_ITEM = {
   quantity: "", unit: "units", expiration_date: "", purchase_date: "", notes: ""
 };
 
-export default function ProviderInventoryTab({ me, myApplications = [], manufacturers = [] }) {
+export default function ProviderInventoryTab({
+  me,
+  myApplications = [],
+  manufacturers = [],
+  inventoryOnly = false,
+}) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
 
@@ -280,7 +285,7 @@ export default function ProviderInventoryTab({ me, myApplications = [], manufact
     <div className="space-y-6">
 
       {/* ── Supplier Accounts ── */}
-      {myApplications.length > 0 && (
+      {!inventoryOnly && myApplications.length > 0 && (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <div>
@@ -311,7 +316,7 @@ export default function ProviderInventoryTab({ me, myApplications = [], manufact
         </div>
       )}
 
-      <div className="h-px" style={{ background: "rgba(30,37,53,0.08)" }} />
+      {!inventoryOnly && <div className="h-px" style={{ background: "rgba(30,37,53,0.08)" }} />}
 
       {/* ── Alerts ── */}
       {(expiringSoon.length > 0 || lowStock.length > 0) && (
