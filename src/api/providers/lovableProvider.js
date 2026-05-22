@@ -109,6 +109,33 @@ function clearAuthSession() {
   window.localStorage.removeItem(REFRESH_TOKEN_KEY);
 }
 
+function sortEntityRows(rows, sortSpec = "") {
+  if (!sortSpec || !Array.isArray(rows)) return rows || [];
+  const desc = sortSpec.startsWith("-");
+  const rawField = desc ? sortSpec.slice(1) : sortSpec;
+  const dateFieldMap = { created_date: "created_at", updated_date: "updated_at" };
+  const field = dateFieldMap[rawField] || rawField;
+  return [...rows].sort((a, b) => {
+    const av = a[field] ?? "";
+    const bv = b[field] ?? "";
+    if (av < bv) return desc ? 1 : -1;
+    if (av > bv) return desc ? -1 : 1;
+    return 0;
+  });
+}
+
+function buildEntityQuery(filters = {}, limit) {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters || {})) {
+    if (value != null && String(value).trim() !== "") {
+      params.set(key, String(value));
+    }
+  }
+  if (limit) params.set("limit", String(limit));
+  const qs = params.toString();
+  return qs ? `?${qs}` : "";
+}
+
 function parseRecoveryHash(rawHash) {
   const source = typeof rawHash === "string" ? rawHash : "";
   const hash = source.startsWith("#") ? source.slice(1) : source;
@@ -542,13 +569,43 @@ export function createLovableProviderClient() {
         };
       }
       if (name === "Appointment") {
+        const fetchAppointments = async (filters = {}, sort = "", limit) => {
+          const qs = buildEntityQuery(filters, limit);
+          const rows = await authRequest(`/admin/appointments${qs}`, { method: "GET" });
+          return sortEntityRows(Array.isArray(rows) ? rows : [], sort);
+        };
         return {
-          list: async () => [],
-          filter: async () => [],
+          list: (sort, limit) => fetchAppointments({}, sort, limit),
+          filter: fetchAppointments,
+          create: (payload) =>
+            authRequest("/admin/appointments", { method: "POST", body: JSON.stringify(payload || {}) }),
+          update: (id, payload) =>
+            authRequest(`/admin/appointments/${encodeURIComponent(id)}`, {
+              method: "PATCH",
+              body: JSON.stringify(payload || {}),
+            }),
           get: createNotImplementedMethod("entities.Appointment.get"),
-          create: createNotImplementedMethod("entities.Appointment.create"),
-          update: createNotImplementedMethod("entities.Appointment.update"),
           delete: createNotImplementedMethod("entities.Appointment.delete")
+        };
+      }
+      if (name === "TreatmentRecord") {
+        const fetchTreatmentRecords = async (filters = {}, sort = "", limit) => {
+          const qs = buildEntityQuery(filters, limit);
+          const rows = await authRequest(`/admin/treatment-records${qs}`, { method: "GET" });
+          return sortEntityRows(Array.isArray(rows) ? rows : [], sort);
+        };
+        return {
+          list: (sort, limit) => fetchTreatmentRecords({}, sort, limit),
+          filter: fetchTreatmentRecords,
+          create: (payload) =>
+            authRequest("/admin/treatment-records", { method: "POST", body: JSON.stringify(payload || {}) }),
+          update: (id, payload) =>
+            authRequest(`/admin/treatment-records/${encodeURIComponent(id)}`, {
+              method: "PATCH",
+              body: JSON.stringify(payload || {}),
+            }),
+          get: createNotImplementedMethod("entities.TreatmentRecord.get"),
+          delete: createNotImplementedMethod("entities.TreatmentRecord.delete")
         };
       }
       if (name === "PatientJourney") {
