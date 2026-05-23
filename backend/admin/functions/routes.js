@@ -358,7 +358,7 @@ async function requireAdminOrStaffModelSignups(req, res, next) {
     const token = getBearerToken(req);
     if (!token) return res.status(401).json({ error: "Missing bearer token." });
     const me = await getMeFromAccessToken(token);
-    if (hasAdminAccess(me?.role) || hasStaffModuleAccess(me, "StaffModelSignups")) {
+    if (hasAdminAccess(me?.role) || hasStaffModuleAccess(me, "AdminModelSignups")) {
       req.me = me;
       return next();
     }

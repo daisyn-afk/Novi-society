@@ -33,8 +33,9 @@ coursesRouter.get("/", async (req, res, next) => {
       const role = String(me.role || "").trim().toLowerCase();
       const isAdmin = hasAdminAccess(role);
       const isStaffAllowed =
-        hasStaffModuleAccess(me, "StaffEnrollments") ||
-        hasStaffModuleAccess(me, "StaffModelSignups");
+        hasStaffModuleAccess(me, "AdminEnrollments") ||
+        hasStaffModuleAccess(me, "AdminModelSignups") ||
+        hasStaffModuleAccess(me, "admincourses");
       if (!isAdmin && role === "staff" && !isStaffAllowed) {
         return res.status(403).json({ error: "Forbidden." });
       }
@@ -55,8 +56,9 @@ coursesRouter.get("/:id", async (req, res, next) => {
     const role = String(me.role || "").trim().toLowerCase();
     if (
       role === "staff" &&
-      !hasStaffModuleAccess(me, "StaffEnrollments") &&
-      !hasStaffModuleAccess(me, "StaffModelSignups")
+      !hasStaffModuleAccess(me, "AdminEnrollments") &&
+      !hasStaffModuleAccess(me, "AdminModelSignups") &&
+      !hasStaffModuleAccess(me, "admincourses")
     ) {
       return res.status(403).json({ error: "Forbidden." });
     }
@@ -71,8 +73,8 @@ coursesRouter.get("/:id", async (req, res, next) => {
 coursesRouter.post("/", async (req, res, next) => {
   try {
     const me = await getOptionalAuthUser(req);
-    if (!me || !hasAdminAccess(me.role)) {
-      return res.status(403).json({ error: "Forbidden. Admin access required." });
+    if (!me || (!hasAdminAccess(me.role) && !hasStaffModuleAccess(me, "admincourses"))) {
+      return res.status(403).json({ error: "Forbidden." });
     }
     const payload = validateCourseInput(req.body, { partial: false });
     const createdByEmail = me.email || req.headers["x-admin-email"] || null;
@@ -86,8 +88,8 @@ coursesRouter.post("/", async (req, res, next) => {
 coursesRouter.put("/:id", async (req, res, next) => {
   try {
     const me = await getOptionalAuthUser(req);
-    if (!me || !hasAdminAccess(me.role)) {
-      return res.status(403).json({ error: "Forbidden. Admin access required." });
+    if (!me || (!hasAdminAccess(me.role) && !hasStaffModuleAccess(me, "admincourses"))) {
+      return res.status(403).json({ error: "Forbidden." });
     }
     const existing = await getCourseById(req.params.id);
     if (!existing) return res.status(404).json({ error: "Course not found" });
@@ -107,8 +109,8 @@ coursesRouter.put("/:id", async (req, res, next) => {
 coursesRouter.delete("/:id", async (req, res, next) => {
   try {
     const me = await getOptionalAuthUser(req);
-    if (!me || !hasAdminAccess(me.role)) {
-      return res.status(403).json({ error: "Forbidden. Admin access required." });
+    if (!me || (!hasAdminAccess(me.role) && !hasStaffModuleAccess(me, "admincourses"))) {
+      return res.status(403).json({ error: "Forbidden." });
     }
     const deleted = await deleteCourse(req.params.id);
     if (!deleted) return res.status(404).json({ error: "Course not found" });

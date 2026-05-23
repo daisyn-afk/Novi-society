@@ -1,13 +1,25 @@
 import { getMeFromAccessToken } from "./service.js";
 
-const STAFF_MODULE_KEYS = new Set([
-  "StaffDashboard",
-  "StaffEnrollments",
-  "StaffProviders",
-  "StaffModelSignups",
-  "StaffPreOrders",
-  "StaffCompliance",
-]);
+const STAFF_MODULE_ALIASES = {
+  AdminUsers: [],
+  AdminPreOrders: ["StaffPreOrders"],
+  admincourses: [],
+  AdminEnrollments: ["StaffEnrollments"],
+  AdminProviders: ["StaffProviders"],
+  AdminLicenses: [],
+  AdminServiceTypes: [],
+  AdminPromoCodes: [],
+  AdminManufacturers: [],
+  AdminEmailTemplates: [],
+  AdminLaunchPad: [],
+  AdminWizardConfig: [],
+  AdminCompliance: [],
+  AdminModelSignups: ["StaffModelSignups"],
+  AdminDashboard: ["StaffDashboard"],
+};
+const STAFF_MODULE_KEYS = new Set(
+  Object.keys(STAFF_MODULE_ALIASES).flatMap((key) => [key, ...(STAFF_MODULE_ALIASES[key] || [])])
+);
 
 function normalizeRole(role) {
   return String(role || "").trim().toLowerCase();
@@ -27,7 +39,10 @@ export function hasAdminAccess(role) {
 export function hasStaffModuleAccess(me, moduleKey) {
   if (!moduleKey || !STAFF_MODULE_KEYS.has(moduleKey)) return false;
   if (normalizeRole(me?.role) !== "staff") return false;
-  return me?.permissions?.[moduleKey] === true;
+  const permissions = me?.permissions || {};
+  if (permissions[moduleKey] === true) return true;
+  const aliases = STAFF_MODULE_ALIASES[moduleKey] || [];
+  return aliases.some((alias) => permissions[alias] === true);
 }
 
 /**

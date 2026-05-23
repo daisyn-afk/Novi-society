@@ -79,18 +79,29 @@ export const ALLOWED_PAGES_BY_ROLE: Record<string, Set<string>> = {
   ]),
   staff: new Set([
     "StaffDashboard",
-    "StaffEnrollments",
-    "StaffProviders",
-    "StaffModelSignups",
-    "StaffPreOrders",
-    "StaffCompliance",
+    "AdminDashboard",
+    "AdminUsers",
+    "AdminPreOrders",
+    "admincourses",
+    "AdminEnrollments",
+    "AdminProviders",
+    "AdminLicenses",
+    "AdminServiceTypes",
+    "AdminPromoCodes",
+    "AdminManufacturers",
+    "AdminEmailTemplates",
+    "AdminLaunchPad",
+    "AdminWizardConfig",
+    "AdminCompliance",
+    "AdminModelSignups",
   ]),
 };
 
 // Canonical list of modules that can be individually granted to staff users.
-// StaffDashboard is always granted and is excluded from the toggle UI.
+// StaffDashboard is always granted as the baseline landing page.
 // These modules mirror the admin sidebar options.
 export const STAFF_MODULE_CATALOG: Array<{ key: string; label: string; group: string }> = [
+  { key: "AdminDashboard",      label: "Admin Dashboard",            group: "Core" },
   { key: "AdminUsers",          label: "Users",                      group: "Core" },
   { key: "AdminPreOrders",      label: "Pre-Order Applications",     group: "Operations" },
   { key: "admincourses",        label: "Courses",                    group: "Operations" },
@@ -148,6 +159,7 @@ export function isPageAllowedForRole(
 
   if (normalizedRole === "staff") {
     if (pageName === "StaffDashboard") return true;
+    if (!ALLOWED_PAGES_BY_ROLE.staff.has(pageName)) return false;
     return permissions?.[pageName] === true;
   }
 

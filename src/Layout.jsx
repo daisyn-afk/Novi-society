@@ -125,10 +125,11 @@ export default function Layout({ children, currentPageName }) {
 
   const role = normalizeRole(user?.role || "provider");
   const navRole = role;
+  const staffDashboardPage = user?.permissions?.AdminDashboard === true ? "AdminDashboard" : "StaffDashboard";
   const navItems = navRole === "staff"
-    ? navByRole.staff.filter(({ page }) =>
-        page === "StaffDashboard" || user?.permissions?.[page] === true
-      )
+    ? navByRole.staff
+        .map((item) => item.page === "StaffDashboard" ? { ...item, page: staffDashboardPage } : item)
+        .filter(({ page }) => page === staffDashboardPage || user?.permissions?.[page] === true)
     : (navByRole[navRole] || navByRole.provider);
   const isProviderUserReady = role === "provider" && Boolean(user?.id || user?.email);
 

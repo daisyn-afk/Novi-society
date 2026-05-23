@@ -13,7 +13,7 @@ enrollmentsRouter.get("/", async (req, res, next) => {
     const role = String(me.role || "").trim().toLowerCase();
     const isAdmin = hasAdminAccess(role);
     const isStaff = role === "staff";
-    if (isStaff && !hasStaffModuleAccess(me, "StaffEnrollments")) {
+    if (isStaff && !hasStaffModuleAccess(me, "AdminEnrollments")) {
       return res.status(403).json({ error: "Forbidden." });
     }
 

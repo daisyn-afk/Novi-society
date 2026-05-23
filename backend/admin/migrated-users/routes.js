@@ -5,8 +5,10 @@ import {
   listPaidPreOrdersNeedingPasswordReset,
   sendPaidUserPasswordResetEmail
 } from "./service.js";
+import { requireAdminOrStaffWithModule } from "../auth/helpers.js";
 
 export const migratedUsersRouter = Router();
+migratedUsersRouter.use(requireAdminOrStaffWithModule("AdminPreOrders"));
 
 migratedUsersRouter.post("/send-password-reset", async (req, res, next) => {
   try {
