@@ -6,8 +6,8 @@ import {
   sendResendHtmlEmail
 } from "../emails/courseStyleEmail.js";
 import {
-  buildSetPasswordRedirectUrl,
-  resolveFrontendBaseUrl
+  resolveAppBaseUrl,
+  resolveSetPasswordUrl
 } from "../lib/frontendBaseUrl.js";
 import {
   ensureProviderUserRecord,
@@ -39,7 +39,8 @@ async function generatePasswordSetupLink(email, redirectBaseUrl, { firstName, la
     throw err;
   }
   const normalized = String(email || "").trim().toLowerCase();
-  const redirectTo = buildSetPasswordRedirectUrl(redirectBaseUrl);
+  // redirectBaseUrl is already a validated base URL string passed from sendPaidUserPasswordResetEmail.
+  const redirectTo = resolveSetPasswordUrl({ origin: redirectBaseUrl });
   const linkData = {
     first_name: firstName || "",
     last_name: lastName || "",
@@ -106,7 +107,7 @@ export async function sendPaidUserPasswordResetEmail({
     throw err;
   }
 
-  const signupBaseUrl = resolveFrontendBaseUrl({ frontendOrigin, requestOrigin });
+  const signupBaseUrl = resolveAppBaseUrl({ origin: frontendOrigin || requestOrigin, referer: requestOrigin });
   const { firstName, lastName } = splitCustomerName(customerName);
   const greetingName = firstName || customerName || "there";
 

@@ -41,6 +41,7 @@ import SMSTerms from './pages/SMSTerms';
 import ContactUs from './pages/ContactUs';
 import { base44 } from "@/api/base44Client";
 import { getDashboardPathForRole, normalizeRole, isPageAllowedForRole } from "@/lib/routeAccessPolicy";
+import { getProviderOnboardingPath, resolveProviderOnboardingState } from "@/lib/providerOnboardingState";
 import RouteErrorBoundary from "@/components/RouteErrorBoundary";
 import PasswordResetHashRedirect from "@/components/PasswordResetHashRedirect";
 
@@ -58,6 +59,17 @@ const RequireRoleRoute = ({ pageKey, children }) => {
     queryFn: () => base44.auth.me(),
     retry: false,
   });
+  const needsProviderOnboardingGate =
+    pageKey === "ProviderDashboard" && normalizeRole(user?.role) === "provider";
+  const {
+    data: providerOnboardingState,
+    isLoading: isLoadingProviderGate,
+  } = useQuery({
+    queryKey: ["provider-onboarding-gate", user?.id || user?.email || "unknown"],
+    queryFn: () => resolveProviderOnboardingState(user),
+    enabled: Boolean(needsProviderOnboardingGate && user),
+    retry: false,
+  });
 
   if (isLoading) {
     return (
@@ -69,6 +81,18 @@ const RequireRoleRoute = ({ pageKey, children }) => {
 
   if (!isPageAllowedForRole(pageKey, user?.role)) {
     return <Forbidden />;
+  }
+
+  if (isLoadingProviderGate) {
+    return (
+      <div className="fixed inset-0 flex items-center justify-center">
+        <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin"></div>
+      </div>
+    );
+  }
+
+  if (needsProviderOnboardingGate && providerOnboardingState && !providerOnboardingState.isComplete) {
+    return <Navigate to={getProviderOnboardingPath()} replace />;
   }
 
   return children;
