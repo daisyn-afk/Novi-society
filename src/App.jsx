@@ -79,7 +79,7 @@ const RequireRoleRoute = ({ pageKey, children }) => {
     );
   }
 
-  if (!isPageAllowedForRole(pageKey, user?.role)) {
+  if (!isPageAllowedForRole(pageKey, user?.role, user?.permissions)) {
     return <Forbidden />;
   }
 

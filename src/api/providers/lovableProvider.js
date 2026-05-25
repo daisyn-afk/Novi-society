@@ -281,6 +281,8 @@ export function createLovableProviderClient() {
             const params = new URLSearchParams({ limit: String(limit || 200) });
             const emailParam = String(opts?.customer_email || "").trim();
             if (emailParam) params.set("customer_email", emailParam);
+            const orderTypeParam = String(opts?.order_type || "").trim();
+            if (orderTypeParam) params.set("order_type", orderTypeParam);
             return authRequest(`/admin/pre-orders?${params.toString()}`, { method: "GET" });
           },
           get: (id) => requestJson(`/admin/checkout/pre-order?id=${encodeURIComponent(id)}`, { method: "GET" }),

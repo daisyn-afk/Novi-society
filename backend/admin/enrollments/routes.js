@@ -1,24 +1,50 @@
 import { Router } from "express";
 import { query } from "../db.js";
 import { backfillPaidEnrollments } from "./repository.js";
+import { hasAdminAccess, hasStaffModuleAccess, requireAuth } from "../auth/helpers.js";
 
 export const enrollmentsRouter = Router();
+enrollmentsRouter.use(requireAuth);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 enrollmentsRouter.get("/", async (req, res, next) => {
   try {
+    const me = req.me || {};
+    const role = String(me.role || "").trim().toLowerCase();
+    const isAdmin = hasAdminAccess(role);
+    const isStaff = role === "staff";
+    if (isStaff && !hasStaffModuleAccess(me, "AdminEnrollments")) {
+      return res.status(403).json({ error: "Forbidden." });
+    }
+
     const providerId = String(req.query?.provider_id || "").trim();
     const providerEmail = String(req.query?.provider_email || "").trim().toLowerCase();
+    const ownId = String(me.id || "").trim();
+    const ownEmail = String(me.email || "").trim().toLowerCase();
+    const forceOwnScope = !isAdmin && !isStaff;
     const status = String(req.query?.status || "").trim();
     const courseId = String(req.query?.course_id || "").trim();
 
     const whereClauses = [];
     const params = [];
-    if (providerId) {
+    if (forceOwnScope) {
+      const ownClauses = [];
+      if (ownId) {
+        params.push(ownId);
+        ownClauses.push(`provider_id::text = $${params.length}`);
+      }
+      if (ownEmail) {
+        params.push(ownEmail);
+        ownClauses.push(`lower(provider_email) = $${params.length}`);
+      }
+      if (ownClauses.length) {
+        whereClauses.push(`(${ownClauses.join(" or ")})`);
+      }
+    } else if (providerId) {
       params.push(providerId);
       whereClauses.push(`provider_id::text = $${params.length}`);
     }
-    if (providerEmail) {
+    if (!forceOwnScope && providerEmail) {
       params.push(providerEmail);
       whereClauses.push(`lower(provider_email) = $${params.length}`);
     }
@@ -60,6 +86,9 @@ enrollmentsRouter.get("/", async (req, res, next) => {
 
 enrollmentsRouter.patch("/:id", async (req, res, next) => {
   try {
+    if (!hasAdminAccess(req.me?.role)) {
+      return res.status(403).json({ error: "Forbidden. Admin access required." });
+    }
     const id = String(req.params.id || "").trim();
     if (!id) return res.status(400).json({ error: "Enrollment id is required." });
     if (!UUID_RE.test(id)) {
@@ -96,6 +125,9 @@ enrollmentsRouter.patch("/:id", async (req, res, next) => {
 
 enrollmentsRouter.post("/repair", async (_req, res, next) => {
   try {
+    if (!hasAdminAccess(_req.me?.role)) {
+      return res.status(403).json({ error: "Forbidden. Admin access required." });
+    }
     const result = await backfillPaidEnrollments();
     return res.json(result);
   } catch (error) {

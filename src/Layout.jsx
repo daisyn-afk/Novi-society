@@ -22,7 +22,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { normalizeRole } from "@/lib/routeAccessPolicy";
+import { hasStaffModulePermission, normalizeRole } from "@/lib/routeAccessPolicy";
 
 const navByRole = {
   admin: [
@@ -70,9 +70,21 @@ const navByRole = {
     { label: "Profile", icon: User, page: "PatientProfile" },
   ],
   staff: [
-    { label: "Dashboard", icon: LayoutDashboard, page: "AdminDashboard" },
-    { label: "Enrollments", icon: ClipboardList, page: "AdminEnrollments" },
-    { label: "Providers", icon: Users, page: "AdminProviders" },
+    { label: "Dashboard",              icon: LayoutDashboard, page: "AdminDashboard"   },
+    { label: "Users",                  icon: Users,           page: "AdminUsers"        },
+    { label: "Pre-Order Applications", icon: ClipboardList,   page: "AdminPreOrders"    },
+    { label: "Courses",                icon: BookOpen,        page: "admincourses"      },
+    { label: "Enrollments",            icon: ClipboardList,   page: "AdminEnrollments"  },
+    { label: "Providers",              icon: Users,           page: "AdminProviders"    },
+    { label: "Licenses & Certifications", icon: FileText,     page: "AdminLicenses"     },
+    { label: "Service Types",          icon: Settings,        page: "AdminServiceTypes" },
+    { label: "Promo Codes",            icon: TicketPercent,   page: "AdminPromoCodes"   },
+    { label: "Manufacturer Marketplace", icon: ShoppingBag,   page: "AdminManufacturers"},
+    { label: "Email Automation",       icon: Mail,            page: "AdminEmailTemplates"},
+    { label: "Growth Studio Editor",   icon: Rocket,          page: "AdminLaunchPad"    },
+    { label: "Wizard Configuration",   icon: Settings,        page: "AdminWizardConfig" },
+    { label: "Compliance & Reviews",   icon: ShieldCheck,     page: "AdminCompliance"   },
+    { label: "Model sign-ups",         icon: Users,           page: "AdminModelSignups" },
   ],
 };
 
@@ -113,7 +125,11 @@ export default function Layout({ children, currentPageName }) {
 
   const role = normalizeRole(user?.role || "provider");
   const navRole = role;
-  const navItems = navByRole[navRole] || navByRole.provider;
+  const navItems = navRole === "staff"
+    ? navByRole.staff.filter(({ page }) =>
+        page === "AdminDashboard" || hasStaffModulePermission(page, user?.permissions)
+      )
+    : (navByRole[navRole] || navByRole.provider);
   const isProviderUserReady = role === "provider" && Boolean(user?.id || user?.email);
 
   // Sidebar unread message badge — shared query key ["msg-threads"] with messaging pages.

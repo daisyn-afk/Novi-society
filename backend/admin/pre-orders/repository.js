@@ -74,15 +74,23 @@ async function getSelectColumnsSql() {
   `;
 }
 
-export async function listPreOrders({ limit = 200, customerEmail = "" } = {}) {
+export async function listPreOrders({ limit = 200, customerEmail = "", orderType = "" } = {}) {
   const safeLimit = Number.isFinite(Number(limit)) ? Math.min(Math.max(Number(limit), 1), 500) : 200;
   const email = String(customerEmail || "").trim().toLowerCase();
+  const normalizedOrderType = String(orderType || "").trim().toLowerCase();
   const selectColumns = await getSelectColumnsSql();
 
   const params = [safeLimit];
-  const innerWhereSql = email
-    ? (() => { params.push(email); return `where lower(customer_email) = $${params.length}`; })()
-    : "";
+  const innerWhereClauses = [];
+  if (email) {
+    params.push(email);
+    innerWhereClauses.push(`lower(customer_email) = $${params.length}`);
+  }
+  if (normalizedOrderType) {
+    params.push(normalizedOrderType);
+    innerWhereClauses.push(`lower(order_type) = $${params.length}`);
+  }
+  const innerWhereSql = innerWhereClauses.length ? `where ${innerWhereClauses.join(" and ")}` : "";
 
   const { rows } = await query(
     `select sub.*,
