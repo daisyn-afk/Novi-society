@@ -58,7 +58,7 @@ export default function PatientProfile() {
   const initials = me?.full_name?.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase() || "P";
 
   return (
-    <div className="max-w-2xl space-y-6">
+    <div className="max-w-2xl mx-auto space-y-6">
       {/* Header */}
       <div>
         <p className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: "rgba(218,106,99,0.9)" }}>Patient</p>

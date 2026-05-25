@@ -419,7 +419,12 @@ export default function AdminUsers() {
           }
         }}
       >
-        <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
+        <DialogContent
+          className="max-w-xl max-h-[90vh] overflow-y-auto"
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+          }}
+        >
           <DialogHeader>
             <DialogTitle>{editing ? `Edit ${editing.email}` : "Create User"}</DialogTitle>
           </DialogHeader>
@@ -585,7 +590,12 @@ export default function AdminUsers() {
           if (!open) setDeleteTarget(null);
         }}
       >
-        <DialogContent className="max-w-md">
+        <DialogContent
+          className="max-w-md"
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+          }}
+        >
           <DialogHeader>
             <DialogTitle>Delete user?</DialogTitle>
           </DialogHeader>

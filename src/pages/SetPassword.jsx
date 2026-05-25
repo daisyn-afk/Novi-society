@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { base44 } from "@/api/base44Client";
 import { useAuth } from "@/lib/AuthContext";
-import { getDashboardPathForRole } from "@/lib/routeAccessPolicy";
+import { getPostAuthRedirectPath } from "@/lib/providerOnboardingState";
 import {
   clearPasswordResetError,
   consumePasswordResetError,
@@ -143,7 +143,8 @@ export default function SetPassword() {
       clearPasswordResetError();
       const currentUser = await base44.auth.me();
       setAuthenticatedSession(currentUser);
-      navigate(getDashboardPathForRole(currentUser?.role), { replace: true });
+      const redirectPath = await getPostAuthRedirectPath({ user: currentUser, nextPath: null });
+      navigate(redirectPath, { replace: true });
     } catch (error) {
       const status = error?.status;
       const message = error?.message || "";

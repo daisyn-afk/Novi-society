@@ -147,6 +147,28 @@ export async function markPasswordResetPending({ email, authUserId, firstName, l
   }
 }
 
+/**
+ * Records that an admin-triggered setup email was dispatched for an already-created user.
+ * Unlike markPasswordResetPending, this only updates the password tracking columns and
+ * never modifies the user's role — safe for all roles (admin, medical_director, etc.).
+ */
+export async function markUserSetupEmailSent(authUserId) {
+  if (!authUserId) return null;
+  const now = new Date();
+  const { rows } = await query(
+    `update public.users
+     set password_setup_status       = $2,
+         password_reset_email_sent_at  = $3,
+         password_reset_link_issued_at = $3,
+         password_reset_completed_at   = null,
+         updated_at                    = now()
+     where auth_user_id = $1
+     returning id, email, password_setup_status`,
+    [authUserId, PASSWORD_SETUP_STATUS.PENDING, now]
+  );
+  return rows[0] || null;
+}
+
 export async function markPasswordResetCompleted(authUserId, email) {
   const normalizedEmail = String(email || "").trim().toLowerCase();
   if (!authUserId && !normalizedEmail) return null;

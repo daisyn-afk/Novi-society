@@ -1,10 +1,11 @@
 import { useState, useEffect } from "react";
-import { useSearchParams, Link } from "react-router-dom";
+import { useSearchParams, Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { createPageUrl } from "@/utils";
 import { Stethoscope, Users, ArrowRight, CheckCircle2, BookOpen, Shield } from "lucide-react";
 import { getDashboardPathForRole } from "@/lib/routeAccessPolicy";
+import { getPostAuthRedirectPath } from "@/lib/providerOnboardingState";
 import {
   GOAL_NEED_MD_COVERAGE,
   GOAL_NEED_TRAINING,
@@ -23,6 +24,7 @@ const BRAND = {
 };
 
 export default function Onboarding() {
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const fromProviderHome = searchParams.get("from") === "provider";
 
@@ -36,20 +38,25 @@ export default function Onboarding() {
   });
 
   useEffect(() => {
-    if (!me?.role) return;
-    if (fromProviderHome) {
-      if (me.role === "provider") {
-        window.location.href = getDashboardPathForRole("provider");
+    const routeAuthenticatedRole = async () => {
+      if (!me?.role) return;
+      if (fromProviderHome) {
+        if (me.role === "provider") {
+          const redirectPath = await getPostAuthRedirectPath({ user: me, nextPath: null });
+          navigate(redirectPath, { replace: true });
+          return;
+        }
+        if (me.role !== "patient") {
+          navigate(getDashboardPathForRole(me.role), { replace: true });
+          return;
+        }
         return;
       }
-      if (me.role !== "patient") {
-        window.location.href = getDashboardPathForRole(me.role);
-        return;
-      }
-      return;
-    }
-    window.location.href = getDashboardPathForRole(me.role);
-  }, [me, fromProviderHome]);
+      const redirectPath = await getPostAuthRedirectPath({ user: me, nextPath: null });
+      navigate(redirectPath, { replace: true });
+    };
+    routeAuthenticatedRole();
+  }, [me, fromProviderHome, navigate]);
 
   const persistGoalAndGoBasic = (goal) => {
     writeProviderSignupGoal(goal);
