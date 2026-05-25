@@ -23,32 +23,12 @@ import {
   markAttemptFailed,
   PAYMENT_FLOW
 } from "../payments/service.js";
+import { resolveAppBaseUrl } from "../lib/frontendBaseUrl.js";
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
-const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-const runtimeVercelUrl =
-  process.env.VERCEL_PROJECT_PRODUCTION_URL ||
-  process.env.VERCEL_URL ||
-  "";
-const appBaseUrl = (() => {
-  const configured = String(process.env.APP_BASE_URL || "").trim();
-  const fallback = configured || (runtimeVercelUrl ? `https://${runtimeVercelUrl}` : "http://localhost:5173");
-  const isProdRuntime = Boolean(process.env.VERCEL) || process.env.NODE_ENV === "production";
-  try {
-    const u = new URL(fallback);
-    const host = String(u.hostname || "").toLowerCase();
-    const isLocalHost = host === "localhost" || host === "127.0.0.1" || host === "::1" || host.endsWith(".local");
-    if (isProdRuntime && isLocalHost && runtimeVercelUrl) {
-      return `https://${runtimeVercelUrl}`;
-    }
-  } catch {
-    // Keep fallback as-is when URL parsing fails.
-  }
-  return fallback;
-})();
 const resendApiKey = process.env.RESEND_API_KEY;
 const resendFromEmail = process.env.RESEND_FROM_EMAIL || "NOVI Society <support@novisociety.com>";
-const noviEmailLogoUrl = process.env.NOVI_EMAIL_LOGO_URL || `${appBaseUrl}/novi-email-logo.png`;
+const noviEmailLogoUrl = process.env.NOVI_EMAIL_LOGO_URL || `${resolveAppBaseUrl(null)}/novi-email-logo.png`;
 
 const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -62,53 +42,6 @@ const supabaseAdmin = supabaseUrl && supabaseServiceRoleKey
 const preorderFallbackTimeoutMs = Number(process.env.PREORDER_FALLBACK_TIMEOUT_MS || 4000);
 let coursePromoColumnsPromise = null;
 let usersAuthUserIdNullablePromise = null;
-
-function resolveFrontendBaseUrl(requestOrigin) {
-  const raw = String(requestOrigin || "").trim();
-  if (!raw) return String(appBaseUrl || "").replace(/\/+$/, "");
-  try {
-    const parsed = new URL(raw);
-    if (!/^https?:$/i.test(parsed.protocol)) {
-      return String(appBaseUrl || "").replace(/\/+$/, "");
-    }
-    const hostname = String(parsed.hostname || "").toLowerCase();
-    const isLocalHost =
-      hostname === "localhost" ||
-      hostname === "127.0.0.1" ||
-      hostname === "::1" ||
-      hostname.endsWith(".local");
-    if (isLocalHost) {
-      return String(appBaseUrl || "").replace(/\/+$/, "");
-    }
-    return `${parsed.protocol}//${parsed.host}`;
-  } catch {
-    return String(appBaseUrl || "").replace(/\/+$/, "");
-  }
-}
-
-function coercePublicBaseUrl(maybeUrl) {
-  const fallback = String(appBaseUrl || "").replace(/\/+$/, "");
-  const raw = String(maybeUrl || "").trim();
-  const candidate = raw || fallback;
-  const isProdRuntime = Boolean(process.env.VERCEL) || process.env.NODE_ENV === "production";
-  const runtimeVercelUrl =
-    process.env.VERCEL_PROJECT_PRODUCTION_URL ||
-    process.env.VERCEL_URL ||
-    "";
-
-  try {
-    const u = new URL(candidate);
-    const host = String(u.hostname || "").toLowerCase();
-    const isLocalHost = host === "localhost" || host === "127.0.0.1" || host === "::1" || host.endsWith(".local");
-    if (isProdRuntime && isLocalHost && runtimeVercelUrl) {
-      return `https://${runtimeVercelUrl}`;
-    }
-    return `${u.protocol}//${u.host}`;
-  } catch {
-    if (runtimeVercelUrl) return `https://${runtimeVercelUrl}`;
-    return fallback;
-  }
-}
 
 function normalizeRole(role) {
   const value = String(role || "provider").trim().toLowerCase();
@@ -192,7 +125,7 @@ export async function enrichPreOrderWithReturnContext(preOrder, sessionId = null
 
 export async function createCourseCheckout(payload, options = {}) {
   if (!stripe) throw new Error("STRIPE_SECRET_KEY is not configured.");
-  const frontendBaseUrl = resolveFrontendBaseUrl(options?.requestOrigin);
+  const frontendBaseUrl = resolveAppBaseUrl({ origin: options?.requestOrigin });
 
   const {
     course_id,
@@ -1576,7 +1509,7 @@ async function inviteUserIfNeeded(email, firstName, lastName, frontendBaseUrlOve
   try {
     const runQuery = async (sql, params = []) => (dbClient ? dbClient.query(sql, params) : query(sql, params));
     const normalizedEmail = String(email).trim().toLowerCase();
-    const signupBaseUrl = coercePublicBaseUrl(resolveFrontendBaseUrl(frontendBaseUrlOverride));
+    const signupBaseUrl = resolveAppBaseUrl({ origin: frontendBaseUrlOverride });
     const defaultSignupLink = `${signupBaseUrl}/signup?email=${encodeURIComponent(normalizedEmail)}`;
 
     const generateSetupLink = async (linkType = "invite") => {
