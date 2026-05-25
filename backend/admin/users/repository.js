@@ -128,7 +128,9 @@ async function getUserByEmail(email) {
 function normalizeStaffPermissions(role, permissions) {
   if (role !== "staff") return null;
   const base = permissions && typeof permissions === "object" ? { ...permissions } : {};
-  base.StaffDashboard = true;
+  // Keep dashboard always present for staff, now using admin dashboard.
+  base.AdminDashboard = true;
+  delete base.StaffDashboard;
   return base;
 }
 

@@ -22,7 +22,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { normalizeRole } from "@/lib/routeAccessPolicy";
+import { hasStaffModulePermission, normalizeRole } from "@/lib/routeAccessPolicy";
 
 const navByRole = {
   admin: [
@@ -70,7 +70,7 @@ const navByRole = {
     { label: "Profile", icon: User, page: "PatientProfile" },
   ],
   staff: [
-    { label: "Dashboard",              icon: LayoutDashboard, page: "StaffDashboard"   },
+    { label: "Dashboard",              icon: LayoutDashboard, page: "AdminDashboard"   },
     { label: "Users",                  icon: Users,           page: "AdminUsers"        },
     { label: "Pre-Order Applications", icon: ClipboardList,   page: "AdminPreOrders"    },
     { label: "Courses",                icon: BookOpen,        page: "admincourses"      },
@@ -125,11 +125,10 @@ export default function Layout({ children, currentPageName }) {
 
   const role = normalizeRole(user?.role || "provider");
   const navRole = role;
-  const staffDashboardPage = user?.permissions?.AdminDashboard === true ? "AdminDashboard" : "StaffDashboard";
   const navItems = navRole === "staff"
-    ? navByRole.staff
-        .map((item) => item.page === "StaffDashboard" ? { ...item, page: staffDashboardPage } : item)
-        .filter(({ page }) => page === staffDashboardPage || user?.permissions?.[page] === true)
+    ? navByRole.staff.filter(({ page }) =>
+        page === "AdminDashboard" || hasStaffModulePermission(page, user?.permissions)
+      )
     : (navByRole[navRole] || navByRole.provider);
   const isProviderUserReady = role === "provider" && Boolean(user?.id || user?.email);
 

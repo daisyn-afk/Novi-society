@@ -9,7 +9,7 @@ export const DASHBOARD_BY_ROLE: Record<string, string> = {
   provider: "ProviderDashboard",
   patient: "PatientJourney",
   medical_director: "MDDashboard",
-  staff: "StaffDashboard",
+  staff: "AdminDashboard",
 };
 
 export const ALLOWED_PAGES_BY_ROLE: Record<string, Set<string>> = {
@@ -78,7 +78,6 @@ export const ALLOWED_PAGES_BY_ROLE: Record<string, Set<string>> = {
     "PatientOnboarding",
   ]),
   staff: new Set([
-    "StaffDashboard",
     "AdminDashboard",
     "AdminUsers",
     "AdminPreOrders",
@@ -98,10 +97,9 @@ export const ALLOWED_PAGES_BY_ROLE: Record<string, Set<string>> = {
 };
 
 // Canonical list of modules that can be individually granted to staff users.
-// StaffDashboard is always granted as the baseline landing page.
+// AdminDashboard is always granted as the baseline landing page.
 // These modules mirror the admin sidebar options.
 export const STAFF_MODULE_CATALOG: Array<{ key: string; label: string; group: string }> = [
-  { key: "AdminDashboard",      label: "Admin Dashboard",            group: "Core" },
   { key: "AdminUsers",          label: "Users",                      group: "Core" },
   { key: "AdminPreOrders",      label: "Pre-Order Applications",     group: "Operations" },
   { key: "admincourses",        label: "Courses",                    group: "Operations" },
@@ -131,6 +129,23 @@ export const SHARED_AUTH_PAGES = new Set([
   "ContactUs",
 ]);
 
+const LEGACY_STAFF_PERMISSION_ALIASES: Record<string, string[]> = {
+  AdminDashboard: ["StaffDashboard"],
+  AdminPreOrders: ["StaffPreOrders"],
+  AdminEnrollments: ["StaffEnrollments"],
+  AdminProviders: ["StaffProviders"],
+  AdminModelSignups: ["StaffModelSignups"],
+};
+
+export function hasStaffModulePermission(
+  pageName: string,
+  permissions?: Record<string, boolean> | null
+) {
+  if (permissions?.[pageName] === true) return true;
+  const aliases = LEGACY_STAFF_PERMISSION_ALIASES[pageName] || [];
+  return aliases.some((legacy) => permissions?.[legacy] === true);
+}
+
 export function normalizeRole(role?: string | null) {
   if (!role) return null;
   return ROLE_ALIASES[role] || role;
@@ -158,9 +173,9 @@ export function isPageAllowedForRole(
   if (SHARED_AUTH_PAGES.has(pageName)) return true;
 
   if (normalizedRole === "staff") {
-    if (pageName === "StaffDashboard") return true;
+    if (pageName === "AdminDashboard") return true;
     if (!ALLOWED_PAGES_BY_ROLE.staff.has(pageName)) return false;
-    return permissions?.[pageName] === true;
+    return hasStaffModulePermission(pageName, permissions);
   }
 
   const allowedPages = ALLOWED_PAGES_BY_ROLE[normalizedRole];
