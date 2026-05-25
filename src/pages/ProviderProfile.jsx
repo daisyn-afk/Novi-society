@@ -93,7 +93,7 @@ export default function ProviderProfile() {
   };
 
   const profileContent = (
-    <div className="max-w-xl space-y-5">
+    <div className="max-w-xl mx-auto space-y-5">
       {/* Header */}
       <div>
         <h2 className="text-2xl font-bold" style={{ fontFamily: "'DM Serif Display', serif", color: "#243257" }}>
