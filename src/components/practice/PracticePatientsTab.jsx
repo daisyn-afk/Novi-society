@@ -42,7 +42,7 @@ export default function PracticePatientsTab({ patients, appointments }) {
     : [];
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 min-w-0 max-w-full overflow-x-hidden">
       {/* NOVI Premium upsell banner */}
       <div className="rounded-2xl p-4 flex items-start gap-3" style={{ background: "linear-gradient(135deg, rgba(200,230,60,0.12) 0%, rgba(123,142,200,0.1) 100%)", border: "1px solid rgba(200,230,60,0.35)" }}>
         <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: "rgba(200,230,60,0.2)" }}>
@@ -111,12 +111,12 @@ export default function PracticePatientsTab({ patients, appointments }) {
                     <p className="text-xs truncate" style={{ color: "rgba(30,37,53,0.5)" }}>{p.email}</p>
                   </div>
 
-                  <div className="flex items-center gap-3 flex-shrink-0">
-                    <div className="text-right hidden sm:block">
-                      <p className="text-xs font-semibold" style={{ color: "#1e2535" }}>{completedAppts.length} treatment{completedAppts.length !== 1 ? "s" : ""}</p>
-                      <p className="text-xs" style={{ color: "rgba(30,37,53,0.45)" }}>{patientRecords.length} documented</p>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <div className="text-right">
+                      <p className="text-xs font-semibold whitespace-nowrap" style={{ color: "#1e2535" }}>{completedAppts.length} treatment{completedAppts.length !== 1 ? "s" : ""}</p>
+                      <p className="text-xs whitespace-nowrap" style={{ color: "rgba(30,37,53,0.45)" }}>{patientRecords.length} documented</p>
                     </div>
-                    <ChevronRight className="w-4 h-4" style={{ color: "rgba(30,37,53,0.3)" }} />
+                    <ChevronRight className="w-4 h-4 flex-shrink-0" style={{ color: "rgba(30,37,53,0.3)" }} />
                   </div>
                 </div>
               </GlassCard>
