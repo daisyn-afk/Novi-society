@@ -86,11 +86,17 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4 py-12" style={{ background: "#f5f3ef", fontFamily: "'DM Sans', sans-serif" }}>
-      <div className="w-full max-w-md rounded-3xl overflow-hidden" style={{ background: "#fff", boxShadow: "0 14px 40px rgba(30,37,53,0.12)", border: "1px solid rgba(30,37,53,0.08)" }}>
-        <div style={{ background: "linear-gradient(135deg,#2D6B7F 0%,#7B8EC8 55%,#C8E63C 100%)", padding: "28px 24px", textAlign: "center" }}>
-          <h1 style={{ margin: 0, color: "#fff", fontSize: 26, fontWeight: 700 }}>Welcome Back</h1>
-          <p style={{ margin: "8px 0 0", color: "rgba(255,255,255,0.88)", fontSize: 14 }}>Login to continue with NOVI Society</p>
+    <div className="min-h-screen flex items-center justify-center px-4 py-12" style={{ background: "linear-gradient(135deg,#2D6B7F 0%,#4a8fa8 38%,#7B8EC8 68%,#DA6A63 100%)", fontFamily: "'DM Sans', sans-serif", position: "relative", overflow: "hidden" }}>
+      <div style={{ position: "fixed", top: "-20%", left: "-8%", width: "55%", height: "130%", borderRadius: "60% 40% 70% 30%/50% 60% 40% 50%", background: "rgba(218,106,99,0.35)", filter: "blur(50px)", pointerEvents: "none", zIndex: 0 }} />
+      <div style={{ position: "fixed", bottom: "-10%", right: "-5%", width: "45%", height: "110%", borderRadius: "40% 60% 30% 70%/60% 40% 60% 40%", background: "rgba(200,230,60,0.2)", filter: "blur(55px)", pointerEvents: "none", zIndex: 0 }} />
+      <div className="w-full max-w-md rounded-3xl overflow-hidden" style={{ background: "rgba(255,255,255,0.9)", backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)", boxShadow: "0 24px 64px rgba(0,0,0,0.22)", border: "1px solid rgba(255,255,255,0.65)", position: "relative", zIndex: 1 }}>
+        <div style={{ background: "linear-gradient(135deg,#2D6B7F 0%,#7B8EC8 55%,#C8E63C 100%)", padding: "32px 24px 24px", textAlign: "center" }}>
+          <img
+            src="/novi-logo-neon-green.png"
+            alt="NOVI Society"
+            style={{ height: 52, width: "auto", display: "block", margin: "0 auto 14px", filter: "drop-shadow(0 4px 16px rgba(0,0,0,0.25))" }}
+          />
+          <p style={{ margin: 0, color: "rgba(255,255,255,0.82)", fontSize: 13, letterSpacing: "0.04em" }}>Welcome back — sign in to continue</p>
         </div>
 
         <form onSubmit={onSubmit} noValidate style={{ padding: 24 }}>

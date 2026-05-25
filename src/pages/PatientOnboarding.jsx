@@ -214,8 +214,8 @@ export default function PatientOnboarding() {
             <button key={c} onClick={() => toggleItem(concerns, setConcerns, c)}
               className="px-4 py-2 rounded-full text-sm font-medium transition-all"
               style={concerns.includes(c)
-                ? { background: "#7B8EC8", color: "#fff" }
-                : { background: "#f5f3ef", color: "#1e2535", border: "1px solid #e5e7eb" }
+                ? { background: "linear-gradient(135deg,#2D6B7F,#7B8EC8)", color: "#fff", boxShadow: "0 3px 10px rgba(123,142,200,0.45)", border: "none" }
+                : { background: "#f5f3ef", color: "#1e2535", border: "1.5px solid #e5e7eb" }
               }>
               {concerns.includes(c) && <CheckCircle2 className="w-3.5 h-3.5 inline mr-1.5" />}{c}
             </button>
@@ -233,8 +233,8 @@ export default function PatientOnboarding() {
             <button key={g} onClick={() => toggleItem(goals, setGoals, g)}
               className="px-4 py-2 rounded-full text-sm font-medium transition-all"
               style={goals.includes(g)
-                ? { background: "#DA6A63", color: "#fff" }
-                : { background: "#f5f3ef", color: "#1e2535", border: "1px solid #e5e7eb" }
+                ? { background: "linear-gradient(135deg,#DA6A63,#e8956d)", color: "#fff", boxShadow: "0 3px 10px rgba(218,106,99,0.45)", border: "none" }
+                : { background: "#f5f3ef", color: "#1e2535", border: "1.5px solid #e5e7eb" }
               }>
               {goals.includes(g) && <CheckCircle2 className="w-3.5 h-3.5 inline mr-1.5" />}{g}
             </button>
@@ -252,8 +252,8 @@ export default function PatientOnboarding() {
             <button key={b.value} onClick={() => setBudget(b.value)}
               className="p-4 rounded-2xl text-left transition-all"
               style={budget === b.value
-                ? { background: "#7B8EC8", color: "#fff", border: "2px solid #7B8EC8" }
-                : { background: "#fff", border: "2px solid #e5e7eb" }
+                ? { background: "linear-gradient(135deg,#2D6B7F,#7B8EC8)", color: "#fff", border: "2px solid transparent", boxShadow: "0 6px 20px rgba(123,142,200,0.4)" }
+                : { background: "#fff", border: "2px solid #e5e7eb", color: "#1e2535" }
               }>
               <p className="font-bold text-sm">{b.label}</p>
               <p className="text-xs mt-0.5 opacity-70">{b.sub}</p>
@@ -300,15 +300,18 @@ export default function PatientOnboarding() {
   // Quick registration dialog
   if (showQuickReg) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-6" style={{ background: "#f5f3ef" }}>
+      <div className="min-h-screen flex items-center justify-center p-6" style={{ background: "linear-gradient(135deg,#2D6B7F 0%,#4a8fa8 38%,#7B8EC8 68%,#DA6A63 100%)", position: "relative", overflow: "hidden" }}>
+        <div style={{ position: "fixed", top: "-20%", left: "-8%", width: "55%", height: "130%", borderRadius: "60% 40% 70% 30%/50% 60% 40% 50%", background: "rgba(218,106,99,0.35)", filter: "blur(50px)", pointerEvents: "none", zIndex: 0 }} />
+        <div style={{ position: "fixed", bottom: "-10%", right: "-5%", width: "45%", height: "110%", borderRadius: "40% 60% 30% 70%/60% 40% 60% 40%", background: "rgba(200,230,60,0.2)", filter: "blur(55px)", pointerEvents: "none", zIndex: 0 }} />
         <div className="w-full max-w-lg">
           {/* Logo */}
-          <div className="flex items-baseline gap-1.5 mb-8">
-            <span style={{ fontFamily: "'DM Serif Display', serif", fontSize: 28, fontStyle: "italic", color: "#1e2535" }}>novi</span>
-            <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: "0.22em", textTransform: "uppercase", color: "#2D6B7F" }}>Society</span>
+          <div className="mb-8" style={{ position: "relative", zIndex: 1 }}>
+            <div style={{ background: "#1e2535", padding: "10px 20px", borderRadius: 14, display: "inline-flex", boxShadow: "0 4px 20px rgba(0,0,0,0.3)" }}>
+              <img src="/novi-logo-neon-green.png" alt="NOVI Society" style={{ height: 32, width: "auto", display: "block" }} />
+            </div>
           </div>
 
-          <div className="bg-white rounded-2xl p-8 shadow-sm">
+          <div className="rounded-2xl p-8" style={{ background: "rgba(255,255,255,0.88)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)", boxShadow: "0 24px 64px rgba(0,0,0,0.18)", border: "1px solid rgba(255,255,255,0.65)", position: "relative", zIndex: 1 }}>
             <h2 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 24, color: "#1e2535", marginBottom: 4 }}>
               Quick Registration
             </h2>
@@ -362,69 +365,81 @@ export default function PatientOnboarding() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-6" style={{ background: "#f5f3ef" }}>
-      <div className="w-full max-w-lg">
+    <div className="min-h-screen flex items-center justify-center p-6" style={{ background: "linear-gradient(135deg,#2D6B7F 0%,#4a8fa8 38%,#7B8EC8 68%,#DA6A63 100%)", position: "relative", overflow: "hidden" }}>
+      <div style={{ position: "fixed", top: "-20%", left: "-8%", width: "55%", height: "130%", borderRadius: "60% 40% 70% 30%/50% 60% 40% 50%", background: "rgba(218,106,99,0.35)", filter: "blur(50px)", pointerEvents: "none", zIndex: 0 }} />
+      <div style={{ position: "fixed", bottom: "-10%", right: "-5%", width: "45%", height: "110%", borderRadius: "40% 60% 30% 70%/60% 40% 60% 40%", background: "rgba(200,230,60,0.2)", filter: "blur(55px)", pointerEvents: "none", zIndex: 0 }} />
+      <div className="w-full max-w-lg" style={{ position: "relative", zIndex: 1 }}>
         {/* Logo */}
-        <div className="flex items-baseline gap-1.5 mb-6">
-          <span style={{ fontFamily: "'DM Serif Display', serif", fontSize: 28, fontStyle: "italic", color: "#1e2535" }}>novi</span>
-          <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: "0.22em", textTransform: "uppercase", color: "#2D6B7F" }}>Society</span>
+        <div className="mb-6">
+          <div style={{ background: "#1e2535", padding: "10px 20px", borderRadius: 14, display: "inline-flex", boxShadow: "0 4px 20px rgba(0,0,0,0.3)" }}>
+            <img src="/novi-logo-neon-green.png" alt="NOVI Society" style={{ height: 32, width: "auto", display: "block" }} />
+          </div>
         </div>
-
-
 
         {/* Progress */}
         <div className="flex gap-1.5 mb-8">
           {steps.map((_, i) => (
-            <div key={i} className="h-1 flex-1 rounded-full transition-all" style={{ background: i <= step ? "#7B8EC8" : "#e5e7eb" }} />
+            <div key={i} className="h-1.5 flex-1 rounded-full transition-all" style={{
+              background: i < step
+                ? "linear-gradient(90deg,#2D6B7F,#C8E63C)"
+                : i === step
+                  ? "#C8E63C"
+                  : "rgba(255,255,255,0.2)"
+            }} />
           ))}
         </div>
 
         {/* Skip to dashboard option */}
         {step === 0 && (
-          <div className="mb-6 p-4 bg-white rounded-xl border-2 border-dashed border-indigo-200">
-            <p className="text-sm text-gray-700 mb-2">
+          <div className="mb-6 p-4 rounded-xl" style={{ background: "rgba(255,255,255,0.15)", backdropFilter: "blur(8px)", border: "1.5px dashed rgba(255,255,255,0.35)" }}>
+            <p className="text-sm mb-2" style={{ color: "rgba(255,255,255,0.85)" }}>
               <strong>Already know your provider?</strong> Complete basic registration and skip to your dashboard.
             </p>
-            <button onClick={() => setShowQuickReg(true)} className="text-sm font-semibold text-indigo-600 hover:text-indigo-700 transition-colors underline">
+            <button onClick={() => setShowQuickReg(true)} style={{ fontSize: 13, fontWeight: 700, color: "#C8E63C", background: "none", border: "none", cursor: "pointer", padding: 0, textDecoration: "underline" }}>
               Skip Personalization →
             </button>
           </div>
         )}
 
-        {/* Badge */}
-        <div className="flex items-center gap-2 mb-4">
-          <Sparkles className="w-4 h-4 text-indigo-400" />
-          <p className="text-xs font-bold uppercase tracking-widest text-indigo-400">Your Novi Journey · Step {step + 1} of {steps.length}</p>
-        </div>
+        {/* Step card */}
+        <div style={{ background: "rgba(255,255,255,0.9)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)", borderRadius: 24, padding: "32px 28px", boxShadow: "0 24px 64px rgba(0,0,0,0.18)", border: "1px solid rgba(255,255,255,0.65)" }}>
+          {/* Badge */}
+          <div className="flex items-center gap-2 mb-5">
+            <div style={{ width: 28, height: 28, borderRadius: 8, background: "linear-gradient(135deg,#DA6A63,#7B8EC8)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Sparkles style={{ width: 14, height: 14, color: "white" }} />
+            </div>
+            <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", color: "#2D6B7F", margin: 0 }}>Your Novi Journey · Step {step + 1} of {steps.length}</p>
+          </div>
 
-        <h1 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 26, color: "#1e2535", marginBottom: 8, lineHeight: 1.2 }}>
-          {currentStep.title}
-        </h1>
-        <p className="text-sm text-gray-500 mb-6">{currentStep.subtitle}</p>
+          <h1 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 26, color: "#1e2535", marginBottom: 8, lineHeight: 1.2, fontStyle: "italic" }}>
+            {currentStep.title}
+          </h1>
+          <p style={{ fontSize: 14, color: "rgba(30,37,53,0.55)", marginBottom: 24, lineHeight: 1.6 }}>{currentStep.subtitle}</p>
 
-        <div className="mb-8">{currentStep.content}</div>
+          <div className="mb-8">{currentStep.content}</div>
 
-        <div className="flex items-center justify-between gap-3">
-          {step > 0
-            ? <button onClick={() => setStep(s => s - 1)} className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 transition-colors">
-                <ArrowLeft className="w-4 h-4" /> Back
-              </button>
-            : <div />
-          }
-          <div className="flex gap-2">
-            {currentStep.canSkip && (
-              <button onClick={isLast ? handleFinish : () => setStep(s => s + 1)}
-                className="text-sm text-gray-400 hover:text-gray-600 px-4 py-2 transition-colors">
-                Skip
-              </button>
-            )}
-            <Button onClick={isLast ? handleFinish : handleNext}
-              disabled={saving}
-              className="px-6 gap-2 font-semibold"
-              style={{ background: "#1e2535", color: "#fff", borderRadius: 100 }}>
-              {saving ? "Saving..." : isLast ? "View My Journey" : "Next"}
-              {!saving && <ArrowRight className="w-4 h-4" />}
-            </Button>
+          <div className="flex items-center justify-between gap-3">
+            {step > 0
+              ? <button onClick={() => setStep(s => s - 1)} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "rgba(30,37,53,0.5)", background: "none", border: "none", cursor: "pointer", fontWeight: 600 }}>
+                  <ArrowLeft style={{ width: 15, height: 15 }} /> Back
+                </button>
+              : <div />
+            }
+            <div className="flex gap-2">
+              {currentStep.canSkip && (
+                <button onClick={isLast ? handleFinish : () => setStep(s => s + 1)}
+                  style={{ fontSize: 13, color: "rgba(30,37,53,0.4)", background: "none", border: "none", cursor: "pointer", padding: "0 12px" }}>
+                  Skip
+                </button>
+              )}
+              <Button onClick={isLast ? handleFinish : handleNext}
+                disabled={saving}
+                className="gap-2 font-bold"
+                style={{ background: "#C8E63C", color: "#1e2535", borderRadius: 100, padding: "10px 24px", fontSize: 13, boxShadow: "0 4px 16px rgba(200,230,60,0.4)", border: "none" }}>
+                {saving ? "Saving..." : isLast ? "View My Journey" : "Next"}
+                {!saving && <ArrowRight style={{ width: 15, height: 15 }} />}
+              </Button>
+            </div>
           </div>
         </div>
       </div>
