@@ -37,3 +37,17 @@ export async function importProviderPatients(rows, mapping) {
 export async function listProviderPatients() {
   return adminApiRequest("/admin/provider-patients", { method: "GET" });
 }
+
+/**
+ * POST /admin/provider-patients/invite
+ * Sends platform invites to roster-only patients (patient_user_id = null).
+ *
+ * @param {string|null} batchId  - optional; limit invites to one import batch
+ * @returns {{ invited: number, skipped: number, failed: number, errors: Array }}
+ */
+export async function inviteProviderPatients(batchId = null) {
+  return adminApiRequest("/admin/provider-patients/invite", {
+    method: "POST",
+    body: JSON.stringify(batchId ? { batch_id: batchId } : {})
+  });
+}

@@ -2,13 +2,69 @@ import { Router } from "express";
 import multer from "multer";
 import { parse } from "csv-parse";
 import { randomUUID } from "node:crypto";
+import { createClient } from "@supabase/supabase-js";
 import { getMeFromAccessToken } from "../auth/service.js";
 import {
   getUserDbIdByAuthUserId,
   listProviderPatients,
   bulkUpsertProviderPatients,
+  listRosterOnlyPatients,
   validateEmail
 } from "./repository.js";
+
+// ── Invite infrastructure (Resend + Supabase admin) ─────────────────────────
+const resendApiKey    = process.env.RESEND_API_KEY || "";
+const resendFromEmail = process.env.RESEND_FROM_EMAIL || "NOVI Society <support@novisociety.com>";
+const appBaseUrl      = process.env.APP_BASE_URL || "http://localhost:5173";
+
+const _supabaseUrl  = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+const _serviceKey   = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+const _supabaseAdmin = _supabaseUrl && _serviceKey
+  ? createClient(_supabaseUrl, _serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
+  : null;
+
+async function sendPatientInviteEmail({ to, firstName, inviteLink }) {
+  if (!to || !inviteLink || !resendApiKey) return false;
+  const name = firstName || "there";
+  const html = `<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"></head>
+<body style="margin:0;padding:0;background:#f5f3ef;font-family:'DM Sans',Helvetica,Arial,sans-serif">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f3ef;padding:40px 0">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
+        <tr><td style="background:linear-gradient(135deg,#2D6B7F 0%,#7B8EC8 55%,#C8E63C 100%);padding:36px 40px;text-align:center;border-radius:16px 16px 0 0">
+          <p style="margin:0;color:#fff;font-size:22px;font-weight:700;letter-spacing:-0.5px">NOVI Society</p>
+        </td></tr>
+        <tr><td style="background:#fff;padding:40px;border-radius:0 0 16px 16px">
+          <p style="margin:0 0 16px;font-size:16px;color:#374151">Hi ${name},</p>
+          <p style="margin:0 0 16px;font-size:15px;color:#374151;line-height:1.6">
+            Your provider has added you to their patient roster on NOVI Society. Create your free account to
+            view aftercare plans, book future appointments, and track your treatment journey.
+          </p>
+          <p style="margin:0 0 28px">
+            <a href="${inviteLink}" style="display:inline-block;background:#2D6B7F;color:#fff;text-decoration:none;padding:12px 20px;border-radius:10px;font-weight:600;font-size:14px">
+              Set up your NOVI account
+            </a>
+          </p>
+          <p style="margin:0;font-size:12px;color:#9ca3af">If you did not expect this email, you can safely ignore it.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${resendApiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ from: resendFromEmail, to: [to], subject: "Your provider has invited you to NOVI Society", html })
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
 
 export const providerPatientsRouter = Router();
 
@@ -214,6 +270,76 @@ providerPatientsRouter.get("/", async (req, res, next) => {
     const { providerDbId } = await requireProviderAuth(req);
     const patients = await listProviderPatients(providerDbId);
     return res.json(patients);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /admin/provider-patients/invite
+// Sends NOVI platform invites to roster-only patients (no account yet).
+// Body (optional): { batch_id: uuid }
+//   - Providing batch_id limits invites to patients from a single import.
+//   - Omitting batch_id invites ALL roster-only patients for this provider.
+// Returns: { invited, skipped, failed, errors }
+// ---------------------------------------------------------------------------
+providerPatientsRouter.post("/invite", async (req, res, next) => {
+  try {
+    const { providerDbId } = await requireProviderAuth(req);
+
+    const batchId = req.body?.batch_id || null;
+    const rosterOnly = await listRosterOnlyPatients(providerDbId, batchId);
+
+    if (rosterOnly.length === 0) {
+      return res.json({ invited: 0, skipped: 0, failed: 0, errors: [] });
+    }
+
+    let invited = 0;
+    let skipped = 0;
+    let failed  = 0;
+    const errors = [];
+
+    for (const patient of rosterOnly) {
+      const email = String(patient.email || "").toLowerCase().trim();
+      if (!email) { failed++; continue; }
+
+      try {
+        // Generate a Supabase invite link (creates the auth user if needed)
+        let inviteLink = `${appBaseUrl}/signup?email=${encodeURIComponent(email)}`;
+
+        if (_supabaseAdmin?.auth?.admin?.generateLink) {
+          const { data: linkData, error: linkErr } = await _supabaseAdmin.auth.admin.generateLink({
+            type: "invite",
+            email,
+            options: { redirectTo: `${appBaseUrl}/set-password` }
+          });
+          if (!linkErr) {
+            const generated = linkData?.properties?.action_link || linkData?.action_link || "";
+            if (generated) inviteLink = generated;
+          }
+        }
+
+        const sent = await sendPatientInviteEmail({
+          to: email,
+          firstName: patient.first_name || null,
+          inviteLink
+        });
+
+        if (sent) {
+          invited++;
+        } else {
+          // Link was generated but email sending failed — still counts as skipped
+          // rather than a hard failure so the caller can retry
+          failed++;
+          errors.push({ email, reason: "Email delivery failed." });
+        }
+      } catch (err) {
+        failed++;
+        errors.push({ email, reason: err.message || "Unexpected error." });
+      }
+    }
+
+    return res.json({ invited, skipped, failed, errors });
   } catch (error) {
     return next(error);
   }

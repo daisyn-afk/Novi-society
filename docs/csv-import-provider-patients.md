@@ -238,14 +238,132 @@ appointment data wins — richer). Patients imported only via CSV appear with
 
 ---
 
+## Patient Lifecycle
+
+### Roster-only patients vs Platform patients
+
+An imported patient exists in one of two states:
+
+| State | `patient_user_id` | Features available |
+|---|---|---|
+| **Roster-only** | `null` | Provider can view name / email / DOB in practice list; AI insights, treatment docs, and clinical history unavailable |
+| **On platform** | `users.id` (set) | Full feature access; appointment booking, aftercare plans, patient journey |
+
+The "Not on platform" badge is shown on patient cards in My Practice → Patients
+whenever `patient_user_id` is `null`.
+
+### What happens before a patient signs up
+
+1. Provider uploads CSV → `provider_patients` row created with `patient_user_id = null`.
+2. Patient appears in My Practice roster immediately.
+3. Dashboard patient count includes the imported patient.
+4. Provider can optionally send an invite (see below).
+
+### What happens when an imported patient signs up
+
+When a patient registers a NOVI account with the **same email** used in the import:
+
+1. `auth/service.js` `signup()` creates the `users` row.
+2. Immediately after, `backfillPatientUserId(usersId, email)` updates all
+   `provider_patients` rows matching that email from `patient_user_id = null`
+   to the new user's DB id.
+3. The patient's "Not on platform" badge disappears on next page load.
+4. Provider–patient relationship is now fully linked; clinical features become
+   accessible.
+
+The backfill is **fire-and-forget** — a failure does not block signup.
+
+---
+
+## Invite Flow
+
+After a successful CSV import, the wizard shows an optional **"Invite newly added patients"** CTA.
+
+**Endpoint:** `POST /admin/provider-patients/invite`
+
+**Request body (optional):**
+```json
+{ "batch_id": "<uuid>" }
+```
+Omit `batch_id` to invite all roster-only patients for the authenticated provider.
+
+**Per-email behaviour:**
+1. Check Supabase Auth for an existing user with that email.
+2. If not found: generate a Supabase invite link → send invite email via Resend.
+3. If found: skip silently (counted as `skipped`).
+
+**Response:**
+```json
+{ "invited": 5, "skipped": 2, "failed": 0, "errors": [] }
+```
+
+Invites are **not** sent automatically on import — providers must trigger the CTA
+themselves.  This is intentional to give providers control over when their
+patients receive communications.
+
+---
+
+## Validation Rules
+
+| Field | Required | Validation |
+|---|---|---|
+| `email` | Yes | Non-empty; must match `[^\s@]+@[^\s@]+\.[^\s@]+`; normalised to lowercase |
+| `first_name` | No | Whitespace-trimmed; empty string → `null` |
+| `last_name` | No | Whitespace-trimmed; empty string → `null` |
+| `phone` | No | Whitespace-trimmed only; no format enforcement |
+| `date_of_birth` | No | Pre-validated by `normalizeDateOfBirth()` before SQL cast |
+| `gender` | No | Free text; whitespace-trimmed |
+
+### Date of birth format handling
+
+`normalizeDateOfBirth()` accepts the following formats and normalises to
+`YYYY-MM-DD` before the PostgreSQL `date` cast:
+
+- `YYYY-MM-DD` (ISO, preferred)
+- `MM/DD/YYYY` or `M/D/YYYY`
+- `MM-DD-YYYY` (not to be confused with ISO)
+- Any format parseable by the JS `Date` engine (e.g. "March 15, 1990")
+
+If the value cannot be parsed, the field is set to `null` and the **row is still
+imported** — DOB is never a reason to fail an import row.
+
+---
+
+## Dashboard Patient Count
+
+The "Patients" KPI on the Provider Dashboard includes:
+
+- Appointment-derived patients (base44 `Appointment` entities, keyed by
+  `patient_id || patient_email`).
+- CSV-imported patients who do **not** have a matching appointment email
+  (roster-only patients).
+
+Deduplication is by email (case-insensitive).  Retention rate is calculated
+from appointment patients only, since roster-only patients have no visit history.
+
+---
+
+## API Reference
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `POST` | `/admin/provider-patients/csv-parse` | Bearer | Parse CSV; return headers + preview rows. No DB writes. |
+| `POST` | `/admin/provider-patients/csv-import` | Bearer | Map columns, validate, bulk upsert. Returns import summary. |
+| `GET`  | `/admin/provider-patients` | Bearer | List all patients for the authenticated provider. |
+| `POST` | `/admin/provider-patients/invite` | Bearer | Send platform invites to roster-only patients. |
+
+---
+
 ## Security / Permission Scope
 
-- All three backend routes require a valid `Authorization: Bearer <token>`.
+- All backend routes require a valid `Authorization: Bearer <token>`.
 - `provider_id` is **always** derived from the token — never trusted from the
   request body.
 - All SQL queries filter by `WHERE provider_id = $providerDbId`.
 - The CSV parse route writes no data to the DB, so there is no cross-provider
   risk even if a token is misused there.
+- The invite endpoint only invites patients belonging to the authenticated
+  provider's roster.
 
 ---
 
@@ -257,6 +375,8 @@ appointment data wins — richer). Patients imported only via CSV appear with
 | Max rows per import | 500 |
 | Processing model | Synchronous (no job queue) |
 | Insert strategy | Per-row upsert in a loop (adequate for ≤ 500 rows) |
+| Invite processing | Synchronous; one email per patient |
 
 For future scale (10k+ rows), replace the per-row loop in `bulkUpsertProviderPatients`
 with a multi-row `UNNEST`-based insert and consider a background job queue.
+For large invite batches, move to a queued worker.

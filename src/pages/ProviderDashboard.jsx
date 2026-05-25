@@ -10,6 +10,7 @@ import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { useProviderAccess } from "@/components/useProviderAccess";
 import { providerOnboardingApi } from "@/api/providerOnboardingApi";
+import { listProviderPatients } from "@/api/providerPatientsApi.js";
 import { isToday, isTomorrow, format, isWithinInterval, startOfMonth, endOfMonth } from "date-fns";
 
 const GLASS = {
@@ -130,6 +131,13 @@ export default function ProviderDashboard() {
     queryFn: async () => { const u = await base44.auth.me(); return base44.entities.TreatmentRecord.filter({ provider_id: u.id }, "-created_date"); },
   });
 
+  // Imported patients from SQL layer — only fetch when practice is accessible
+  const { data: importedPatients = [] } = useQuery({
+    queryKey: ["provider-patients"],
+    queryFn: listProviderPatients,
+    enabled: !!me && accessStatus === "full",
+  });
+
   const today = new Date();
 
   // ── Credentials
@@ -157,12 +165,27 @@ export default function ProviderDashboard() {
   myAppointments.forEach(a => {
     const key = a.patient_id || a.patient_email;
     if (!key) return;
-    if (!patientMap[key]) patientMap[key] = { name: a.patient_name, visits: 0 };
+    if (!patientMap[key]) patientMap[key] = { name: a.patient_name, email: (a.patient_email || "").toLowerCase().trim(), visits: 0 };
     patientMap[key].visits++;
   });
-  const totalPatients = Object.keys(patientMap).length;
+
+  // Build a set of emails already represented by appointment patients so we
+  // can add imported-only patients without double-counting.
+  const appointmentEmailSet = new Set(
+    Object.values(patientMap)
+      .filter(p => p.email)
+      .map(p => p.email)
+  );
+  const csvOnlyCount = importedPatients.filter(ip => {
+    const email = (ip.email || "").toLowerCase().trim();
+    return email && !appointmentEmailSet.has(email);
+  }).length;
+
+  const totalPatients = Object.keys(patientMap).length + csvOnlyCount;
   const returningPatients = Object.values(patientMap).filter(p => p.visits > 1).length;
-  const retentionRate = totalPatients > 0 ? Math.round((returningPatients / totalPatients) * 100) : 0;
+  // Retention rate is based on appointment patients only (imported-only have no visit history)
+  const appointmentPatientCount = Object.keys(patientMap).length;
+  const retentionRate = appointmentPatientCount > 0 ? Math.round((returningPatients / appointmentPatientCount) * 100) : 0;
   const completedAppts = myAppointments.filter(a => a.status === "completed");
 
   // ── Revenue this month

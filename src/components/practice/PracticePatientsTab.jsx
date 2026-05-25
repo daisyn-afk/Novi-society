@@ -124,11 +124,17 @@ export default function PracticePatientsTab({ patients, appointments }) {
                   </div>
 
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <p className="font-semibold text-sm truncate" style={{ color: "#1e2535" }}>{p.name || "Unknown"}</p>
                       {isPremium && (
                         <span className="text-xs font-bold px-1.5 py-0.5 rounded-full flex-shrink-0 flex items-center gap-1" style={{ background: "rgba(200,230,60,0.2)", color: "#4a6b10", border: "1px solid rgba(200,230,60,0.4)" }}>
                           <Sparkles className="w-2.5 h-2.5" />NOVI+
+                        </span>
+                      )}
+                      {!p.id && (
+                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full flex-shrink-0"
+                          style={{ background: "rgba(30,37,53,0.06)", color: "rgba(30,37,53,0.4)", border: "1px solid rgba(30,37,53,0.1)" }}>
+                          Not on platform
                         </span>
                       )}
                     </div>

@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { pool } from "../db.js";
+import { backfillPatientUserId } from "../provider-patients/repository.js";
 
 const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabasePublishableKey = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
@@ -529,6 +530,14 @@ export async function signup(payload) {
     lastName,
     role
   });
+
+  // Link any provider_patients rows imported with this email before the patient
+  // had a platform account.  Fire-and-forget: a failure here must not block signup.
+  if (profile?.id) {
+    backfillPatientUserId(profile.id, createdData.user.email || email).catch((err) => {
+      console.warn("[signup] provider_patients backfill skipped:", err?.message || err);
+    });
+  }
 
   const { data: loginData, error: loginError } = await withMutedAuthJsFetchConsole(() =>
     authClient.auth.signInWithPassword({

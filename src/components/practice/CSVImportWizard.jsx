@@ -32,9 +32,28 @@ import {
   AlertCircle,
   FileText,
   Loader2,
-  Users
+  Users,
+  Download,
+  Mail
 } from "lucide-react";
-import { parseProviderPatientsCsv, importProviderPatients } from "@/api/providerPatientsApi.js";
+import { parseProviderPatientsCsv, importProviderPatients, inviteProviderPatients } from "@/api/providerPatientsApi.js";
+
+const CSV_TEMPLATE =
+  "email,first_name,last_name,phone,date_of_birth,gender\n" +
+  "jane.doe@example.com,Jane,Doe,555-0100,1990-03-15,Female\n" +
+  "john.smith@example.com,John,Smith,555-0200,1985-07-22,Male\n";
+
+function downloadCsvTemplate() {
+  const blob = new Blob([CSV_TEMPLATE], { type: "text/csv" });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a");
+  a.href     = url;
+  a.download = "patient_import_template.csv";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 
 const SYSTEM_FIELDS = [
   { key: "email",         label: "Email",         required: true  },
@@ -88,6 +107,8 @@ export default function CSVImportWizard({ open, onClose }) {
   const [error, setError]           = useState("");
   const [importing, setImporting]   = useState(false);
   const [parsing, setParsing]       = useState(false);
+  const [inviting, setInviting]     = useState(false);
+  const [inviteResult, setInviteResult] = useState(null); // { invited, skipped, failed }
 
   const handleFileParse = useCallback(async (f) => {
     setError("");
@@ -127,6 +148,19 @@ export default function CSVImportWizard({ open, onClose }) {
     }
   };
 
+  const handleInvite = async () => {
+    if (!summary?.batchId) return;
+    setInviting(true);
+    try {
+      const result = await inviteProviderPatients(summary.batchId);
+      setInviteResult(result);
+    } catch {
+      setInviteResult({ invited: 0, skipped: 0, failed: 0, errors: [] });
+    } finally {
+      setInviting(false);
+    }
+  };
+
   const handleClose = () => {
     setStep(0);
     setFile(null);
@@ -134,6 +168,7 @@ export default function CSVImportWizard({ open, onClose }) {
     setMapping({});
     setSummary(null);
     setError("");
+    setInviteResult(null);
     onClose();
   };
 
@@ -247,10 +282,20 @@ export default function CSVImportWizard({ open, onClose }) {
               </div>
             )}
 
-            <p className="text-xs text-center" style={{ color: "rgba(30,37,53,0.4)" }}>
-              Your CSV must have at minimum an <strong>Email</strong> column.
-              Optional: First Name, Last Name, Phone, Date of Birth, Gender.
-            </p>
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs" style={{ color: "rgba(30,37,53,0.4)" }}>
+                Requires an <strong>Email</strong> column. Optional: First Name, Last Name, Phone, Date of Birth, Gender.
+              </p>
+              <button
+                type="button"
+                onClick={downloadCsvTemplate}
+                className="flex items-center gap-1 text-xs font-semibold whitespace-nowrap flex-shrink-0 transition-opacity hover:opacity-75"
+                style={{ color: "#7B8EC8" }}
+              >
+                <Download className="w-3 h-3" />
+                Download template
+              </button>
+            </div>
           </div>
         )}
 
@@ -392,6 +437,55 @@ export default function CSVImportWizard({ open, onClose }) {
                 <CheckCircle2 className="w-4 h-4 flex-shrink-0" style={{ color: "#2d9e4e" }} />
                 <p className="text-xs font-medium" style={{ color: "#2d9e4e" }}>
                   {summary.imported} patient{summary.imported !== 1 ? "s" : ""} successfully added to your practice.
+                </p>
+              </div>
+            )}
+
+            {/* Invite CTA — only show if patients were newly added */}
+            {summary.imported > 0 && !inviteResult && (
+              <div className="rounded-2xl p-4 space-y-2" style={{ background: "rgba(123,142,200,0.07)", border: "1px solid rgba(123,142,200,0.22)" }}>
+                <div className="flex items-start gap-2.5">
+                  <div className="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5"
+                    style={{ background: "rgba(123,142,200,0.15)" }}>
+                    <Mail className="w-4 h-4" style={{ color: "#7B8EC8" }} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold" style={{ color: "#1e2535" }}>
+                      Invite patients to NOVI
+                    </p>
+                    <p className="text-xs mt-0.5 leading-relaxed" style={{ color: "rgba(30,37,53,0.55)" }}>
+                      Send a one-time invite email to patients who don&apos;t have a NOVI account yet so they can
+                      view aftercare plans and book future appointments.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  disabled={inviting}
+                  onClick={handleInvite}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all hover:opacity-80"
+                  style={{ background: "#7B8EC8", color: "white", border: "none" }}
+                >
+                  {inviting
+                    ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />Sending invites…</>
+                    : <><Mail className="w-3.5 h-3.5" />Invite newly added patients</>
+                  }
+                </button>
+              </div>
+            )}
+
+            {/* Invite result */}
+            {inviteResult && (
+              <div className="rounded-2xl p-4 space-y-1" style={{ background: "rgba(45,158,78,0.06)", border: "1px solid rgba(45,158,78,0.2)" }}>
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 flex-shrink-0" style={{ color: "#2d9e4e" }} />
+                  <p className="text-xs font-semibold" style={{ color: "#2d9e4e" }}>
+                    Invite results: {inviteResult.invited} sent
+                    {inviteResult.failed > 0 ? `, ${inviteResult.failed} failed` : ""}
+                  </p>
+                </div>
+                <p className="text-xs pl-6" style={{ color: "rgba(30,37,53,0.5)" }}>
+                  Patients already on NOVI were skipped automatically.
                 </p>
               </div>
             )}
