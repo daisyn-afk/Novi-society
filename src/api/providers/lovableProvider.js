@@ -322,6 +322,27 @@ export function createLovableProviderClient() {
           delete: createNotImplementedMethod("entities.ProviderManufacturerRep.delete"),
         };
       }
+      if (name === "ProviderRepCall") {
+        const buildCallQuery = (filters = {}) => {
+          const params = new URLSearchParams();
+          if (filters.manufacturer_id) params.set("manufacturer_id", String(filters.manufacturer_id));
+          if (filters.provider_id) params.set("provider_id", String(filters.provider_id));
+          if (filters.upcoming) params.set("upcoming", "true");
+          const qs = params.toString();
+          return qs ? `?${qs}` : "";
+        };
+        return {
+          list: () => authRequest("/admin/provider-rep-calls?upcoming=true", { method: "GET" }),
+          filter: (filters = {}) =>
+            authRequest(`/admin/provider-rep-calls${buildCallQuery(filters)}`, { method: "GET" }),
+          get: createNotImplementedMethod("entities.ProviderRepCall.get"),
+          create: createNotImplementedMethod(
+            "entities.ProviderRepCall.create (use functions.invoke('scheduleRepCall') instead)"
+          ),
+          update: createNotImplementedMethod("entities.ProviderRepCall.update"),
+          delete: createNotImplementedMethod("entities.ProviderRepCall.delete"),
+        };
+      }
       if (name === "ManufacturerOrderRequest") {
         const buildQuery = (filters = {}, sort = "-created_at") => {
           const params = new URLSearchParams();

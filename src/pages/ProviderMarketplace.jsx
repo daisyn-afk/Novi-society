@@ -7,6 +7,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import ProviderSalesLock from "@/components/ProviderSalesLock";
 import { useProviderAccess } from "@/components/useProviderAccess";
 import RepContactDialog from "@/components/provider/RepContactDialog";
+import ScheduleCallDialog from "@/components/provider/ScheduleCallDialog";
+import UpcomingRepCalls from "@/components/provider/UpcomingRepCalls";
 import RepInfoModal from "@/components/provider/RepInfoModal";
 import OrderRequestDialog from "@/components/provider/OrderRequestDialog";
 import SaveRepContactForm, { resolveRepDisplay } from "@/components/provider/SaveRepContactForm";
@@ -400,10 +402,12 @@ function GlassCard({ children, className = "", style = {}, onClick }) {
     : <div className={className} style={base}>{children}</div>;
 }
 
-function ApprovedAccountHub({ mfr, me, className = "", layout = "default" }) {
+function ApprovedAccountHub({ mfr, me, className = "", layout = "default", applicationId = null }) {
   const [contactOpen, setContactOpen] = useState(false);
   const [contactType, setContactType] = useState("order");
   const [orderOpen, setOrderOpen] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [repModalOpen, setRepModalOpen] = useState(false);
 
   const { data: savedRep } = useQuery({
     queryKey: ["provider-manufacturer-rep", mfr?.id],
@@ -439,7 +443,7 @@ function ApprovedAccountHub({ mfr, me, className = "", layout = "default" }) {
       icon: Calendar,
       color: "#7B8EC8",
       bg: "rgba(123,142,200,0.1)",
-      onClick: () => { setContactType("call"); setContactOpen(true); },
+      onClick: () => setScheduleOpen(true),
     },
     {
       label: "Message Rep",
@@ -521,6 +525,21 @@ function ApprovedAccountHub({ mfr, me, className = "", layout = "default" }) {
         initialType={contactType}
         savedRep={savedRep}
       />
+      <ScheduleCallDialog
+        open={scheduleOpen}
+        onClose={() => setScheduleOpen(false)}
+        manufacturer={mfr}
+        me={me}
+        savedRep={savedRep}
+        onAddRepInfo={() => setRepModalOpen(true)}
+      />
+      <RepInfoModal
+        open={repModalOpen}
+        onClose={() => setRepModalOpen(false)}
+        manufacturer={mfr}
+        applicationId={applicationId}
+        initialRep={savedRep}
+      />
       <OrderRequestDialog
         open={orderOpen}
         onClose={() => setOrderOpen(false)}
@@ -536,6 +555,7 @@ function MyAccountCard({ app, mfr, me, savedRep }) {
   const [contactOpen, setContactOpen] = useState(false);
   const [contactType, setContactType] = useState("order");
   const [orderOpen, setOrderOpen] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
   const [repModalOpen, setRepModalOpen] = useState(false);
 
   const repContact = getSavedRepContact(savedRep);
@@ -597,7 +617,7 @@ function MyAccountCard({ app, mfr, me, savedRep }) {
             </button>
             <button
               type="button"
-              onClick={() => { setContactType("call"); setContactOpen(true); }}
+              onClick={() => setScheduleOpen(true)}
               className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg transition-opacity hover:opacity-85"
               style={actionBtnStyle("#7B8EC8")}
             >
@@ -682,6 +702,14 @@ function MyAccountCard({ app, mfr, me, savedRep }) {
             me={me}
             initialType={contactType}
             savedRep={savedRep}
+          />
+          <ScheduleCallDialog
+            open={scheduleOpen}
+            onClose={() => setScheduleOpen(false)}
+            manufacturer={mfr}
+            me={me}
+            savedRep={savedRep}
+            onAddRepInfo={() => setRepModalOpen(true)}
           />
           <OrderRequestDialog
             open={orderOpen}
@@ -889,6 +917,8 @@ function ApprovedSupplierDetailView({
 
       {/* Action tiles */}
       <ApprovedAccountHub mfr={mfr} me={me} layout="tiles" />
+
+      <UpcomingRepCalls manufacturerId={mfr.id} />
 
       {/* Account rep */}
       {rep.rep_email && (

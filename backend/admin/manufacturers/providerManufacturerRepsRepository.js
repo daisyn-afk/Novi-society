@@ -21,6 +21,11 @@ function asTrimmedString(value, fallback = "") {
   return typeof s === "string" ? s.trim() : fallback;
 }
 
+export function isValidEmailFormat(email) {
+  const value = String(email || "").trim().toLowerCase();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
 function rowToApi(row) {
   if (!row) return null;
   return {
@@ -95,7 +100,7 @@ export async function upsertProviderManufacturerRep(payload = {}) {
     err.statusCode = 400;
     throw err;
   }
-  if (!repEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(repEmail)) {
+  if (!repEmail || !isValidEmailFormat(repEmail)) {
     const err = new Error("A valid rep_email is required.");
     err.statusCode = 400;
     throw err;

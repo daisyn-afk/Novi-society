@@ -41,6 +41,8 @@ const { integrationsRouter } = await import("./integrations/routes.js");
 const { manufacturersRouter, manufacturerApplicationsRouter } = await import("./manufacturers/routes.js");
 const { manufacturerOrderRequestsRouter } = await import("./manufacturers/orderRequestsRoutes.js");
 const { providerManufacturerRepsRouter } = await import("./manufacturers/providerManufacturerRepsRoutes.js");
+const { providerRepCallsRouter } = await import("./manufacturers/providerRepCallsRoutes.js");
+const { googleCalendarRouter } = await import("./manufacturers/googleCalendarRoutes.js");
 const { mdMessagesRouter } = await import("./md-messages/routes.js");
 const { appointmentsRouter } = await import("./appointments/routes.js");
 const { treatmentRecordsRouter } = await import("./treatment-records/routes.js");
@@ -87,6 +89,8 @@ export function createAdminApp() {
   app.use("/admin/manufacturer-applications", manufacturerApplicationsRouter);
   app.use("/admin/manufacturer-order-requests", manufacturerOrderRequestsRouter);
   app.use("/admin/provider-manufacturer-reps", providerManufacturerRepsRouter);
+  app.use("/admin/provider-rep-calls", providerRepCallsRouter);
+  app.use("/admin/integrations/google-calendar", googleCalendarRouter);
   app.use("/admin/md-messages", mdMessagesRouter);
   app.use("/admin/appointments", appointmentsRouter);
   app.use("/admin/treatment-records", treatmentRecordsRouter);

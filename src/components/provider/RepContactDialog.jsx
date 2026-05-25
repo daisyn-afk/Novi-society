@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { base44 } from "@/api/base44Client";
-import { Mail, Calendar, Send, CheckCircle } from "lucide-react";
+import { Mail, Send, CheckCircle } from "lucide-react";
 import { resolveRepDisplay } from "@/components/provider/SaveRepContactForm";
 
 const TEMPLATES = {
@@ -27,26 +27,6 @@ Products I'm interested in ordering:
 I'm a verified NOVI Society provider with active MD board oversight.
 
 Thank you,
-${me?.full_name || ""}`,
-  },
-  call: {
-    label: "Schedule a Call",
-    icon: Calendar,
-    color: "#7B8EC8",
-    subject: (mfrName) => `Schedule a Call — ${mfrName} Rep Request`,
-    body: (me, mfrName) =>
-`Hi,
-
-I'd love to schedule a call to discuss my account, pricing, and available promotions.
-
-Provider: ${me?.full_name || ""}
-Practice: ${me?.practice_name || ""}
-Best times for me: [Add your availability here]
-Phone: ${me?.phone || ""}
-
-I'm a NOVI Society verified provider — happy to share my credential summary if helpful.
-
-Thanks,
 ${me?.full_name || ""}`,
   },
   message: {
@@ -149,7 +129,7 @@ export default function RepContactDialog({ open, onClose, manufacturer, me, init
             )}
 
             {/* Type selector */}
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2">
               {Object.entries(TEMPLATES).map(([key, tpl]) => {
                 const Icon = tpl.icon;
                 const active = type === key;

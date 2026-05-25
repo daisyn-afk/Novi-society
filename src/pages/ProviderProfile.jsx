@@ -1,8 +1,11 @@
 import { useState, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useProviderAccess } from "@/components/useProviderAccess";
 import ProviderSalesLock from "@/components/ProviderSalesLock";
+import ProviderGoogleCalendarCard from "@/components/provider/ProviderGoogleCalendarCard";
 import { base44 } from "@/api/base44Client";
+import { googleCalendarCallbackMessage } from "@/lib/googleCalendarApi";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,6 +18,7 @@ import { isValidUsPhone, usPhoneValidationError } from "@/lib/phoneValidation";
 export default function ProviderProfile() {
   const { status: accessStatus } = useProviderAccess();
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { data: me, refetch } = useQuery({ queryKey: ["me"], queryFn: () => base44.auth.me() });
   const [form, setForm] = useState({});
   const [uploading, setUploading] = useState(false);
@@ -40,6 +44,18 @@ export default function ProviderProfile() {
       instagram_handle: me.instagram_handle || "",
     });
   }, [me]);
+
+  useEffect(() => {
+    const callbackBanner = googleCalendarCallbackMessage(searchParams);
+    if (!callbackBanner) return;
+    showBanner(callbackBanner.type, callbackBanner.message);
+    queryClient.invalidateQueries({ queryKey: ["google-calendar-status"] });
+    searchParams.delete("google_calendar");
+    searchParams.delete("reason");
+    searchParams.delete("expected");
+    searchParams.delete("got");
+    setSearchParams(searchParams, { replace: true });
+  }, [searchParams, setSearchParams, queryClient]);
 
   const validateForm = () => {
     const phoneErr = usPhoneValidationError(form.phone, { required: true });
@@ -226,6 +242,8 @@ export default function ProviderProfile() {
 
         </CardContent>
       </Card>
+
+      <ProviderGoogleCalendarCard providerEmail={me?.email || ""} />
     </div>
   );
 
