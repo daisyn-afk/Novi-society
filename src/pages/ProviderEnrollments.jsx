@@ -371,10 +371,10 @@ export default function ProviderEnrollments() {
             {loadingEnrollments ? (
               <div className="space-y-4">{[1,2].map(i => <div key={i} className="h-64 animate-pulse rounded-3xl" style={{ background: "rgba(255,255,255,0.15)" }} />)}</div>
             ) : activeEnrollments.length === 0 ? (
-              <div className="text-center py-20 rounded-3xl" style={{ background: "rgba(255,255,255,0.1)" }}>
-                <BookOpen className="w-12 h-12 mx-auto mb-3 opacity-30 text-white" />
-                <p className="font-semibold text-white/70 mb-1">You have not enrolled in any courses yet</p>
-                <p className="text-sm text-white/40 mb-6">Enroll in a NOVI course to unlock MD coverage and grow your skills.</p>
+              <div className="text-center py-20 rounded-3xl" style={{ background: "rgba(30,37,53,0.08)", border: "1px solid rgba(30,37,53,0.1)" }}>
+                <BookOpen className="w-12 h-12 mx-auto mb-3" style={{ color: "rgba(30,37,53,0.3)" }} />
+                <p className="font-semibold mb-1" style={{ color: "rgba(30,37,53,0.75)" }}>You have not enrolled in any courses yet</p>
+                <p className="text-sm mb-6" style={{ color: "rgba(30,37,53,0.45)" }}>Enroll in a NOVI course to unlock MD coverage and grow your skills.</p>
                 <button onClick={() => setActiveTab("browse")} className="px-6 py-2.5 rounded-xl text-sm font-bold text-white" style={{ background: "#FA6F30" }}>
                   Browse Courses →
                 </button>

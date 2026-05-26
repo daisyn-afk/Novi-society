@@ -14,11 +14,11 @@
  * Each page declares which minimum tier it requires via the `requiredTier` prop.
  * If the provider is below that tier, the lock overlay renders.
  */
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import {
   Lock, Clock, CheckCircle2, ArrowRight, BookOpen, Award, Shield,
-  Stethoscope, Users, Activity, FileText, Zap
+  Stethoscope, Users, Activity, FileText, Zap, X
 } from "lucide-react";
 
 const TIER_ORDER = ["none", "rejected", "pending", "courses_only", "md_eligible", "full"];
@@ -251,6 +251,7 @@ function LockCTA({ currentStatus }) {
 export default function ProviderSalesLock({ feature, applicationStatus, requiredTier = "full", children }) {
   const meta = FEATURE_META[feature] || FEATURE_META.dashboard;
   const Icon = meta.icon;
+  const navigate = useNavigate();
 
   if (applicationStatus === "loading") {
     return (
@@ -283,6 +284,18 @@ export default function ProviderSalesLock({ feature, applicationStatus, required
         }}
       >
         <div className="w-full max-w-lg mx-auto py-4">
+          {/* Close button row */}
+          <div className="flex justify-end mb-3">
+            <button
+              onClick={() => navigate(-1)}
+              aria-label="Go back"
+              className="flex items-center justify-center w-9 h-9 rounded-full transition-colors"
+              style={{ background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.2)", color: "rgba(255,255,255,0.7)" }}
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
           <LockMessage currentStatus={applicationStatus} feature={feature} />
 
           <div
