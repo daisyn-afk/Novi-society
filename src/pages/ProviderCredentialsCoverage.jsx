@@ -161,6 +161,7 @@ export default function ProviderCredentialsCoverage() {
   const [licenseOpen, setLicenseOpen] = useState(false);
   const [licenseForm, setLicenseForm] = useState({ license_type: "RN" });
   const [licenseExpiryError, setLicenseExpiryError] = useState("");
+  const [licenseDocumentError, setLicenseDocumentError] = useState("");
   const [uploading, setUploading] = useState(false);
   const [certSubmitOpen, setCertSubmitOpen] = useState(false);
   const [certSubmitStep, setCertSubmitStep] = useState(0);
@@ -625,6 +626,11 @@ export default function ProviderCredentialsCoverage() {
       return;
     }
     setLicenseExpiryError("");
+    if (!licenseForm.document_url) {
+      setLicenseDocumentError("License document is required.");
+      return;
+    }
+    setLicenseDocumentError("");
     createLicense.mutate();
   };
 
@@ -635,6 +641,7 @@ export default function ProviderCredentialsCoverage() {
       setLicenseOpen(false);
       setLicenseForm({ license_type: "RN" });
       setLicenseExpiryError("");
+      setLicenseDocumentError("");
     },
   });
   const uploadLicenseFile = async (e) => {
@@ -1094,19 +1101,22 @@ export default function ProviderCredentialsCoverage() {
 
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="w-full grid grid-cols-5 h-auto p-1" style={{ background: "rgba(255,255,255,0.6)", backdropFilter: "blur(12px)", borderRadius: 14, border: "1px solid rgba(255,255,255,0.8)" }}>
-          {[
-            { value: "overview", label: "Overview" },
-            { value: "licenses", label: "Licenses" },
-            { value: "certifications", label: "Certifications" },
-            { value: "coverage", label: "MD Coverage" },
-            { value: "documents", label: "Documents" },
-          ].map(t => (
-            <TabsTrigger key={t.value} value={t.value} className="rounded-xl text-sm font-semibold transition-all" style={{ color: activeTab === t.value ? "#FA6F30" : "rgba(30,37,53,0.55)" }}>
-              {t.label}
-            </TabsTrigger>
-          ))}
-        </TabsList>
+        <div className="overflow-x-auto -mx-4 px-4 scrollbar-hide">
+          <TabsList className="flex w-max min-w-full h-auto p-1 gap-0.5" style={{ background: "rgba(255,255,255,0.6)", backdropFilter: "blur(12px)", borderRadius: 14, border: "1px solid rgba(255,255,255,0.8)" }}>
+            {[
+              { value: "overview",       label: "Overview",       short: "Overview" },
+              { value: "licenses",       label: "Licenses",       short: "Licenses" },
+              { value: "certifications", label: "Certifications", short: "Certs" },
+              { value: "coverage",       label: "MD Coverage",    short: "Coverage" },
+              { value: "documents",      label: "Documents",      short: "Docs" },
+            ].map(t => (
+              <TabsTrigger key={t.value} value={t.value} className="rounded-xl font-semibold transition-all whitespace-nowrap px-3 py-1.5 text-xs sm:text-sm" style={{ color: activeTab === t.value ? "#FA6F30" : "rgba(30,37,53,0.55)" }}>
+                <span className="sm:hidden">{t.short}</span>
+                <span className="hidden sm:inline">{t.label}</span>
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </div>
 
         {/* ── OVERVIEW TAB ── */}
         <TabsContent value="overview" className="pt-5 space-y-5">
@@ -1839,7 +1849,7 @@ export default function ProviderCredentialsCoverage() {
       {/* Add License */}
       <Dialog open={licenseOpen} onOpenChange={(open) => {
         setLicenseOpen(open);
-        if (!open) setLicenseExpiryError("");
+        if (!open) { setLicenseExpiryError(""); setLicenseDocumentError(""); }
       }}>
         <DialogContent>
           <DialogHeader><DialogTitle>Add Professional License</DialogTitle></DialogHeader>
@@ -1878,17 +1888,25 @@ export default function ProviderCredentialsCoverage() {
                 {licenseExpiryError && <p className="text-xs text-red-500 mt-1">{licenseExpiryError}</p>}
               </div>
             </div>
-            <label className="flex items-center gap-2 cursor-pointer border-2 border-dashed rounded-xl p-4 hover:bg-slate-50 transition-colors">
-              <Upload className="w-4 h-4 text-slate-400" />
-              <span className="text-sm text-slate-500">{uploading ? "Uploading..." : licenseForm.document_url ? "Document uploaded ✓" : "Upload document (PDF, JPG, PNG)"}</span>
-              <input type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png" onChange={uploadLicenseFile} />
-            </label>
+            <div>
+              <Label className="text-sm font-medium mb-1.5 block">
+                License Document *
+              </Label>
+              <label className={`flex items-center gap-2 cursor-pointer border-2 border-dashed rounded-xl p-4 hover:bg-slate-50 transition-colors ${licenseDocumentError ? "border-red-400 bg-red-50" : licenseForm.document_url ? "border-green-400 bg-green-50" : ""}`}>
+                <Upload className={`w-4 h-4 ${licenseDocumentError ? "text-red-400" : "text-slate-400"}`} />
+                <span className={`text-sm ${licenseDocumentError ? "text-red-500" : licenseForm.document_url ? "text-green-700" : "text-slate-500"}`}>
+                  {uploading ? "Uploading..." : licenseForm.document_url ? "Document uploaded ✓" : "Upload document (PDF, JPG, PNG)"}
+                </span>
+                <input type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png" onChange={(e) => { setLicenseDocumentError(""); uploadLicenseFile(e); }} />
+              </label>
+              {licenseDocumentError && <p className="text-xs text-red-500 mt-1">{licenseDocumentError}</p>}
+            </div>
             <div className="flex gap-2 justify-end">
               <Button variant="outline" onClick={() => setLicenseOpen(false)}>Cancel</Button>
               <Button
                 style={{ background: "#FA6F30", color: "#fff" }}
                 onClick={handleSubmitLicense}
-                disabled={!licenseForm.license_number || createLicense.isPending || uploading || isExpiredLicenseDate(licenseForm.expiration_date)}
+                disabled={!licenseForm.license_number || !licenseForm.document_url || createLicense.isPending || uploading || isExpiredLicenseDate(licenseForm.expiration_date)}
               >
                 {createLicense.isPending ? "Submitting..." : "Submit License"}
               </Button>

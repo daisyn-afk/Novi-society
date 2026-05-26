@@ -2,6 +2,7 @@ import { Router } from "express";
 import { pool, query } from "../db.js";
 import { getMeFromAccessToken } from "../auth/service.js";
 import { notifyProviderOfCourseCertificateIssuance } from "../certificationNotifications.js";
+import { notifyAdminsOfCertificationSubmission } from "../adminNotifications.js";
 
 export const certificationsRouter = Router();
 const appBaseUrl = process.env.APP_BASE_URL || "http://localhost:5173";
@@ -118,8 +119,6 @@ function providerOwnsCertification(row, ownership) {
 
 let certColumnsPromise = null;
 let ensureCertColumnsPromise = null;
-let notificationTablePromise = null;
-let notificationColumnsByTablePromise = null;
 async function ensureCertificationWriteColumns() {
   if (!ensureCertColumnsPromise) {
     ensureCertColumnsPromise = (async () => {
@@ -435,6 +434,9 @@ async function resolveNotificationRecipient({ providerId, providerEmail }) {
   }
 }
 
+let notificationTablePromise = null;
+let notificationColumnsByTablePromise = null;
+
 async function getNotificationTableName() {
   if (!notificationTablePromise) {
     notificationTablePromise = query(
@@ -537,105 +539,6 @@ async function createCertificationApprovedNotification({
     return true;
   } catch {
     return false;
-  }
-}
-
-async function listAdminRecipients() {
-  const { rows } = await query(
-    `select auth_user_id, email, full_name, first_name
-     from public.users
-     where lower(coalesce(role, '')) in ('admin', 'super_admin', 'owner')
-       and nullif(trim(email), '') is not null`
-  );
-  return rows || [];
-}
-
-function buildAdminSubmissionEmailHtml({ adminName, title, summaryLines = [] }) {
-  const safeName = escapeHtml(adminName || "Admin");
-  const safeTitle = escapeHtml(title || "New provider submission");
-  const lines = summaryLines
-    .map((line) => `<li style="margin:0 0 8px">${escapeHtml(line)}</li>`)
-    .join("");
-  return `
-<!DOCTYPE html>
-<html>
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
-<body style="margin:0;padding:0;background:#f5f3ef;font-family:'DM Sans',Helvetica,Arial,sans-serif">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f3ef;padding:40px 0">
-    <tr><td align="center">
-      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
-        <tr><td style="background:linear-gradient(135deg,#2D6B7F 0%,#7B8EC8 55%,#C8E63C 100%);padding:36px 40px;text-align:center;border-radius:16px 16px 0 0">
-          <img src="${noviEmailLogoUrl}" alt="NOVI Society" style="width:160px;height:auto" />
-        </td></tr>
-        <tr><td style="background:#fff;padding:40px;border-radius:0 0 16px 16px">
-          <p style="margin:0 0 18px;font-size:16px;color:#374151">Hi ${safeName},</p>
-          <p style="margin:0 0 16px;font-size:16px;color:#374151"><strong>${safeTitle}</strong></p>
-          <ul style="margin:0 0 18px;padding-left:20px;color:#374151;font-size:14px;line-height:1.7">${lines}</ul>
-          <p style="margin:0;font-size:14px;color:#374151">Please review it in the admin portal.</p>
-        </td></tr>
-      </table>
-    </td></tr>
-  </table>
-</body>
-</html>`;
-}
-
-async function notifyAdminsOfCertificationSubmission({
-  providerName,
-  providerEmail,
-  certificationName,
-  serviceTypeName,
-  certificationId
-}) {
-  const admins = await listAdminRecipients();
-  if (!admins.length) return;
-  const { tableName, columns } = await getNotificationTableColumnsByName();
-  for (const admin of admins) {
-    const adminUserId = String(admin?.auth_user_id || "").trim() || null;
-    const adminEmail = String(admin?.email || "").trim().toLowerCase() || null;
-    if (tableName && columns.size > 0) {
-      const valuesByColumn = {
-        user_id: adminUserId,
-        user_email: adminEmail,
-        type: "cert_submitted",
-        message: `New certification submitted by ${providerName || providerEmail || "a provider"} (${certificationName || "certification"}).`,
-        link_page: `AdminLicenses?tab=certifications&focus_type=certification&focus_id=${encodeURIComponent(String(certificationId || ""))}`
-      };
-      const insertColumns = Object.keys(valuesByColumn).filter((col) => columns.has(col));
-      if (insertColumns.length > 0) {
-        const placeholders = insertColumns.map((_, idx) => `$${idx + 1}`).join(", ");
-        const params = insertColumns.map((col) => valuesByColumn[col]);
-        await query(
-          `insert into public.${tableName} (${insertColumns.join(", ")}) values (${placeholders})`,
-          params
-        ).catch(() => {});
-      }
-    }
-    if (resendApiKey && adminEmail) {
-      const html = buildAdminSubmissionEmailHtml({
-        adminName: admin?.first_name || admin?.full_name || "Admin",
-        title: "New certification submission pending review",
-        summaryLines: [
-          `Provider: ${providerName || "Unknown Provider"}`,
-          `Email: ${providerEmail || "Not provided"}`,
-          `Certification: ${certificationName || "N/A"}`,
-          `Service: ${serviceTypeName || "N/A"}`
-        ]
-      });
-      await fetch("https://api.resend.com/emails", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${resendApiKey}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          from: resendFromEmail,
-          to: [adminEmail],
-          subject: "New certification submission pending review",
-          html
-        })
-      }).catch(() => {});
-    }
   }
 }
 
