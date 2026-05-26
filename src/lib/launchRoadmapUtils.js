@@ -73,8 +73,39 @@ function isStepComplete(step, autoChecks, manualChecklist = {}) {
   return !!manualChecklist[step.id];
 }
 
-export function getLaunchRoadmapPhases() {
+export function getStaticLaunchRoadmapPhases() {
   return launchRoadmap.phases;
+}
+
+/** @deprecated use getStaticLaunchRoadmapPhases or merged phases from API */
+export function getLaunchRoadmapPhases() {
+  return getStaticLaunchRoadmapPhases();
+}
+
+const PHASE_ORDER = { foundation: 1, activation: 2, growth: 3, scale: 4 };
+
+/** Merge DB-backed phases with static interactive-tool steps and Scale phase. */
+export function mergeLaunchRoadmapPhases(dbPhases = [], staticPhases = getStaticLaunchRoadmapPhases()) {
+  const staticById = Object.fromEntries(staticPhases.map((p) => [p.id, p]));
+  const dbIds = new Set(dbPhases.map((p) => p.id));
+
+  const merged = dbPhases.map((dbPhase) => {
+    const staticPhase = staticById[dbPhase.id];
+    const interactiveSteps = (staticPhase?.steps || []).filter((s) => s.embedded_tool);
+    const steps = [...(dbPhase.steps || []), ...interactiveSteps].sort(
+      (a, b) => (a.priority || 0) - (b.priority || 0)
+    );
+    return {
+      ...(staticPhase || {}),
+      ...dbPhase,
+      steps,
+    };
+  });
+
+  const staticOnly = staticPhases.filter((p) => !dbIds.has(p.id));
+  return [...merged, ...staticOnly].sort(
+    (a, b) => (PHASE_ORDER[a.id] || 99) - (PHASE_ORDER[b.id] || 99)
+  );
 }
 
 export function computeLaunchRoadmapStats({
@@ -83,10 +114,10 @@ export function computeLaunchRoadmapStats({
   certs = [],
   enrollments = [],
   mdSubs = [],
+  phases = getStaticLaunchRoadmapPhases(),
 }) {
   const manualChecklist = me?.launch_checklist || {};
   const autoChecks = buildAutoChecks({ me, licenses, certs, enrollments, mdSubs });
-  const phases = getLaunchRoadmapPhases();
 
   const phasesWithProgress = phases.map((phase) => {
     const steps = phase.steps.map((step) => ({
@@ -139,8 +170,33 @@ export function computeLaunchRoadmapStats({
 }
 
 export function getStepActionUrl(step, createPageUrl) {
+  return resolveNextStepNavigation(step, createPageUrl)?.url || null;
+}
+
+/** Where the Next Step / Next Best Action should navigate. */
+export function resolveNextStepNavigation(step, createPageUrl) {
+  if (!step) return null;
+
   if (step.navigate_to) {
-    return createPageUrl(step.navigate_to) + (step.navigate_params || "");
+    return {
+      url: createPageUrl(step.navigate_to) + (step.navigate_params || ""),
+      type: "internal",
+    };
   }
-  return step.link || null;
+
+  if (step.link && !step.links?.length) {
+    return { url: step.link, type: "external" };
+  }
+
+  const phase = step.phaseId || "";
+  const stepId = step.id || "";
+  const qs = new URLSearchParams();
+  if (phase) qs.set("phase", phase);
+  if (stepId) qs.set("step", stepId);
+  const query = qs.toString();
+
+  return {
+    url: `${createPageUrl("ProviderLaunchPad")}${query ? `?${query}` : ""}`,
+    type: step.embedded_tool ? "growth_studio_tool" : "growth_studio",
+  };
 }

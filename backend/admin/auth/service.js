@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { pool } from "../db.js";
+import { getProviderLaunchChecklist, upsertProviderLaunchChecklist } from "../launch-roadmap/repository.js";
 import {
   ensureProviderUserRecord,
   getUserPasswordSetupByAuthUserId,
@@ -665,6 +666,9 @@ export async function getMeFromAccessToken(accessToken) {
       avatar_url: normalizeNullableText(providerMetadata.avatar_url),
       website_url: normalizeNullableText(providerMetadata.website_url),
       instagram_handle: normalizeNullableText(providerMetadata.instagram_handle),
+      launch_checklist: resolvedRole === "provider"
+        ? await getProviderLaunchChecklist(data.user.id)
+        : {},
       date_of_birth: normalizeDateOnly(patientProfile?.date_of_birth),
       gender: normalizeNullableText(patientProfile?.gender),
       allergies: normalizeNullableText(patientProfile?.allergies),
@@ -887,6 +891,10 @@ export async function updateMe({ accessToken, updates }) {
   }
   if (nextRole === "patient" && userRow?.id) {
     await upsertPatientProfile({ userId: userRow.id, updates });
+  }
+
+  if (Object.prototype.hasOwnProperty.call(updates || {}, "launch_checklist")) {
+    await upsertProviderLaunchChecklist(me.id, updates.launch_checklist);
   }
 
   return getMeFromAccessToken(accessToken);

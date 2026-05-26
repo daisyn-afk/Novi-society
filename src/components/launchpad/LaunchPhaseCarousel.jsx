@@ -50,19 +50,23 @@ const COMING_SOON_TOOLS = {
   },
 };
 
-function getDefaultStepIndex(steps) {
+function getDefaultStepIndex(steps, focusStepId) {
+  if (focusStepId) {
+    const idx = steps.findIndex((s) => s.id === focusStepId);
+    if (idx >= 0) return idx;
+  }
   const firstIncomplete = steps.findIndex((s) => !s.done);
   return firstIncomplete >= 0 ? firstIncomplete : 0;
 }
 
-export default function LaunchPhaseCarousel({ phase, onToggle, canToggle, me }) {
+export default function LaunchPhaseCarousel({ phase, onToggle, canToggle, me, focusStepId }) {
   const navigate = useNavigate();
   const theme = getPhaseTheme(phase.id);
-  const [stepIndex, setStepIndex] = useState(() => getDefaultStepIndex(phase.steps));
+  const [stepIndex, setStepIndex] = useState(() => getDefaultStepIndex(phase.steps, focusStepId));
 
   useEffect(() => {
-    setStepIndex(getDefaultStepIndex(phase.steps));
-  }, [phase.id, phase.doneCount]);
+    setStepIndex(getDefaultStepIndex(phase.steps, focusStepId));
+  }, [phase.id, phase.doneCount, focusStepId]);
 
   const step = phase.steps[stepIndex];
   if (!step) return null;

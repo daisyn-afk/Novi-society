@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import PracticeLaunchTab from "@/components/practice/PracticeLaunchTab";
 import VendorDirectory from "@/components/launchpad/VendorDirectory";
 
@@ -8,7 +9,16 @@ const PAGE_TABS = [
 ];
 
 export default function ProviderLaunchPad() {
+  const [searchParams] = useSearchParams();
+  const focusPhaseId = searchParams.get("phase");
+  const focusStepId = searchParams.get("step");
   const [activeTab, setActiveTab] = useState("roadmap");
+
+  useEffect(() => {
+    if (focusPhaseId || focusStepId) {
+      setActiveTab("roadmap");
+    }
+  }, [focusPhaseId, focusStepId]);
 
   return (
     <div className="max-w-4xl mx-auto">

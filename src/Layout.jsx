@@ -23,6 +23,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { normalizeRole } from "@/lib/routeAccessPolicy";
+import ProviderNextStepBar from "@/components/launchpad/ProviderNextStepBar";
+import { useLaunchRoadmapStats } from "@/components/launchpad/useLaunchRoadmapStats";
 
 const navByRole = {
   admin: [
@@ -119,6 +121,10 @@ export default function Layout({ children, currentPageName }) {
   // Sidebar unread message badge — shared query key ["msg-threads"] with messaging pages.
   // Polling at 5s keeps the badge live without hammering the API.
   const isMessagingRole = role === "provider" || role === "medical_director";
+  const showProviderNextStepBar = role === "provider" && isProviderUserReady;
+  const { stats: launchRoadmapStats, isLoading: launchRoadmapLoading } = useLaunchRoadmapStats({
+    enabled: showProviderNextStepBar,
+  });
   const { data: sidebarUnreadCount = 0 } = useQuery({
     queryKey: ["msg-threads"],
     queryFn: () => mdMessagesApi.getThreads(),
@@ -474,6 +480,9 @@ export default function Layout({ children, currentPageName }) {
 
         {/* Page content */}
         <main className="flex-1 p-5 lg:p-7 overflow-auto" style={{ background: "transparent", minHeight: 0 }}>
+          {showProviderNextStepBar && !launchRoadmapLoading && (
+            <ProviderNextStepBar stats={launchRoadmapStats} />
+          )}
           {/* Contextual status banners for providers */}
           {role === "provider" && providerAccessStatus === "pending" && (
             <div className="flex items-center gap-3 px-4 py-3 rounded-2xl mb-5" style={{ background: "rgba(250,111,48,0.15)", border: "1px solid rgba(250,111,48,0.4)" }}>

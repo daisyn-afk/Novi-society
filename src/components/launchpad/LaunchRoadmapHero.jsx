@@ -1,10 +1,44 @@
 import { useNavigate } from "react-router-dom";
 import { createPageUrl } from "@/utils";
-import { getStepActionUrl } from "@/lib/launchRoadmapUtils";
+import { resolveNextStepNavigation } from "@/lib/launchRoadmapUtils";
 import { LAUNCH_PAD } from "@/lib/launchRoadmapTheme";
 import { ArrowRight } from "lucide-react";
 
-export default function LaunchRoadmapHero({ stats }) {
+function LaunchRoadmapHeroSkeleton() {
+  return (
+    <div className="space-y-5 animate-pulse">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="space-y-2">
+          <div className="h-3 w-24 rounded bg-slate-200" />
+          <div className="h-8 w-56 rounded bg-slate-200" />
+        </div>
+        <div className="h-5 w-36 rounded bg-slate-200" />
+      </div>
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <div className="h-3 w-24 rounded bg-slate-200" />
+          <div className="h-4 w-10 rounded bg-slate-200" />
+        </div>
+        <div className="h-2 rounded-full bg-slate-200" />
+      </div>
+      <div
+        className="grid grid-cols-3 rounded-2xl overflow-hidden"
+        style={{ border: `1px solid ${LAUNCH_PAD.greyBorder}` }}
+      >
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="px-4 py-4 text-center space-y-2">
+            <div className="h-7 w-12 mx-auto rounded bg-slate-200" />
+            <div className="h-3 w-20 mx-auto rounded bg-slate-200" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export default function LaunchRoadmapHero({ stats, isLoading = false }) {
+  if (isLoading) return <LaunchRoadmapHeroSkeleton />;
+  if (!stats) return null;
   const navigate = useNavigate();
   const {
     overallPct,
@@ -21,15 +55,14 @@ export default function LaunchRoadmapHero({ stats }) {
     ? "Ready to Accept Patients"
     : "Not Yet Ready";
 
-  const actionUrl = nextAction ? getStepActionUrl(nextAction, createPageUrl) : null;
-  const isExternal = !!(nextAction?.link && !nextAction?.navigate_to);
+  const nav = nextAction ? resolveNextStepNavigation(nextAction, createPageUrl) : null;
 
   const handleStart = () => {
-    if (!actionUrl) return;
-    if (isExternal) {
-      window.open(actionUrl, "_blank", "noopener,noreferrer");
+    if (!nav?.url) return;
+    if (nav.type === "external") {
+      window.open(nav.url, "_blank", "noopener,noreferrer");
     } else {
-      navigate(actionUrl);
+      navigate(nav.url);
     }
   };
 
@@ -151,12 +184,11 @@ export default function LaunchRoadmapHero({ stats }) {
           <p className="text-xs mt-1 leading-relaxed" style={{ color: "rgba(30,37,53,0.55)" }}>
             {nextAction.desc}
           </p>
-          {(actionUrl || nextAction.embedded_tool) && (
+          {(nav?.url || nextAction.embedded_tool) && (
             <button
               type="button"
               onClick={handleStart}
-              disabled={!actionUrl}
-              className="inline-flex items-center gap-1.5 mt-3 text-sm font-bold transition-opacity hover:opacity-80 disabled:opacity-40"
+              className="inline-flex items-center gap-1.5 mt-3 text-sm font-bold transition-opacity hover:opacity-80"
               style={{ color: LAUNCH_PAD.blue }}
             >
               Start <ArrowRight className="w-4 h-4" />

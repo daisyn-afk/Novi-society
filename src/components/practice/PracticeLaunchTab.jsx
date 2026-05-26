@@ -1,58 +1,36 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { base44 } from "@/api/base44Client";
-import { computeLaunchRoadmapStats } from "@/lib/launchRoadmapUtils";
+import { useSearchParams } from "react-router-dom";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { updateLaunchRoadmapProgress } from "@/api/launchRoadmapApi";
+import { useLaunchRoadmapStats } from "@/components/launchpad/useLaunchRoadmapStats";
 import LaunchRoadmapHero from "@/components/launchpad/LaunchRoadmapHero";
 import LaunchPhaseCarousel from "@/components/launchpad/LaunchPhaseCarousel";
 
 export default function PracticeLaunchTab() {
   const qc = useQueryClient();
+  const [searchParams] = useSearchParams();
+  const focusPhaseId = searchParams.get("phase");
+  const focusStepId = searchParams.get("step");
 
-  const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => base44.auth.me() });
-
-  const { data: licenses = [] } = useQuery({
-    queryKey: ["my-licenses"],
-    queryFn: () => base44.entities.License.filter({}),
-    enabled: !!me,
-  });
-
-  const { data: certs = [] } = useQuery({
-    queryKey: ["my-certs"],
-    queryFn: async () => {
-      const u = await base44.auth.me();
-      return base44.entities.Certification.filter({ provider_id: u.id });
-    },
-    enabled: !!me,
-  });
-
-  const { data: enrollments = [] } = useQuery({
-    queryKey: ["my-enrollments"],
-    queryFn: async () => {
-      const u = await base44.auth.me();
-      const [byProviderId, byEmail] = await Promise.all([
-        u?.id ? base44.entities.Enrollment.filter({ provider_id: u.id }) : [],
-        u?.email ? base44.entities.Enrollment.filter({ provider_email: u.email }) : [],
-      ]);
-      return Array.from(
-        new Map([...(byProviderId || []), ...(byEmail || [])].map((r) => [r.id, r])).values()
-      );
-    },
-    enabled: !!me,
-  });
-
-  const { data: mdSubs = [] } = useQuery({
-    queryKey: ["my-md-subscriptions"],
-    queryFn: async () => {
-      const u = await base44.auth.me();
-      return base44.entities.MDSubscription.filter({ provider_id: u.id });
-    },
-    enabled: !!me,
-  });
-
-  const stats = computeLaunchRoadmapStats({ me, licenses, certs, enrollments, mdSubs });
+  const { me, stats, isLoading } = useLaunchRoadmapStats();
 
   const toggleMutation = useMutation({
-    mutationFn: (newChecklist) => base44.auth.updateMe({ launch_checklist: newChecklist }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["me"] }),
+    mutationFn: (newChecklist) => updateLaunchRoadmapProgress(newChecklist),
+    onMutate: async (newChecklist) => {
+      await qc.cancelQueries({ queryKey: ["me"] });
+      const previousMe = qc.getQueryData(["me"]);
+      if (previousMe) {
+        qc.setQueryData(["me"], { ...previousMe, launch_checklist: newChecklist });
+      }
+      return { previousMe };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.previousMe) {
+        qc.setQueryData(["me"], context.previousMe);
+      }
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ["me"] });
+    },
   });
 
   const toggle = (stepId) => {
@@ -64,17 +42,19 @@ export default function PracticeLaunchTab() {
 
   return (
     <div className="max-w-3xl space-y-10">
-      <LaunchRoadmapHero stats={stats} />
+      <LaunchRoadmapHero stats={stats} isLoading={isLoading} />
 
-      {stats.phases.map((phase) => (
-        <LaunchPhaseCarousel
-          key={phase.id}
-          phase={phase}
-          onToggle={toggle}
-          canToggle={canToggle}
-          me={me}
-        />
-      ))}
+      {!isLoading &&
+        stats.phases.map((phase) => (
+          <LaunchPhaseCarousel
+            key={phase.id}
+            phase={phase}
+            onToggle={toggle}
+            canToggle={canToggle}
+            me={me}
+            focusStepId={phase.id === focusPhaseId ? focusStepId : undefined}
+          />
+        ))}
     </div>
   );
 }
