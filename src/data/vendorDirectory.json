@@ -1,0 +1,170 @@
+[
+  {
+    "id": "legal",
+    "label": "Legal & Business Formation",
+    "icon": "briefcase",
+    "color": "#7B8EC8",
+    "textColor": "#3a4e8c",
+    "tools": [
+      {
+        "name": "ZenBusiness",
+        "tag": "LLC Formation",
+        "description": "LLC formation in 10 minutes. Starts at $0 + state fees. They handle the paperwork so you don't have to.",
+        "url": "https://www.zenbusiness.com",
+        "isNoviPick": true
+      },
+      {
+        "name": "LegalZoom",
+        "tag": "Legal Services",
+        "description": "Business formation, operating agreements, and trademark registration. Premium but thorough.",
+        "url": "https://www.legalzoom.com"
+      },
+      {
+        "name": "IRS EIN Application",
+        "tag": "Free",
+        "description": "Free. 5-minute form. You need this before you open a bank account.",
+        "url": "https://www.irs.gov/businesses/small-businesses-self-employed/apply-for-an-employer-identification-number-ein-online"
+      }
+    ]
+  },
+  {
+    "id": "banking",
+    "label": "Banking & Payments",
+    "icon": "landmark",
+    "color": "#2D6B7F",
+    "textColor": "#1a4555",
+    "tools": [
+      {
+        "name": "Mercury",
+        "tag": "Recommended",
+        "description": "Free business banking designed for startups. No fees, no minimums, great app. NOVI team recommended.",
+        "url": "https://mercury.com",
+        "isNoviPick": true
+      },
+      {
+        "name": "Relay",
+        "tag": "Free",
+        "description": "Free business checking with automatic profit allocation. Great for separating owner pay from business expenses.",
+        "url": "https://relayfi.com"
+      },
+      {
+        "name": "Square",
+        "tag": "Payments",
+        "description": "Accept card payments in person at events, pop-ups, or your treatment location. Reader is $49.",
+        "url": "https://squareup.com"
+      },
+      {
+        "name": "Stripe",
+        "tag": "Online Payments",
+        "description": "Online payment processing for your website and booking links.",
+        "url": "https://stripe.com"
+      }
+    ]
+  },
+  {
+    "id": "accounting",
+    "label": "Accounting & Taxes",
+    "icon": "calculator",
+    "color": "#FA6F30",
+    "textColor": "#b84a10",
+    "tools": [
+      {
+        "name": "Wave",
+        "tag": "Free",
+        "description": "Completely free accounting software. Invoicing, expense tracking, and reports. Perfect for your first year.",
+        "url": "https://www.waveapps.com",
+        "isNoviPick": true
+      },
+      {
+        "name": "QuickBooks Self-Employed",
+        "tag": "$15/mo",
+        "description": "$15/month. Auto-categorize expenses, mileage tracking, and quarterly tax estimates.",
+        "url": "https://quickbooks.intuit.com/self-employed/"
+      },
+      {
+        "name": "Keeper Tax",
+        "tag": "Tax Savings",
+        "description": "AI-powered tax deduction finder. Scans your bank for write-offs you're missing. $16/month.",
+        "url": "https://www.keepertax.com"
+      }
+    ]
+  },
+  {
+    "id": "insurance",
+    "label": "Insurance & Compliance",
+    "icon": "shield",
+    "color": "#DA6A63",
+    "textColor": "#a03030",
+    "tools": [
+      {
+        "name": "Hiscox",
+        "tag": "Recommended",
+        "description": "Malpractice + general liability for aesthetic providers. Online quotes in minutes. $30–50/month.",
+        "url": "https://www.hiscox.com",
+        "isNoviPick": true
+      },
+      {
+        "name": "CM&F Group",
+        "tag": "Malpractice",
+        "description": "Specialized medical malpractice for nurses, NPs, and PAs. They understand aesthetics.",
+        "url": "https://www.cmfgroup.com"
+      },
+      {
+        "name": "NEXT Insurance",
+        "tag": "General Liability",
+        "description": "General liability and professional liability bundled. Fully online, instant COI generation.",
+        "url": "https://www.nextinsurance.com"
+      }
+    ]
+  },
+  {
+    "id": "marketing",
+    "label": "Marketing & Growth",
+    "icon": "megaphone",
+    "color": "#C8E63C",
+    "textColor": "#4a6b10",
+    "tools": [
+      {
+        "name": "Google Business Profile",
+        "tag": "Free · Essential",
+        "description": "Free. 10 minutes. Shows up when someone searches 'Botox near me' in your city. Non-negotiable.",
+        "url": "https://business.google.com",
+        "isNoviPick": true
+      },
+      {
+        "name": "Canva Pro",
+        "tag": "$13/mo",
+        "description": "Design before/afters, social posts, and marketing materials. Templates made for aesthetics. $13/month.",
+        "url": "https://www.canva.com/pro/"
+      },
+      {
+        "name": "Later",
+        "tag": "Social Media",
+        "description": "Schedule Instagram posts in advance. Plan your whole week in 20 minutes.",
+        "url": "https://later.com"
+      },
+      {
+        "name": "Mailchimp",
+        "tag": "Email",
+        "description": "Email marketing for patient follow-ups, promotions, and newsletters. Free up to 500 contacts.",
+        "url": "https://mailchimp.com"
+      }
+    ]
+  },
+  {
+    "id": "education",
+    "label": "Continuing Education",
+    "icon": "graduationCap",
+    "color": "#7B8EC8",
+    "textColor": "#3a4e8c",
+    "tools": [
+      {
+        "name": "NOVI Courses",
+        "tag": "On NOVI",
+        "description": "Hands-on clinical training with certification. Required for NOVI MD coverage activation.",
+        "internalPage": "ProviderEnrollments",
+        "isNoviPick": true
+      }
+    ]
+  }
+]

@@ -1,0 +1,146 @@
+import launchRoadmap from "@/data/launchRoadmap.json";
+
+const PROFILE_FIELDS = [
+  "avatar_url",
+  "bio",
+  "city",
+  "state",
+  "practice_name",
+  "phone",
+];
+
+function hasActiveSchedule(me) {
+  const schedule = me?.schedule || {};
+  return Object.values(schedule).some(
+    (day) => day?.enabled && day?.start && day?.end
+  );
+}
+
+function buildAutoChecks({ me, licenses = [], certs = [], enrollments = [], mdSubs = [] }) {
+  const verifiedLicense = licenses.some((l) => l.status === "verified");
+  const activeCert = certs.some((c) => c.status === "active");
+  const activeMd = mdSubs.some((s) => s.status === "active");
+  const hasLiveTreatment = !!(
+    me?.service_offerings_v2 &&
+    Object.values(me.service_offerings_v2).some((v) => v?.is_live)
+  );
+
+  const profileBasic = !!(me?.bio && me?.avatar_url && me?.city);
+  const profileFieldsFilled = PROFILE_FIELDS.filter((key) => {
+    const val = me?.[key];
+    return val != null && String(val).trim() !== "";
+  }).length;
+  const profileCompleteScore =
+    profileFieldsFilled + (hasActiveSchedule(me) ? 1 : 0) + (hasLiveTreatment ? 1 : 0);
+
+  return {
+    license_uploaded: licenses.length > 0,
+    license_verified: verifiedLicense,
+    cpr_bls: !!(
+      me?.launch_checklist?.cpr_bls ||
+      certs.some((c) =>
+        /cpr|bls|basic life support/i.test(
+          `${c.certification_name || ""} ${c.issued_by || ""}`
+        )
+      )
+    ),
+    course_enrolled: enrollments.length > 0,
+    course_completed: enrollments.some((e) =>
+      ["completed", "attended"].includes(String(e.status || "").toLowerCase())
+    ),
+    certified: activeCert,
+    md_active: activeMd,
+    profile_basic: profileBasic,
+    profile_complete: profileBasic && hasActiveSchedule(me) && !!me?.practice_name,
+    treatments_live: hasLiveTreatment,
+    book_link: !!(me?.practice_name && profileBasic && hasLiveTreatment),
+    _profileCompletePct: Math.round(
+      (profileCompleteScore / (PROFILE_FIELDS.length + 2)) * 100
+    ),
+    _goLiveGates: {
+      license_verified: verifiedLicense,
+      md_active: activeMd,
+      profile_complete: profileBasic && hasActiveSchedule(me) && !!me?.practice_name,
+      treatments_live: hasLiveTreatment,
+    },
+  };
+}
+
+function isStepComplete(step, autoChecks, manualChecklist = {}) {
+  if (step.autoCheck) {
+    return !!autoChecks[step.autoCheck];
+  }
+  return !!manualChecklist[step.id];
+}
+
+export function getLaunchRoadmapPhases() {
+  return launchRoadmap.phases;
+}
+
+export function computeLaunchRoadmapStats({
+  me,
+  licenses = [],
+  certs = [],
+  enrollments = [],
+  mdSubs = [],
+}) {
+  const manualChecklist = me?.launch_checklist || {};
+  const autoChecks = buildAutoChecks({ me, licenses, certs, enrollments, mdSubs });
+  const phases = getLaunchRoadmapPhases();
+
+  const phasesWithProgress = phases.map((phase) => {
+    const steps = phase.steps.map((step) => ({
+      ...step,
+      done: isStepComplete(step, autoChecks, manualChecklist),
+    }));
+    const doneCount = steps.filter((s) => s.done).length;
+    const pct = steps.length
+      ? Math.round((doneCount / steps.length) * 100)
+      : 0;
+    const complete = doneCount === steps.length;
+    return { ...phase, steps, doneCount, pct, complete };
+  });
+
+  const allSteps = phasesWithProgress.flatMap((p) =>
+    p.steps.map((s) => ({ ...s, phaseId: p.id, phaseLabel: p.label }))
+  );
+  const totalSteps = allSteps.length;
+  const completedCount = allSteps.filter((s) => s.done).length;
+  const overallPct = totalSteps
+    ? Math.round((completedCount / totalSteps) * 100)
+    : 0;
+
+  const goLiveGates = autoChecks._goLiveGates;
+  const goLiveComplete = Object.values(goLiveGates).filter(Boolean).length;
+  const readyToGoLivePct = Math.round((goLiveComplete / 4) * 100);
+  const profileCompletePct = autoChecks._profileCompletePct;
+  const phasesDone = phasesWithProgress.filter((p) => p.complete).length;
+
+  const isReadyForPatients = goLiveComplete === 4;
+
+  const nextAction = allSteps
+    .filter((s) => !s.done)
+    .sort((a, b) => (a.priority || 999) - (b.priority || 999))[0] || null;
+
+  return {
+    phases: phasesWithProgress,
+    overallPct,
+    completedCount,
+    totalSteps,
+    readyToGoLivePct,
+    profileCompletePct,
+    phasesDone,
+    totalPhases: phases.length,
+    isReadyForPatients,
+    nextAction,
+    manualChecklist,
+    autoChecks,
+  };
+}
+
+export function getStepActionUrl(step, createPageUrl) {
+  if (step.navigate_to) {
+    return createPageUrl(step.navigate_to) + (step.navigate_params || "");
+  }
+  return step.link || null;
+}
