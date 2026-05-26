@@ -14,6 +14,29 @@ import {
   recordStripeWebhookEvent,
   PAYMENT_FLOW
 } from "../payments/service.js";
+import {
+  createManufacturerApplication,
+  getManufacturerById
+} from "../manufacturers/repository.js";
+import {
+  resolveRepContactForProvider,
+  getProviderManufacturerRep,
+  isValidEmailFormat,
+} from "../manufacturers/providerManufacturerRepsRepository.js";
+import { createProviderGoogleMeetEvent } from "../manufacturers/googleCalendarService.js";
+import { getProviderGoogleConnection } from "../manufacturers/providerGoogleConnectionRepository.js";
+import {
+  addMinutesToLocalDateTime,
+  createProviderRepCall,
+  parseScheduledAt,
+} from "../manufacturers/providerRepCallsRepository.js";
+import { createManufacturerOrderRequest } from "../manufacturers/orderRequestsRepository.js";
+import {
+  notifyAdminsOfManufacturerApplication,
+  notifyRepOfManufacturerApplication,
+  notifyRepOfContactRequest,
+} from "../manufacturers/notifications.js";
+import { buildManufacturerApplicationPayload } from "../manufacturers/providerApplicationContext.js";
 
 export const functionsRouter = Router();
 let certificationColumnsPromise = null;
@@ -1916,6 +1939,259 @@ functionsRouter.post("/promoteFromWaitlist", requireAdminOrStaffModelSignups, as
       // best effort: promotion should still succeed even if email delivery fails
     }
     return res.json({ success: true, booking });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+functionsRouter.post("/sendManufacturerInquiry", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ ok: false, error: "Missing bearer token." });
+    const me = await getMeFromAccessToken(token);
+
+    const body = req.body || {};
+    const manufacturerId = String(body.manufacturer_id || "").trim();
+    if (!manufacturerId) {
+      return res.status(400).json({ ok: false, error: "manufacturer_id is required." });
+    }
+
+    const manufacturer = await getManufacturerById(manufacturerId);
+    if (!manufacturer) {
+      return res.status(404).json({ ok: false, error: "Manufacturer not found." });
+    }
+
+    const formData = body.form_data && typeof body.form_data === "object" ? body.form_data : {};
+    const enriched = await buildManufacturerApplicationPayload({ me, formData });
+
+    const application = await createManufacturerApplication({
+      manufacturer_id: manufacturerId,
+      manufacturer_name: manufacturer.name,
+      provider_id: me?.id || null,
+      provider_email: enriched.provider_email,
+      provider_name: enriched.provider_name,
+      practice_name: enriched.practice_name,
+      practice_address: enriched.practice_address,
+      practice_phone: enriched.practice_phone,
+      license_type: enriched.license_type,
+      license_number: enriched.license_number,
+      license_state: enriched.license_state,
+      supervising_physician_name: enriched.supervising_physician_name,
+      supervising_physician_email: enriched.supervising_physician_email,
+      additional_fields: enriched.additional_fields,
+    });
+
+    // Fire-and-forget notifications. Failures are logged inside the helpers
+    // and never block the submission flow.
+    Promise.allSettled([
+      notifyAdminsOfManufacturerApplication({ application, manufacturer }),
+      notifyRepOfManufacturerApplication({ application, manufacturer }),
+    ]).catch(() => {});
+
+    return res.status(201).json({ ok: true, application });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+functionsRouter.post("/sendRepContactEmail", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ ok: false, error: "Missing bearer token." });
+    const me = await getMeFromAccessToken(token);
+
+    const body = req.body || {};
+    const manufacturerId = String(body.manufacturer_id || "").trim();
+    if (!manufacturerId) {
+      return res.status(400).json({ ok: false, error: "manufacturer_id is required." });
+    }
+
+    const manufacturer = await getManufacturerById(manufacturerId);
+    if (!manufacturer) {
+      return res.status(404).json({ ok: false, error: "Manufacturer not found." });
+    }
+
+    const contactType = String(body.type || body.contact_type || "message").trim();
+    const repContact = await resolveRepContactForProvider({
+      providerId: me?.id,
+      manufacturerId,
+      manufacturer,
+    });
+
+    if (!repContact.rep_email) {
+      return res.status(400).json({
+        ok: false,
+        error: "No rep email on file. Save your rep contact info or ask admin to configure application routing.",
+      });
+    }
+
+    const orderRequest = await createManufacturerOrderRequest({
+      manufacturer_id: manufacturerId,
+      manufacturer_name: manufacturer.name,
+      provider_id: me?.id || null,
+      provider_email: me?.email || "",
+      provider_name: me?.full_name || "",
+      practice_name: body.practice_name || me?.full_name || "",
+      contact_type: contactType,
+      subject: body.subject || "",
+      message: body.message || "",
+      order_items: body.order_items || [],
+      rep_email: repContact.rep_email,
+    });
+
+    Promise.resolve(
+      notifyRepOfContactRequest({
+        orderRequest,
+        manufacturer,
+        providerEmail: me?.email || orderRequest.provider_email,
+        providerPhone: me?.phone || "",
+        savedRep: repContact,
+      })
+    ).catch((err) => {
+      console.error("[email] contact_request_notify_threw", {
+        order_request_id: orderRequest.id,
+        error_message: err?.message || String(err),
+      });
+    });
+
+    return res.status(201).json({ ok: true, order_request: orderRequest });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+functionsRouter.post("/scheduleRepCall", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ ok: false, error: "Missing bearer token." });
+    const me = await getMeFromAccessToken(token);
+
+    const body = req.body || {};
+    const manufacturerId = String(body.manufacturer_id || "").trim();
+    const date = String(body.scheduled_date || body.date || "").trim();
+    const time = String(body.scheduled_time || body.time || "").trim();
+    const timezone = String(body.timezone || "").trim();
+    const durationMinutes = Number(body.duration_minutes) || 30;
+    const topic = String(body.topic || "").trim();
+    const notes = String(body.notes || "").trim();
+
+    if (!manufacturerId) {
+      return res.status(400).json({ ok: false, error: "manufacturer_id is required." });
+    }
+    if (!date || !time || !timezone) {
+      return res.status(400).json({ ok: false, error: "scheduled_date, scheduled_time, and timezone are required." });
+    }
+    if (![15, 30, 45, 60].includes(durationMinutes)) {
+      return res.status(400).json({ ok: false, error: "duration_minutes must be 15, 30, 45, or 60." });
+    }
+
+    const manufacturer = await getManufacturerById(manufacturerId);
+    if (!manufacturer) {
+      return res.status(404).json({ ok: false, error: "Manufacturer not found." });
+    }
+
+    const savedRep = await getProviderManufacturerRep({
+      providerId: me?.id,
+      manufacturerId,
+    });
+
+    if (!savedRep?.rep_email) {
+      return res.status(400).json({
+        ok: false,
+        error: "Your rep email is not set. Add your rep's contact info before scheduling a call.",
+        code: "REP_EMAIL_NOT_SET",
+      });
+    }
+
+    const repEmail = String(savedRep.rep_email).trim().toLowerCase();
+    if (!isValidEmailFormat(repEmail)) {
+      return res.status(400).json({
+        ok: false,
+        error: "Rep email appears invalid. Please update your rep contact info.",
+        code: "REP_EMAIL_INVALID",
+      });
+    }
+
+    const providerEmail = String(me?.email || "").trim().toLowerCase();
+    if (!isValidEmailFormat(providerEmail)) {
+      return res.status(400).json({
+        ok: false,
+        error: "Your account email is invalid. Update your profile before scheduling.",
+        code: "PROVIDER_EMAIL_INVALID",
+      });
+    }
+
+    const calendarConnection = await getProviderGoogleConnection(me?.id);
+    if (!calendarConnection?.access_token) {
+      return res.status(400).json({
+        ok: false,
+        error: "Connect Google Calendar in your Profile settings before scheduling a call.",
+        code: "GOOGLE_CALENDAR_NOT_CONNECTED",
+      });
+    }
+    if (calendarConnection.google_email?.toLowerCase() !== providerEmail) {
+      return res.status(400).json({
+        ok: false,
+        error: "Connected Google account must match your NOVI email. Reconnect in Profile settings.",
+        code: "GOOGLE_EMAIL_MISMATCH",
+      });
+    }
+
+    const { scheduledAt, isFuture } = await parseScheduledAt({ date, time, timezone });
+    if (!isFuture) {
+      return res.status(400).json({ ok: false, error: "Scheduled time must be in the future." });
+    }
+
+    const startDateTime = `${date}T${time}:00`;
+    const endDateTime = addMinutesToLocalDateTime(date, time, durationMinutes);
+    const mfrName = manufacturer.name || "Supplier";
+    const providerName = me?.full_name || "NOVI Provider";
+    const repName = savedRep.rep_name || "Account Rep";
+    const summary = topic
+      ? `${mfrName} call: ${topic}`
+      : `NOVI Provider call — ${providerName} & ${mfrName}`;
+
+    const description = [
+      `Supplier: ${mfrName}`,
+      `Provider: ${providerName}`,
+      `Rep: ${repName}`,
+      topic ? `Topic: ${topic}` : null,
+      notes ? `Notes: ${notes}` : null,
+      "",
+      "Scheduled via NOVI Supplier Network.",
+    ]
+      .filter((line) => line !== null)
+      .join("\n");
+
+    const { eventId, meetLink } = await createProviderGoogleMeetEvent({
+      providerId: me?.id,
+      summary,
+      description,
+      startDateTime,
+      endDateTime,
+      timeZone: timezone,
+      attendeeEmails: [repEmail],
+    });
+
+    const call = await createProviderRepCall({
+      provider_id: me?.id,
+      manufacturer_id: manufacturerId,
+      manufacturer_name: mfrName,
+      rep_name: repName,
+      rep_email: repEmail,
+      provider_email: providerEmail,
+      provider_name: providerName,
+      scheduled_at: scheduledAt,
+      duration_minutes: durationMinutes,
+      timezone,
+      topic: topic || null,
+      notes: notes || null,
+      google_event_id: eventId,
+      meet_link: meetLink,
+      status: "scheduled",
+    });
+
+    return res.status(201).json({ ok: true, call, meet_link: meetLink });
   } catch (error) {
     return next(error);
   }

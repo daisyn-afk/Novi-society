@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { Button } from "@/components/ui/button";
@@ -381,15 +382,15 @@ Return this exact JSON structure:
     { id: "history", label: "Treatment History" },
   ];
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-start justify-end" style={{ background: "rgba(30,37,53,0.45)", backdropFilter: "blur(4px)" }} onClick={onClose}>
+  return createPortal(
+    <div className="fixed inset-0 z-[130] flex justify-end" style={{ background: "rgba(30,37,53,0.45)", backdropFilter: "blur(4px)" }} onClick={onClose}>
       <div
-        className="h-full w-full max-w-2xl overflow-y-auto flex flex-col"
+        className="h-full w-full min-w-0 max-w-full sm:max-w-2xl overflow-y-auto overflow-x-hidden flex flex-col"
         style={{ background: "linear-gradient(160deg, #f0eefb 0%, #f5f3ef 50%, #eaf5c8 100%)", boxShadow: "-8px 0 40px rgba(30,37,53,0.18)" }}
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="sticky top-0 z-10 px-6 py-4 flex items-center gap-4" style={{ background: "rgba(245,243,239,0.92)", backdropFilter: "blur(20px)", borderBottom: "1px solid rgba(30,37,53,0.08)" }}>
+        <div className="sticky top-0 z-10 px-4 sm:px-6 py-4 flex items-center gap-4 min-w-0" style={{ background: "rgba(245,243,239,0.92)", backdropFilter: "blur(20px)", borderBottom: "1px solid rgba(30,37,53,0.08)" }}>
           <div className="relative flex-shrink-0">
             <div className="w-12 h-12 rounded-full flex items-center justify-center text-base font-bold text-white"
               style={{ background: isPremium ? "linear-gradient(135deg, #C8E63C, #7B8EC8)" : "rgba(123,142,200,0.5)" }}>
@@ -418,7 +419,7 @@ Return this exact JSON structure:
         </div>
 
         {/* Tab Bar */}
-        <div className="px-6 pt-4 pb-0 flex gap-1 overflow-x-auto" style={{ borderBottom: "1px solid rgba(30,37,53,0.08)" }}>
+        <div className="px-4 sm:px-6 pt-4 pb-0 flex gap-1 overflow-x-auto min-w-0" style={{ borderBottom: "1px solid rgba(30,37,53,0.08)" }}>
           {tabs.map(t => (
             <button key={t.id} onClick={() => setTab(t.id)}
               className="px-3 pb-3 text-sm font-semibold whitespace-nowrap flex items-center gap-1.5 transition-all relative"
@@ -429,7 +430,7 @@ Return this exact JSON structure:
           ))}
         </div>
 
-        <div className="flex-1 p-6 space-y-4">
+        <div className="flex-1 p-4 sm:p-6 space-y-4 min-w-0 overflow-x-hidden">
 
           {/* OVERVIEW TAB */}
           {tab === "overview" && (
@@ -781,6 +782,7 @@ Return this exact JSON structure:
         appointment={docDialog.appt}
         existingRecord={docDialog.existing}
       />
-    </div>
+    </div>,
+    document.body
   );
 }

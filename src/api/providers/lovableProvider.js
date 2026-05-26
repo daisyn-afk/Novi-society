@@ -221,6 +221,151 @@ export function createLovableProviderClient() {
   const entityProxy = new Proxy({}, {
     get: (_, entityName) => {
       const name = String(entityName);
+      if (name === "Manufacturer") {
+        return {
+          list: () => authRequest("/admin/manufacturers", { method: "GET" }),
+          get: (id) => authRequest(`/admin/manufacturers/${encodeURIComponent(id)}`, { method: "GET" }),
+          create: (payload) => authRequest("/admin/manufacturers", {
+            method: "POST",
+            body: JSON.stringify(payload || {})
+          }),
+          update: (id, payload) => authRequest(`/admin/manufacturers/${encodeURIComponent(id)}`, {
+            method: "PUT",
+            body: JSON.stringify(payload || {})
+          }),
+          delete: (id) => authRequest(`/admin/manufacturers/${encodeURIComponent(id)}`, { method: "DELETE" }),
+          filter: (filters = {}) => {
+            const params = new URLSearchParams();
+            if (Object.hasOwn(filters, "is_active")) {
+              params.set("is_active", String(Boolean(filters.is_active)));
+            }
+            if (Object.hasOwn(filters, "is_featured")) {
+              params.set("is_featured", String(Boolean(filters.is_featured)));
+            }
+            if (filters.category) {
+              params.set("category", String(filters.category));
+            }
+            const qs = params.toString();
+            return authRequest(`/admin/manufacturers${qs ? `?${qs}` : ""}`, { method: "GET" });
+          }
+        };
+      }
+      if (name === "ManufacturerApplication") {
+        const buildQuery = (filters = {}, sort = "-submitted_at") => {
+          const params = new URLSearchParams();
+          if (filters.provider_id) params.set("provider_id", String(filters.provider_id));
+          if (filters.manufacturer_id) params.set("manufacturer_id", String(filters.manufacturer_id));
+          if (filters.status) params.set("status", String(filters.status));
+          if (sort) params.set("sort", String(sort));
+          const qs = params.toString();
+          return qs ? `?${qs}` : "";
+        };
+        return {
+          list: (sort = "-submitted_at") =>
+            authRequest(`/admin/manufacturer-applications${buildQuery({}, sort)}`, { method: "GET" }),
+          filter: (filters = {}, sort = "-submitted_at") =>
+            authRequest(`/admin/manufacturer-applications${buildQuery(filters, sort)}`, { method: "GET" }),
+          get: (id) =>
+            authRequest(`/admin/manufacturer-applications/${encodeURIComponent(id)}`, { method: "GET" }),
+          update: (id, payload) =>
+            authRequest(`/admin/manufacturer-applications/${encodeURIComponent(id)}`, {
+              method: "PATCH",
+              body: JSON.stringify(payload || {})
+            }),
+          create: createNotImplementedMethod(
+            "entities.ManufacturerApplication.create (use functions.invoke('sendManufacturerInquiry') instead)"
+          ),
+          delete: createNotImplementedMethod("entities.ManufacturerApplication.delete")
+        };
+      }
+      if (name === "ProviderInventory") {
+        const buildInventoryQuery = (filters = {}) => {
+          const params = new URLSearchParams();
+          if (filters.provider_id) params.set("provider_id", String(filters.provider_id));
+          if (filters.manufacturer_id) params.set("manufacturer_id", String(filters.manufacturer_id));
+          const qs = params.toString();
+          return qs ? `?${qs}` : "";
+        };
+        return {
+          list: (_sort = "-created_date") =>
+            authRequest(`/admin/manufacturer-order-requests/inventory-lines${buildInventoryQuery({})}`, { method: "GET" }),
+          filter: (filters = {}, _sort = "-created_date") =>
+            authRequest(`/admin/manufacturer-order-requests/inventory-lines${buildInventoryQuery(filters)}`, { method: "GET" }),
+          get: createNotImplementedMethod("entities.ProviderInventory.get"),
+          create: createNotImplementedMethod("entities.ProviderInventory.create"),
+          update: createNotImplementedMethod("entities.ProviderInventory.update"),
+          delete: createNotImplementedMethod("entities.ProviderInventory.delete"),
+        };
+      }
+      if (name === "ProviderManufacturerRep") {
+        const buildRepQuery = (filters = {}) => {
+          const params = new URLSearchParams();
+          if (filters.manufacturer_id) params.set("manufacturer_id", String(filters.manufacturer_id));
+          if (filters.provider_id) params.set("provider_id", String(filters.provider_id));
+          const qs = params.toString();
+          return qs ? `?${qs}` : "";
+        };
+        return {
+          list: () => authRequest("/admin/provider-manufacturer-reps", { method: "GET" }),
+          filter: (filters = {}) =>
+            authRequest(`/admin/provider-manufacturer-reps${buildRepQuery(filters)}`, { method: "GET" }),
+          lookup: (filters = {}) =>
+            authRequest(`/admin/provider-manufacturer-reps/lookup${buildRepQuery(filters)}`, { method: "GET" }),
+          upsert: (payload) =>
+            authRequest("/admin/provider-manufacturer-reps", {
+              method: "PUT",
+              body: JSON.stringify(payload || {}),
+            }),
+          get: createNotImplementedMethod("entities.ProviderManufacturerRep.get"),
+          create: createNotImplementedMethod("entities.ProviderManufacturerRep.create (use upsert instead)"),
+          update: createNotImplementedMethod("entities.ProviderManufacturerRep.update (use upsert instead)"),
+          delete: createNotImplementedMethod("entities.ProviderManufacturerRep.delete"),
+        };
+      }
+      if (name === "ProviderRepCall") {
+        const buildCallQuery = (filters = {}) => {
+          const params = new URLSearchParams();
+          if (filters.manufacturer_id) params.set("manufacturer_id", String(filters.manufacturer_id));
+          if (filters.provider_id) params.set("provider_id", String(filters.provider_id));
+          if (filters.upcoming) params.set("upcoming", "true");
+          const qs = params.toString();
+          return qs ? `?${qs}` : "";
+        };
+        return {
+          list: () => authRequest("/admin/provider-rep-calls?upcoming=true", { method: "GET" }),
+          filter: (filters = {}) =>
+            authRequest(`/admin/provider-rep-calls${buildCallQuery(filters)}`, { method: "GET" }),
+          get: createNotImplementedMethod("entities.ProviderRepCall.get"),
+          create: createNotImplementedMethod(
+            "entities.ProviderRepCall.create (use functions.invoke('scheduleRepCall') instead)"
+          ),
+          update: createNotImplementedMethod("entities.ProviderRepCall.update"),
+          delete: createNotImplementedMethod("entities.ProviderRepCall.delete"),
+        };
+      }
+      if (name === "ManufacturerOrderRequest") {
+        const buildQuery = (filters = {}, sort = "-created_at") => {
+          const params = new URLSearchParams();
+          if (filters.provider_id) params.set("provider_id", String(filters.provider_id));
+          if (filters.manufacturer_id) params.set("manufacturer_id", String(filters.manufacturer_id));
+          if (filters.contact_type) params.set("contact_type", String(filters.contact_type));
+          if (sort) params.set("sort", String(sort));
+          const qs = params.toString();
+          return qs ? `?${qs}` : "";
+        };
+        return {
+          list: (sort = "-created_at") =>
+            authRequest(`/admin/manufacturer-order-requests${buildQuery({}, sort)}`, { method: "GET" }),
+          filter: (filters = {}, sort = "-created_at") =>
+            authRequest(`/admin/manufacturer-order-requests${buildQuery(filters, sort)}`, { method: "GET" }),
+          get: createNotImplementedMethod("entities.ManufacturerOrderRequest.get"),
+          create: createNotImplementedMethod(
+            "entities.ManufacturerOrderRequest.create (use functions.invoke('sendRepContactEmail') instead)"
+          ),
+          update: createNotImplementedMethod("entities.ManufacturerOrderRequest.update"),
+          delete: createNotImplementedMethod("entities.ManufacturerOrderRequest.delete"),
+        };
+      }
       if (name === "ServiceType") {
         return {
           list: () => authRequest("/admin/service-types", { method: "GET" }),
@@ -808,7 +953,13 @@ export function createLovableProviderClient() {
           const formData = new FormData();
           formData.append("file", file);
           const uploadPath =
-            kind === "patient_journey_selfie" ? "/admin/uploads/patient-selfie" : "/admin/uploads/license-photo";
+            kind === "patient_journey_selfie"
+              ? "/admin/uploads/patient-selfie"
+              : kind === "manufacturer_logo"
+                ? "/admin/uploads/manufacturer-logo"
+                : kind === "manufacturer_contract"
+                  ? "/admin/uploads/md-document"
+                  : "/admin/uploads/license-photo";
           const response = await fetch(`${ADMIN_API_BASE_URL}${toApiPath(uploadPath)}`, {
             method: "POST",
             headers: token ? { Authorization: `Bearer ${token}` } : {},

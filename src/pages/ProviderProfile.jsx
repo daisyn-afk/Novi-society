@@ -1,8 +1,12 @@
 import { useState, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useProviderAccess } from "@/components/useProviderAccess";
 import ProviderSalesLock from "@/components/ProviderSalesLock";
+import ProviderGoogleAccountCard from "@/components/provider/ProviderGoogleAccountCard";
 import { base44 } from "@/api/base44Client";
+import { googleCalendarCallbackMessage } from "@/lib/googleCalendarApi";
+import { gmailCallbackMessage } from "@/lib/gmailApi";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,6 +19,7 @@ import { isValidUsPhone, usPhoneValidationError } from "@/lib/phoneValidation";
 export default function ProviderProfile() {
   const { status: accessStatus } = useProviderAccess();
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { data: me, refetch } = useQuery({ queryKey: ["me"], queryFn: () => base44.auth.me() });
   const [form, setForm] = useState({});
   const [uploading, setUploading] = useState(false);
@@ -40,6 +45,22 @@ export default function ProviderProfile() {
       instagram_handle: me.instagram_handle || "",
     });
   }, [me]);
+
+  useEffect(() => {
+    const calendarBanner = googleCalendarCallbackMessage(searchParams);
+    const gmailBanner = gmailCallbackMessage(searchParams);
+    const banner = gmailBanner || calendarBanner;
+    if (!banner) return;
+    showBanner(banner.type, banner.message);
+    queryClient.invalidateQueries({ queryKey: ["google-calendar-status"] });
+    queryClient.invalidateQueries({ queryKey: ["gmail-status"] });
+    searchParams.delete("google_calendar");
+    searchParams.delete("gmail");
+    searchParams.delete("reason");
+    searchParams.delete("expected");
+    searchParams.delete("got");
+    setSearchParams(searchParams, { replace: true });
+  }, [searchParams, setSearchParams, queryClient]);
 
   const validateForm = () => {
     const phoneErr = usPhoneValidationError(form.phone, { required: true });
@@ -226,6 +247,8 @@ export default function ProviderProfile() {
 
         </CardContent>
       </Card>
+
+      <ProviderGoogleAccountCard providerEmail={me?.email || ""} />
     </div>
   );
 
