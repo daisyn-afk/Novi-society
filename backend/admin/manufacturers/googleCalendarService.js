@@ -1,9 +1,9 @@
 import crypto from "node:crypto";
 import { google } from "googleapis";
 import {
-  getProviderGoogleCalendarConnection,
-  updateProviderGoogleCalendarTokens,
-} from "./providerGoogleCalendarRepository.js";
+  getProviderGoogleConnection,
+  updateProviderGoogleTokens,
+} from "./providerGoogleConnectionRepository.js";
 
 const CALENDAR_SCOPES = [
   "https://www.googleapis.com/auth/calendar.events",
@@ -116,7 +116,7 @@ export async function exchangeGoogleCalendarCode(code) {
 }
 
 async function getAuthedCalendarClient(providerId) {
-  const connection = await getProviderGoogleCalendarConnection(providerId);
+  const connection = await getProviderGoogleConnection(providerId);
   if (!connection?.access_token) {
     const err = new Error(
       "Google Calendar is not connected. Connect Google Calendar in your Profile settings first."
@@ -136,7 +136,7 @@ async function getAuthedCalendarClient(providerId) {
   oauth2.on("tokens", (tokens) => {
     if (!tokens?.access_token) return;
     Promise.resolve(
-      updateProviderGoogleCalendarTokens(providerId, {
+      updateProviderGoogleTokens(providerId, {
         access_token: tokens.access_token,
         refresh_token: tokens.refresh_token || undefined,
         token_expiry: tokens.expiry_date ? new Date(tokens.expiry_date) : undefined,

@@ -43,6 +43,7 @@ const { manufacturerOrderRequestsRouter } = await import("./manufacturers/orderR
 const { providerManufacturerRepsRouter } = await import("./manufacturers/providerManufacturerRepsRoutes.js");
 const { providerRepCallsRouter } = await import("./manufacturers/providerRepCallsRoutes.js");
 const { googleCalendarRouter } = await import("./manufacturers/googleCalendarRoutes.js");
+const { gmailRouter } = await import("./manufacturers/gmailRoutes.js");
 const { mdMessagesRouter } = await import("./md-messages/routes.js");
 const { appointmentsRouter } = await import("./appointments/routes.js");
 const { treatmentRecordsRouter } = await import("./treatment-records/routes.js");
@@ -91,6 +92,7 @@ export function createAdminApp() {
   app.use("/admin/provider-manufacturer-reps", providerManufacturerRepsRouter);
   app.use("/admin/provider-rep-calls", providerRepCallsRouter);
   app.use("/admin/integrations/google-calendar", googleCalendarRouter);
+  app.use("/admin/integrations/gmail", gmailRouter);
   app.use("/admin/md-messages", mdMessagesRouter);
   app.use("/admin/appointments", appointmentsRouter);
   app.use("/admin/treatment-records", treatmentRecordsRouter);

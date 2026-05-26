@@ -23,7 +23,7 @@ import {
   isValidEmailFormat,
 } from "../manufacturers/providerManufacturerRepsRepository.js";
 import { createProviderGoogleMeetEvent } from "../manufacturers/googleCalendarService.js";
-import { getProviderGoogleCalendarConnection } from "../manufacturers/providerGoogleCalendarRepository.js";
+import { getProviderGoogleConnection } from "../manufacturers/providerGoogleConnectionRepository.js";
 import {
   addMinutesToLocalDateTime,
   createProviderRepCall,
@@ -2090,7 +2090,7 @@ functionsRouter.post("/scheduleRepCall", async (req, res, next) => {
       });
     }
 
-    const calendarConnection = await getProviderGoogleCalendarConnection(me?.id);
+    const calendarConnection = await getProviderGoogleConnection(me?.id);
     if (!calendarConnection?.access_token) {
       return res.status(400).json({
         ok: false,

@@ -7,10 +7,10 @@ import {
   verifyOAuthState,
 } from "./googleCalendarService.js";
 import {
-  deleteProviderGoogleCalendarConnection,
-  getProviderGoogleCalendarConnection,
-  upsertProviderGoogleCalendarConnection,
-} from "./providerGoogleCalendarRepository.js";
+  deleteProviderGoogleConnection,
+  getProviderGoogleConnection,
+  upsertProviderGoogleConnection,
+} from "./providerGoogleConnectionRepository.js";
 
 function getBearerToken(req) {
   const raw = req.headers.authorization || "";
@@ -43,7 +43,7 @@ export const googleCalendarRouter = Router();
 googleCalendarRouter.get("/status", async (req, res, next) => {
   try {
     const { me } = await requireAuth(req);
-    const connection = await getProviderGoogleCalendarConnection(me?.id);
+    const connection = await getProviderGoogleConnection(me?.id);
     const providerEmail = String(me?.email || "").trim().toLowerCase();
 
     res.json({
@@ -110,13 +110,14 @@ googleCalendarRouter.get("/callback", async (req, res) => {
       );
     }
 
-    await upsertProviderGoogleCalendarConnection({
+    await upsertProviderGoogleConnection({
       provider_id: providerId,
       google_email: tokenData.googleEmail,
       access_token: tokenData.accessToken,
       refresh_token: tokenData.refreshToken,
       token_expiry: tokenData.expiryDate,
       scopes: tokenData.scopes,
+      merge_scopes: true,
     });
 
     return res.redirect(profileRedirect({ google_calendar: "connected" }));
@@ -129,7 +130,28 @@ googleCalendarRouter.get("/callback", async (req, res) => {
 googleCalendarRouter.delete("/", async (req, res, next) => {
   try {
     const { me } = await requireAuth(req);
-    const removed = await deleteProviderGoogleCalendarConnection(me?.id);
+
+    // Best-effort revoke at Google so the grant is fully invalidated, not just
+    // forgotten locally. (Q12: single "Disconnect Google" — no scope-only
+    // disconnect.) Revoke failures (already revoked, network) do not block the
+    // local row deletion below.
+    const connection = await getProviderGoogleConnection(me?.id);
+    const refreshToken = connection?.refresh_token || "";
+    if (refreshToken) {
+      try {
+        await fetch(
+          `https://oauth2.googleapis.com/revoke?token=${encodeURIComponent(refreshToken)}`,
+          { method: "POST" }
+        );
+      } catch (revokeErr) {
+        console.warn(
+          "[google] revoke_failed",
+          revokeErr?.message || String(revokeErr)
+        );
+      }
+    }
+
+    const removed = await deleteProviderGoogleConnection(me?.id);
     res.json({ ok: true, disconnected: removed });
   } catch (error) {
     next(error);
