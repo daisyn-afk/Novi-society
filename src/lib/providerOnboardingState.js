@@ -4,6 +4,7 @@ import { getDashboardPathForRole, normalizeRole } from "@/lib/routeAccessPolicy"
 import { createPageUrl } from "@/utils";
 
 const PROVIDER_ONBOARDING_PATH = createPageUrl("ProviderBasicOnboarding");
+const PROVIDER_DASHBOARD_PATH = createPageUrl("ProviderDashboard");
 
 function hasVerifiedLicense(licenses) {
   return Array.isArray(licenses) && licenses.some((item) => item?.status === "verified");
@@ -38,6 +39,20 @@ async function getLegacyProviderSignals(user) {
   };
 }
 
+/**
+ * @deprecated Use `useProviderDashboardState` (or `resolveProviderDashboardState`)
+ * for any new gating logic. This function is preserved for backward compatibility
+ * with the post-auth redirect flow and any external callers.
+ *
+ * NOTE: It now always returns `isComplete: true` for providers because the
+ * canonical Locked/Active decision lives inside `<ProviderDashboard />` itself
+ * (which renders `<ProviderDashboardLocked />` when locked). We no longer
+ * force-redirect providers away from `/ProviderDashboard` based on
+ * `has_completed_basic`; the locked dashboard surfaces the basic-onboarding
+ * CTA when needed. This eliminates the redirect loop where providers with
+ * incomplete onboarding bounced between `/ProviderDashboard` and
+ * `/ProviderBasicOnboarding`.
+ */
 export async function resolveProviderOnboardingState(user) {
   const normalizedRole = normalizeRole(user?.role);
   if (normalizedRole !== "provider") {
@@ -53,7 +68,11 @@ export async function resolveProviderOnboardingState(user) {
     if (legacy.hasLegacyActivation) {
       return { state: "active_legacy", isComplete: true };
     }
-    return { state: "onboarding_incomplete", isComplete: false };
+    // Provider with no basic profile + no legacy activation: still allow them
+    // through to /ProviderDashboard so the locked dashboard can render the
+    // "complete basic onboarding" CTA. The locked dashboard is the source of
+    // truth for what these users should do next.
+    return { state: "locked_dashboard", isComplete: true };
   } catch {
     // Fail open to avoid locking out active providers during transient API issues.
     return { state: "onboarding_check_unavailable", isComplete: true };
@@ -90,25 +109,17 @@ export async function getPostAuthRedirectPath({ user, nextPath }) {
     return roleDashboard;
   }
 
-  const providerState = await resolveProviderOnboardingState(user);
-  if (!providerState.isComplete) {
-    logPostAuthRedirectDecision({
-      resolvedRole: normalizedRole,
-      redirectTarget: PROVIDER_ONBOARDING_PATH,
-      reason: "provider_onboarding_incomplete",
-      onboardingState: providerState.state,
-    });
-    return PROVIDER_ONBOARDING_PATH;
-  }
-
-  const providerDashboard = getDashboardPathForRole(user?.role);
+  // All providers — regardless of onboarding completeness — land on
+  // /ProviderDashboard. The page itself renders either the locked or active
+  // dashboard based on `useProviderDashboardState`. This keeps a single
+  // canonical entry point and removes the redirect-loop risk between
+  // /ProviderDashboard and /ProviderBasicOnboarding.
   logPostAuthRedirectDecision({
     resolvedRole: normalizedRole,
-    redirectTarget: providerDashboard,
-    reason: "provider_onboarding_complete",
-    onboardingState: providerState.state,
+    redirectTarget: PROVIDER_DASHBOARD_PATH,
+    reason: "provider_canonical_entry",
   });
-  return providerDashboard;
+  return PROVIDER_DASHBOARD_PATH;
 }
 
 export function getProviderOnboardingPath() {
