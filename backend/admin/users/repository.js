@@ -240,6 +240,12 @@ export async function updateUser(id, payload) {
       ? normalizeStaffPermissions(nextRole, current.permissions)
       : null;
 
+  if (payload?.password && !current.auth_user_id) {
+    const err = new Error("Cannot update password: this user has no linked auth account.");
+    err.statusCode = 400;
+    throw err;
+  }
+
   if (current.auth_user_id) {
     const updates = {};
     if (nextEmail !== current.email) updates.email = nextEmail;

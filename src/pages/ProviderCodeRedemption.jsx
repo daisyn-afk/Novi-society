@@ -336,7 +336,7 @@ export default function ProviderCodeRedemption() {
             {(loadingEnrollments || fetchingEnrollments) ? (
               <p className="text-sm text-slate-500">Loading latest course windows...</p>
             ) : enrollmentWindows.length === 0 ? (
-              <p className="text-sm text-slate-500">No eligible paid/confirmed course sessions found yet.</p>
+              <p className="text-sm text-slate-500">No eligible paid/confirmed course sessions found yet. Purchase a course to see it here.</p>
             ) : enrollmentWindows.map(({ key, enrollment, course, window, isOpen, isAttended }) => (
               (!isOpen && !isAttended) ? (
                 <div
@@ -399,9 +399,11 @@ export default function ProviderCodeRedemption() {
               </button>
               )
             ))}
-            <p className="text-xs text-slate-500 pt-1">
-              Pick the course row first. You can enter code only for rows marked "Class is on".
-            </p>
+            {enrollmentWindows.length > 0 && (
+              <p className="text-xs text-slate-500 pt-1">
+                Pick the course row first. You can enter code only for rows marked "Class is on".
+              </p>
+            )}
           </CardContent>
         </Card>
 

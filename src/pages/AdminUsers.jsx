@@ -12,6 +12,7 @@ import {
   Users as UsersIcon
 } from "lucide-react";
 import { adminUsersApi } from "@/api/adminUsersApi";
+import { useToast } from "@/components/ui/use-toast";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -92,6 +93,7 @@ function roleLabel(value) {
 
 export default function AdminUsers() {
   const qc = useQueryClient();
+  const { toast } = useToast();
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState("all");
@@ -104,6 +106,7 @@ export default function AdminUsers() {
 
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [showPassword, setShowPassword] = useState(false);
+  const [savedPasswords, setSavedPasswords] = useState({});
 
   const debouncedSearch = useDebounced(search, 300);
 
@@ -151,14 +154,25 @@ export default function AdminUsers() {
       }
       return adminUsersApi.create(payload);
     },
-      onSuccess: () => {
+      onSuccess: (_, variables) => {
         qc.invalidateQueries({ queryKey: ["admin-users"] });
+        if (editing?.id && variables?.password) {
+          setSavedPasswords((prev) => ({ ...prev, [editing.id]: variables.password }));
+        }
         setDialogOpen(false);
         setEditing(null);
         setForm({ ...EMPTY_FORM, permissions: buildEmptyPermissions() });
         setFormError("");
+        toast({
+          title: editing ? "User updated" : "User created",
+          description: variables?.password ? "Password updated." : undefined
+        });
       },
-    onError: (err) => setFormError(err?.message || "Unable to save user.")
+    onError: (err) => {
+      const msg = err?.message || "Unable to save user.";
+      setFormError(msg);
+      toast({ title: "Save failed", description: msg, variant: "destructive" });
+    }
   });
 
   const deleteMutation = useMutation({
@@ -166,6 +180,10 @@ export default function AdminUsers() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["admin-users"] });
       setDeleteTarget(null);
+      toast({ title: "User deleted" });
+    },
+    onError: (err) => {
+      toast({ title: "Delete failed", description: err?.message || "Try again.", variant: "destructive" });
     }
   });
 
@@ -189,13 +207,13 @@ export default function AdminUsers() {
       first_name: user.first_name || "",
       last_name: user.last_name || "",
       email: user.email || "",
-      password: "",
+      password: savedPasswords[user.id] || "",
       role: user.role || "",
       is_active: user.is_active !== false,
       permissions
     });
     setFormError("");
-    setShowPassword(false);
+    setShowPassword(Boolean(savedPasswords[user.id]));
     setDialogOpen(true);
   };
 
@@ -257,6 +275,8 @@ export default function AdminUsers() {
                 }}
                 placeholder="Search by name or email"
                 className="pl-9"
+                autoComplete="new-password"
+                name="user-search"
               />
             </div>
             <Select
@@ -428,7 +448,7 @@ export default function AdminUsers() {
           <DialogHeader>
             <DialogTitle>{editing ? `Edit ${editing.email}` : "Create User"}</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4 pt-2">
+          <form autoComplete="off" onSubmit={(e) => e.preventDefault()} className="space-y-4 pt-2">
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs font-semibold text-slate-600 mb-1 block">
@@ -438,6 +458,7 @@ export default function AdminUsers() {
                   value={form.first_name}
                   onChange={(e) => setForm((f) => ({ ...f, first_name: e.target.value }))}
                   placeholder="Jane"
+                  autoComplete="off"
                 />
               </div>
               <div>
@@ -448,6 +469,7 @@ export default function AdminUsers() {
                   value={form.last_name}
                   onChange={(e) => setForm((f) => ({ ...f, last_name: e.target.value }))}
                   placeholder="Doe"
+                  autoComplete="off"
                 />
               </div>
             </div>
@@ -459,6 +481,7 @@ export default function AdminUsers() {
                 value={form.email}
                 onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
                 placeholder="user@example.com"
+                autoComplete="new-password"
               />
             </div>
 
@@ -471,8 +494,9 @@ export default function AdminUsers() {
                   type={showPassword ? "text" : "password"}
                   value={form.password}
                   onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
-                  placeholder={editing ? "••••••••" : "Minimum 8 characters"}
+                  placeholder={editing ? "Enter new password to change" : "Minimum 8 characters"}
                   className="pr-10"
+                  autoComplete="new-password"
                 />
                 <button
                   type="button"
@@ -568,7 +592,7 @@ export default function AdminUsers() {
             {formError ? (
               <p className="text-sm text-red-600">{formError}</p>
             ) : null}
-          </div>
+          </form>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
               Cancel
