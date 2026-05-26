@@ -7,17 +7,18 @@ import {
   fetchThread,
   findOrDiscoverThread,
   isGmailOAuthConfigured,
+  listRepThreadHistory,
   persistGmailGrant,
   replyToThread,
+  selectRepThread,
   sendNewMessage,
   streamAttachment,
+  verifyThreadInvolvesRep,
 } from "./gmailService.js";
 import {
   getProviderGoogleConnection,
   hasGmailScope,
 } from "./providerGoogleConnectionRepository.js";
-import { getRepThread } from "./providerRepGmailThreadsRepository.js";
-
 function getBearerToken(req) {
   const raw = req.headers.authorization || "";
   if (!raw.startsWith("Bearer ")) return null;
@@ -164,7 +165,23 @@ gmailRouter.get("/threads", async (req, res, next) => {
       manufacturerId,
     });
 
-    res.json({ thread });
+    const wantHistory =
+      req.query?.include_history === "1" ||
+      req.query?.include_history === "true";
+    let threads = [];
+    if (wantHistory) {
+      try {
+        threads = await listRepThreadHistory({
+          providerId: me.id,
+          repEmail,
+          ensureThreadId: thread?.thread_id || null,
+        });
+      } catch (err) {
+        console.warn("[gmail] thread_history_failed", err?.message || err);
+      }
+    }
+
+    res.json({ thread, threads });
   } catch (error) {
     next(error);
   }
@@ -209,6 +226,32 @@ gmailRouter.post("/threads", async (req, res, next) => {
   }
 });
 
+// Set the active thread pointer for (provider, rep).
+gmailRouter.post("/threads/select", async (req, res, next) => {
+  try {
+    const { me } = await requireAuth(req);
+    const repEmail = String(req.body?.rep_email || "").trim().toLowerCase();
+    const threadId = String(req.body?.thread_id || "").trim();
+    const manufacturerId =
+      String(req.body?.manufacturer_id || "").trim() || null;
+    if (!repEmail || !threadId) {
+      return res
+        .status(400)
+        .json({ error: "rep_email and thread_id are required." });
+    }
+
+    const thread = await selectRepThread({
+      providerId: me.id,
+      repEmail,
+      threadId,
+      manufacturerId,
+    });
+    res.json({ thread });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // Reply to an existing thread (Q9 reply box).
 gmailRouter.post("/threads/:threadId/reply", async (req, res, next) => {
   try {
@@ -222,14 +265,18 @@ gmailRouter.post("/threads/:threadId/reply", async (req, res, next) => {
     // Confirm the provider actually owns this thread before forwarding the
     // send to Gmail. (Defense in depth — the underlying call is also scoped
     // to the provider's own credentials.)
-    const stored = await getRepThread({
-      providerId: me.id,
-      repEmail: req.body?.rep_email || "",
-    });
-    if (stored && stored.thread_id !== threadId) {
-      return res
-        .status(403)
-        .json({ error: "Thread does not belong to this provider." });
+    const repEmail = String(req.body?.rep_email || "").trim().toLowerCase();
+    if (repEmail) {
+      const allowed = await verifyThreadInvolvesRep({
+        providerId: me.id,
+        threadId,
+        repEmail,
+      });
+      if (!allowed) {
+        return res.status(403).json({
+          error: "This thread does not match the selected rep.",
+        });
+      }
     }
 
     const result = await replyToThread({

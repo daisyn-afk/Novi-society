@@ -10,6 +10,10 @@ import {
   upsertProviderGoogleConnection,
 } from "./providerGoogleConnectionRepository.js";
 import {
+  listRepThreadHistoryRows,
+  upsertRepThreadHistory,
+} from "./providerRepGmailThreadHistoryRepository.js";
+import {
   getRepThread,
   touchRepThreadSync,
   upsertRepThread,
@@ -186,7 +190,7 @@ export async function findOrDiscoverThread({ providerId, repEmail, manufacturerI
   const found = data.threads?.[0];
   if (!found) return existing || null;
 
-  return upsertRepThread({
+  const row = await upsertRepThread({
     provider_id: providerId,
     rep_email: email,
     manufacturer_id: manufacturerId || existing?.manufacturer_id || null,
@@ -194,6 +198,296 @@ export async function findOrDiscoverThread({ providerId, repEmail, manufacturerI
     last_history_id: found.historyId || null,
     last_synced_at: new Date(),
   });
+
+  await rememberRepThreadInHistory({
+    providerId,
+    repEmail: email,
+    threadId: found.id,
+    gmail,
+  });
+
+  return row;
+}
+
+function headerContainsEmail(headerValue, email) {
+  const needle = String(email || "").trim().toLowerCase();
+  if (!needle) return false;
+  return String(headerValue || "").toLowerCase().includes(needle);
+}
+
+/** True when any message in the thread involves repEmail in From/To/Cc. */
+export async function verifyThreadInvolvesRep({ providerId, threadId, repEmail }) {
+  const email = String(repEmail || "").trim().toLowerCase();
+  const tid = String(threadId || "").trim();
+  if (!email || !tid) return false;
+
+  const { gmail } = await getAuthedGmail(providerId);
+  const { data } = await gmail.users.threads.get({
+    userId: "me",
+    id: tid,
+    format: "metadata",
+    metadataHeaders: ["From", "To", "Cc"],
+  });
+
+  for (const message of data.messages || []) {
+    for (const name of ["From", "To", "Cc"]) {
+      if (headerContainsEmail(headerValue(message, name), email)) return true;
+    }
+  }
+  return false;
+}
+
+function threadStubToHistoryRow(stub, thread) {
+  const msgs = thread?.messages || [];
+  const first = msgs[0];
+  const last = msgs[msgs.length - 1] || first;
+  const rawSubject = first ? headerValue(first, "Subject") : "";
+  const normalized = rawSubject.replace(/^re:\s*/i, "").trim();
+  return {
+    thread_id: thread?.id || stub.id,
+    subject: normalized || rawSubject || "(no subject)",
+    snippet: stub.snippet || thread?.snippet || "",
+    message_count: msgs.length,
+    last_date: last ? headerValue(last, "Date") : "",
+    internal_date: last?.internalDate || first?.internalDate || null,
+    history_id: thread?.historyId || stub.historyId || null,
+  };
+}
+
+async function summarizeThreadForHistory(gmail, threadId, stub = {}) {
+  const { data: thread } = await gmail.users.threads.get({
+    userId: "me",
+    id: String(threadId),
+    format: "metadata",
+    metadataHeaders: ["Subject", "Date"],
+  });
+  return threadStubToHistoryRow(
+    { id: threadId, snippet: stub.snippet || "", historyId: stub.historyId },
+    thread
+  );
+}
+
+async function collectGmailThreadStubs(gmail, q, limit = 50) {
+  const stubById = new Map();
+  let pageToken;
+
+  while (stubById.size < limit) {
+    const { data } = await gmail.users.threads.list({
+      userId: "me",
+      q,
+      maxResults: Math.min(50, limit - stubById.size),
+      pageToken: pageToken || undefined,
+    });
+    for (const stub of data.threads || []) {
+      if (!stubById.has(stub.id)) stubById.set(stub.id, stub);
+    }
+    pageToken = data.nextPageToken;
+    if (!pageToken || stubById.size >= limit) break;
+  }
+
+  return stubById;
+}
+
+/** Save thread id + optional metadata for sidebar history. */
+async function rememberRepThreadInHistory({
+  providerId,
+  repEmail,
+  threadId,
+  gmail = null,
+  meta = {},
+}) {
+  const email = String(repEmail || "").trim().toLowerCase();
+  const tid = String(threadId || "").trim();
+  if (!providerId || !email || !tid) return null;
+
+  let subject = meta.subject || null;
+  let snippet = meta.snippet || null;
+  let internalDate = meta.internal_date ?? meta.last_internal_date ?? null;
+
+  if (gmail && (!subject || internalDate == null)) {
+    try {
+      const row = await summarizeThreadForHistory(gmail, tid);
+      subject = subject || row.subject;
+      snippet = snippet || row.snippet;
+      internalDate = internalDate ?? row.internal_date;
+    } catch {
+      /* metadata optional */
+    }
+  }
+
+  return upsertRepThreadHistory({
+    provider_id: providerId,
+    rep_email: email,
+    thread_id: tid,
+    subject,
+    snippet,
+    last_internal_date: internalDate,
+  });
+}
+
+/**
+ * Lists Gmail threads with this rep (newest first). Used for thread history UI.
+ * Always includes ensureThreadId / stored pointer even if Gmail search misses it.
+ */
+export async function listRepThreadHistory({
+  providerId,
+  repEmail,
+  maxResults = 25,
+  ensureThreadId = null,
+}) {
+  const email = String(repEmail || "").trim().toLowerCase();
+  if (!email) return [];
+
+  const { gmail } = await getAuthedGmail(providerId);
+  const limit = Math.min(Math.max(Number(maxResults) || 25, 1), 50);
+  const stubById = new Map();
+
+  let storedRows = [];
+  try {
+    storedRows = await listRepThreadHistoryRows({
+      providerId,
+      repEmail: email,
+      limit: 50,
+    });
+  } catch (err) {
+    console.warn("[gmail] thread_history_db_failed", err?.message || err);
+  }
+  for (const row of storedRows) {
+    stubById.set(row.thread_id, {
+      id: row.thread_id,
+      snippet: row.snippet || "",
+      historyId: null,
+      _subject: row.subject,
+      _internal_date: row.last_internal_date,
+    });
+  }
+
+  const searchQueries = [
+    email,
+    `from:${email} OR to:${email}`,
+    `to:${email}`,
+    `from:${email}`,
+  ];
+
+  for (const q of searchQueries) {
+    try {
+      const found = await collectGmailThreadStubs(gmail, q, limit);
+      for (const [id, stub] of found) {
+        if (!stubById.has(id)) stubById.set(id, stub);
+      }
+      if (stubById.size >= limit) break;
+    } catch (err) {
+      console.warn("[gmail] threads_list_query_failed", {
+        q,
+        error_message: err?.message || String(err),
+      });
+    }
+  }
+
+  const stored = await getRepThread({ providerId, repEmail: email });
+  for (const tid of [ensureThreadId, stored?.thread_id].filter(Boolean)) {
+    const id = String(tid).trim();
+    if (id && !stubById.has(id)) {
+      stubById.set(id, { id, snippet: "" });
+    }
+  }
+
+  if (stubById.size === 0) return [];
+
+  const rows = await Promise.all(
+    Array.from(stubById.values()).map(async (stub) => {
+      if (stub._subject) {
+        return {
+          thread_id: stub.id,
+          subject: stub._subject,
+          snippet: stub.snippet || "",
+          message_count: 0,
+          last_date: "",
+          internal_date: stub._internal_date ?? null,
+          history_id: stub.historyId || null,
+        };
+      }
+      try {
+        const row = await summarizeThreadForHistory(gmail, stub.id, stub);
+        await upsertRepThreadHistory({
+          provider_id: providerId,
+          rep_email: email,
+          thread_id: row.thread_id,
+          subject: row.subject,
+          snippet: row.snippet,
+          last_internal_date: row.internal_date,
+        });
+        return row;
+      } catch (err) {
+        console.warn("[gmail] thread_summarize_failed", {
+          thread_id: stub.id,
+          error_message: err?.message || String(err),
+        });
+        return {
+          thread_id: stub.id,
+          subject: "(no subject)",
+          snippet: stub.snippet || "",
+          message_count: 0,
+          last_date: "",
+          internal_date: null,
+          history_id: stub.historyId || null,
+        };
+      }
+    })
+  );
+
+  rows.sort((a, b) => {
+    const ta = Number(a.internal_date) || 0;
+    const tb = Number(b.internal_date) || 0;
+    return tb - ta;
+  });
+
+  return rows;
+}
+
+/** Persist which Gmail thread is active for this (provider, rep). */
+export async function selectRepThread({
+  providerId,
+  repEmail,
+  threadId,
+  manufacturerId,
+}) {
+  const email = String(repEmail || "").trim().toLowerCase();
+  const tid = String(threadId || "").trim();
+  if (!email || !tid) {
+    const err = new Error("rep_email and thread_id are required.");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const allowed = await verifyThreadInvolvesRep({
+    providerId,
+    threadId: tid,
+    repEmail: email,
+  });
+  if (!allowed) {
+    const err = new Error("Thread does not match this rep.");
+    err.statusCode = 403;
+    throw err;
+  }
+
+  const row = await upsertRepThread({
+    provider_id: providerId,
+    rep_email: email,
+    manufacturer_id: manufacturerId || null,
+    thread_id: tid,
+    last_synced_at: new Date(),
+  });
+
+  const { gmail } = await getAuthedGmail(providerId);
+  await rememberRepThreadInHistory({
+    providerId,
+    repEmail: email,
+    threadId: tid,
+    gmail,
+  });
+
+  return row;
 }
 
 // ---------- Thread fetch + mark-as-read (Q5 + Q8) ----------
@@ -434,9 +728,34 @@ export async function sendNewMessage({
     signature: buildSignature(me),
   });
 
+  const existing = await getRepThread({
+    providerId,
+    repEmail: cleanRepEmail,
+  });
+
   const { data } = await gmail.users.messages.send({
     userId: "me",
     requestBody: { raw },
+  });
+
+  if (
+    existing?.thread_id &&
+    String(existing.thread_id) !== String(data.threadId)
+  ) {
+    await rememberRepThreadInHistory({
+      providerId,
+      repEmail: cleanRepEmail,
+      threadId: existing.thread_id,
+      gmail,
+    });
+  }
+
+  await rememberRepThreadInHistory({
+    providerId,
+    repEmail: cleanRepEmail,
+    threadId: data.threadId,
+    gmail,
+    meta: { subject: subject || "(no subject)", snippet: String(body || "").slice(0, 200) },
   });
 
   await upsertRepThread({

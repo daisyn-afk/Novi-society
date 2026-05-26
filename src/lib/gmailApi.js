@@ -10,12 +10,28 @@ export function fetchGmailConnectUrl() {
   return adminApiRequest(`${BASE}/connect-url`, { method: "GET" });
 }
 
-export function fetchRepThreadPointer({ repEmail, manufacturerId } = {}) {
+export function fetchRepThreadPointer({
+  repEmail,
+  manufacturerId,
+  includeHistory = true,
+} = {}) {
   const params = new URLSearchParams();
   if (repEmail) params.set("rep_email", repEmail);
   if (manufacturerId) params.set("manufacturer_id", manufacturerId);
+  if (includeHistory) params.set("include_history", "1");
   const qs = params.toString();
   return adminApiRequest(`${BASE}/threads${qs ? `?${qs}` : ""}`, { method: "GET" });
+}
+
+export function selectRepThread({ repEmail, threadId, manufacturerId } = {}) {
+  return adminApiRequest(`${BASE}/threads/select`, {
+    method: "POST",
+    body: JSON.stringify({
+      rep_email: repEmail,
+      thread_id: threadId,
+      manufacturer_id: manufacturerId || null,
+    }),
+  });
 }
 
 export function fetchThreadMessages(threadId) {
