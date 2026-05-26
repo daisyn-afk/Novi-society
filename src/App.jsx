@@ -309,7 +309,12 @@ const AuthenticatedApp = () => {
         }
       />
       <Route path="/admin/courses" element={<RequireRoleRoute pageKey="admincourses"><Navigate to="/admincourses" replace /></RequireRoleRoute>} />
-      <Route path="/admin/users" element={<RequireRoleRoute pageKey="AdminProviders"><Navigate to="/AdminProviders" replace /></RequireRoleRoute>} />
+      <Route path="/admin/users" element={<RequireRoleRoute pageKey="AdminUsers"><Navigate to="/AdminUsers" replace /></RequireRoleRoute>} />
+      <Route path="/StaffPreOrders" element={<RequireRoleRoute pageKey="AdminPreOrders"><Navigate to="/AdminPreOrders" replace /></RequireRoleRoute>} />
+      <Route path="/StaffEnrollments" element={<RequireRoleRoute pageKey="AdminEnrollments"><Navigate to="/AdminEnrollments" replace /></RequireRoleRoute>} />
+      <Route path="/StaffProviders" element={<RequireRoleRoute pageKey="AdminProviders"><Navigate to="/AdminProviders" replace /></RequireRoleRoute>} />
+      <Route path="/StaffCompliance" element={<RequireRoleRoute pageKey="AdminCompliance"><Navigate to="/AdminCompliance" replace /></RequireRoleRoute>} />
+      <Route path="/StaffModelSignups" element={<RequireRoleRoute pageKey="AdminModelSignups"><Navigate to="/AdminModelSignups" replace /></RequireRoleRoute>} />
       {Object.entries(Pages).map(([path, Page]) => (
         <Route
           key={path}

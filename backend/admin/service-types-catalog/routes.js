@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { requireAdminOrStaffWithModule } from "../auth/helpers.js";
 import {
   createServiceType,
   deleteServiceType,
@@ -31,7 +32,7 @@ serviceTypesCatalogRouter.get("/:id", async (req, res, next) => {
   }
 });
 
-serviceTypesCatalogRouter.post("/", async (req, res, next) => {
+serviceTypesCatalogRouter.post("/", requireAdminOrStaffWithModule("AdminServiceTypes"), async (req, res, next) => {
   try {
     const row = await createServiceType(req.body || {});
     res.status(201).json(row);
@@ -40,7 +41,7 @@ serviceTypesCatalogRouter.post("/", async (req, res, next) => {
   }
 });
 
-serviceTypesCatalogRouter.put("/:id", async (req, res, next) => {
+serviceTypesCatalogRouter.put("/:id", requireAdminOrStaffWithModule("AdminServiceTypes"), async (req, res, next) => {
   try {
     const row = await updateServiceType(req.params.id, req.body || {});
     if (!row) return res.status(404).json({ error: "Service type not found" });
@@ -50,7 +51,7 @@ serviceTypesCatalogRouter.put("/:id", async (req, res, next) => {
   }
 });
 
-serviceTypesCatalogRouter.delete("/:id", async (req, res, next) => {
+serviceTypesCatalogRouter.delete("/:id", requireAdminOrStaffWithModule("AdminServiceTypes"), async (req, res, next) => {
   try {
     const ok = await deleteServiceType(req.params.id);
     if (!ok) return res.status(404).json({ error: "Service type not found" });

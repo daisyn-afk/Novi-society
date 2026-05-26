@@ -16,7 +16,7 @@ import {
 import { markUserSetupEmailSent } from "./passwordSetup.js";
 import {
   buildPasswordResetEmailHtml,
-  PASSWORD_RESET_EMAIL_SUBJECT,
+  getPasswordSetupSubject,
   sendResendHtmlEmail
 } from "../emails/courseStyleEmail.js";
 import { resolveSetPasswordUrl } from "../lib/frontendBaseUrl.js";
@@ -37,7 +37,7 @@ const _supabaseAdmin =
  * block the user-creation response.
  */
 async function sendAdminUserSetupEmail(createdUser, req) {
-  const { auth_user_id: authUserId, email, first_name: firstName, last_name: lastName } = createdUser;
+  const { auth_user_id: authUserId, email, first_name: firstName, last_name: lastName, role } = createdUser;
   if (!email) {
     // eslint-disable-next-line no-console
     console.warn("[admin-users] invite email skipped: missing email on created user");
@@ -91,10 +91,10 @@ async function sendAdminUserSetupEmail(createdUser, req) {
     });
 
     const greetingName = firstName || email;
-    const html = buildPasswordResetEmailHtml({ greetingName, resetLink: link });
+    const html = buildPasswordResetEmailHtml({ greetingName, resetLink: link, role });
     const result = await sendResendHtmlEmail({
       to: email,
-      subject: PASSWORD_RESET_EMAIL_SUBJECT,
+      subject: getPasswordSetupSubject(role),
       html
     });
 

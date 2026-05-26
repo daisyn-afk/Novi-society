@@ -86,8 +86,8 @@ enrollmentsRouter.get("/", async (req, res, next) => {
 
 enrollmentsRouter.patch("/:id", async (req, res, next) => {
   try {
-    if (!hasAdminAccess(req.me?.role)) {
-      return res.status(403).json({ error: "Forbidden. Admin access required." });
+    if (!hasAdminAccess(req.me?.role) && !hasStaffModuleAccess(req.me, "AdminEnrollments")) {
+      return res.status(403).json({ error: "Forbidden." });
     }
     const id = String(req.params.id || "").trim();
     if (!id) return res.status(400).json({ error: "Enrollment id is required." });
@@ -125,8 +125,8 @@ enrollmentsRouter.patch("/:id", async (req, res, next) => {
 
 enrollmentsRouter.post("/repair", async (_req, res, next) => {
   try {
-    if (!hasAdminAccess(_req.me?.role)) {
-      return res.status(403).json({ error: "Forbidden. Admin access required." });
+    if (!hasAdminAccess(_req.me?.role) && !hasStaffModuleAccess(_req.me, "AdminEnrollments")) {
+      return res.status(403).json({ error: "Forbidden." });
     }
     const result = await backfillPaidEnrollments();
     return res.json(result);

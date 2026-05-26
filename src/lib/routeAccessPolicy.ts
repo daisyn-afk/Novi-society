@@ -134,6 +134,7 @@ const LEGACY_STAFF_PERMISSION_ALIASES: Record<string, string[]> = {
   AdminPreOrders: ["StaffPreOrders"],
   AdminEnrollments: ["StaffEnrollments"],
   AdminProviders: ["StaffProviders"],
+  AdminCompliance: ["StaffCompliance"],
   AdminModelSignups: ["StaffModelSignups"],
 };
 

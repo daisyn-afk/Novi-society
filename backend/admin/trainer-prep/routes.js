@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { requireAdminOrStaffWithModule } from "../auth/helpers.js";
 import {
   createSupplyList,
   createSupplyItem,
@@ -9,6 +10,7 @@ import {
 } from "./repository.js";
 
 export const trainerPrepRouter = Router();
+trainerPrepRouter.use(requireAdminOrStaffWithModule("admincourses"));
 
 trainerPrepRouter.get("/supply-lists", async (_req, res, next) => {
   try {

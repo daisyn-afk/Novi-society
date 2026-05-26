@@ -1,25 +1,15 @@
 import { Router } from "express";
 import { pool, query } from "../db.js";
-import { getMeFromAccessToken } from "../auth/service.js";
+import { hasAdminOrStaffModuleAccess, requireAuth } from "../auth/helpers.js";
 import { notifyProviderOfCourseCertificateIssuance } from "../certificationNotifications.js";
 import { notifyAdminsOfCertificationSubmission } from "../adminNotifications.js";
 
 export const certificationsRouter = Router();
+certificationsRouter.use(requireAuth);
 const appBaseUrl = process.env.APP_BASE_URL || "http://localhost:5173";
 const resendApiKey = process.env.RESEND_API_KEY || "";
 const resendFromEmail = process.env.RESEND_FROM_EMAIL || "NOVI Society <support@novisociety.com>";
 const noviEmailLogoUrl = process.env.NOVI_EMAIL_LOGO_URL || `${appBaseUrl}/novi-email-logo.png`;
-
-function getBearerToken(req) {
-  const raw = req.headers.authorization || "";
-  if (!raw.startsWith("Bearer ")) return null;
-  return raw.slice("Bearer ".length).trim() || null;
-}
-
-function hasAdminAccess(role) {
-  const normalized = String(role || "").trim().toLowerCase();
-  return normalized === "admin" || normalized === "super_admin" || normalized === "owner";
-}
 
 function resolveNameFromUser(user) {
   const full = String(user?.full_name || "").trim();
@@ -41,17 +31,6 @@ function appendSubmitterAuditNote(existingNotes, me) {
     );
   }
   return parts.filter(Boolean).join("\n");
-}
-
-async function requireAuth(req) {
-  const token = getBearerToken(req);
-  if (!token) {
-    const err = new Error("Missing bearer token.");
-    err.statusCode = 401;
-    throw err;
-  }
-  const me = await getMeFromAccessToken(token);
-  return { me };
 }
 
 async function getProviderOwnershipAliases(me) {
@@ -115,6 +94,46 @@ function providerOwnsCertification(row, ownership) {
   const idMatch = ownerId && ownership.aliases.has(ownerId);
   const emailMatch = Boolean(ownership.authEmail && ownerEmail && ownerEmail === ownership.authEmail);
   return idMatch || emailMatch;
+}
+
+function toPermissionObject(rawPermissions) {
+  if (rawPermissions && typeof rawPermissions === "object" && !Array.isArray(rawPermissions)) {
+    return rawPermissions;
+  }
+  if (typeof rawPermissions === "string") {
+    try {
+      const parsed = JSON.parse(rawPermissions);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+    } catch {
+      // ignore malformed legacy payloads
+    }
+  }
+  return {};
+}
+
+function hasTruthyPermission(permissions, key) {
+  const value = permissions?.[key];
+  return value === true || value === "true" || value === 1 || value === "1";
+}
+
+async function resolveCanManageCertifications(me) {
+  if (hasAdminOrStaffModuleAccess(me, "AdminLicenses")) return true;
+  if (String(me?.role || "").trim().toLowerCase() !== "staff") return false;
+  const authUserId = String(me?.id || "").trim();
+  if (!authUserId) return false;
+  try {
+    const { rows } = await query(
+      `select permissions
+       from public.users
+       where auth_user_id = $1
+       limit 1`,
+      [authUserId]
+    );
+    const permissions = toPermissionObject(rows?.[0]?.permissions);
+    return hasTruthyPermission(permissions, "AdminLicenses");
+  } catch {
+    return false;
+  }
 }
 
 let certColumnsPromise = null;
@@ -563,7 +582,8 @@ function isAdminIssuedCourseCertification(body, canSetAnyProvider) {
 
 certificationsRouter.get("/", async (req, res, next) => {
   try {
-    const { me } = await requireAuth(req);
+    const me = req.me || {};
+    const canManageCertifications = await resolveCanManageCertifications(me);
     const columns = await getCertificationColumns();
     const where = [];
     const params = [];
@@ -572,7 +592,7 @@ certificationsRouter.get("/", async (req, res, next) => {
     const hasProviderEmail = columns.has("provider_email");
     const hasCreatedBy = columns.has("created_by");
 
-    if (!hasAdminAccess(me.role)) {
+    if (!canManageCertifications) {
       const ownership = await getProviderOwnershipAliases(me);
       const ownershipChecks = [];
       if (hasProviderId && ownership.aliases.size > 0) {
@@ -651,10 +671,10 @@ certificationsRouter.get("/", async (req, res, next) => {
 
 certificationsRouter.post("/", async (req, res, next) => {
   try {
-    const { me } = await requireAuth(req);
+    const me = req.me || {};
     const body = req.body || {};
     const columns = await getCertificationColumns();
-    const canSetAnyProvider = hasAdminAccess(me.role);
+    const canSetAnyProvider = hasAdminOrStaffModuleAccess(me, "AdminLicenses");
     const adminIssuedCourseCertification = isAdminIssuedCourseCertification(body, canSetAnyProvider);
     let resolvedTemplateCourseId = body.template_course_id || null;
     if (columns.has("template_course_id") && !resolvedTemplateCourseId) {
@@ -760,7 +780,7 @@ certificationsRouter.post("/", async (req, res, next) => {
         await query(`update public.certification set ${setClause} where id = $1`, values);
       }
     }
-    if (!hasAdminAccess(me.role)) {
+    if (!canSetAnyProvider) {
       void notifyAdminsOfCertificationSubmission({
         providerName: created?.provider_name || valuesByColumn.provider_name,
         providerEmail: created?.provider_email || valuesByColumn.provider_email,
@@ -802,7 +822,8 @@ certificationsRouter.post("/", async (req, res, next) => {
 
 certificationsRouter.get("/:id", async (req, res, next) => {
   try {
-    const { me } = await requireAuth(req);
+    const me = req.me || {};
+    const canManageCertifications = await resolveCanManageCertifications(me);
     const id = String(req.params.id || "").trim();
     const { rows } = await query(`select * from public.certification where id = $1 limit 1`, [id]);
     const row = rows[0];
@@ -811,7 +832,7 @@ certificationsRouter.get("/:id", async (req, res, next) => {
       err.statusCode = 404;
       throw err;
     }
-    if (!hasAdminAccess(me.role)) {
+    if (!canManageCertifications) {
       const ownership = await getProviderOwnershipAliases(me);
       if (!providerOwnsCertification(row, ownership)) {
         const err = new Error("Forbidden.");
@@ -827,7 +848,8 @@ certificationsRouter.get("/:id", async (req, res, next) => {
 
 certificationsRouter.patch("/:id", async (req, res, next) => {
   try {
-    const { me } = await requireAuth(req);
+    const me = req.me || {};
+    const canManageCertifications = await resolveCanManageCertifications(me);
     const id = String(req.params.id || "").trim();
     if (!id) {
       const err = new Error("Certification id is required.");
@@ -842,7 +864,7 @@ certificationsRouter.patch("/:id", async (req, res, next) => {
       err.statusCode = 404;
       throw err;
     }
-    if (!hasAdminAccess(me.role)) {
+    if (!canManageCertifications) {
       const ownership = await getProviderOwnershipAliases(me);
       if (!providerOwnsCertification(existing, ownership)) {
         const err = new Error("Forbidden.");
@@ -852,7 +874,7 @@ certificationsRouter.patch("/:id", async (req, res, next) => {
     }
 
     const updates = { ...(req.body || {}) };
-    if (hasAdminAccess(me.role)) {
+    if (canManageCertifications) {
       const prevStatus = String(existing?.status || "").toLowerCase();
       const nextStatusRaw = updates.status != null ? updates.status : existing?.status;
       const nextStatus = String(nextStatusRaw || "").toLowerCase();
@@ -895,10 +917,10 @@ certificationsRouter.patch("/:id", async (req, res, next) => {
     const hadCertificateDocument = Boolean(resolveCertificationDocumentUrl(existing));
     const hasCertificateDocument = Boolean(resolveCertificationDocumentUrl(updated));
     const courseCertificateDocumentAdded = issuedCourseCert && !hadCertificateDocument && hasCertificateDocument;
-    if (hasAdminAccess(me.role) && courseCertificateDocumentAdded) {
+    if (canManageCertifications && courseCertificateDocumentAdded) {
       void notifyProviderOfCourseCertificateIssuance(updated);
     }
-    const changedStatus = hasAdminAccess(me.role) && String(existing?.status || "") !== String(updated?.status || "");
+    const changedStatus = canManageCertifications && String(existing?.status || "") !== String(updated?.status || "");
     const isApproved = String(updated?.status || "").toLowerCase() === "active";
     const isRejected = String(updated?.status || "").toLowerCase() === "revoked";
     const wasPending = String(existing?.status || "").toLowerCase() === "pending";

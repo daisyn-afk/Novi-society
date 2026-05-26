@@ -51,12 +51,49 @@ export function buildCourseStyleEmailHtml({ greetingName, bodyHtml, includeSigno
 </html>`;
 }
 
-export const PASSWORD_RESET_EMAIL_SUBJECT = "Set your NOVI Society provider password";
+/**
+ * Returns the email subject for an account password-setup email.
+ * Providers keep their role-specific subject; all other roles get a clean,
+ * role-labelled variant so recipients are never confused by "provider" copy.
+ *
+ * @param {string} [role] - The user's role (e.g. "provider", "staff", "admin", "medical_director", "patient")
+ * @returns {string}
+ */
+export function getPasswordSetupSubject(role) {
+  const normalized = String(role || "").trim().toLowerCase();
+  const ROLE_LABELS = {
+    provider: "provider password",
+    staff: "staff account password",
+    admin: "admin account password",
+    medical_director: "medical director account password",
+  };
+  const label = ROLE_LABELS[normalized] ?? "account password";
+  return `Set your NOVI Society ${label}`;
+}
 
-export function buildPasswordResetEmailHtml({ greetingName, resetLink }) {
+/**
+ * Legacy constant kept for flows that intentionally target providers
+ * (migrated-users path, checkout path). New callers should use
+ * getPasswordSetupSubject(role) instead.
+ */
+export const PASSWORD_RESET_EMAIL_SUBJECT = getPasswordSetupSubject("provider");
+
+/**
+ * Builds the password-setup email HTML.
+ *
+ * @param {object} params
+ * @param {string} params.greetingName
+ * @param {string} params.resetLink
+ * @param {string} [params.role] - When omitted or unknown, falls back to generic account copy.
+ */
+export function buildPasswordResetEmailHtml({ greetingName, resetLink, role }) {
   const safeLink = escapeHtml(resetLink);
+  const isProvider = String(role || "").trim().toLowerCase() === "provider";
+  const introText = isProvider
+    ? "Your NOVI Society provider account is ready. Use the secure link below to create your password and access your provider dashboard."
+    : "Your NOVI Society account is ready. Use the secure link below to create your password and sign in.";
   const bodyHtml = `
-          <p style="margin:0 0 24px;font-size:16px;color:#374151;line-height:1.6">Your NOVI Society provider account is ready. Use the secure link below to create your password and access your provider dashboard.</p>
+          <p style="margin:0 0 24px;font-size:16px;color:#374151;line-height:1.6">${introText}</p>
           <div style="background:#f9f8f6;border-radius:12px;padding:24px;margin-bottom:32px;border:1px solid rgba(0,0,0,0.07)">
             <p style="margin:0 0 12px;font-size:13px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#2D6B7F">Password reset</p>
             <p style="margin:0 0 20px;font-size:14px;color:#374151;line-height:1.6">This link can be used only once. After you set your password, sign in at the NOVI login page with your email and the password you chose.</p>
