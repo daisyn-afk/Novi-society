@@ -10,6 +10,8 @@ import { Button } from "@/components/ui/button";
 import {
   CheckCircle,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Download,
   Mail,
   MessageSquarePlus,
@@ -207,6 +209,7 @@ export default function RepContactDialog({
   const [body, setBody] = useState("");
   const [replyBody, setReplyBody] = useState("");
   const [startingNewThread, setStartingNewThread] = useState(false);
+  const [historyCollapsed, setHistoryCollapsed] = useState(false);
   const wasOpenRef = useRef(false);
 
   const resetComposeFields = () => {
@@ -227,6 +230,7 @@ export default function RepContactDialog({
     if (!open) {
       wasOpenRef.current = false;
       setStartingNewThread(false);
+      setHistoryCollapsed(false);
       return;
     }
     if (wasOpenRef.current) return;
@@ -309,7 +313,13 @@ export default function RepContactDialog({
           />
         </DialogHeader>
 
-        <div className="flex-1 overflow-y-auto px-5 py-4 min-h-0 bg-[#f6f8fb]">
+        <div
+          className={`flex-1 min-h-0 px-5 py-4 bg-[#f6f8fb] ${
+            showThread && !showCompose
+              ? "flex flex-col overflow-hidden"
+              : "overflow-y-auto"
+          }`}
+        >
         {!repEmail ? (
           <NoRepEmailNotice />
         ) : statusQuery.isLoading ? (
@@ -345,10 +355,12 @@ export default function RepContactDialog({
             }
           />
         ) : (
-          <div className="flex gap-3 min-h-[460px]">
+          <div className="flex flex-1 min-h-0 gap-2 overflow-hidden">
             <ThreadHistorySidebar
               threads={displayThreads}
               activeThreadId={threadId}
+              collapsed={historyCollapsed}
+              onToggleCollapse={() => setHistoryCollapsed((v) => !v)}
               loading={
                 threadPointerQuery.isLoading || threadPointerQuery.isFetching
               }
@@ -361,7 +373,7 @@ export default function RepContactDialog({
               }}
               onNewThread={beginNewThread}
             />
-            <div className="flex-1 min-w-0">
+            <div className="flex flex-1 min-w-0 min-h-0 flex-col overflow-hidden">
               <ThreadView
                 repEmail={repEmail}
                 repName={repName}
@@ -695,14 +707,34 @@ function FirstMessageCompose({
 function ThreadHistorySidebar({
   threads,
   activeThreadId,
+  collapsed,
+  onToggleCollapse,
   loading,
   selecting,
   onSelect,
   onNewThread,
 }) {
+  const newThreadBtn = (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={onNewThread}
+      className={`gap-1.5 h-8 text-xs font-semibold ${
+        collapsed ? "w-9 px-0 justify-center" : "w-full"
+      }`}
+      style={{ borderColor: "rgba(45,107,127,0.35)", color: "#2D6B7F" }}
+      title="New thread"
+    >
+      <MessageSquarePlus className="w-3.5 h-3.5 shrink-0" />
+      {!collapsed ? <span>New thread</span> : null}
+    </Button>
+  );
+
   return (
     <aside
-      className="w-[200px] sm:w-[220px] shrink-0 flex flex-col rounded-xl overflow-hidden"
+      className={`shrink-0 flex flex-col min-h-0 self-stretch rounded-xl overflow-hidden transition-[width] duration-200 ${
+        collapsed ? "w-11" : "w-[200px] sm:w-[220px]"
+      }`}
       style={{
         background: "#fff",
         border: "1px solid rgba(30,37,53,0.1)",
@@ -710,88 +742,115 @@ function ThreadHistorySidebar({
       }}
     >
       <div
-        className="px-3 py-2.5 border-b flex items-center justify-between gap-1"
+        className={`shrink-0 border-b flex items-center gap-1 ${
+          collapsed ? "px-1 py-2 justify-center" : "px-2 py-2.5 justify-between"
+        }`}
         style={{ borderColor: "rgba(30,37,53,0.08)" }}
       >
-        <p
-          className="text-[11px] font-bold uppercase tracking-wide"
-          style={{ color: "rgba(30,37,53,0.5)" }}
-        >
-          Threads
-        </p>
-        {(loading || selecting) && (
-          <RefreshCw
-            className="w-3 h-3 animate-spin shrink-0"
-            style={{ color: "#7B8EC8" }}
-          />
+        {!collapsed ? (
+          <>
+            <p
+              className="text-[11px] font-bold uppercase tracking-wide pl-1"
+              style={{ color: "rgba(30,37,53,0.5)" }}
+            >
+              Threads
+            </p>
+            <div className="flex items-center gap-0.5">
+              {(loading || selecting) && (
+                <RefreshCw
+                  className="w-3 h-3 animate-spin shrink-0"
+                  style={{ color: "#7B8EC8" }}
+                />
+              )}
+              <button
+                type="button"
+                onClick={onToggleCollapse}
+                className="p-1 rounded-md hover:bg-slate-100 transition-colors"
+                title="Hide thread history"
+                aria-label="Hide thread history"
+              >
+                <ChevronLeft className="w-4 h-4" style={{ color: "#7B8EC8" }} />
+              </button>
+            </div>
+          </>
+        ) : (
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            className="p-1 rounded-md hover:bg-slate-100 transition-colors"
+            title="Show thread history"
+            aria-label="Show thread history"
+          >
+            <ChevronRight className="w-4 h-4" style={{ color: "#7B8EC8" }} />
+          </button>
         )}
       </div>
 
-      <div className="flex-1 overflow-y-auto max-h-[420px] py-1">
-        {threads.length === 0 && !loading ? (
-          <p
-            className="text-xs px-3 py-4 text-center leading-relaxed"
-            style={{ color: "rgba(30,37,53,0.5)" }}
-          >
-            No past threads yet.
-          </p>
-        ) : (
-          threads.map((t) => {
-            const active = t.thread_id === activeThreadId;
-            return (
-              <button
-                key={t.thread_id}
-                type="button"
-                onClick={() => onSelect(t.thread_id)}
-                disabled={selecting}
-                className="w-full text-left px-3 py-2.5 transition-colors border-l-2"
-                style={{
-                  borderLeftColor: active ? "#2D6B7F" : "transparent",
-                  background: active
-                    ? "rgba(45,107,127,0.1)"
-                    : "transparent",
-                }}
-              >
-                <p
-                  className="text-xs font-semibold truncate leading-snug"
-                  style={{ color: active ? "#2D6B7F" : "#1e2535" }}
-                  title={t.subject}
+      {!collapsed ? (
+        <div className="flex-1 min-h-0 overflow-y-auto py-1 overscroll-contain">
+          {threads.length === 0 && !loading ? (
+            <p
+              className="text-xs px-3 py-4 text-center leading-relaxed"
+              style={{ color: "rgba(30,37,53,0.5)" }}
+            >
+              No past threads yet.
+            </p>
+          ) : (
+            threads.map((t) => {
+              const active = t.thread_id === activeThreadId;
+              return (
+                <button
+                  key={t.thread_id}
+                  type="button"
+                  onClick={() => onSelect(t.thread_id)}
+                  disabled={selecting}
+                  className="w-full text-left px-3 py-2.5 transition-colors border-l-2"
+                  style={{
+                    borderLeftColor: active ? "#2D6B7F" : "transparent",
+                    background: active
+                      ? "rgba(45,107,127,0.1)"
+                      : "transparent",
+                  }}
                 >
-                  {t.subject || "(no subject)"}
-                </p>
-                <p
-                  className="text-[10px] mt-1 line-clamp-2 leading-relaxed"
-                  style={{ color: "rgba(30,37,53,0.5)" }}
-                >
-                  {t.snippet || "—"}
-                </p>
-                <p
-                  className="text-[10px] mt-1 tabular-nums"
-                  style={{ color: "rgba(30,37,53,0.4)" }}
-                >
-                  {formatThreadListDate(t.internal_date)}
-                  {t.message_count > 1 ? ` · ${t.message_count} msgs` : ""}
-                </p>
-              </button>
-            );
-          })
-        )}
-      </div>
+                  <p
+                    className="text-xs font-semibold truncate leading-snug"
+                    style={{ color: active ? "#2D6B7F" : "#1e2535" }}
+                    title={t.subject}
+                  >
+                    {t.subject || "(no subject)"}
+                  </p>
+                  <p
+                    className="text-[10px] mt-1 line-clamp-2 leading-relaxed"
+                    style={{ color: "rgba(30,37,53,0.5)" }}
+                  >
+                    {t.snippet || "—"}
+                  </p>
+                  <p
+                    className="text-[10px] mt-1 tabular-nums"
+                    style={{ color: "rgba(30,37,53,0.4)" }}
+                  >
+                    {formatThreadListDate(t.internal_date)}
+                    {t.message_count > 1 ? ` · ${t.message_count} msgs` : ""}
+                  </p>
+                </button>
+              );
+            })
+          )}
+        </div>
+      ) : (
+        <div className="flex-1 min-h-0" aria-hidden />
+      )}
 
       <div
-        className="p-2 border-t shrink-0"
-        style={{ borderColor: "rgba(30,37,53,0.08)" }}
+        className={`shrink-0 border-t bg-white ${
+          collapsed ? "p-1.5 flex justify-center" : "p-2"
+        }`}
+        style={{
+          borderColor: "rgba(30,37,53,0.08)",
+          boxShadow: "0 -4px 12px rgba(30,37,53,0.04)",
+        }}
       >
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={onNewThread}
-          className="w-full gap-1.5 h-8 text-xs font-semibold"
-          style={{ borderColor: "rgba(45,107,127,0.35)", color: "#2D6B7F" }}
-        >
-          <MessageSquarePlus className="w-3.5 h-3.5" />
-          New thread
-        </Button>
+        {newThreadBtn}
       </div>
     </aside>
   );
@@ -852,9 +911,9 @@ function ThreadView({
   }, [messages.length, loading]);
 
   return (
-    <div className="flex flex-col min-h-[440px]">
+    <div className="grid flex-1 min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden">
       <div
-        className="rounded-xl px-4 py-3 mb-3 shrink-0 flex items-center justify-between gap-2"
+        className="rounded-xl px-4 py-3 mb-2 flex items-center justify-between gap-2 min-h-0"
         style={{
           background: "#fff",
           border: "1px solid rgba(30,37,53,0.1)",
@@ -883,7 +942,7 @@ function ThreadView({
 
       <div
         ref={chatRef}
-        className="flex-1 min-h-[240px] max-h-[360px] overflow-y-auto rounded-2xl px-3 py-4 space-y-4"
+        className="min-h-0 overflow-y-auto rounded-2xl px-3 py-4 space-y-4 overscroll-contain"
         style={{
           background: "linear-gradient(180deg, #eef1f6 0%, #e8ecf4 100%)",
           border: "1px solid rgba(30,37,53,0.06)",
@@ -912,76 +971,86 @@ function ThreadView({
       </div>
 
       <div
-        className="mt-4 shrink-0 rounded-2xl overflow-hidden shadow-md"
+        className="shrink-0 flex-none pt-2 z-10"
         style={{
-          background: "#fff",
-          border: "1px solid rgba(30,37,53,0.1)",
+          boxShadow: "0 -6px 16px rgba(30,37,53,0.06)",
+          background: "#f6f8fb",
         }}
       >
         <div
-          className="flex items-center gap-2 px-4 py-2.5 border-b text-sm"
-          style={{ borderColor: "rgba(30,37,53,0.08)", color: "#1e2535" }}
+          className="rounded-2xl overflow-hidden"
+          style={{
+            background: "#fff",
+            border: "1px solid rgba(30,37,53,0.1)",
+          }}
         >
-          <Reply className="w-4 h-4 shrink-0" style={{ color: "rgba(30,37,53,0.45)" }} />
-          <span className="text-slate-500">Reply to</span>
-          <span className="font-medium truncate">{repName}</span>
-          <span
-            className="truncate underline decoration-[#FDE68A] decoration-2 underline-offset-2 text-xs sm:text-sm"
-            style={{ color: "rgba(30,37,53,0.65)" }}
+          <div
+            className="flex items-center gap-2 px-4 py-2 border-b text-sm"
+            style={{ borderColor: "rgba(30,37,53,0.08)", color: "#1e2535" }}
           >
-            ({repEmail})
-          </span>
-        </div>
-        <textarea
-          value={replyBody}
-          onChange={(e) => onReplyBody(e.target.value)}
-          rows={4}
-          placeholder="Write your reply…"
-          className="w-full px-4 py-3 text-sm outline-none resize-none"
-          style={{
-            color: "#1e2535",
-            lineHeight: 1.6,
-            minHeight: 96,
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-              e.preventDefault();
-              onSendReply();
-            }
-          }}
-        />
-        <div
-          className="flex items-center justify-between gap-2 px-3 py-2.5 border-t"
-          style={{
-            borderColor: "rgba(30,37,53,0.08)",
-            background: "rgba(246,248,251,0.9)",
-          }}
-        >
-          <p className="text-[10px] pl-1" style={{ color: "rgba(30,37,53,0.45)" }}>
-            Ctrl+Enter to send
-          </p>
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={onClose} className="h-8 text-xs">
-              Close
-            </Button>
-            <GmailSendButton
-              label={sending ? "Sending…" : "Send"}
-              disabled={sending || !replyBody.trim()}
-              color="#2D6B7F"
-              onClick={onSendReply}
-              fullWidth={false}
-            />
+            <Reply className="w-4 h-4 shrink-0" style={{ color: "rgba(30,37,53,0.45)" }} />
+            <span className="text-slate-500">Reply to</span>
+            <span className="font-medium truncate">{repName}</span>
+            <span
+              className="truncate underline decoration-[#FDE68A] decoration-2 underline-offset-2 text-xs sm:text-sm"
+              style={{ color: "rgba(30,37,53,0.65)" }}
+            >
+              ({repEmail})
+            </span>
+          </div>
+          <textarea
+            value={replyBody}
+            onChange={(e) => onReplyBody(e.target.value)}
+            rows={3}
+            placeholder="Write your reply…"
+            className="w-full px-4 py-3 text-sm outline-none resize-none"
+            style={{
+              color: "#1e2535",
+              lineHeight: 1.6,
+              minHeight: 72,
+              maxHeight: 120,
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                onSendReply();
+              }
+            }}
+          />
+          <div
+            className="flex items-center justify-between gap-2 px-3 py-1 border-t"
+            style={{
+              borderColor: "rgba(30,37,53,0.08)",
+              background: "rgba(246,248,251,0.95)",
+            }}
+          >
+            <p className="text-[10px] pl-1 leading-tight" style={{ color: "rgba(30,37,53,0.45)" }}>
+              Ctrl+Enter to send
+              <span className="hidden sm:inline">
+                {" "}
+                · attachments open in Gmail
+              </span>
+            </p>
+            <div className="flex items-center gap-2 shrink-0">
+              <Button variant="ghost" size="sm" onClick={onClose} className="h-6 text-xs">
+                Close
+              </Button>
+              <GmailSendButton
+                label={sending ? "Sending…" : "Send"}
+                disabled={sending || !replyBody.trim()}
+                color="#2D6B7F"
+                onClick={onSendReply}
+                fullWidth={false}
+              />
+            </div>
           </div>
         </div>
+        {error ? (
+          <p className="text-xs mt-1.5 px-1" style={{ color: "#DA6A63" }}>
+            {error}
+          </p>
+        ) : null}
       </div>
-      {error ? (
-        <p className="text-xs mt-2 px-1" style={{ color: "#DA6A63" }}>
-          {error}
-        </p>
-      ) : null}
-      <p className="text-[10px] text-center mt-2" style={{ color: "rgba(30,37,53,0.4)" }}>
-        Attachments download here · full thread history lives in Gmail
-      </p>
     </div>
   );
 }
