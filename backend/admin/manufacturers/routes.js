@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { getMeFromAccessToken } from "../auth/service.js";
+import { hasAdminOrStaffModuleAccess, requireAuth } from "../auth/helpers.js";
 import {
   createManufacturer,
   deleteManufacturer,
@@ -12,36 +12,8 @@ import {
   updateManufacturerApplication,
 } from "./repository.js";
 
-function getBearerToken(req) {
-  const raw = req.headers.authorization || "";
-  if (!raw.startsWith("Bearer ")) return null;
-  return raw.slice("Bearer ".length).trim() || null;
-}
-
-async function requireAuth(req) {
-  const token = getBearerToken(req);
-  if (!token) {
-    const err = new Error("Missing bearer token.");
-    err.statusCode = 401;
-    throw err;
-  }
-  const me = await getMeFromAccessToken(token);
-  return { me };
-}
-
-function isAdminRole(role) {
-  const value = String(role || "").trim().toLowerCase();
-  return value === "admin" || value === "super_admin" || value === "owner";
-}
-
-async function requireAdmin(req) {
-  const { me } = await requireAuth(req);
-  if (!isAdminRole(me?.role)) {
-    const err = new Error("Admin access required.");
-    err.statusCode = 403;
-    throw err;
-  }
-  return { me };
+function canManageManufacturers(me) {
+  return hasAdminOrStaffModuleAccess(me, "AdminManufacturers");
 }
 
 function parseBoolQuery(value) {
@@ -53,10 +25,10 @@ function parseBoolQuery(value) {
 // ─── Manufacturers CRUD ───────────────────────────────────────────────────────
 
 export const manufacturersRouter = Router();
+manufacturersRouter.use(requireAuth);
 
 manufacturersRouter.get("/", async (req, res, next) => {
   try {
-    await requireAuth(req);
     const rows = await listManufacturers({
       isActive: parseBoolQuery(req.query?.is_active),
       isFeatured: parseBoolQuery(req.query?.is_featured),
@@ -70,7 +42,6 @@ manufacturersRouter.get("/", async (req, res, next) => {
 
 manufacturersRouter.get("/:id", async (req, res, next) => {
   try {
-    await requireAuth(req);
     const row = await getManufacturerById(req.params.id);
     if (!row) return res.status(404).json({ error: "Manufacturer not found" });
     res.json(row);
@@ -81,7 +52,9 @@ manufacturersRouter.get("/:id", async (req, res, next) => {
 
 manufacturersRouter.post("/", async (req, res, next) => {
   try {
-    await requireAdmin(req);
+    if (!canManageManufacturers(req.me)) {
+      return res.status(403).json({ error: "Forbidden." });
+    }
     const row = await createManufacturer(req.body || {});
     res.status(201).json(row);
   } catch (error) {
@@ -91,7 +64,9 @@ manufacturersRouter.post("/", async (req, res, next) => {
 
 manufacturersRouter.put("/:id", async (req, res, next) => {
   try {
-    await requireAdmin(req);
+    if (!canManageManufacturers(req.me)) {
+      return res.status(403).json({ error: "Forbidden." });
+    }
     const row = await updateManufacturer(req.params.id, req.body || {});
     if (!row) return res.status(404).json({ error: "Manufacturer not found" });
     res.json(row);
@@ -102,7 +77,9 @@ manufacturersRouter.put("/:id", async (req, res, next) => {
 
 manufacturersRouter.patch("/:id", async (req, res, next) => {
   try {
-    await requireAdmin(req);
+    if (!canManageManufacturers(req.me)) {
+      return res.status(403).json({ error: "Forbidden." });
+    }
     // PATCH used by the admin list to flip is_active without a full payload.
     if (Object.prototype.hasOwnProperty.call(req.body || {}, "is_active") &&
         Object.keys(req.body).length === 1) {
@@ -120,7 +97,9 @@ manufacturersRouter.patch("/:id", async (req, res, next) => {
 
 manufacturersRouter.delete("/:id", async (req, res, next) => {
   try {
-    await requireAdmin(req);
+    if (!canManageManufacturers(req.me)) {
+      return res.status(403).json({ error: "Forbidden." });
+    }
     const ok = await deleteManufacturer(req.params.id);
     if (!ok) return res.status(404).json({ error: "Manufacturer not found" });
     res.status(204).send();
@@ -132,17 +111,18 @@ manufacturersRouter.delete("/:id", async (req, res, next) => {
 // ─── Manufacturer Applications ────────────────────────────────────────────────
 
 export const manufacturerApplicationsRouter = Router();
+manufacturerApplicationsRouter.use(requireAuth);
 
 manufacturerApplicationsRouter.get("/", async (req, res, next) => {
   try {
-    const { me } = await requireAuth(req);
+    const me = req.me || {};
     // Non-admins can only see their own applications; admins see all.
     const sortRaw = String(req.query?.sort || "-submitted_at");
     const sort = sortRaw.startsWith("-") ? sortRaw.slice(1) : sortRaw;
     const providerIdRaw = req.query?.provider_id
       ? String(req.query.provider_id)
       : undefined;
-    const providerId = isAdminRole(me?.role)
+    const providerId = canManageManufacturers(me)
       ? providerIdRaw
       : String(me?.id || "");
     const rows = await listManufacturerApplications({
@@ -161,10 +141,10 @@ manufacturerApplicationsRouter.get("/", async (req, res, next) => {
 
 manufacturerApplicationsRouter.get("/:id", async (req, res, next) => {
   try {
-    const { me } = await requireAuth(req);
+    const me = req.me || {};
     const row = await getManufacturerApplicationById(req.params.id);
     if (!row) return res.status(404).json({ error: "Application not found" });
-    if (!isAdminRole(me?.role) && String(row.provider_id || "") !== String(me?.id || "")) {
+    if (!canManageManufacturers(me) && String(row.provider_id || "") !== String(me?.id || "")) {
       return res.status(403).json({ error: "Forbidden" });
     }
     res.json(row);
@@ -175,7 +155,10 @@ manufacturerApplicationsRouter.get("/:id", async (req, res, next) => {
 
 manufacturerApplicationsRouter.patch("/:id", async (req, res, next) => {
   try {
-    const { me } = await requireAdmin(req);
+    const me = req.me || {};
+    if (!canManageManufacturers(me)) {
+      return res.status(403).json({ error: "Forbidden." });
+    }
     const row = await updateManufacturerApplication(req.params.id, {
       ...(req.body || {}),
       reviewed_by: req.body?.reviewed_by ?? me?.id ?? null,

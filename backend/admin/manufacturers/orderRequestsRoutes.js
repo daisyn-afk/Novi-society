@@ -1,38 +1,21 @@
 import { Router } from "express";
-import { getMeFromAccessToken } from "../auth/service.js";
+import { hasAdminOrStaffModuleAccess, requireAuth } from "../auth/helpers.js";
 import {
   listManufacturerOrderInventoryLines,
   listManufacturerOrderRequests,
 } from "./orderRequestsRepository.js";
 
-function getBearerToken(req) {
-  const raw = req.headers.authorization || "";
-  if (!raw.startsWith("Bearer ")) return null;
-  return raw.slice("Bearer ".length).trim() || null;
-}
-
-async function requireAuth(req) {
-  const token = getBearerToken(req);
-  if (!token) {
-    const err = new Error("Missing bearer token.");
-    err.statusCode = 401;
-    throw err;
-  }
-  const me = await getMeFromAccessToken(token);
-  return { me };
-}
-
-function isAdminRole(role) {
-  const value = String(role || "").trim().toLowerCase();
-  return value === "admin" || value === "super_admin" || value === "owner";
+function canManageManufacturers(me) {
+  return hasAdminOrStaffModuleAccess(me, "AdminManufacturers");
 }
 
 export const manufacturerOrderRequestsRouter = Router();
+manufacturerOrderRequestsRouter.use(requireAuth);
 
 manufacturerOrderRequestsRouter.get("/inventory-lines", async (req, res, next) => {
   try {
-    const { me } = await requireAuth(req);
-    const providerId = isAdminRole(me?.role)
+    const me = req.me || {};
+    const providerId = canManageManufacturers(me)
       ? req.query?.provider_id
         ? String(req.query.provider_id)
         : undefined
@@ -53,10 +36,10 @@ manufacturerOrderRequestsRouter.get("/inventory-lines", async (req, res, next) =
 
 manufacturerOrderRequestsRouter.get("/", async (req, res, next) => {
   try {
-    const { me } = await requireAuth(req);
+    const me = req.me || {};
     const sortRaw = String(req.query?.sort || "-created_at");
     const sort = sortRaw.startsWith("-") ? sortRaw : `-${sortRaw}`;
-    const providerId = isAdminRole(me?.role)
+    const providerId = canManageManufacturers(me)
       ? req.query?.provider_id
         ? String(req.query.provider_id)
         : undefined

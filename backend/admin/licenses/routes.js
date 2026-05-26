@@ -1,10 +1,11 @@
 import { Router } from "express";
 import { createClient } from "@supabase/supabase-js";
 import { pool } from "../db.js";
-import { getMeFromAccessToken } from "../auth/service.js";
+import { hasAdminOrStaffModuleAccess, requireAuth } from "../auth/helpers.js";
 import { notifyAdminsOfLicenseSubmission } from "../adminNotifications.js";
 
 export const licensesRouter = Router();
+licensesRouter.use(requireAuth);
 const resendApiKey = process.env.RESEND_API_KEY;
 const resendFromEmail = process.env.RESEND_FROM_EMAIL || "NOVI Society <support@novisociety.com>";
 const appBaseUrl = process.env.APP_BASE_URL || "http://localhost:5173";
@@ -16,12 +17,6 @@ const supabaseAdmin = supabaseUrl && supabaseServiceRoleKey
       auth: { persistSession: false, autoRefreshToken: false }
     })
   : null;
-
-
-function hasAdminAccess(role) {
-  const normalized = String(role || "").trim().toLowerCase();
-  return normalized === "admin" || normalized === "super_admin" || normalized === "owner";
-}
 
 function pickNameFromMetadata(meta = {}) {
   const first = String(meta.first_name || meta.given_name || meta.firstName || "").trim();
@@ -57,23 +52,6 @@ async function resolveNameFromAuthByUserId(userId) {
   }
 }
 
-function getBearerToken(req) {
-  const raw = req.headers.authorization || "";
-  if (!raw.startsWith("Bearer ")) return null;
-  return raw.slice("Bearer ".length).trim() || null;
-}
-
-async function requireAuth(req) {
-  const token = getBearerToken(req);
-  if (!token) {
-    const err = new Error("Missing bearer token.");
-    err.statusCode = 401;
-    throw err;
-  }
-  const me = await getMeFromAccessToken(token);
-  return { me };
-}
-
 function mapLicenseRow(row) {
   const resolvedProviderEmail =
     String(row.provider_email_resolved || row.provider_email || "").trim() || null;
@@ -86,6 +64,46 @@ function mapLicenseRow(row) {
     created_date: row.created_at,
     updated_date: row.updated_at
   };
+}
+
+function toPermissionObject(rawPermissions) {
+  if (rawPermissions && typeof rawPermissions === "object" && !Array.isArray(rawPermissions)) {
+    return rawPermissions;
+  }
+  if (typeof rawPermissions === "string") {
+    try {
+      const parsed = JSON.parse(rawPermissions);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+    } catch {
+      // ignore malformed legacy payloads
+    }
+  }
+  return {};
+}
+
+function hasTruthyPermission(permissions, key) {
+  const value = permissions?.[key];
+  return value === true || value === "true" || value === 1 || value === "1";
+}
+
+async function resolveCanManageLicenses(me) {
+  if (hasAdminOrStaffModuleAccess(me, "AdminLicenses")) return true;
+  if (String(me?.role || "").trim().toLowerCase() !== "staff") return false;
+  const authUserId = String(me?.id || "").trim();
+  if (!authUserId) return false;
+  try {
+    const { rows } = await pool.query(
+      `select permissions
+       from public.users
+       where auth_user_id = $1
+       limit 1`,
+      [authUserId]
+    );
+    const permissions = toPermissionObject(rows?.[0]?.permissions);
+    return hasTruthyPermission(permissions, "AdminLicenses");
+  } catch {
+    return false;
+  }
 }
 
 async function fetchLicenseById(client, id) {
@@ -248,7 +266,8 @@ async function sendLicenseDecisionEmail({ providerEmail, providerFirstName, isAp
 
 licensesRouter.get("/", async (req, res, next) => {
   try {
-    const { me } = await requireAuth(req);
+    const me = req.me || {};
+    const canManageLicenses = await resolveCanManageLicenses(me);
     const status = String(req.query?.status || "").trim();
     const providerId = String(req.query?.provider_id || "").trim();
     const providerEmail = String(req.query?.provider_email || "").trim();
@@ -267,7 +286,7 @@ licensesRouter.get("/", async (req, res, next) => {
       params.push(providerEmail.toLowerCase());
       where.push(`lower(l.provider_email) = $${params.length}`);
     }
-    if (!hasAdminAccess(me.role)) {
+    if (!canManageLicenses) {
       params.push(me.id);
       const providerIdParam = `$${params.length}`;
       params.push(String(me.email || "").toLowerCase());
@@ -328,10 +347,11 @@ licensesRouter.get("/", async (req, res, next) => {
 
 licensesRouter.post("/", async (req, res, next) => {
   try {
-    const { me } = await requireAuth(req);
+    const me = req.me || {};
+    const canManageLicenses = await resolveCanManageLicenses(me);
     const body = req.body || {};
-    const providerId = hasAdminAccess(me.role) && body.provider_id ? String(body.provider_id) : me.id;
-    const providerEmail = hasAdminAccess(me.role) && body.provider_email
+    const providerId = canManageLicenses && body.provider_id ? String(body.provider_id) : me.id;
+    const providerEmail = canManageLicenses && body.provider_email
       ? String(body.provider_email)
       : me.email || String(body.provider_email || "");
     const licenseType = String(body.license_type || "").trim();
@@ -371,7 +391,7 @@ licensesRouter.post("/", async (req, res, next) => {
         ]
       );
       const inserted = await fetchLicenseById(client, rows[0]?.id);
-      if (!hasAdminAccess(me.role)) {
+      if (!canManageLicenses) {
         const insertedMapped = mapLicenseRow(inserted || rows[0]);
         void notifyAdminsOfLicenseSubmission({
           providerName: insertedMapped.provider_name,
@@ -392,7 +412,8 @@ licensesRouter.post("/", async (req, res, next) => {
 
 licensesRouter.get("/:id", async (req, res, next) => {
   try {
-    const { me } = await requireAuth(req);
+    const me = req.me || {};
+    const canManageLicenses = await resolveCanManageLicenses(me);
     const id = String(req.params.id || "").trim();
     const client = await pool.connect();
     try {
@@ -402,7 +423,7 @@ licensesRouter.get("/:id", async (req, res, next) => {
         err.statusCode = 404;
         throw err;
       }
-      if (!hasAdminAccess(me.role) && row.provider_id !== me.id) {
+      if (!canManageLicenses && row.provider_id !== me.id) {
         const err = new Error("Forbidden.");
         err.statusCode = 403;
         throw err;
@@ -418,7 +439,8 @@ licensesRouter.get("/:id", async (req, res, next) => {
 
 licensesRouter.patch("/:id", async (req, res, next) => {
   try {
-    const { me } = await requireAuth(req);
+    const me = req.me || {};
+    const canManageLicenses = await resolveCanManageLicenses(me);
     const id = String(req.params.id || "").trim();
     if (!id) {
       const err = new Error("License id is required.");
@@ -434,7 +456,7 @@ licensesRouter.patch("/:id", async (req, res, next) => {
         err.statusCode = 404;
         throw err;
       }
-      if (!hasAdminAccess(me.role) && existing.provider_id !== me.id) {
+      if (!canManageLicenses && existing.provider_id !== me.id) {
         const err = new Error("Forbidden.");
         err.statusCode = 403;
         throw err;
@@ -447,7 +469,7 @@ licensesRouter.patch("/:id", async (req, res, next) => {
       const requestedRejectionReason = Object.prototype.hasOwnProperty.call(updates, "rejection_reason")
         ? String(updates.rejection_reason || "").trim()
         : "";
-      if (hasAdminAccess(me.role) && requestedStatus === "rejected" && !requestedRejectionReason) {
+      if (canManageLicenses && requestedStatus === "rejected" && !requestedRejectionReason) {
         const err = new Error("rejection_reason is required when rejecting a license.");
         err.statusCode = 400;
         throw err;
@@ -500,10 +522,10 @@ licensesRouter.patch("/:id", async (req, res, next) => {
         ]
       );
       const updated = rows[0];
-      const statusChangedByAdmin = hasAdminAccess(me.role) && existing.status !== updated.status;
+      const statusChangedByReviewer = canManageLicenses && existing.status !== updated.status;
       const isApproved = updated.status === "verified";
       const isRejected = updated.status === "rejected";
-      if (statusChangedByAdmin && (isApproved || isRejected)) {
+      if (statusChangedByReviewer && (isApproved || isRejected)) {
         const providerResult = await client.query(
           `select first_name, full_name, email
            from public.users

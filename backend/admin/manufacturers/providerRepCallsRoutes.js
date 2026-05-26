@@ -1,35 +1,18 @@
 import { Router } from "express";
-import { getMeFromAccessToken } from "../auth/service.js";
+import { hasAdminOrStaffModuleAccess, requireAuth } from "../auth/helpers.js";
 import { listProviderRepCalls } from "./providerRepCallsRepository.js";
 
-function getBearerToken(req) {
-  const raw = req.headers.authorization || "";
-  if (!raw.startsWith("Bearer ")) return null;
-  return raw.slice("Bearer ".length).trim() || null;
-}
-
-async function requireAuth(req) {
-  const token = getBearerToken(req);
-  if (!token) {
-    const err = new Error("Missing bearer token.");
-    err.statusCode = 401;
-    throw err;
-  }
-  const me = await getMeFromAccessToken(token);
-  return { me };
-}
-
-function isAdminRole(role) {
-  const value = String(role || "").trim().toLowerCase();
-  return value === "admin" || value === "super_admin" || value === "owner";
+function canManageManufacturers(me) {
+  return hasAdminOrStaffModuleAccess(me, "AdminManufacturers");
 }
 
 export const providerRepCallsRouter = Router();
+providerRepCallsRouter.use(requireAuth);
 
 providerRepCallsRouter.get("/", async (req, res, next) => {
   try {
-    const { me } = await requireAuth(req);
-    const providerId = isAdminRole(me?.role)
+    const me = req.me || {};
+    const providerId = canManageManufacturers(me)
       ? req.query?.provider_id
         ? String(req.query.provider_id)
         : undefined

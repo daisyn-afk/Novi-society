@@ -13,7 +13,7 @@ const STAFF_MODULE_ALIASES = {
   AdminEmailTemplates: [],
   AdminLaunchPad: [],
   AdminWizardConfig: [],
-  AdminCompliance: [],
+  AdminCompliance: ["StaffCompliance"],
   AdminModelSignups: ["StaffModelSignups"],
   AdminDashboard: ["StaffDashboard"],
 };
@@ -43,6 +43,11 @@ export function hasStaffModuleAccess(me, moduleKey) {
   if (permissions[moduleKey] === true) return true;
   const aliases = STAFF_MODULE_ALIASES[moduleKey] || [];
   return aliases.some((alias) => permissions[alias] === true);
+}
+
+export function hasAdminOrStaffModuleAccess(me, moduleKey) {
+  if (hasAdminAccess(me?.role)) return true;
+  return hasStaffModuleAccess(me, moduleKey);
 }
 
 /**
