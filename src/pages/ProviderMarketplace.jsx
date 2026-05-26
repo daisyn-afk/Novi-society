@@ -404,7 +404,6 @@ function GlassCard({ children, className = "", style = {}, onClick }) {
 
 function ApprovedAccountHub({ mfr, me, className = "", layout = "default", applicationId = null }) {
   const [contactOpen, setContactOpen] = useState(false);
-  const [contactType, setContactType] = useState("order");
   const [orderOpen, setOrderOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [repModalOpen, setRepModalOpen] = useState(false);
@@ -450,7 +449,7 @@ function ApprovedAccountHub({ mfr, me, className = "", layout = "default", appli
       icon: Mail,
       color: "#2D6B7F",
       bg: "rgba(45,107,127,0.1)",
-      onClick: () => { setContactType("message"); setContactOpen(true); },
+      onClick: () => setContactOpen(true),
     },
   ];
 
@@ -522,7 +521,6 @@ function ApprovedAccountHub({ mfr, me, className = "", layout = "default", appli
         onClose={() => setContactOpen(false)}
         manufacturer={mfr}
         me={me}
-        initialType={contactType}
         savedRep={savedRep}
       />
       <ScheduleCallDialog
@@ -553,7 +551,6 @@ function ApprovedAccountHub({ mfr, me, className = "", layout = "default", appli
 
 function MyAccountCard({ app, mfr, me, savedRep }) {
   const [contactOpen, setContactOpen] = useState(false);
-  const [contactType, setContactType] = useState("order");
   const [orderOpen, setOrderOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [repModalOpen, setRepModalOpen] = useState(false);
@@ -625,7 +622,7 @@ function MyAccountCard({ app, mfr, me, savedRep }) {
             </button>
             <button
               type="button"
-              onClick={() => { setContactType("message"); setContactOpen(true); }}
+              onClick={() => setContactOpen(true)}
               className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg transition-opacity hover:opacity-85"
               style={actionBtnStyle("#2D6B7F")}
             >
@@ -700,7 +697,6 @@ function MyAccountCard({ app, mfr, me, savedRep }) {
             onClose={() => setContactOpen(false)}
             manufacturer={mfr}
             me={me}
-            initialType={contactType}
             savedRep={savedRep}
           />
           <ScheduleCallDialog
