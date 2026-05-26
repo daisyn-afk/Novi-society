@@ -190,7 +190,7 @@ export default function AdminUsers() {
       last_name: user.last_name || "",
       email: user.email || "",
       password: "",
-      role: user.role || "provider",
+      role: user.role || "",
       is_active: user.is_active !== false,
       permissions
     });

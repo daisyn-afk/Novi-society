@@ -123,13 +123,13 @@ export default function Layout({ children, currentPageName }) {
     }
   }, [isSuccess, user, currentPageName]);
 
-  const role = normalizeRole(user?.role || "provider");
+  const role = normalizeRole(user?.role);
   const navRole = role;
   const navItems = navRole === "staff"
     ? navByRole.staff.filter(({ page }) =>
         page === "AdminDashboard" || hasStaffModulePermission(page, user?.permissions)
       )
-    : (navByRole[navRole] || navByRole.provider);
+    : (navByRole[navRole] || []);
   const isProviderUserReady = role === "provider" && Boolean(user?.id || user?.email);
 
   // Sidebar unread message badge — shared query key ["msg-threads"] with messaging pages.

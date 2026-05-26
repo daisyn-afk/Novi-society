@@ -60,17 +60,55 @@ export async function resolveProviderOnboardingState(user) {
   }
 }
 
+function logPostAuthRedirectDecision(context) {
+  if (typeof import.meta !== "undefined" && import.meta.env?.DEV) {
+    // eslint-disable-next-line no-console
+    console.debug("[auth-redirect]", context);
+  }
+}
+
 export async function getPostAuthRedirectPath({ user, nextPath }) {
   const normalizedRole = normalizeRole(user?.role);
+
+  if (nextPath) {
+    logPostAuthRedirectDecision({
+      resolvedRole: normalizedRole,
+      redirectTarget: nextPath,
+      reason: "explicit_next_path",
+    });
+    return nextPath;
+  }
+
   if (normalizedRole !== "provider") {
-    return nextPath || getDashboardPathForRole(user?.role);
+    const roleDashboard = getDashboardPathForRole(user?.role);
+    logPostAuthRedirectDecision({
+      resolvedRole: normalizedRole,
+      redirectTarget: roleDashboard,
+      reason: "role_dashboard",
+      staffPermissions: normalizedRole === "staff" ? user?.permissions : undefined,
+    });
+    return roleDashboard;
   }
 
   const providerState = await resolveProviderOnboardingState(user);
   if (!providerState.isComplete) {
+    logPostAuthRedirectDecision({
+      resolvedRole: normalizedRole,
+      redirectTarget: PROVIDER_ONBOARDING_PATH,
+      reason: "provider_onboarding_incomplete",
+      onboardingState: providerState.state,
+    });
     return PROVIDER_ONBOARDING_PATH;
   }
-  return nextPath || getDashboardPathForRole(user?.role);
+
+  const providerDashboard = getDashboardPathForRole(user?.role);
+  logPostAuthRedirectDecision({
+    resolvedRole: normalizedRole,
+    redirectTarget: providerDashboard,
+    reason: "provider_onboarding_complete",
+    onboardingState: providerState.state,
+  });
+  return providerDashboard;
 }
 
 export function getProviderOnboardingPath() {

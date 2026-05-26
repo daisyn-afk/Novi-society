@@ -1,10 +1,10 @@
 import { createClient } from "@supabase/supabase-js";
 import { pool } from "../db.js";
 import {
-  ensureProviderUserRecord,
   getUserPasswordSetupByAuthUserId,
   isPasswordResetLinkConsumed,
-  markPasswordResetCompleted
+  markPasswordResetCompleted,
+  syncUserRecordOnPasswordSetup
 } from "../users/passwordSetup.js";
 
 const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -831,7 +831,7 @@ export async function setPasswordWithAccessToken({ accessToken, refreshToken, pa
   const userEmail = updatedData?.user?.email || sessionData.user.email;
   const metaName = readNameFromAuthUser(sessionData.user || {});
 
-  await ensureProviderUserRecord({
+  await syncUserRecordOnPasswordSetup({
     authUserId,
     email: userEmail,
     firstName: metaName.firstName,
@@ -841,11 +841,19 @@ export async function setPasswordWithAccessToken({ accessToken, refreshToken, pa
   await markPasswordResetCompleted(authUserId, userEmail);
 
   const profile = await getUserRowByAuthUserId(authUserId);
+  const resolvedRole =
+    profile?.role ||
+    updatedData?.user?.user_metadata?.role ||
+    sessionData.user.user_metadata?.role ||
+    "provider";
   return {
     user: {
       id: authUserId,
       email: updatedData?.user?.email || sessionData.user.email,
-      role: profile?.role || updatedData?.user?.user_metadata?.role || sessionData.user.user_metadata?.role || "provider",
+      role: resolvedRole,
+      permissions: resolvedRole === "staff" && profile?.permissions
+        ? (typeof profile.permissions === "object" ? profile.permissions : null)
+        : null,
       first_name: profile?.first_name || updatedData?.user?.user_metadata?.first_name || sessionData.user.user_metadata?.first_name || null,
       last_name: profile?.last_name || updatedData?.user?.user_metadata?.last_name || sessionData.user.user_metadata?.last_name || null,
       full_name: profile?.full_name || updatedData?.user?.user_metadata?.full_name || sessionData.user.user_metadata?.full_name || null
@@ -866,28 +874,30 @@ export async function updateMe({ accessToken, updates }) {
   const lastName = Object.prototype.hasOwnProperty.call(safeUpdates, "last_name")
     ? String(safeUpdates.last_name || "").trim() || null
     : me.last_name;
-  const nextRole = me.role || "provider";
 
   const client = await pool.connect();
   try {
+    // Role is intentionally excluded from this UPDATE — it is read-only through
+    // the self-service endpoint. Role changes go through POST/PUT /admin/users only.
     const { rows } = await client.query(
       `update public.users
        set first_name = $2,
            last_name = $3,
            full_name = $4,
-           role = $5,
            updated_at = now()
        where auth_user_id = $1
        returning id, auth_user_id, email, first_name, last_name, full_name, role, is_active, created_at, updated_at`,
-      [me.id, firstName, lastName, fullName(firstName, lastName), nextRole]
+      [me.id, firstName, lastName, fullName(firstName, lastName)]
     );
     if (!rows[0]) {
+      // Brand-new users without a DB row (edge case): upsert preserves any existing
+      // role via coalesce, defaulting to the session role only on first insert.
       userRow = await upsertUserRow({
         authUserId: me.id,
         email: me.email,
         firstName,
         lastName,
-        role: nextRole
+        role: me.role || "provider"
       });
     } else {
       userRow = rows[0];
@@ -896,10 +906,11 @@ export async function updateMe({ accessToken, updates }) {
     client.release();
   }
 
-  if (nextRole === "provider" && userRow?.id) {
+  const effectiveRole = userRow?.role || me.role;
+  if (effectiveRole === "provider" && userRow?.id) {
     await upsertProviderProfile({ userId: userRow.id, updates: safeUpdates });
   }
-  if (nextRole === "patient" && userRow?.id) {
+  if (effectiveRole === "patient" && userRow?.id) {
     await upsertPatientProfile({ userId: userRow.id, updates: safeUpdates });
   }
 

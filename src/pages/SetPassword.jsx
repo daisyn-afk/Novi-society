@@ -181,7 +181,7 @@ export default function SetPassword() {
           <p style={{ margin: "8px 0 0", color: "rgba(255,255,255,0.88)", fontSize: 14 }}>
             {linkError
               ? "Your reset link cannot be used"
-              : "Create your password, then sign in with your email to access the provider dashboard"}
+              : "Create your password to finish setting up your NOVI Society account"}
           </p>
         </div>
 
