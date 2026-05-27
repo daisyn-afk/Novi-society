@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { requireAdminOrStaffWithModule } from "../auth/helpers.js";
 import {
   createTemplateCourse,
   deleteTemplateCourse,
@@ -9,6 +10,7 @@ import {
 import { validateTemplateInput } from "./validation.js";
 
 export const templateCoursesRouter = Router();
+templateCoursesRouter.use(requireAdminOrStaffWithModule("admincourses"));
 
 function buildServiceTypeLookup(body) {
   const map = new Map();

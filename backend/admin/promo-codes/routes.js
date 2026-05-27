@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { requireAdminOrStaffWithModule } from "../auth/helpers.js";
 import { createPromoCode, deletePromoCode, listPromoCodes, updatePromoCode } from "./repository.js";
 
 function validatePromoInput(payload) {
@@ -38,7 +39,7 @@ promoCodesRouter.get("/", async (_req, res, next) => {
   }
 });
 
-promoCodesRouter.post("/", async (req, res, next) => {
+promoCodesRouter.post("/", requireAdminOrStaffWithModule("AdminPromoCodes"), async (req, res, next) => {
   try {
     validatePromoInput(req.body || {});
     const created = await createPromoCode(req.body || {});
@@ -48,7 +49,7 @@ promoCodesRouter.post("/", async (req, res, next) => {
   }
 });
 
-promoCodesRouter.put("/:id", async (req, res, next) => {
+promoCodesRouter.put("/:id", requireAdminOrStaffWithModule("AdminPromoCodes"), async (req, res, next) => {
   try {
     validatePromoInput(req.body || {});
     const updated = await updatePromoCode(req.params.id, req.body || {});
@@ -59,7 +60,7 @@ promoCodesRouter.put("/:id", async (req, res, next) => {
   }
 });
 
-promoCodesRouter.delete("/:id", async (req, res, next) => {
+promoCodesRouter.delete("/:id", requireAdminOrStaffWithModule("AdminPromoCodes"), async (req, res, next) => {
   try {
     const ok = await deletePromoCode(req.params.id);
     if (!ok) return res.status(404).json({ error: "Promo code not found." });

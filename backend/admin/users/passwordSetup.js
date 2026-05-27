@@ -37,6 +37,48 @@ export function isPasswordResetLinkConsumed(userRow) {
   return userRow?.password_setup_status === PASSWORD_SETUP_STATUS.COMPLETED;
 }
 
+/**
+ * Links auth identity after password setup without changing an existing user's role.
+ * Used by the generic /set-password flow (admin-created staff, admin, MD, etc.).
+ * Inserts with role=provider only when no profile row exists (legacy paid-user migration).
+ */
+export async function syncUserRecordOnPasswordSetup({ authUserId, email, firstName, lastName }) {
+  const normalized = String(email || "").trim().toLowerCase();
+  if (!normalized) return null;
+  const mergedName = [firstName, lastName].filter(Boolean).join(" ").trim() || null;
+
+  const byEmail = await query(
+    `update public.users
+     set auth_user_id = coalesce(auth_user_id, $1),
+         first_name = coalesce(first_name, $3),
+         last_name = coalesce(last_name, $4),
+         full_name = coalesce(full_name, $5),
+         updated_at = now()
+     where lower(email) = lower($2)
+     returning id, auth_user_id, email, role, permissions, password_setup_status`,
+    [authUserId || null, normalized, firstName || null, lastName || null, mergedName]
+  );
+  if (byEmail.rows[0]) return byEmail.rows[0];
+
+  if (!authUserId) return null;
+
+  const inserted = await query(
+    `insert into public.users (
+       auth_user_id, email, first_name, last_name, full_name, role
+     ) values ($1, $2, $3, $4, $5, 'provider')
+     on conflict (auth_user_id)
+     do update set
+       email = excluded.email,
+       first_name = coalesce(public.users.first_name, excluded.first_name),
+       last_name = coalesce(public.users.last_name, excluded.last_name),
+       full_name = coalesce(public.users.full_name, excluded.full_name),
+       updated_at = now()
+     returning id, auth_user_id, email, role, permissions, password_setup_status`,
+    [authUserId, normalized, firstName || null, lastName || null, mergedName]
+  );
+  return inserted.rows[0] || null;
+}
+
 export async function ensureProviderUserRecord({ authUserId, email, firstName, lastName }) {
   const normalized = String(email || "").trim().toLowerCase();
   if (!normalized) return null;
@@ -145,6 +187,28 @@ export async function markPasswordResetPending({ email, authUserId, firstName, l
   } finally {
     client.release();
   }
+}
+
+/**
+ * Records that an admin-triggered setup email was dispatched for an already-created user.
+ * Unlike markPasswordResetPending, this only updates the password tracking columns and
+ * never modifies the user's role — safe for all roles (admin, medical_director, etc.).
+ */
+export async function markUserSetupEmailSent(authUserId) {
+  if (!authUserId) return null;
+  const now = new Date();
+  const { rows } = await query(
+    `update public.users
+     set password_setup_status       = $2,
+         password_reset_email_sent_at  = $3,
+         password_reset_link_issued_at = $3,
+         password_reset_completed_at   = null,
+         updated_at                    = now()
+     where auth_user_id = $1
+     returning id, email, password_setup_status`,
+    [authUserId, PASSWORD_SETUP_STATUS.PENDING, now]
+  );
+  return rows[0] || null;
 }
 
 export async function markPasswordResetCompleted(authUserId, email) {

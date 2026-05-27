@@ -1,39 +1,22 @@
 import { Router } from "express";
-import { getMeFromAccessToken } from "../auth/service.js";
+import { hasAdminOrStaffModuleAccess, requireAuth } from "../auth/helpers.js";
 import {
   getProviderManufacturerRep,
   listProviderManufacturerReps,
   upsertProviderManufacturerRep,
 } from "./providerManufacturerRepsRepository.js";
 
-function getBearerToken(req) {
-  const raw = req.headers.authorization || "";
-  if (!raw.startsWith("Bearer ")) return null;
-  return raw.slice("Bearer ".length).trim() || null;
-}
-
-async function requireAuth(req) {
-  const token = getBearerToken(req);
-  if (!token) {
-    const err = new Error("Missing bearer token.");
-    err.statusCode = 401;
-    throw err;
-  }
-  const me = await getMeFromAccessToken(token);
-  return { me };
-}
-
-function isAdminRole(role) {
-  const value = String(role || "").trim().toLowerCase();
-  return value === "admin" || value === "super_admin" || value === "owner";
+function canManageManufacturers(me) {
+  return hasAdminOrStaffModuleAccess(me, "AdminManufacturers");
 }
 
 export const providerManufacturerRepsRouter = Router();
+providerManufacturerRepsRouter.use(requireAuth);
 
 providerManufacturerRepsRouter.get("/", async (req, res, next) => {
   try {
-    const { me } = await requireAuth(req);
-    const providerId = isAdminRole(me?.role)
+    const me = req.me || {};
+    const providerId = canManageManufacturers(me)
       ? req.query?.provider_id
         ? String(req.query.provider_id)
         : undefined
@@ -53,13 +36,13 @@ providerManufacturerRepsRouter.get("/", async (req, res, next) => {
 
 providerManufacturerRepsRouter.get("/lookup", async (req, res, next) => {
   try {
-    const { me } = await requireAuth(req);
+    const me = req.me || {};
     const manufacturerId = String(req.query?.manufacturer_id || "").trim();
     if (!manufacturerId) {
       return res.status(400).json({ error: "manufacturer_id is required." });
     }
 
-    const providerId = isAdminRole(me?.role)
+    const providerId = canManageManufacturers(me)
       ? String(req.query?.provider_id || me?.id || "")
       : String(me?.id || "");
 
@@ -72,15 +55,21 @@ providerManufacturerRepsRouter.get("/lookup", async (req, res, next) => {
 
 providerManufacturerRepsRouter.put("/", async (req, res, next) => {
   try {
-    const { me } = await requireAuth(req);
+    const me = req.me || {};
     const body = req.body || {};
     const manufacturerId = String(body.manufacturer_id || "").trim();
     if (!manufacturerId) {
       return res.status(400).json({ error: "manufacturer_id is required." });
     }
 
+    const providerId = canManageManufacturers(me)
+      ? String(body.provider_id || body.providerId || me?.id || "").trim()
+      : String(me?.id || "").trim();
+    if (!providerId) {
+      return res.status(400).json({ error: "provider_id is required." });
+    }
     const row = await upsertProviderManufacturerRep({
-      provider_id: me?.id,
+      provider_id: providerId,
       manufacturer_id: manufacturerId,
       manufacturer_application_id: body.manufacturer_application_id || null,
       rep_name: body.rep_name || "",

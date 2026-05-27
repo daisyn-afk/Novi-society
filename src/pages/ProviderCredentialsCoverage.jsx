@@ -161,6 +161,7 @@ export default function ProviderCredentialsCoverage() {
   const [licenseOpen, setLicenseOpen] = useState(false);
   const [licenseForm, setLicenseForm] = useState({ license_type: "RN" });
   const [licenseExpiryError, setLicenseExpiryError] = useState("");
+  const [licenseDocumentError, setLicenseDocumentError] = useState("");
   const [uploading, setUploading] = useState(false);
   const [certSubmitOpen, setCertSubmitOpen] = useState(false);
   const [certSubmitStep, setCertSubmitStep] = useState(0);
@@ -625,6 +626,11 @@ export default function ProviderCredentialsCoverage() {
       return;
     }
     setLicenseExpiryError("");
+    if (!licenseForm.document_url) {
+      setLicenseDocumentError("License document is required.");
+      return;
+    }
+    setLicenseDocumentError("");
     createLicense.mutate();
   };
 
@@ -635,6 +641,7 @@ export default function ProviderCredentialsCoverage() {
       setLicenseOpen(false);
       setLicenseForm({ license_type: "RN" });
       setLicenseExpiryError("");
+      setLicenseDocumentError("");
     },
   });
   const uploadLicenseFile = async (e) => {
@@ -1094,19 +1101,22 @@ export default function ProviderCredentialsCoverage() {
 
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="w-full grid grid-cols-5 h-auto p-1" style={{ background: "rgba(255,255,255,0.6)", backdropFilter: "blur(12px)", borderRadius: 14, border: "1px solid rgba(255,255,255,0.8)" }}>
-          {[
-            { value: "overview", label: "Overview" },
-            { value: "licenses", label: "Licenses" },
-            { value: "certifications", label: "Certifications" },
-            { value: "coverage", label: "MD Coverage" },
-            { value: "documents", label: "Documents" },
-          ].map(t => (
-            <TabsTrigger key={t.value} value={t.value} className="rounded-xl text-sm font-semibold transition-all" style={{ color: activeTab === t.value ? "#FA6F30" : "rgba(30,37,53,0.55)" }}>
-              {t.label}
-            </TabsTrigger>
-          ))}
-        </TabsList>
+        <div className="overflow-x-auto -mx-4 px-4 scrollbar-hide">
+          <TabsList className="flex w-max min-w-full h-auto p-1 gap-0.5" style={{ background: "rgba(255,255,255,0.6)", backdropFilter: "blur(12px)", borderRadius: 14, border: "1px solid rgba(255,255,255,0.8)" }}>
+            {[
+              { value: "overview",       label: "Overview",       short: "Overview" },
+              { value: "licenses",       label: "Licenses",       short: "Licenses" },
+              { value: "certifications", label: "Certifications", short: "Certs" },
+              { value: "coverage",       label: "MD Coverage",    short: "Coverage" },
+              { value: "documents",      label: "Documents",      short: "Docs" },
+            ].map(t => (
+              <TabsTrigger key={t.value} value={t.value} className="rounded-xl font-semibold transition-all whitespace-nowrap px-3 py-1.5 text-xs sm:text-sm" style={{ color: activeTab === t.value ? "#FA6F30" : "rgba(30,37,53,0.55)" }}>
+                <span className="sm:hidden">{t.short}</span>
+                <span className="hidden sm:inline">{t.label}</span>
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </div>
 
         {/* ── OVERVIEW TAB ── */}
         <TabsContent value="overview" className="pt-5 space-y-5">
@@ -1839,7 +1849,7 @@ export default function ProviderCredentialsCoverage() {
       {/* Add License */}
       <Dialog open={licenseOpen} onOpenChange={(open) => {
         setLicenseOpen(open);
-        if (!open) setLicenseExpiryError("");
+        if (!open) { setLicenseExpiryError(""); setLicenseDocumentError(""); }
       }}>
         <DialogContent>
           <DialogHeader><DialogTitle>Add Professional License</DialogTitle></DialogHeader>
@@ -1878,17 +1888,25 @@ export default function ProviderCredentialsCoverage() {
                 {licenseExpiryError && <p className="text-xs text-red-500 mt-1">{licenseExpiryError}</p>}
               </div>
             </div>
-            <label className="flex items-center gap-2 cursor-pointer border-2 border-dashed rounded-xl p-4 hover:bg-slate-50 transition-colors">
-              <Upload className="w-4 h-4 text-slate-400" />
-              <span className="text-sm text-slate-500">{uploading ? "Uploading..." : licenseForm.document_url ? "Document uploaded ✓" : "Upload document (PDF, JPG, PNG)"}</span>
-              <input type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png" onChange={uploadLicenseFile} />
-            </label>
+            <div>
+              <Label className="text-sm font-medium mb-1.5 block">
+                License Document *
+              </Label>
+              <label className={`flex items-center gap-2 cursor-pointer border-2 border-dashed rounded-xl p-4 hover:bg-slate-50 transition-colors ${licenseDocumentError ? "border-red-400 bg-red-50" : licenseForm.document_url ? "border-green-400 bg-green-50" : ""}`}>
+                <Upload className={`w-4 h-4 ${licenseDocumentError ? "text-red-400" : "text-slate-400"}`} />
+                <span className={`text-sm ${licenseDocumentError ? "text-red-500" : licenseForm.document_url ? "text-green-700" : "text-slate-500"}`}>
+                  {uploading ? "Uploading..." : licenseForm.document_url ? "Document uploaded ✓" : "Upload document (PDF, JPG, PNG)"}
+                </span>
+                <input type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png" onChange={(e) => { setLicenseDocumentError(""); uploadLicenseFile(e); }} />
+              </label>
+              {licenseDocumentError && <p className="text-xs text-red-500 mt-1">{licenseDocumentError}</p>}
+            </div>
             <div className="flex gap-2 justify-end">
               <Button variant="outline" onClick={() => setLicenseOpen(false)}>Cancel</Button>
               <Button
                 style={{ background: "#FA6F30", color: "#fff" }}
                 onClick={handleSubmitLicense}
-                disabled={!licenseForm.license_number || createLicense.isPending || uploading || isExpiredLicenseDate(licenseForm.expiration_date)}
+                disabled={!licenseForm.license_number || !licenseForm.document_url || createLicense.isPending || uploading || isExpiredLicenseDate(licenseForm.expiration_date)}
               >
                 {createLicense.isPending ? "Submitting..." : "Submit License"}
               </Button>
@@ -1908,7 +1926,7 @@ export default function ProviderCredentialsCoverage() {
           {step === -1 && (
             <div className="space-y-4 pt-1">
               {/* Current status */}
-              <div className="rounded-xl p-4 space-y-2" style={{ background: "rgba(123,142,200,0.08)", border: "1px solid rgba(123,142,200,0.25)" }}>
+              <div className="rounded-xl p-4 space-y-3" style={{ background: "rgba(123,142,200,0.07)", border: "1px solid rgba(123,142,200,0.2)" }}>
                 <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "#7B8EC8" }}>Your Current Status</p>
                 <div className="grid grid-cols-3 gap-2">
                   {[
@@ -1916,30 +1934,33 @@ export default function ProviderCredentialsCoverage() {
                     { label: "Certification", ok: activeCerts.length > 0, value: activeCerts.length > 0 ? `${activeCerts.length} active` : pendingCerts.length > 0 ? "Under review" : "None yet" },
                     { label: "MD Coverage", ok: activeSubscriptions.length > 0, value: activeSubscriptions.length > 0 ? `${activeSubscriptions.length} active` : "Not applied" },
                   ].map(({ label, ok, value }) => (
-                    <div key={label} className="rounded-lg px-3 py-2.5 text-center" style={{ background: ok ? "rgba(200,230,60,0.12)" : "rgba(255,255,255,0.06)", border: `1px solid ${ok ? "rgba(200,230,60,0.3)" : "rgba(255,255,255,0.12)"}` }}>
-                      <p className="text-xs font-bold" style={{ color: ok ? "#C8E63C" : "rgba(255,255,255,0.4)" }}>{label}</p>
-                      <p className="text-xs mt-0.5 font-semibold" style={{ color: ok ? "#fff" : "rgba(255,255,255,0.5)" }}>{value}</p>
+                    <div key={label} className="rounded-lg px-3 py-3 text-center" style={{
+                      background: ok ? "rgba(90,122,0,0.08)" : "rgba(0,0,0,0.04)",
+                      border: `1px solid ${ok ? "rgba(90,122,0,0.2)" : "rgba(0,0,0,0.1)"}`,
+                    }}>
+                      <p className="text-xs font-semibold" style={{ color: ok ? "#4a6b00" : "rgba(0,0,0,0.45)" }}>{label}</p>
+                      <p className="text-xs mt-1 font-bold" style={{ color: ok ? "#2d4200" : "rgba(0,0,0,0.6)" }}>{value}</p>
                     </div>
                   ))}
                 </div>
               </div>
 
               {/* What is MD Coverage */}
-              <div className="rounded-xl p-4 space-y-3" style={{ background: "rgba(250,111,48,0.08)", border: "1px solid rgba(250,111,48,0.2)" }}>
+              <div className="rounded-xl p-4 space-y-3" style={{ background: "rgba(250,111,48,0.06)", border: "1px solid rgba(250,111,48,0.18)" }}>
                 <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "#FA6F30" }}>What is MD Board Coverage?</p>
-                <p className="text-sm leading-relaxed" style={{ color: "rgba(0,0,0,0.7)" }}>
+                <p className="text-sm leading-relaxed" style={{ color: "rgba(0,0,0,0.72)" }}>
                   NOVI maintains a Board of Medical Directors — licensed physicians who provide clinical oversight and legal supervision. When approved, NOVI assigns you a Board MD who signs your protocols. <strong>You don't find an MD yourself — we handle it.</strong>
                 </p>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-2 gap-x-4 gap-y-2.5">
                   {[
                     { icon: Shield, text: "Board MD auto-assigned to you" },
                     { icon: FileText, text: "Signed protocol documents included" },
                     { icon: ShieldCheck, text: "State compliance coverage" },
                     { icon: DollarSign, text: `$${FIRST_SERVICE_PRICE}/mo base · $${ADDON_SERVICE_PRICE}/mo per add-on · $${MAX_MONTHLY_CAP} cap` },
                   ].map(({ icon: Icon, text }, i) => (
-                    <div key={i} className="flex items-center gap-2 text-xs" style={{ color: "rgba(0,0,0,0.65)" }}>
-                      <Icon className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#FA6F30" }} />
-                      {text}
+                    <div key={i} className="flex items-start gap-2 text-sm" style={{ color: "rgba(0,0,0,0.68)" }}>
+                      <Icon className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: "#FA6F30" }} />
+                      <span>{text}</span>
                     </div>
                   ))}
                 </div>
@@ -1947,38 +1968,38 @@ export default function ProviderCredentialsCoverage() {
 
               {/* Two paths */}
               <div>
-                <p className="text-xs font-bold uppercase tracking-widest mb-2.5" style={{ color: "rgba(0,0,0,0.5)" }}>Two Paths to Coverage</p>
+                <p className="text-xs font-bold uppercase tracking-widest mb-2.5" style={{ color: "rgba(0,0,0,0.45)" }}>Two Paths to Coverage</p>
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="rounded-xl p-4 space-y-2" style={{ background: "rgba(200,230,60,0.08)", border: "1px solid rgba(200,230,60,0.25)" }}>
-                    <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: "rgba(200,230,60,0.2)" }}>
+                  <div className="rounded-xl p-4 space-y-2.5" style={{ background: "rgba(200,230,60,0.07)", border: "1px solid rgba(90,122,0,0.18)" }}>
+                    <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: "rgba(200,230,60,0.18)" }}>
                       <KeyRound className="w-4 h-4" style={{ color: "#5a7a20" }} />
                     </div>
                     <p className="font-bold text-sm" style={{ color: "#1e2535" }}>NOVI Class Code</p>
-                    <p className="text-xs leading-relaxed" style={{ color: "rgba(0,0,0,0.55)" }}>
-                      Attended a NOVI course? Enter the class code given by your instructor on the day of class to instantly verify your training.
+                    <p className="text-xs leading-relaxed" style={{ color: "rgba(0,0,0,0.58)" }}>
+                      Attended a NOVI course? Enter the class code from your instructor to instantly verify your training.
                     </p>
-                    <div className="text-xs font-semibold px-2 py-1 rounded-full inline-block" style={{ background: "rgba(200,230,60,0.2)", color: "#5a7a20" }}>Fastest path</div>
+                    <div className="text-xs font-semibold px-2.5 py-1 rounded-full inline-block" style={{ background: "rgba(200,230,60,0.22)", color: "#4a6b00" }}>Fastest path</div>
                   </div>
-                  <div className="rounded-xl p-4 space-y-2" style={{ background: "rgba(123,142,200,0.08)", border: "1px solid rgba(123,142,200,0.25)" }}>
-                    <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: "rgba(123,142,200,0.2)" }}>
-                      <Award className="w-4 h-4" style={{ color: "#7B8EC8" }} />
+                  <div className="rounded-xl p-4 space-y-2.5" style={{ background: "rgba(123,142,200,0.07)", border: "1px solid rgba(123,142,200,0.22)" }}>
+                    <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: "rgba(123,142,200,0.18)" }}>
+                      <Award className="w-4 h-4" style={{ color: "#5a6eaa" }} />
                     </div>
                     <p className="font-bold text-sm" style={{ color: "#1e2535" }}>External Certification</p>
-                    <p className="text-xs leading-relaxed" style={{ color: "rgba(0,0,0,0.55)" }}>
-                      Certified by another school? Submit your certificate and license for review. Our team will verify and approve within 1–3 business days.
+                    <p className="text-xs leading-relaxed" style={{ color: "rgba(0,0,0,0.58)" }}>
+                      Certified elsewhere? Submit your certificate for review. Our team verifies and approves within 1–3 business days.
                     </p>
-                    <div className="text-xs font-semibold px-2 py-1 rounded-full inline-block" style={{ background: "rgba(123,142,200,0.15)", color: "#7B8EC8" }}>1–3 day review</div>
+                    <div className="text-xs font-semibold px-2.5 py-1 rounded-full inline-block" style={{ background: "rgba(123,142,200,0.15)", color: "#5a6eaa" }}>1–3 day review</div>
                   </div>
                 </div>
               </div>
 
               {/* Requirement check */}
               {verifiedLicenses.length === 0 && (
-                <div className="rounded-xl px-4 py-3 flex items-start gap-3" style={{ background: "rgba(218,106,99,0.1)", border: "1px solid rgba(218,106,99,0.3)" }}>
-                  <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: "#DA6A63" }} />
+                <div className="rounded-xl px-4 py-3 flex items-start gap-3" style={{ background: "rgba(218,106,99,0.08)", border: "1px solid rgba(218,106,99,0.25)" }}>
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: "#c0544e" }} />
                   <div>
-                    <p className="text-sm font-bold" style={{ color: "#DA6A63" }}>License verification required first</p>
-                    <p className="text-xs mt-0.5" style={{ color: "rgba(0,0,0,0.55)" }}>You need a verified professional license before applying for MD coverage. Go to the Licenses tab to upload yours.</p>
+                    <p className="text-sm font-bold" style={{ color: "#c0544e" }}>License verification required first</p>
+                    <p className="text-xs mt-1 leading-relaxed" style={{ color: "rgba(0,0,0,0.58)" }}>You need a verified professional license before applying for MD coverage. Go to the Licenses tab to upload yours.</p>
                   </div>
                 </div>
               )}
@@ -1986,8 +2007,8 @@ export default function ProviderCredentialsCoverage() {
               <Button
                 onClick={() => setStep(0)}
                 disabled={verifiedLicenses.length === 0}
-                className="w-full font-bold"
-                style={{ background: verifiedLicenses.length > 0 ? "#FA6F30" : "rgba(0,0,0,0.1)", color: verifiedLicenses.length > 0 ? "#fff" : "rgba(0,0,0,0.35)" }}
+                className="w-full font-bold py-5"
+                style={{ background: verifiedLicenses.length > 0 ? "#FA6F30" : "rgba(0,0,0,0.08)", color: verifiedLicenses.length > 0 ? "#fff" : "rgba(0,0,0,0.3)" }}
               >
                 <Zap className="w-4 h-4 mr-2" />
                 Continue to Apply

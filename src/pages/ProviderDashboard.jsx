@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Award, BookOpen, Calendar, ShieldCheck, AlertTriangle, CheckCircle,
   ArrowRight, Clock, Zap, Users, FileText, Star, ChevronRight,
@@ -14,6 +14,9 @@ import { providerOnboardingApi } from "@/api/providerOnboardingApi";
 import { isToday, isTomorrow, format, isWithinInterval, startOfMonth, endOfMonth } from "date-fns";
 import { useAttendanceContext } from "@/components/provider/useAttendanceContext";
 import { Input } from "@/components/ui/input";
+import { useProviderDashboardState } from "@/hooks/useProviderDashboardState";
+import ProviderDashboardLocked from "@/components/provider/ProviderDashboardLocked";
+
 
 const GLASS = {
   background: "rgba(255,255,255,0.45)",
@@ -62,6 +65,29 @@ function ActionCard({ icon: Icon, color, title, sub, badge, badgeColor, to, urge
 }
 
 export default function ProviderDashboard() {
+  const dashboardState = useProviderDashboardState();
+
+  if (dashboardState.isLoading) {
+    return (
+      <div className="flex items-center justify-center py-24">
+        <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin"></div>
+      </div>
+    );
+  }
+
+  if (!dashboardState.isUnlocked) {
+    return (
+      <ProviderDashboardLocked
+        dashboardState={dashboardState}
+        enrollments={dashboardState.enrollments || []}
+      />
+    );
+  }
+
+  return <ProviderActiveDashboard />;
+}
+
+function ProviderActiveDashboard() {
   const { status: accessStatus } = useProviderAccess();
   const attendance = useAttendanceContext();
   const [selectedAttendanceKey, setSelectedAttendanceKey] = useState("");
@@ -140,6 +166,10 @@ export default function ProviderDashboard() {
   const { data: treatmentRecords = [] } = useQuery({
     queryKey: ["treatment-records"],
     queryFn: async () => { const u = await base44.auth.me(); return base44.entities.TreatmentRecord.filter({ provider_id: u.id }, "-created_date"); },
+  });
+  const { data: serviceTypes = [] } = useQuery({
+    queryKey: ["service-types"],
+    queryFn: () => base44.entities.ServiceType.filter({ is_active: true }),
   });
 
   const today = new Date();
@@ -249,6 +279,28 @@ export default function ProviderDashboard() {
   const hour = today.getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
 
+  // ── Welcome card data ──
+  const displayName = me?.practice_name || me?.full_name || "Provider";
+  const bioLine = (me?.bio || "").trim();
+  const initial = (displayName || "P").trim().charAt(0).toUpperCase();
+  const specialtyChips = useMemo(() => {
+    const validName = (n) => typeof n === "string" && n.trim().length >= 3;
+    const fromSpecialties = Array.isArray(me?.specialties)
+      ? me.specialties
+          .map((id) => serviceTypes.find((s) => s.id === id)?.name)
+          .filter(validName)
+      : [];
+    if (fromSpecialties.length > 0) return fromSpecialties.slice(0, 4);
+    const fromCoverage = activeSubscriptions
+      .map((s) => s.service_type_name)
+      .filter(validName);
+    if (fromCoverage.length > 0) return fromCoverage.slice(0, 4);
+    return activeCerts
+      .map((c) => c.service_type_name || c.certification_name)
+      .filter(validName)
+      .slice(0, 4);
+  }, [me?.specialties, serviceTypes, activeSubscriptions, activeCerts]);
+
   const dashboardContent = (
     <div className="max-w-5xl space-y-7 w-full overflow-x-hidden">
       {basicOnboarding?.has_completed_basic === false && (
@@ -355,30 +407,138 @@ export default function ProviderDashboard() {
         </div>
       )}
 
-      {/* ── Header ── */}
-      <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
-        <div>
-          <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: "#DA6A63", marginBottom: 6 }}>{greeting}</p>
-          <h1 style={{ fontFamily: "'DM Serif Display', serif", fontSize: "clamp(28px, 5vw, 46px)", color: "#1e2535", lineHeight: 1.05, fontStyle: "italic", fontWeight: 400 }}>
-            {me?.full_name?.split(" ")[0] || "Provider"}
-          </h1>
-          <p className="mt-1.5 text-sm" style={{ color: "rgba(30,37,53,0.5)" }}>
-            {hasMDCoverage
-              ? `✓ MD Coverage Active · ${activeSubscriptions.length} service${activeSubscriptions.length > 1 ? "s" : ""} covered`
-              : "Complete your setup to start seeing patients"}
-          </p>
+      {/* ── Welcome card ── */}
+      <div className="rounded-3xl overflow-hidden" style={{ ...GLASS, borderRadius: 24 }}>
+        <div className="px-5 sm:px-6 py-5 flex flex-col sm:flex-row sm:items-center gap-4">
+
+          {/* Avatar */}
+          <div className="flex-shrink-0">
+            {me?.avatar_url ? (
+              <img
+                src={me.avatar_url}
+                alt={displayName}
+                className="w-16 h-16 object-cover"
+                style={{ borderRadius: 14, border: "2px solid rgba(255,255,255,0.9)" }}
+              />
+            ) : (
+              <div
+                className="w-16 h-16 flex items-center justify-center"
+                style={{
+                  borderRadius: 14,
+                  overflow: "hidden",
+                  background: "linear-gradient(135deg, rgba(123,142,200,0.22), rgba(123,142,200,0.1))",
+                  border: "1.5px solid rgba(123,142,200,0.3)",
+                  boxShadow: "0 2px 8px rgba(30,37,53,0.06)",
+                }}
+              >
+                <span
+                  style={{
+                    fontFamily: "'DM Serif Display', serif",
+                    fontStyle: "italic",
+                    fontSize: 26,
+                    color: "#1e2535",
+                    fontWeight: 400,
+                    lineHeight: 1,
+                  }}
+                >
+                  {initial}
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* Name / tagline / chips */}
+          <div className="flex-1 min-w-0">
+            <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: "rgba(30,37,53,0.5)" }}>
+              {greeting}
+            </p>
+            <h1
+              className="truncate"
+              style={{
+                fontFamily: "'DM Serif Display', serif",
+                fontSize: "clamp(22px, 4vw, 32px)",
+                color: "#1e2535",
+                lineHeight: 1.05,
+                fontStyle: "italic",
+                fontWeight: 400,
+                marginTop: 2,
+              }}
+            >
+              {displayName}
+            </h1>
+            {bioLine && (
+              <p
+                className="mt-1 text-sm italic truncate"
+                style={{ color: "rgba(30,37,53,0.5)" }}
+              >
+                {bioLine}
+              </p>
+            )}
+            {specialtyChips.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-2.5">
+                {specialtyChips.map((name) => (
+                  <span
+                    key={name}
+                    className="text-xs font-semibold px-2.5 py-1 rounded-full"
+                    style={{
+                      background: "rgba(123,142,200,0.13)",
+                      color: "#5a6da4",
+                      border: "1px solid rgba(123,142,200,0.28)",
+                    }}
+                  >
+                    {name}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Actions */}
+          <div className="flex gap-2 flex-shrink-0 self-stretch sm:self-center">
+            <Link to={createPageUrl("ProviderPractice")} className="flex-1 sm:flex-none">
+              <button
+                className="w-full flex items-center justify-center gap-1.5 text-xs font-semibold px-3.5 py-2.5 rounded-xl whitespace-nowrap"
+                style={{ background: "rgba(255,255,255,0.75)", border: "1px solid rgba(30,37,53,0.12)", color: "#1e2535" }}
+              >
+                <Stethoscope className="w-3.5 h-3.5" /> My Practice
+              </button>
+            </Link>
+            <Link to={createPageUrl("ProviderEnrollments")} className="flex-1 sm:flex-none">
+              <button
+                className="w-full flex items-center justify-center gap-1.5 text-sm font-semibold px-4 py-2.5 rounded-xl whitespace-nowrap"
+                style={{ background: "linear-gradient(135deg, #7B8EC8, #5a6da4)", color: "#fff" }}
+              >
+                Courses <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </Link>
+          </div>
         </div>
-        <div className="flex gap-2 flex-shrink-0">
-          <Link to={createPageUrl("ProviderPractice")}>
-            <button className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl" style={{ background: "rgba(255,255,255,0.75)", border: "1px solid rgba(30,37,53,0.12)", color: "#1e2535" }}>
-              <Stethoscope className="w-3.5 h-3.5" /> My Practice
-            </button>
-          </Link>
-          <Link to={createPageUrl("ProviderEnrollments")}>
-            <button className="flex items-center gap-2 text-sm font-semibold px-4 py-2.5 rounded-xl" style={{ background: "#1e2535", color: "#fff" }}>
-              Browse Courses <ArrowRight className="w-4 h-4" />
-            </button>
-          </Link>
+
+        {/* Footer row */}
+        <div
+          className="px-5 sm:px-6 py-3 flex flex-wrap items-center gap-3"
+          style={{
+            borderTop: "1px solid rgba(123,142,200,0.14)",
+            background: "rgba(123,142,200,0.07)",
+          }}
+        >
+          <p className="text-xs font-medium" style={{ color: hasMDCoverage ? "#4a5e8a" : "rgba(30,37,53,0.55)" }}>
+            {hasMDCoverage ? (
+              <>
+                <span style={{ fontWeight: 700, color: "#3d5080" }}>✓ MD Coverage Active</span>
+                <span style={{ color: "rgba(30,37,53,0.45)", margin: "0 4px" }}>·</span>
+                {activeSubscriptions.length} service{activeSubscriptions.length > 1 ? "s" : ""} covered
+              </>
+            ) : (
+              "Complete your setup to start seeing patients"
+            )}
+          </p>
+          <span
+            className="text-xs font-semibold px-2.5 py-1 rounded-full"
+            style={{ background: "rgba(123,142,200,0.18)", color: "#5a6da4", border: "1px solid rgba(123,142,200,0.28)", letterSpacing: "0.01em" }}
+          >
+            Powered by NOVI Society
+          </span>
         </div>
       </div>
 
@@ -709,29 +869,38 @@ export default function ProviderDashboard() {
       )}
 
       {/* ── Practice performance ── */}
-      {completedAppts.length > 0 && (
-        <div>
-          <SectionLabel>Practice Performance</SectionLabel>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            {[
-              { icon: Users, label: "Total Patients", value: totalPatients, color: "#2D6B7F" },
-              { icon: Repeat, label: "Retention", value: `${retentionRate}%`, color: "#FA6F30" },
-              { icon: TrendingUp, label: "Completed", value: completedAppts.length, color: "#C8E63C" },
-              { icon: Trophy, label: "Rating", value: avgRating || "—", color: "#DA6A63" },
-            ].map(({ icon: Icon, label, value, color }) => (
-              <Link key={label} to={createPageUrl("ProviderPractice")}>
-                <div className="py-3 px-3 rounded-2xl text-center transition-all hover:scale-[1.02]" style={GLASS}>
-                  <div className="w-7 h-7 rounded-lg flex items-center justify-center mx-auto mb-1.5" style={{ background: `${color}18` }}>
-                    <Icon className="w-3.5 h-3.5" style={{ color }} />
-                  </div>
-                  <p className="text-xl font-bold leading-tight" style={{ color: "#1e2535", fontFamily: "'DM Serif Display', serif" }}>{value}</p>
-                  <p style={{ fontSize: 10, color: "rgba(30,37,53,0.45)", textTransform: "uppercase", letterSpacing: "0.05em", marginTop: 2 }}>{label}</p>
+      <div>
+        <SectionLabel>Practice Performance</SectionLabel>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {[
+            { icon: Users,      label: "Total Patients", value: totalPatients,          color: "#2D6B7F" },
+            { icon: Repeat,     label: "Retention",      value: `${retentionRate}%`,    color: "#FA6F30" },
+            { icon: TrendingUp, label: "Completed",      value: completedAppts.length,  color: "#C8E63C" },
+            { icon: Trophy,     label: "Rating",         value: avgRating || "—",       color: "#DA6A63" },
+          ].map(({ icon: Icon, label, value, color }) => (
+            <Link key={label} to={createPageUrl("ProviderPractice")}>
+              <div
+                className="py-4 px-3 rounded-2xl text-center transition-all hover:scale-[1.02]"
+                style={{ ...GLASS, background: `${color}0d`, border: `1px solid ${color}22` }}
+              >
+                <div
+                  className="w-8 h-8 rounded-xl flex items-center justify-center mx-auto mb-2"
+                  style={{ background: `${color}20` }}
+                >
+                  <Icon className="w-4 h-4" style={{ color }} />
                 </div>
-              </Link>
-            ))}
-          </div>
+                <p className="text-2xl font-bold leading-tight" style={{ color: "#1e2535" }}>{value}</p>
+                <p
+                  className="mt-1 uppercase tracking-widest"
+                  style={{ fontSize: 10, color: "rgba(30,37,53,0.45)", letterSpacing: "0.08em" }}
+                >
+                  {label}
+                </p>
+              </div>
+            </Link>
+          ))}
         </div>
-      )}
+      </div>
 
     </div>
   );

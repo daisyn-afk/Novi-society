@@ -210,7 +210,7 @@ export default function ProviderBasicOnboarding() {
       className="min-h-screen flex flex-col items-center justify-start pt-8 pb-16 px-4"
       style={{
         fontFamily: "'DM Sans', sans-serif",
-        background: "linear-gradient(150deg, #ede9fb 0%, #f5f2ff 40%, #eaf5c8 75%, #C8E63C 100%)",
+        background: "linear-gradient(135deg, #2D6B7F 0%, #4a8fa8 38%, #7B8EC8 68%, #DA6A63 100%)",
         backgroundAttachment: "fixed",
       }}
     >
@@ -228,26 +228,31 @@ export default function ProviderBasicOnboarding() {
         }
       `}</style>
 
+      {/* Background blobs */}
+      <div style={{ position: "fixed", top: "-20%", left: "-8%", width: "55%", height: "130%", borderRadius: "60% 40% 70% 30%/50% 60% 40% 50%", background: "rgba(218,106,99,0.35)", filter: "blur(50px)", pointerEvents: "none", zIndex: 0 }} />
+      <div style={{ position: "fixed", bottom: "-10%", right: "-5%", width: "45%", height: "110%", borderRadius: "40% 60% 30% 70%/60% 40% 60% 40%", background: "rgba(200,230,60,0.2)", filter: "blur(55px)", pointerEvents: "none", zIndex: 0 }} />
+
       {/* Logo */}
-      <div className="flex items-baseline gap-1.5 mb-8">
-        <span style={{ fontFamily: "'DM Serif Display', serif", fontSize: 28, fontStyle: "italic", color: "#1e2535", lineHeight: 1 }}>novi</span>
-        <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: "0.22em", textTransform: "uppercase", color: "rgba(30,37,53,0.5)" }}>Society</span>
+      <div className="mb-8" style={{ position: "relative", zIndex: 1 }}>
+        <div style={{ background: "#1e2535", padding: "10px 20px", borderRadius: 14, display: "inline-flex", boxShadow: "0 4px 20px rgba(0,0,0,0.3)" }}>
+          <img src="/novi-logo-neon-green.png" alt="NOVI Society" style={{ height: 32, width: "auto", display: "block" }} />
+        </div>
       </div>
 
-      <div className="w-full max-w-2xl min-w-0">
+      <div className="w-full max-w-2xl min-w-0" style={{ position: "relative", zIndex: 1 }}>
         <div className="text-center mb-8">
-          <p className="text-xs font-bold uppercase tracking-widest mb-2" style={{ color: "#DA6A63" }}>Provider Registration</p>
-          <h1 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 28, color: "#1e2535", fontStyle: "italic", lineHeight: 1.2 }}>
+          <p className="text-xs font-bold uppercase tracking-widest mb-2" style={{ color: "#C8E63C", letterSpacing: "0.2em", textShadow: "0 1px 6px rgba(0,0,0,0.2)" }}>Provider Registration</p>
+          <h1 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 28, color: "white", fontStyle: "italic", lineHeight: 1.2, textShadow: "0 2px 12px rgba(0,0,0,0.2)" }}>
             {goalHeadline}
           </h1>
-          <p className="mt-3 text-sm" style={{ color: "rgba(30,37,53,0.6)" }}>
+          <p className="mt-3 text-sm" style={{ color: "rgba(255,255,255,0.7)" }}>
             {goalSub}
           </p>
         </div>
 
         {/* Applicant info */}
         {me && (
-          <div className="flex items-center gap-3 px-4 py-3 rounded-xl mb-6" style={{ background: "rgba(255,255,255,0.6)", border: "1px solid rgba(30,37,53,0.1)" }}>
+          <div className="flex items-center gap-3 px-4 py-3 rounded-xl mb-6" style={{ background: "rgba(45,107,127,0.08)", border: "1px solid rgba(45,107,127,0.18)" }}>
             <div className="w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm" style={{ background: "#7B8EC8", color: "white" }}>
               {me.full_name?.[0] || "?"}
             </div>
@@ -258,12 +263,12 @@ export default function ProviderBasicOnboarding() {
           </div>
         )}
 
-        <div className="rounded-2xl overflow-hidden mb-6 min-w-0" style={{ background: "rgba(255,255,255,0.7)", border: "1px solid rgba(30,37,53,0.1)" }}>
+        <div className="rounded-2xl overflow-hidden mb-6 min-w-0" style={{ background: "rgba(255,255,255,0.88)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)", border: "1px solid rgba(255,255,255,0.65)", boxShadow: "0 24px 64px rgba(0,0,0,0.18)" }}>
           <div className="px-4 sm:px-5 pt-5 pb-4 space-y-5 min-w-0 overflow-x-hidden">
 
             {/* Personal Info */}
             <div>
-              <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: "rgba(30,37,53,0.5)" }}>Personal Information</p>
+              <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: "#2D6B7F" }}>Personal Information</p>
               <div className="min-w-0">
                 <Label className="text-xs mb-1.5 block font-semibold uppercase tracking-wide" style={labelStyle}>Date of Birth (Must be 18+) *</Label>
                 <Input
@@ -282,7 +287,7 @@ export default function ProviderBasicOnboarding() {
 
             {/* Address */}
             <div>
-              <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: "rgba(30,37,53,0.5)" }}>Address</p>
+              <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: "#7B8EC8" }}>Address</p>
               <div className="space-y-3">
                 <div>
                   <Label className="text-xs mb-1.5 block font-semibold uppercase tracking-wide" style={labelStyle}>Street Address *</Label>
@@ -359,7 +364,7 @@ export default function ProviderBasicOnboarding() {
 
             {/* License */}
             <div>
-              <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: "rgba(30,37,53,0.5)" }}>Professional License</p>
+              <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: "#DA6A63" }}>Professional License</p>
               <div className="space-y-3">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="min-w-0">

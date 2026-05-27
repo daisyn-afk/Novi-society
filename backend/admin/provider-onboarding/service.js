@@ -1,5 +1,6 @@
 import { pool, query } from "../db.js";
 import { getMeFromAccessToken } from "../auth/service.js";
+import { notifyAdminsOfLicenseSubmission } from "../adminNotifications.js";
 
 let tableEnsured = false;
 
@@ -261,7 +262,9 @@ export async function submitProviderBasicOnboarding({ accessToken, payload }) {
       [me.id, licenseType, licenseNumber]
     );
 
-    if (existingLicenseRes.rows[0]?.id) {
+    let licenseId = existingLicenseRes.rows[0]?.id || null;
+
+    if (licenseId) {
       await client.query(
         `update public.licenses
          set provider_email = $2,
@@ -275,7 +278,7 @@ export async function submitProviderBasicOnboarding({ accessToken, payload }) {
              updated_at = now()
          where id = $1`,
         [
-          existingLicenseRes.rows[0].id,
+          licenseId,
           me.email || null,
           issuingState,
           expirationDate,
@@ -283,7 +286,7 @@ export async function submitProviderBasicOnboarding({ accessToken, payload }) {
         ]
       );
     } else {
-      await client.query(
+      const licenseInsert = await client.query(
         `insert into public.licenses (
            provider_id,
            provider_email,
@@ -293,7 +296,8 @@ export async function submitProviderBasicOnboarding({ accessToken, payload }) {
            expiration_date,
            document_url,
            status
-         ) values ($1, $2, $3, $4, $5, $6, $7, 'pending_review')`,
+         ) values ($1, $2, $3, $4, $5, $6, $7, 'pending_review')
+         returning id`,
         [
           me.id,
           me.email || null,
@@ -304,9 +308,45 @@ export async function submitProviderBasicOnboarding({ accessToken, payload }) {
           documentUrl
         ]
       );
+      licenseId = licenseInsert.rows[0]?.id || null;
     }
 
     await client.query("commit");
+
+    // Notify admins that a provider submitted/resubmitted a license via onboarding.
+    // Resolve the provider name from public.users (same source the licenses list JOIN uses)
+    // so the notification matches what admins see in the admin portal.
+    // Fire-and-forget so a notification failure never blocks the provider's response.
+    void (async () => {
+      try {
+        const { rows: userRows } = await query(
+          `select full_name, first_name, last_name
+           from public.users
+           where auth_user_id = $1
+           limit 1`,
+          [me.id]
+        );
+        const u = userRows[0];
+        const providerName =
+          String(u?.full_name || "").trim() ||
+          [String(u?.first_name || "").trim(), String(u?.last_name || "").trim()]
+            .filter(Boolean)
+            .join(" ") ||
+          String(me.full_name || "").trim() ||
+          null;
+        await notifyAdminsOfLicenseSubmission({
+          providerName,
+          providerEmail: me.email || null,
+          licenseType,
+          licenseNumber,
+          licenseId
+        });
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn("[provider-onboarding] admin notification failed:", err?.message);
+      }
+    })();
+
     return rows[0];
   } catch (error) {
     await client.query("rollback");

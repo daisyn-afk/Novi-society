@@ -148,11 +148,11 @@ export default function NoviLanding() {
               <div className="mt-6 pt-5" style={{ borderTop: "1px solid rgba(200,230,60,0.15)" }}><p className="text-xs font-semibold italic" style={{ color: "#C8E63C" }}>"Every check-in is an insight. Every insight is a reason to come back."</p></div>
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-3 gap-2 sm:gap-4">
             {[{ stat: "Real-time", label: "Daily patient result tracking" }, { stat: "Instant", label: "Competitive market intelligence" }, { stat: "AI-driven", label: "Personalized provider guidance" }].map((item, i) => (
-              <div key={i} className="text-center p-6 rounded-2xl" style={{ background: "#f9f8f6", border: "1px solid rgba(0,0,0,0.07)" }}>
-                <p style={{ fontFamily: "'DM Serif Display', serif", fontSize: "1.6rem", color: "#2D6B7F", fontStyle: "italic", fontWeight: 400, marginBottom: "6px" }}>{item.stat}</p>
-                <p className="text-sm" style={{ color: "rgba(30,37,53,0.6)" }}>{item.label}</p>
+              <div key={i} className="text-center p-2 sm:p-6 rounded-2xl overflow-hidden" style={{ background: "#f9f8f6", border: "1px solid rgba(0,0,0,0.07)" }}>
+                <p className="text-[1.1rem] sm:text-[1.6rem]" style={{ fontFamily: "'DM Serif Display', serif", color: "#2D6B7F", fontStyle: "italic", fontWeight: 400, marginBottom: "6px" }}>{item.stat}</p>
+                <p className="text-xs sm:text-sm" style={{ color: "rgba(30,37,53,0.6)" }}>{item.label}</p>
               </div>
             ))}
           </div>

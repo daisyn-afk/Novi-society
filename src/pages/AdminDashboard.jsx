@@ -1,14 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import {
-  Users, BookOpen, Award, TrendingUp, Clock, AlertTriangle, ArrowRight,
+  BookOpen, Award, TrendingUp, Clock, AlertTriangle, ArrowRight,
   Stethoscope, ShieldCheck, Star, Calendar, Activity, FileText,
   CheckCircle2, XCircle, UserCheck, HeartPulse, DollarSign, ClipboardList
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
-import { format, subDays, isAfter } from "date-fns";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
+import { subDays, isAfter } from "date-fns";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
+import { hasStaffModulePermission, normalizeRole } from "@/lib/routeAccessPolicy";
 
 const CARD = { background: "rgba(255,255,255,0.22)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)", border: "1px solid rgba(255,255,255,0.35)", boxShadow: "0 4px 24px rgba(0,0,0,0.06)" };
 
@@ -89,6 +90,7 @@ function StatusBadge({ status, label }) {
 const PIE_COLORS = ["#7B8EC8", "#C8E63C", "#FA6F30", "#DA6A63", "#2D6B7F", "#a8cc20"];
 
 export default function AdminDashboard() {
+  const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => base44.auth.me(), retry: false });
   const { data: preOrders = [] } = useQuery({ queryKey: ["pre-orders-dash"], queryFn: () => base44.entities.PreOrder.list("-created_date", 100) });
   const { data: enrollments = [] } = useQuery({ queryKey: ["enrollments"], queryFn: () => base44.entities.Enrollment.list() });
   const { data: courses = [] } = useQuery({ queryKey: ["courses"], queryFn: () => base44.entities.Course.list() });
@@ -103,6 +105,13 @@ export default function AdminDashboard() {
   const { data: complianceLogs = [] } = useQuery({ queryKey: ["compliance-logs"], queryFn: () => base44.entities.ComplianceLog.list() });
   const { data: patientJourneys = [] } = useQuery({ queryKey: ["patient-journeys"], queryFn: () => base44.entities.PatientJourney.list() });
   const { data: serviceTypes = [] } = useQuery({ queryKey: ["service-types"], queryFn: () => base44.entities.ServiceType.list() });
+  const normalizedRole = normalizeRole(me?.role);
+  const isStaff = normalizedRole === "staff";
+  const hasSectionAccess = (...moduleKeys) => {
+    if (!isStaff) return true;
+    if (moduleKeys.length === 0) return true;
+    return moduleKeys.some((key) => hasStaffModulePermission(key, me?.permissions));
+  };
 
   // ── Derived: Users ──────────────────────────────────────────────
   const providers = users.filter(u => u.role === "provider");
@@ -194,6 +203,7 @@ export default function AdminDashboard() {
 
       {/* ── Pre-Order Alert ── */}
       {(() => {
+        if (!hasSectionAccess("AdminPreOrders")) return null;
         const pending = preOrders.filter(o => o.status === "pending_approval");
         if (pending.length === 0) return null;
         return (
@@ -224,6 +234,7 @@ export default function AdminDashboard() {
       </div>
 
       {/* ── Section: Providers & Licenses ── */}
+      {hasSectionAccess("AdminLicenses") && (
       <div>
         <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: "rgba(30,37,53,0.4)" }}>Providers & Licenses</p>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
@@ -271,8 +282,10 @@ export default function AdminDashboard() {
           </div>
         </div>
       </div>
+      )}
 
       {/* ── Section: Courses & Enrollments ── */}
+      {hasSectionAccess("admincourses", "AdminEnrollments") && (
       <div>
         <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: "rgba(30,37,53,0.4)" }}>Courses & Enrollments</p>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
@@ -285,7 +298,7 @@ export default function AdminDashboard() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {/* Enrollments per course */}
           <div className="rounded-2xl overflow-hidden" style={CARD}>
-            <SectionHeader icon={BookOpen} label="Top Courses by Enrollment" color="#7B8EC8" linkTo="AdminCourses" />
+            <SectionHeader icon={BookOpen} label="Top Courses by Enrollment" color="#7B8EC8" linkTo="admincourses" />
             <div className="p-4">
               {topCourses.length === 0 ? (
                 <p className="text-sm text-center py-6" style={{ color: "rgba(30,37,53,0.4)" }}>No enrollment data yet</p>
@@ -321,8 +334,10 @@ export default function AdminDashboard() {
           </div>
         </div>
       </div>
+      )}
 
       {/* ── Section: Certifications ── */}
+      {hasSectionAccess("AdminLicenses") && (
       <div>
         <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: "rgba(30,37,53,0.4)" }}>Certifications</p>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
@@ -333,7 +348,7 @@ export default function AdminDashboard() {
         </div>
 
         <div className="rounded-2xl overflow-hidden" style={CARD}>
-          <SectionHeader icon={Award} label="Certifications by Category" color="#C8E63C" linkTo="AdminCertifications" />
+          <SectionHeader icon={Award} label="Certifications by Category" color="#C8E63C" linkTo="AdminLicenses" />
           <div className="p-4 grid grid-cols-2 gap-3">
             {certCategoryData.length === 0 ? (
               <p className="text-sm col-span-2 text-center py-6" style={{ color: "rgba(30,37,53,0.4)" }}>No cert data yet</p>
@@ -343,8 +358,10 @@ export default function AdminDashboard() {
           </div>
         </div>
       </div>
+      )}
 
       {/* ── Section: Patients ── */}
+      {hasSectionAccess("AdminProviders") && (
       <div>
         <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: "rgba(30,37,53,0.4)" }}>Patients & Journeys</p>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -354,8 +371,10 @@ export default function AdminDashboard() {
           <StatCard label="Have Roadmaps" value={patientsWithRoadmap} icon={Activity} color="#7B8EC8" bg="rgba(123,142,200,0.12)" sub={`${patientsWithScans} with scans`} />
         </div>
       </div>
+      )}
 
       {/* ── Section: Medical Directors & Supervision ── */}
+      {hasSectionAccess("AdminProviders") && (
       <div>
         <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: "rgba(30,37,53,0.4)" }}>Medical Directors & Supervision</p>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
@@ -379,8 +398,10 @@ export default function AdminDashboard() {
           </div>
         </div>
       </div>
+      )}
 
       {/* ── Section: Appointments ── */}
+      {hasSectionAccess("AdminProviders") && (
       <div>
         <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: "rgba(30,37,53,0.4)" }}>Appointments</p>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
@@ -391,7 +412,7 @@ export default function AdminDashboard() {
         </div>
 
         <div className="rounded-2xl overflow-hidden" style={CARD}>
-          <SectionHeader icon={Calendar} label="Recent Appointments" color="#7B8EC8" linkTo="PatientAppointments" />
+          <SectionHeader icon={Calendar} label="Recent Appointments" color="#7B8EC8" />
           <div className="p-4">
             {recentAppts.length === 0 ? (
               <p className="text-sm text-center py-6" style={{ color: "rgba(30,37,53,0.4)" }}>No appointments yet</p>
@@ -414,8 +435,10 @@ export default function AdminDashboard() {
           </div>
         </div>
       </div>
+      )}
 
       {/* ── Section: Treatment Records ── */}
+      {hasSectionAccess("AdminCompliance") && (
       <div>
         <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: "rgba(30,37,53,0.4)" }}>Treatment Records</p>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
@@ -445,8 +468,10 @@ export default function AdminDashboard() {
           </div>
         </div>
       </div>
+      )}
 
       {/* ── Section: Reviews ── */}
+      {hasSectionAccess("AdminCompliance") && (
       <div>
         <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: "rgba(30,37,53,0.4)" }}>Reviews & Ratings</p>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
@@ -457,7 +482,7 @@ export default function AdminDashboard() {
         </div>
 
         <div className="rounded-2xl overflow-hidden" style={CARD}>
-          <SectionHeader icon={Star} label="Rating Distribution" color="#C8E63C" linkTo="AdminReviews" />
+          <SectionHeader icon={Star} label="Rating Distribution" color="#C8E63C" linkTo="AdminCompliance" />
           <div className="p-4 space-y-2">
             {ratingDist.map(d => (
               <MiniBar key={d.star} label={d.star} value={d.count} max={reviews.length || 1} color="#C8E63C" />
@@ -465,8 +490,10 @@ export default function AdminDashboard() {
           </div>
         </div>
       </div>
+      )}
 
       {/* ── Section: Compliance ── */}
+      {hasSectionAccess("AdminCompliance") && (
       <div>
         <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: "rgba(30,37,53,0.4)" }}>Compliance</p>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
@@ -487,6 +514,7 @@ export default function AdminDashboard() {
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 }

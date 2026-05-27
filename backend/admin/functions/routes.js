@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { query } from "../db.js";
 import { getMeFromAccessToken } from "../auth/service.js";
+import { hasAdminAccess, hasStaffModuleAccess } from "../auth/helpers.js";
 import { notifyAdminsOfPendingCourseCertIssuance } from "../certificationNotifications.js";
 import { withCourseEmailShell } from "../courseEmailShell.js";
 import { listEligibleMedicalDirectorsForService } from "../mdEligibleDirectors.js";
@@ -373,6 +374,21 @@ function getBearerToken(req) {
   const raw = req.headers.authorization || "";
   if (!raw.startsWith("Bearer ")) return null;
   return raw.slice("Bearer ".length).trim() || null;
+}
+
+async function requireAdminOrStaffModelSignups(req, res, next) {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ error: "Missing bearer token." });
+    const me = await getMeFromAccessToken(token);
+    if (hasAdminAccess(me?.role) || hasStaffModuleAccess(me, "AdminModelSignups")) {
+      req.me = me;
+      return next();
+    }
+    return res.status(403).json({ error: "Forbidden." });
+  } catch (error) {
+    return res.status(error?.statusCode || 401).json({ error: error?.message || "Unauthorized." });
+  }
 }
 
 function parseClassDateTime(dateValue, timeValue, fallbackHour, fallbackMinute) {
@@ -1377,7 +1393,7 @@ functionsRouter.post("/modelCheckoutWebhook", async (req, res, next) => {
   }
 });
 
-functionsRouter.post("/sendModelConfirmationEmail", async (req, res, next) => {
+functionsRouter.post("/sendModelConfirmationEmail", requireAdminOrStaffModelSignups, async (req, res, next) => {
   try {
     const { customer_email, customer_name, course_date, time_slot, treatment_type, course_title } = req.body || {};
     if (!customer_email || !customer_name || !course_date) return res.status(400).json({ error: "Missing required fields" });
@@ -1415,7 +1431,7 @@ functionsRouter.post("/sendModelConfirmationEmail", async (req, res, next) => {
   }
 });
 
-functionsRouter.post("/sendModelGFEEmail", async (req, res, next) => {
+functionsRouter.post("/sendModelGFEEmail", requireAdminOrStaffModelSignups, async (req, res, next) => {
   try {
     const { customer_email, customer_name, gfe_url } = req.body || {};
     if (!customer_email || !gfe_url) return res.status(400).json({ error: "customer_email and gfe_url required" });
@@ -1441,7 +1457,7 @@ functionsRouter.post("/sendModelGFEEmail", async (req, res, next) => {
   }
 });
 
-functionsRouter.post("/sendModelReminderEmail", async (req, res, next) => {
+functionsRouter.post("/sendModelReminderEmail", requireAdminOrStaffModelSignups, async (req, res, next) => {
   try {
     const { customer_email, customer_name, course_date, time_slot, treatment_type } = req.body || {};
     if (!customer_email || !customer_name || !course_date || !time_slot) return res.status(400).json({ error: "Missing required fields" });
@@ -1468,7 +1484,7 @@ functionsRouter.post("/sendModelReminderEmail", async (req, res, next) => {
   }
 });
 
-functionsRouter.post("/sendModelPostTrainingEmail", async (req, res, next) => {
+functionsRouter.post("/sendModelPostTrainingEmail", requireAdminOrStaffModelSignups, async (req, res, next) => {
   try {
     const { customer_email, customer_name, treatment_type, course_title, pre_order_id } = req.body || {};
     if (!customer_email || !customer_name) return res.status(400).json({ error: "Missing required fields" });
@@ -1493,7 +1509,7 @@ functionsRouter.post("/sendModelPostTrainingEmail", async (req, res, next) => {
   }
 });
 
-functionsRouter.post("/sendModelReminderBatch", async (_req, res, next) => {
+functionsRouter.post("/sendModelReminderBatch", requireAdminOrStaffModelSignups, async (_req, res, next) => {
   try {
     const { rows } = await query(
       `select id, customer_email, customer_name, course_date, model_time_slot, treatment_type
@@ -1529,7 +1545,7 @@ functionsRouter.post("/sendModelReminderBatch", async (_req, res, next) => {
   }
 });
 
-functionsRouter.post("/sendModelGFEReminderBatch", async (_req, res, next) => {
+functionsRouter.post("/sendModelGFEReminderBatch", requireAdminOrStaffModelSignups, async (_req, res, next) => {
   try {
     const hasMeetingUrl = await hasPreOrderColumn("gfe_meeting_url");
     const hasGfeStatus = await hasPreOrderColumn("gfe_status");
@@ -1574,7 +1590,7 @@ functionsRouter.post("/sendModelGFEReminderBatch", async (_req, res, next) => {
   }
 });
 
-functionsRouter.post("/sendModelPostTrainingBatch", async (_req, res, next) => {
+functionsRouter.post("/sendModelPostTrainingBatch", requireAdminOrStaffModelSignups, async (_req, res, next) => {
   try {
     const { rows } = await query(
       `select id, customer_email, customer_name, treatment_type, course_title
@@ -1604,7 +1620,7 @@ functionsRouter.post("/sendModelPostTrainingBatch", async (_req, res, next) => {
   }
 });
 
-functionsRouter.post("/sendModelGFE", async (req, res, next) => {
+functionsRouter.post("/sendModelGFE", requireAdminOrStaffModelSignups, async (req, res, next) => {
   try {
     const { customer_name, customer_email, phone, pre_order_id, course_id, treatment_type, date_of_birth } = req.body || {};
     if (!customer_email) return res.status(400).json({ error: "customer_email is required" });
@@ -1856,7 +1872,7 @@ functionsRouter.post("/cancelModelBooking", async (req, res, next) => {
   }
 });
 
-functionsRouter.post("/promoteFromWaitlist", async (req, res, next) => {
+functionsRouter.post("/promoteFromWaitlist", requireAdminOrStaffModelSignups, async (req, res, next) => {
   try {
     const preOrderId = String(req.body?.pre_order_id || "").trim();
     const timeSlot = String(req.body?.time_slot || "").trim();

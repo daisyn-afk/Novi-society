@@ -3,6 +3,8 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import {
   ChevronLeft,
   ChevronRight,
+  Eye,
+  EyeOff,
   Pencil,
   Plus,
   Search,
@@ -10,6 +12,7 @@ import {
   Users as UsersIcon
 } from "lucide-react";
 import { adminUsersApi } from "@/api/adminUsersApi";
+import { useToast } from "@/components/ui/use-toast";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,12 +38,14 @@ import {
   TableHeader,
   TableRow
 } from "@/components/ui/table";
+import { STAFF_MODULE_CATALOG } from "@/lib/routeAccessPolicy";
 
 const ROLE_OPTIONS = [
   { value: "provider", label: "Provider" },
   { value: "patient", label: "Patient" },
   { value: "medical_director", label: "Medical Director" },
-  { value: "admin", label: "Admin" }
+  { value: "admin", label: "Admin" },
+  { value: "staff", label: "Staff" }
 ];
 
 const ROLE_FILTER_OPTIONS = [{ value: "all", label: "All roles" }, ...ROLE_OPTIONS];
@@ -50,13 +55,18 @@ const ACTIVE_FILTER_OPTIONS = [
   { value: "false", label: "Inactive" }
 ];
 
+function buildEmptyPermissions() {
+  return Object.fromEntries(STAFF_MODULE_CATALOG.map((m) => [m.key, false]));
+}
+
 const EMPTY_FORM = {
   first_name: "",
   last_name: "",
   email: "",
   password: "",
   role: "provider",
-  is_active: true
+  is_active: true,
+  permissions: buildEmptyPermissions()
 };
 
 const PAGE_SIZE = 10;
@@ -83,6 +93,7 @@ function roleLabel(value) {
 
 export default function AdminUsers() {
   const qc = useQueryClient();
+  const { toast } = useToast();
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState("all");
@@ -94,6 +105,8 @@ export default function AdminUsers() {
   const [formError, setFormError] = useState("");
 
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const [savedPasswords, setSavedPasswords] = useState({});
 
   const debouncedSearch = useDebounced(search, 300);
 
@@ -133,21 +146,33 @@ export default function AdminUsers() {
           first_name: payload.first_name,
           last_name: payload.last_name,
           role: payload.role,
-          is_active: payload.is_active
+          is_active: payload.is_active,
+          permissions: payload.role === "staff" ? payload.permissions : null
         };
         if (payload.password) body.password = payload.password;
         return adminUsersApi.update(editing.id, body);
       }
       return adminUsersApi.create(payload);
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["admin-users"] });
-      setDialogOpen(false);
-      setEditing(null);
-      setForm(EMPTY_FORM);
-      setFormError("");
-    },
-    onError: (err) => setFormError(err?.message || "Unable to save user.")
+      onSuccess: (_, variables) => {
+        qc.invalidateQueries({ queryKey: ["admin-users"] });
+        if (editing?.id && variables?.password) {
+          setSavedPasswords((prev) => ({ ...prev, [editing.id]: variables.password }));
+        }
+        setDialogOpen(false);
+        setEditing(null);
+        setForm({ ...EMPTY_FORM, permissions: buildEmptyPermissions() });
+        setFormError("");
+        toast({
+          title: editing ? "User updated" : "User created",
+          description: variables?.password ? "Password updated." : undefined
+        });
+      },
+    onError: (err) => {
+      const msg = err?.message || "Unable to save user.";
+      setFormError(msg);
+      toast({ title: "Save failed", description: msg, variant: "destructive" });
+    }
   });
 
   const deleteMutation = useMutation({
@@ -155,27 +180,40 @@ export default function AdminUsers() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["admin-users"] });
       setDeleteTarget(null);
+      toast({ title: "User deleted" });
+    },
+    onError: (err) => {
+      toast({ title: "Delete failed", description: err?.message || "Try again.", variant: "destructive" });
     }
   });
 
   const openCreate = () => {
     setEditing(null);
-    setForm(EMPTY_FORM);
+    setForm({ ...EMPTY_FORM, permissions: buildEmptyPermissions() });
     setFormError("");
+    setShowPassword(false);
     setDialogOpen(true);
   };
 
   const openEdit = (user) => {
     setEditing(user);
+    const existingPerms = user.permissions && typeof user.permissions === "object"
+      ? user.permissions
+      : {};
+    const permissions = Object.fromEntries(
+      STAFF_MODULE_CATALOG.map((m) => [m.key, existingPerms[m.key] === true])
+    );
     setForm({
       first_name: user.first_name || "",
       last_name: user.last_name || "",
       email: user.email || "",
-      password: "",
-      role: user.role || "provider",
-      is_active: user.is_active !== false
+      password: savedPasswords[user.id] || "",
+      role: user.role || "",
+      is_active: user.is_active !== false,
+      permissions
     });
     setFormError("");
+    setShowPassword(Boolean(savedPasswords[user.id]));
     setDialogOpen(true);
   };
 
@@ -202,7 +240,8 @@ export default function AdminUsers() {
       email,
       password: form.password,
       role: form.role,
-      is_active: form.is_active
+      is_active: form.is_active,
+      permissions: form.permissions
     });
   };
 
@@ -236,6 +275,8 @@ export default function AdminUsers() {
                 }}
                 placeholder="Search by name or email"
                 className="pl-9"
+                autoComplete="new-password"
+                name="user-search"
               />
             </div>
             <Select
@@ -392,16 +433,22 @@ export default function AdminUsers() {
           setDialogOpen(open);
           if (!open) {
             setEditing(null);
-            setForm(EMPTY_FORM);
+            setForm({ ...EMPTY_FORM, permissions: buildEmptyPermissions() });
             setFormError("");
+            setShowPassword(false);
           }
         }}
       >
-        <DialogContent className="max-w-xl">
+        <DialogContent
+          className="max-w-xl max-h-[90vh] overflow-y-auto"
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+          }}
+        >
           <DialogHeader>
             <DialogTitle>{editing ? `Edit ${editing.email}` : "Create User"}</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4 pt-2">
+          <form autoComplete="off" onSubmit={(e) => e.preventDefault()} className="space-y-4 pt-2">
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs font-semibold text-slate-600 mb-1 block">
@@ -411,6 +458,7 @@ export default function AdminUsers() {
                   value={form.first_name}
                   onChange={(e) => setForm((f) => ({ ...f, first_name: e.target.value }))}
                   placeholder="Jane"
+                  autoComplete="off"
                 />
               </div>
               <div>
@@ -421,6 +469,7 @@ export default function AdminUsers() {
                   value={form.last_name}
                   onChange={(e) => setForm((f) => ({ ...f, last_name: e.target.value }))}
                   placeholder="Doe"
+                  autoComplete="off"
                 />
               </div>
             </div>
@@ -432,6 +481,7 @@ export default function AdminUsers() {
                 value={form.email}
                 onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
                 placeholder="user@example.com"
+                autoComplete="new-password"
               />
             </div>
 
@@ -439,12 +489,25 @@ export default function AdminUsers() {
               <label className="text-xs font-semibold text-slate-600 mb-1 block">
                 {editing ? "New password (leave blank to keep current)" : "Password *"}
               </label>
-              <Input
-                type="password"
-                value={form.password}
-                onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
-                placeholder={editing ? "••••••••" : "Minimum 8 characters"}
-              />
+              <div className="relative">
+                <Input
+                  type={showPassword ? "text" : "password"}
+                  value={form.password}
+                  onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
+                  placeholder={editing ? "Enter new password to change" : "Minimum 8 characters"}
+                  className="pr-10"
+                  autoComplete="new-password"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 focus:outline-none"
+                  tabIndex={-1}
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
@@ -480,10 +543,56 @@ export default function AdminUsers() {
               </div>
             </div>
 
+            {form.role === "staff" && (
+              <div className="rounded-lg border border-slate-200 p-4 space-y-3">
+                <div>
+                  <p className="text-xs font-semibold text-slate-700 mb-0.5">Module Access</p>
+                  <p className="text-xs text-slate-400">
+                    Select the modules this staff user can access. Dashboard is always included.
+                  </p>
+                </div>
+                <div className="space-y-3">
+                  {Array.from(
+                    new Set(STAFF_MODULE_CATALOG.map((m) => m.group))
+                  ).map((group) => (
+                    <div key={group}>
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
+                        {group}
+                      </p>
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                        {STAFF_MODULE_CATALOG.filter((m) => m.group === group).map((module) => (
+                          <label
+                            key={module.key}
+                            className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer select-none"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={form.permissions?.[module.key] === true}
+                              onChange={(e) =>
+                                setForm((f) => ({
+                                  ...f,
+                                  permissions: {
+                                    ...f.permissions,
+                                    [module.key]: e.target.checked
+                                  }
+                                }))
+                              }
+                              className="rounded"
+                            />
+                            <span>{module.label}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {formError ? (
               <p className="text-sm text-red-600">{formError}</p>
             ) : null}
-          </div>
+          </form>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
               Cancel
@@ -505,7 +614,12 @@ export default function AdminUsers() {
           if (!open) setDeleteTarget(null);
         }}
       >
-        <DialogContent className="max-w-md">
+        <DialogContent
+          className="max-w-md"
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+          }}
+        >
           <DialogHeader>
             <DialogTitle>Delete user?</DialogTitle>
           </DialogHeader>

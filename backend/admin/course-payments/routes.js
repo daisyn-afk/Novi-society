@@ -1,7 +1,9 @@
 import { Router } from "express";
 import { listCoursePayments } from "./repository.js";
+import { requireAdminOrStaffWithModule } from "../auth/helpers.js";
 
 export const coursePaymentsRouter = Router();
+coursePaymentsRouter.use(requireAdminOrStaffWithModule("AdminPreOrders"));
 
 coursePaymentsRouter.get("/", async (req, res, next) => {
   try {

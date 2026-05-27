@@ -7,7 +7,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   LayoutDashboard, BookOpen, Award, FileText, Users,
   Calendar, Star, ShieldCheck, ClipboardList, Settings, Layers,
-  Menu, X, LogOut, User, Lock, Stethoscope, Sparkles, Clock, AlertTriangle, ShoppingBag, Mail, Rocket, TicketPercent, MessageSquare
+  Menu, X, LogOut, User, Stethoscope, Sparkles, Clock, AlertTriangle, ShoppingBag, Mail, Rocket, TicketPercent, MessageSquare
 } from "lucide-react";
 import { useProviderAccess } from "@/components/useProviderAccess";
 import { providerOnboardingApi } from "@/api/providerOnboardingApi";
@@ -72,14 +72,25 @@ const navByRole = {
     { label: "Profile", icon: User, page: "PatientProfile" },
   ],
   staff: [
-    { label: "Dashboard", icon: LayoutDashboard, page: "AdminDashboard" },
-    { label: "Enrollments", icon: ClipboardList, page: "AdminEnrollments" },
-    { label: "Providers", icon: Users, page: "AdminProviders" },
+    { label: "Dashboard",              icon: LayoutDashboard, page: "AdminDashboard"   },
+    { label: "Users",                  icon: Users,           page: "AdminUsers"        },
+    { label: "Pre-Order Applications", icon: ClipboardList,   page: "AdminPreOrders"    },
+    { label: "Courses",                icon: BookOpen,        page: "admincourses"      },
+    { label: "Enrollments",            icon: ClipboardList,   page: "AdminEnrollments"  },
+    { label: "Providers",              icon: Users,           page: "AdminProviders"    },
+    { label: "Licenses & Certifications", icon: FileText,     page: "AdminLicenses"     },
+    { label: "Service Types",          icon: Settings,        page: "AdminServiceTypes" },
+    { label: "Promo Codes",            icon: TicketPercent,   page: "AdminPromoCodes"   },
+    { label: "Manufacturer Marketplace", icon: ShoppingBag,   page: "AdminManufacturers"},
+    { label: "Email Automation",       icon: Mail,            page: "AdminEmailTemplates"},
+    { label: "Growth Studio Editor",   icon: Rocket,          page: "AdminLaunchPad"    },
+    { label: "Wizard Configuration",   icon: Settings,        page: "AdminWizardConfig" },
+    { label: "Compliance & Reviews",   icon: ShieldCheck,     page: "AdminCompliance"   },
+    { label: "Model sign-ups",         icon: Users,           page: "AdminModelSignups" },
   ],
 };
 
 const BARE_PAGES = ["Onboarding", "ProviderGettingStarted", "LandingPage", "ProviderApplication", "NoviLanding", "ModelSignup", "ModelBookingLookup", "PrivacyPolicy", "TermsAndConditions", "RefundPolicy", "SMSTerms", "ContactUs"];
-const PROVIDER_FREE_PAGES = ["ProviderDashboard", "CourseCatalog", "ProviderProfile", "ProviderGettingStarted"];
 
 export default function Layout({ children, currentPageName }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -113,10 +124,13 @@ export default function Layout({ children, currentPageName }) {
     }
   }, [isSuccess, user, currentPageName]);
 
-  const role = normalizeRole(user?.role || "provider");
+  const role = normalizeRole(user?.role);
   const navRole = role;
-  const navItems = navByRole[navRole] || navByRole.provider;
-  const isProviderUserReady = role === "provider" && Boolean(user?.id || user?.email);
+  const navItems = navRole === "staff"
+    ? navByRole.staff.filter(({ page }) =>
+        page === "AdminDashboard" || hasStaffModulePermission(page, user?.permissions)
+      )
+    : (navByRole[navRole] || []);
 
   // Sidebar unread message badge — shared query key ["msg-threads"] with messaging pages.
   // Polling at 5s keeps the badge live without hammering the API.
@@ -139,62 +153,6 @@ export default function Layout({ children, currentPageName }) {
       ),
   });
 
-  const { data: providerEnrollments = [] } = useQuery({
-    queryKey: ["my-enrollments"],
-    queryFn: async () => {
-      const me = await queryClient.ensureQueryData({
-        queryKey: ["me"],
-        queryFn: () => base44.auth.me(),
-        staleTime: 30_000,
-      });
-      const [byProviderIdResult, byEmailResult, preOrdersResult] = await Promise.allSettled([
-        me?.id ? base44.entities.Enrollment.filter({ provider_id: me.id }) : Promise.resolve([]),
-        me?.email ? base44.entities.Enrollment.filter({ provider_email: me.email }) : Promise.resolve([]),
-        me?.email
-          ? base44.entities.PreOrder.list("-created_date", 500, { customer_email: me.email })
-          : Promise.resolve([]),
-      ]);
-      const byProviderId = byProviderIdResult.status === "fulfilled" ? (byProviderIdResult.value || []) : [];
-      const byEmail = byEmailResult.status === "fulfilled" ? (byEmailResult.value || []) : [];
-      const preOrders = preOrdersResult.status === "fulfilled" ? (preOrdersResult.value || []) : [];
-      const email = String(me?.email || "").trim().toLowerCase();
-      const derivedFromPreOrders = email
-        ? preOrders
-            .filter((p) => p?.order_type === "course")
-            .filter((p) => Boolean(p?.course_id))
-            .filter((p) => ["paid", "confirmed", "completed"].includes(String(p?.status || "").toLowerCase()))
-            .filter((p) => String(p?.customer_email || "").trim().toLowerCase() === email)
-            .map((p) => ({
-              id: `preorder-${p.id}`,
-              pre_order_id: p.id,
-              course_id: p.course_id,
-              provider_id: me?.id || null,
-              provider_email: p.customer_email,
-              provider_name: p.customer_name,
-              status: p.status === "completed" ? "confirmed" : p.status,
-              created_date: p.created_date,
-            }))
-        : [];
-      return Array.from(new Map([...(byProviderId || []), ...(byEmail || []), ...derivedFromPreOrders].map((row) => [row.pre_order_id || row.id, row])).values());
-    },
-    enabled: isProviderUserReady,
-    staleTime: 30_000,
-  });
-
-  const { data: providerCerts = [] } = useQuery({
-    queryKey: ["my-certs"],
-    queryFn: async () => {
-      const me = await queryClient.ensureQueryData({
-        queryKey: ["me"],
-        queryFn: () => base44.auth.me(),
-        staleTime: 30_000,
-      });
-      return base44.entities.Certification.filter({ provider_id: me.id });
-    },
-    enabled: isProviderUserReady,
-  });
-
-  const isProviderUnlocked = true;
 
   const handleLogout = async () => {
     try {
@@ -376,7 +334,6 @@ export default function Layout({ children, currentPageName }) {
         {/* Nav */}
         <nav className="relative z-10 flex-1 px-3 py-1 overflow-y-auto space-y-0.5">
           {navItems.map(({ label, icon: Icon, page }) => {
-            const isLocked = !isProviderUnlocked && !PROVIDER_FREE_PAGES.includes(page);
             const active = isActive(page);
             const isMessagesPage = page === "MDMessaging" || page === "ProviderMessaging";
             const showUnreadBadge = isMessagesPage && sidebarUnreadCount > 0;
@@ -385,7 +342,7 @@ export default function Layout({ children, currentPageName }) {
                 key={page}
                 to={createPageUrl(page)}
                 onClick={() => setSidebarOpen(false)}
-                className={`novi-nav-item${active ? " active" : ""}${isLocked ? " locked" : ""}`}
+                className={`novi-nav-item${active ? " active" : ""}`}
               >
                 <Icon className="w-[15px] h-[15px] flex-shrink-0" style={{ opacity: active ? 0.9 : 0.6 }} />
                 <span className="flex-1">{label}</span>
@@ -397,7 +354,6 @@ export default function Layout({ children, currentPageName }) {
                     {sidebarUnreadCount > 99 ? "99+" : sidebarUnreadCount}
                   </span>
                 )}
-                {isLocked && <Lock className="w-3 h-3 opacity-30 flex-shrink-0" />}
               </Link>
             );
           })}

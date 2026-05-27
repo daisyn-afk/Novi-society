@@ -1,7 +1,9 @@
 import { Router } from "express";
+import { requireAdminOrStaffWithModule } from "../auth/helpers.js";
 import { createClassSession, listClassSessions, updateClassSession } from "./repository.js";
 
 export const classSessionsRouter = Router();
+classSessionsRouter.use(requireAdminOrStaffWithModule("admincourses"));
 
 classSessionsRouter.get("/", async (req, res, next) => {
   try {

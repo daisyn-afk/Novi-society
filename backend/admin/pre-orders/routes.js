@@ -1,13 +1,49 @@
 import { Router } from "express";
 import { listPreOrders, updatePreOrderStatus, patchPreOrder } from "./repository.js";
+import { hasAdminAccess, hasStaffModuleAccess, requireAuth } from "../auth/helpers.js";
 
 export const preOrdersRouter = Router();
+preOrdersRouter.use(requireAuth);
 
 preOrdersRouter.get("/", async (req, res, next) => {
   try {
+    const me = req.me || {};
+    const role = String(me.role || "").trim().toLowerCase();
+    let requestedOrderType = String(req.query?.order_type || "").trim().toLowerCase();
+    const requestedEmail = String(req.query?.customer_email || "").trim().toLowerCase();
+    let customerEmail = requestedEmail;
+
+    if (!hasAdminAccess(role) && role !== "staff") {
+      customerEmail = String(me.email || "").trim().toLowerCase();
+      if (!customerEmail) {
+        return res.status(403).json({ error: "Forbidden." });
+      }
+    }
+
+    if (role === "staff") {
+      const canPreOrders = hasStaffModuleAccess(me, "AdminPreOrders");
+      const canModelSignups = hasStaffModuleAccess(me, "AdminModelSignups");
+
+      if (requestedOrderType === "model") {
+        if (!canModelSignups) {
+          return res.status(403).json({ error: "Forbidden." });
+        }
+      } else if (requestedOrderType) {
+        if (!canPreOrders) return res.status(403).json({ error: "Forbidden." });
+      } else {
+        // Match admin page behavior:
+        // - If staff has only one related module, auto-scope to that dataset.
+        // - If both are granted, return both datasets like admin.
+        if (canPreOrders && !canModelSignups) requestedOrderType = "course";
+        else if (!canPreOrders && canModelSignups) requestedOrderType = "model";
+        else if (!canPreOrders && !canModelSignups) return res.status(403).json({ error: "Forbidden." });
+      }
+    }
+
     const rows = await listPreOrders({
       limit: req.query?.limit || 200,
-      customerEmail: req.query?.customer_email || "",
+      customerEmail,
+      orderType: requestedOrderType,
     });
     res.json(rows);
   } catch (error) {
@@ -17,6 +53,10 @@ preOrdersRouter.get("/", async (req, res, next) => {
 
 preOrdersRouter.patch("/:id", async (req, res, next) => {
   try {
+    const me = req.me || {};
+    if (!hasAdminAccess(me.role) && !hasStaffModuleAccess(me, "AdminModelSignups")) {
+      return res.status(403).json({ error: "Forbidden." });
+    }
     const row = await patchPreOrder(req.params.id, req.body || {});
     if (!row) return res.status(404).json({ error: "Pre-order not found." });
     res.json(row);
@@ -27,6 +67,10 @@ preOrdersRouter.patch("/:id", async (req, res, next) => {
 
 preOrdersRouter.post("/action", async (req, res, next) => {
   try {
+    const me = req.me || {};
+    if (!hasAdminAccess(me.role) && !hasStaffModuleAccess(me, "AdminPreOrders")) {
+      return res.status(403).json({ error: "Forbidden." });
+    }
     const row = await updatePreOrderStatus({
       id: req.body?.pre_order_id,
       action: req.body?.action,
