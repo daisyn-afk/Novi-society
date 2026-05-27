@@ -33,7 +33,7 @@
         "priority": 30,
         "autoCheck": "cpr_bls",
         "navigate_to": "ProviderPractice",
-        "navigate_params": "?tab=profile"
+        "navigate_params": "?tab=profile&step=cpr_bls"
       },
       {
         "id": "bloodborne",

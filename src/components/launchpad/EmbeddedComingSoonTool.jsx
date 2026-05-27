@@ -40,10 +40,10 @@ export default function EmbeddedComingSoonTool({ label, teaser, accent = "#FA6F3
       </button>
       <div className="px-4 py-5 text-center">
         <span
-          className="inline-block text-[10px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-full mb-3"
+          className="inline-block text-[10px] font-bold tracking-wide px-2.5 py-1 rounded-full mb-3"
           style={{ background: "rgba(250,111,48,0.15)", color: "#b84a10" }}
         >
-          Soon
+          Coming Soon
         </span>
         <p className="text-sm leading-relaxed" style={{ color: "rgba(30,37,53,0.55)" }}>
           This interactive tool is on the way. Check back soon.

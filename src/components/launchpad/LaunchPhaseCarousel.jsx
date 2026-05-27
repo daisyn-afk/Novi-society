@@ -72,7 +72,7 @@ function PhaseComingSoonBlock({ phase, theme }) {
             {phase.label}
           </h3>
           <span
-            className="text-[10px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-full"
+            className="text-[10px] font-bold tracking-wide px-2.5 py-1 rounded-full"
             style={{ background: "rgba(250,111,48,0.15)", color: "#b84a10" }}
           >
             Coming Soon
@@ -228,10 +228,10 @@ export default function LaunchPhaseCarousel({ phase, onToggle, canToggle, me, fo
             </p>
             {!isDone && step.coming_soon && (
               <span
-                className="text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full flex-shrink-0 mt-0.5"
+                className="text-[10px] font-bold tracking-wide px-2 py-0.5 rounded-full flex-shrink-0 mt-0.5"
                 style={{ background: "rgba(250,111,48,0.15)", color: "#b84a10" }}
               >
-                Soon
+                Coming Soon
               </span>
             )}
           </div>

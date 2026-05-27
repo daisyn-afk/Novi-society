@@ -1,4 +1,5 @@
 import launchRoadmap from "@/data/launchRoadmap.json";
+import { isCprBlsCert } from "@/lib/cprBlsCert";
 
 const PROFILE_FIELDS = [
   "avatar_url",
@@ -22,7 +23,7 @@ export const READINESS_MODULE_IDS = [
 function hasActiveSchedule(me) {
   const schedule = me?.schedule || {};
   return Object.values(schedule).some(
-    (day) => day?.enabled && day?.start && day?.end
+    (day) => day?.open || day?.enabled
   );
 }
 
@@ -62,11 +63,7 @@ function buildAutoChecks({
     ),
     cpr_bls: !!(
       me?.launch_checklist?.cpr_bls ||
-      certs.some((c) =>
-        /cpr|bls|basic life support/i.test(
-          `${c.certification_name || ""} ${c.issued_by || ""}`
-        )
-      )
+      certs.some(isCprBlsCert)
     ),
     course_enrolled: enrollments.length > 0,
     course_completed: enrollments.some((e) =>

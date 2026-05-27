@@ -653,6 +653,13 @@ async function resolveTemplateCourseIdForServiceType(serviceTypeId) {
   return rows?.[0]?.id || null;
 }
 
+function isComplianceCertification(body) {
+  const category = String(body?.category || "").trim().toLowerCase();
+  if (category === "compliance") return true;
+  const label = `${body?.certification_name || body?.cert_name || ""} ${body?.issued_by || ""}`;
+  return /cpr|bls|basic life support/i.test(label);
+}
+
 function isAdminIssuedCourseCertification(body, canSetAnyProvider) {
   if (!canSetAnyProvider) return false;
   return Boolean(String(body?.enrollment_id || "").trim() || String(body?.course_id || "").trim());
@@ -753,11 +760,17 @@ certificationsRouter.post("/", async (req, res, next) => {
     const columns = await getCertificationColumns();
     const canSetAnyProvider = hasAdminAccess(me.role);
     const adminIssuedCourseCertification = isAdminIssuedCourseCertification(body, canSetAnyProvider);
+    const complianceCertification = isComplianceCertification(body);
     let resolvedTemplateCourseId = body.template_course_id || null;
     if (columns.has("template_course_id") && !resolvedTemplateCourseId) {
       resolvedTemplateCourseId = await resolveTemplateCourseIdForServiceType(body.service_type_id);
     }
-    if (columns.has("template_course_id") && !resolvedTemplateCourseId && !adminIssuedCourseCertification) {
+    if (
+      columns.has("template_course_id") &&
+      !resolvedTemplateCourseId &&
+      !adminIssuedCourseCertification &&
+      !complianceCertification
+    ) {
       const err = new Error("No linked template course found for this service type. Ask admin to link the service type to a template course.");
       err.statusCode = 400;
       throw err;

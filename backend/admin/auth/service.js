@@ -1,5 +1,10 @@
 import { createClient } from "@supabase/supabase-js";
 import { pool } from "../db.js";
+import {
+  buildProviderMetadataUpdates,
+  mapProviderProfileToMeExtras,
+  normalizeProviderProfileUpdates,
+} from "./providerProfileFields.js";
 import { getProviderLaunchChecklist, upsertProviderLaunchChecklist } from "../launch-roadmap/repository.js";
 import {
   ensureProviderUserRecord,
@@ -417,13 +422,7 @@ async function upsertProviderProfile({ userId, updates }) {
   const hasState = Object.prototype.hasOwnProperty.call(updates || {}, "state");
   const hasZip = Object.prototype.hasOwnProperty.call(updates || {}, "zip");
   const hasOnboardingCompleted = Object.prototype.hasOwnProperty.call(updates || {}, "onboarding_completed");
-  const metadataFieldKeys = ["bio", "phone", "specialty", "avatar_url", "website_url", "instagram_handle"];
-  const metadataUpdates = {};
-  for (const key of metadataFieldKeys) {
-    if (Object.prototype.hasOwnProperty.call(updates || {}, key)) {
-      metadataUpdates[key] = normalizeNullableText(updates[key]);
-    }
-  }
+  const metadataUpdates = buildProviderMetadataUpdates(updates);
   const hasMetadataUpdates = Object.keys(metadataUpdates).length > 0;
   const hasProviderProfileUpdates =
     hasDob ||
@@ -666,6 +665,7 @@ export async function getMeFromAccessToken(accessToken) {
       avatar_url: normalizeNullableText(providerMetadata.avatar_url),
       website_url: normalizeNullableText(providerMetadata.website_url),
       instagram_handle: normalizeNullableText(providerMetadata.instagram_handle),
+      ...(resolvedRole === "provider" ? mapProviderProfileToMeExtras(providerProfile) : {}),
       launch_checklist: resolvedRole === "provider"
         ? await getProviderLaunchChecklist(data.user.id)
         : {},
@@ -887,7 +887,10 @@ export async function updateMe({ accessToken, updates }) {
   }
 
   if (nextRole === "provider" && userRow?.id) {
-    await upsertProviderProfile({ userId: userRow.id, updates });
+    await upsertProviderProfile({
+      userId: userRow.id,
+      updates: normalizeProviderProfileUpdates(updates),
+    });
   }
   if (nextRole === "patient" && userRow?.id) {
     await upsertPatientProfile({ userId: userRow.id, updates });

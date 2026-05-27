@@ -23,6 +23,42 @@ import { format, parseISO, isAfter, startOfDay } from "date-fns";
 
 const SECTIONS = ["appointments", "patients", "profile", "treatments", "performance"];
 
+const EMPTY_PRACTICE_FORM = {
+  practice_name: "", bio: "", city: "", state: "", phone: "",
+  consultation_fee: "", starting_price: "", accepts_new_patients: true, avatar_url: "",
+  instagram_handle: "", website_url: "", contact_email: "", address: "", zip: "",
+  facebook: "", tiktok: "", deposit_percent: "", cancellation_hours: "",
+  schedule: {}, specialties: [], languages: [], credentials: [],
+};
+
+function buildPracticeFormFromMe(me) {
+  if (!me) return { ...EMPTY_PRACTICE_FORM };
+  return {
+    practice_name: me.practice_name || "",
+    bio: me.bio || "",
+    city: me.city || "",
+    state: me.state || "",
+    phone: me.phone || "",
+    consultation_fee: me.consultation_fee ?? "",
+    starting_price: me.starting_price ?? "",
+    accepts_new_patients: me.accepts_new_patients ?? true,
+    avatar_url: me.avatar_url || "",
+    instagram_handle: me.instagram_handle || "",
+    website_url: me.website_url || "",
+    contact_email: me.contact_email || "",
+    address: me.address || me.address_line1 || "",
+    zip: me.zip || "",
+    facebook: me.facebook || "",
+    tiktok: me.tiktok || "",
+    deposit_percent: me.deposit_percent ?? "",
+    cancellation_hours: me.cancellation_hours ?? "",
+    schedule: me.schedule && typeof me.schedule === "object" ? me.schedule : {},
+    specialties: Array.isArray(me.specialties) ? me.specialties : [],
+    languages: Array.isArray(me.languages) ? me.languages : [],
+    credentials: Array.isArray(me.credentials) ? me.credentials : [],
+  };
+}
+
 function StarRating({ rating }) {
   return (
     <div className="flex gap-0.5">
@@ -123,12 +159,7 @@ export default function ProviderPractice() {
   const [logPickerOpen, setLogPickerOpen] = useState(false);
   const [docDialog, setDocDialog] = useState({ open: false, appt: null, existing: null });
   const [bookingCopied, setBookingCopied] = useState(false);
-  const [form, setForm] = useState({
-    practice_name: "", bio: "", city: "", state: "", phone: "",
-    consultation_fee: "", starting_price: "", accepts_new_patients: true, avatar_url: "",
-    instagram_handle: "", website_url: "",
-  });
-  const [initialized, setInitialized] = useState(false);
+  const [form, setForm] = useState({ ...EMPTY_PRACTICE_FORM });
 
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => base44.auth.me() });
 
@@ -154,23 +185,8 @@ export default function ProviderPractice() {
   });
 
   useEffect(() => {
-    if (me && !initialized) {
-      setForm({
-        practice_name: me.practice_name || "",
-        bio: me.bio || "",
-        city: me.city || "",
-        state: me.state || "",
-        phone: me.phone || "",
-        consultation_fee: me.consultation_fee || "",
-        starting_price: me.starting_price || "",
-        accepts_new_patients: me.accepts_new_patients ?? true,
-        avatar_url: me.avatar_url || "",
-        instagram_handle: me.instagram_handle || "",
-        website_url: me.website_url || "",
-      });
-      setInitialized(true);
-    }
-  }, [me, initialized]);
+    if (me?.id) setForm(buildPracticeFormFromMe(me));
+  }, [me?.id]);
 
   useEffect(() => {
     const tab = searchParams.get("tab");
@@ -189,8 +205,9 @@ export default function ProviderPractice() {
 
   const saveMutation = useMutation({
     mutationFn: (data) => base44.auth.updateMe(data),
-    onSuccess: () => {
-      qc.invalidateQueries(["me"]);
+    onSuccess: (updatedMe) => {
+      qc.setQueryData({ queryKey: ["me"] }, updatedMe);
+      setForm(buildPracticeFormFromMe(updatedMe));
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
     },
@@ -490,7 +507,7 @@ export default function ProviderPractice() {
       </SectionModal>
 
       <SectionModal open={openSection === "profile"} onOpenChange={v => !v && closeModal()} title="Practice Profile">
-        <PracticeProfileTab form={form} setForm={setForm} me={me} onSave={handleSave} saving={saveMutation.isPending} saved={saved} serviceTypes={serviceTypes} activeServiceIds={activeServiceIds} manufacturerApplications={manufacturerApplications} />
+        <PracticeProfileTab form={form} setForm={setForm} me={me} onSave={handleSave} saving={saveMutation.isPending} saved={saved} serviceTypes={serviceTypes} activeServiceIds={activeServiceIds} manufacturerApplications={manufacturerApplications} focusSection={searchParams.get("step")} />
       </SectionModal>
 
       <SectionModal open={openSection === "treatments"} onOpenChange={v => !v && closeModal()} title="Treatment Menu">
