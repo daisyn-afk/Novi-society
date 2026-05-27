@@ -124,6 +124,24 @@ function hasPaidEnrollment(enrollments) {
   );
 }
 
+/**
+ * Whether the provider has satisfied basic onboarding — either via the
+ * provider_basic_onboarding form or legacy activation (verified license,
+ * active certification, or active MD subscription).
+ */
+export function resolveHasCompletedBasic({
+  onboarding,
+  licenses = [],
+  certs = [],
+  mdSubs = [],
+} = {}) {
+  if (onboarding?.has_completed_basic === true) return true;
+  if (hasVerifiedLicense(licenses)) return true;
+  if (hasActiveCert(certs)) return true;
+  if (hasActiveMdSub(mdSubs)) return true;
+  return false;
+}
+
 // ─── core resolver ─────────────────────────────────────────────────────────
 
 /**
@@ -158,8 +176,15 @@ export function resolveProviderDashboardState({
     };
   }
 
+  const hasCompletedBasic = resolveHasCompletedBasic({
+    onboarding,
+    licenses,
+    certs,
+    mdSubs,
+  });
+
   const signals = {
-    hasCompletedBasic: onboarding?.has_completed_basic === true,
+    hasCompletedBasic,
     hasAnyLicense: hasAnyLicense(licenses),
     hasVerifiedLicense: hasVerifiedLicense(licenses),
     hasPendingLicense: hasPendingLicense(licenses),

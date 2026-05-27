@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
@@ -9,6 +10,7 @@ import {
   Plus, X, ChevronDown, ChevronUp, ShieldCheck, Eye, Star, Clock, Shield, Copy, Link
 } from "lucide-react";
 import { base44 } from "@/api/base44Client";
+import CprBlsCertSection from "@/components/practice/CprBlsCertSection.jsx";
 
 const GLASS_STYLE = {
   background: "rgba(255,255,255,0.5)",
@@ -86,7 +88,8 @@ function BookingLinkCard({ me }) {
   );
 }
 
-export default function PracticeProfileTab({ form, setForm, me, onSave, saving, saved, serviceTypes = [], activeServiceIds = new Set(), manufacturerApplications = [] }) {
+export default function PracticeProfileTab({ form, setForm, me, onSave, saving, saved, serviceTypes = [], activeServiceIds = new Set(), manufacturerApplications = [], focusSection }) {
+  const qc = useQueryClient();
   const f = (key, val) => setForm(prev => ({ ...prev, [key]: val }));
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [expandedSections, setExpandedSections] = useState({ hours: true, specialties: true });
@@ -101,7 +104,13 @@ export default function PracticeProfileTab({ form, setForm, me, onSave, saving, 
   const [newCredential, setNewCredential] = useState({ title: "", institution: "", year: "" });
 
   const updateDay = (day, field, val) => {
-    f("schedule", { ...schedule, [day]: { ...schedule[day], [field]: val } });
+    const current = schedule[day] || {};
+    const next = { ...current, [field]: val };
+    if (field === "open" && val) {
+      if (!next.start) next.start = "9:00 AM";
+      if (!next.end) next.end = "5:00 PM";
+    }
+    f("schedule", { ...schedule, [day]: next });
   };
 
   const toggleSpecialty = (s) => {
@@ -124,9 +133,14 @@ export default function PracticeProfileTab({ form, setForm, me, onSave, saving, 
     const file = e.target.files?.[0];
     if (!file) return;
     setUploadingPhoto(true);
-    const { file_url } = await base44.integrations.Core.UploadFile({ file });
-    f("avatar_url", file_url);
-    setUploadingPhoto(false);
+    try {
+      const { file_url } = await base44.integrations.Core.UploadFile({ file });
+      f("avatar_url", file_url);
+      const updatedMe = await base44.auth.updateMe({ avatar_url: file_url });
+      qc.setQueryData({ queryKey: ["me"] }, updatedMe);
+    } finally {
+      setUploadingPhoto(false);
+    }
   };
 
   return (
@@ -194,6 +208,9 @@ export default function PracticeProfileTab({ form, setForm, me, onSave, saving, 
           {form.bio && <p className="text-gray-600 text-sm mt-4 leading-relaxed line-clamp-3">{form.bio}</p>}
         </div>
       </GlassCard>
+
+      {/* ── CPR / BLS Compliance ── */}
+      <CprBlsCertSection me={me} focusSection={focusSection} />
 
       {/* ── Practice Info ── */}
       <GlassCard>

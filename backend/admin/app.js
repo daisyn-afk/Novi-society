@@ -47,6 +47,7 @@ const { gmailRouter } = await import("./manufacturers/gmailRoutes.js");
 const { mdMessagesRouter } = await import("./md-messages/routes.js");
 const { appointmentsRouter } = await import("./appointments/routes.js");
 const { treatmentRecordsRouter } = await import("./treatment-records/routes.js");
+const { launchRoadmapRouter } = await import("./launch-roadmap/routes.js");
 
 export function createAdminApp() {
   const app = express();
@@ -96,6 +97,7 @@ export function createAdminApp() {
   app.use("/admin/md-messages", mdMessagesRouter);
   app.use("/admin/appointments", appointmentsRouter);
   app.use("/admin/treatment-records", treatmentRecordsRouter);
+  app.use("/admin/launch-roadmap", launchRoadmapRouter);
   app.use("/functions", functionsRouter);
 
   app.use((error, _req, res, _next) => {

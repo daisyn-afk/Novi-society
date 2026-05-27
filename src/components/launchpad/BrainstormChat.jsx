@@ -13,7 +13,7 @@ const STARTERS = [
   "How do I build a loyal patient base from scratch?",
 ];
 
-export default function BrainstormChat({ me }) {
+export default function BrainstormChat({ me, embedded = false }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -45,7 +45,14 @@ export default function BrainstormChat({ me }) {
   const reset = () => setMessages([]);
 
   return (
-    <div className="flex flex-col max-w-2xl" style={{ height: "calc(100vh - 280px)", minHeight: 400 }}>
+    <div
+      className="flex flex-col max-w-2xl"
+      style={
+        embedded
+          ? { minHeight: 360, maxHeight: 480 }
+          : { height: "calc(100vh - 280px)", minHeight: 400 }
+      }
+    >
       {/* Header */}
       <div className="rounded-2xl p-5 mb-4 flex-shrink-0" style={{ background: "linear-gradient(135deg, #7B8EC8, #2D6B7F)", boxShadow: "0 4px 20px rgba(123,142,200,0.25)" }}>
         <div className="flex items-center justify-between">

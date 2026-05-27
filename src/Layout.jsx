@@ -10,7 +10,7 @@ import {
   Menu, X, LogOut, User, Stethoscope, Sparkles, Clock, AlertTriangle, ShoppingBag, Mail, Rocket, TicketPercent, MessageSquare
 } from "lucide-react";
 import { useProviderAccess } from "@/components/useProviderAccess";
-import { providerOnboardingApi } from "@/api/providerOnboardingApi";
+import { useProviderDashboardState } from "@/hooks/useProviderDashboardState";
 import { mdMessagesApi } from "@/api/mdMessagesApi";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import NotificationBell from "@/components/NotificationBell";
@@ -23,6 +23,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { hasStaffModulePermission, normalizeRole } from "@/lib/routeAccessPolicy";
+import ProviderNextStepBar from "@/components/launchpad/ProviderNextStepBar";
+import { useLaunchRoadmapStats } from "@/components/launchpad/useLaunchRoadmapStats";
 
 const navByRole = {
   admin: [
@@ -95,23 +97,11 @@ export default function Layout({ children, currentPageName }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { status: providerAccessStatus } = useProviderAccess();
+  const providerDashboardState = useProviderDashboardState();
 
   const { data: user, isSuccess } = useQuery({
     queryKey: ["me"],
     queryFn: () => base44.auth.me(),
-    retry: false,
-  });
-
-  const { data: providerBasicOnboarding } = useQuery({
-    queryKey: ["provider-basic-onboarding"],
-    queryFn: async () => {
-      try {
-        return await providerOnboardingApi.getMe();
-      } catch {
-        return null;
-      }
-    },
-    enabled: isSuccess && normalizeRole(user?.role || "") === "provider",
     retry: false,
   });
 
@@ -130,9 +120,15 @@ export default function Layout({ children, currentPageName }) {
       )
     : (navByRole[navRole] || []);
 
+  const isProviderUserReady = role === "provider" && Boolean(user?.id || user?.email);
+
   // Sidebar unread message badge — shared query key ["msg-threads"] with messaging pages.
   // Polling at 5s keeps the badge live without hammering the API.
   const isMessagingRole = role === "provider" || role === "medical_director";
+  const showProviderNextStepBar = isProviderUserReady;
+  const { stats: launchRoadmapStats, isLoading: launchRoadmapLoading } = useLaunchRoadmapStats({
+    enabled: showProviderNextStepBar,
+  });
   const { data: sidebarUnreadCount = 0 } = useQuery({
     queryKey: ["msg-threads"],
     queryFn: () => mdMessagesApi.getThreads(),
@@ -313,7 +309,9 @@ export default function Layout({ children, currentPageName }) {
         {/* Role pill */}
         <div className="relative z-10 px-5 pt-4 pb-2">
           <span className="novi-role-pill">{roleLabel}</span>
-          {providerBasicOnboarding?.has_completed_basic === false && (
+          {role === "provider" &&
+            !providerDashboardState.isLoading &&
+            !providerDashboardState.hasCompletedBasic && (
             <div className="mt-2">
               <span
                 className="text-[8px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-full inline-block"
@@ -430,6 +428,9 @@ export default function Layout({ children, currentPageName }) {
 
         {/* Page content */}
         <main className="flex-1 p-5 lg:p-7 overflow-auto" style={{ background: "transparent", minHeight: 0 }}>
+          {showProviderNextStepBar && !launchRoadmapLoading && (
+            <ProviderNextStepBar stats={launchRoadmapStats} />
+          )}
           {/* Contextual status banners for providers */}
           {role === "provider" && providerAccessStatus === "pending" && (
             <div className="flex items-center gap-3 px-4 py-3 rounded-2xl mb-5" style={{ background: "rgba(250,111,48,0.15)", border: "1px solid rgba(250,111,48,0.4)" }}>

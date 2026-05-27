@@ -1,0 +1,300 @@
+{
+  "phases": [
+    {
+      "id": "foundation",
+      "label": "Foundation",
+      "description": "Get legally & operationally ready before seeing patients",
+      "color": "#7B8EC8",
+      "textColor": "#3a4e8c",
+      "icon": "building",
+      "steps": [
+        {
+          "id": "license_verified",
+          "label": "License Verified by NOVI Admin",
+          "desc": "Prerequisite for MD coverage. Upload your RN, NP, PA, or MD license for admin verification.",
+          "priority": 10,
+          "autoCheck": "license_verified",
+          "navigate_to": "ProviderCredentialsCoverage",
+          "navigate_params": "?tab=licenses"
+        },
+        {
+          "id": "md_mpi",
+          "label": "Add MD to MPI",
+          "desc": "Legally required in most states. Add your supervising medical director to your practice profile.",
+          "priority": 20,
+          "autoCheck": "md_mpi",
+          "navigate_to": "ProviderPractice",
+          "navigate_params": "?tab=profile"
+        },
+        {
+          "id": "cpr_bls",
+          "label": "Upload CPR/BLS Cert",
+          "desc": "NOVI compliance requirement. Upload your current CPR or BLS certification.",
+          "priority": 30,
+          "autoCheck": "cpr_bls",
+          "navigate_to": "ProviderPractice",
+          "navigate_params": "?tab=profile&step=cpr_bls"
+        },
+        {
+          "id": "bloodborne",
+          "label": "Bloodborne Pathogens Training",
+          "desc": "OSHA legal requirement. Complete annual bloodborne pathogens training.",
+          "priority": 40,
+          "link": "https://www.redcross.org/take-a-class/program-aed/online-only/bloodborne-pathogens-training",
+          "linkLabel": "Take Red Cross bloodborne pathogens training →"
+        },
+        {
+          "id": "llc",
+          "label": "Form an LLC",
+          "desc": "Asset protection. Keeps your personal money separate from your business.",
+          "priority": 50,
+          "links": [
+            {
+              "url": "https://www.zenbusiness.com",
+              "label": "Form your LLC with ZenBusiness →"
+            },
+            {
+              "url": "https://www.legalzoom.com",
+              "label": "Form your LLC with LegalZoom →"
+            }
+          ]
+        },
+        {
+          "id": "ein",
+          "label": "Get EIN (Free)",
+          "desc": "Business banking requirement. Free 5-minute IRS form.",
+          "priority": 60,
+          "link": "https://www.irs.gov/businesses/small-businesses-self-employed/apply-for-an-employer-identification-number-ein-online",
+          "linkLabel": "Get your EIN from the IRS →"
+        },
+        {
+          "id": "banking",
+          "label": "Open Business Bank Account",
+          "desc": "Clean financials. Never mix personal and business money.",
+          "priority": 70,
+          "links": [
+            {
+              "url": "https://mercury.com",
+              "label": "Open a free account with Mercury →"
+            },
+            {
+              "url": "https://relayfi.com",
+              "label": "Open a free account with Relay →"
+            }
+          ]
+        },
+        {
+          "id": "insurance",
+          "label": "Malpractice Insurance",
+          "desc": "$30–50/mo, critical coverage. Non-negotiable before treating patients.",
+          "priority": 80,
+          "links": [
+            {
+              "url": "https://www.hiscox.com",
+              "label": "Get a quote from Hiscox →"
+            },
+            {
+              "url": "https://www.cmfgroup.com",
+              "label": "Get a quote from CM&F Group →"
+            },
+            {
+              "url": "https://www.nextinsurance.com",
+              "label": "Get a quote from NEXT Insurance →"
+            }
+          ]
+        },
+        {
+          "id": "md_insurance",
+          "label": "Add MD to Insurance Policy",
+          "desc": "Required by most MDs. Contact your insurer to add your supervising MD to your malpractice policy.",
+          "priority": 90
+        }
+      ]
+    },
+    {
+      "id": "activation",
+      "label": "Activation",
+      "description": "Launch your NOVI profile and start accepting patients",
+      "color": "#C8E63C",
+      "textColor": "#4a6b10",
+      "icon": "zap",
+      "steps": [
+        {
+          "id": "profile",
+          "label": "Complete Your Profile",
+          "desc": "3x booking rate. Photo, bio, hours, and practice details — patients decide in 10 seconds.",
+          "priority": 200,
+          "autoCheck": "profile_complete",
+          "navigate_to": "ProviderPractice",
+          "navigate_params": "?tab=profile"
+        },
+        {
+          "id": "treatments",
+          "label": "Add Services & Prices",
+          "desc": "Required to accept bookings. Toggle at least one service live with your pricing.",
+          "priority": 210,
+          "autoCheck": "treatments_live",
+          "navigate_to": "ProviderPractice",
+          "navigate_params": "?tab=treatments"
+        },
+        {
+          "id": "book_link",
+          "label": "Share Your Booking Link",
+          "desc": "Drop your NOVI link in your Instagram bio — Instagram → appointments.",
+          "priority": 220,
+          "autoCheck": "book_link",
+          "navigate_to": "ProviderProfile"
+        },
+        {
+          "id": "cherry_financing",
+          "label": "Cherry Patient Financing",
+          "desc": "30–40% more high-ticket closes. Offer monthly payment plans at checkout.",
+          "priority": 230,
+          "link": "https://www.withcherry.com",
+          "linkLabel": "Set up Cherry patient financing →"
+        },
+        {
+          "id": "supplier_marketplace",
+          "label": "Apply to Supplier Marketplace",
+          "desc": "Better pricing and rep support from vetted aesthetic suppliers.",
+          "priority": 240,
+          "navigate_to": "ProviderMarketplace"
+        },
+        {
+          "id": "deposit_policy",
+          "label": "Set Deposit & Cancellation Policy",
+          "desc": "Eliminate no-shows. A 20–30% deposit at booking kills last-minute cancellations.",
+          "priority": 250,
+          "autoCheck": "deposit_policy",
+          "navigate_to": "ProviderPractice",
+          "navigate_params": "?tab=profile"
+        },
+        {
+          "id": "roi_calculator",
+          "label": "ROI Calculator",
+          "desc": "Service pricing engine. Plug in product cost, time, and overhead to know what to charge.",
+          "priority": 260,
+          "embedded_tool": "pricing_calculator",
+          "coming_soon": true
+        },
+        {
+          "id": "vendor_directory",
+          "label": "Trusted Vendor Directory",
+          "desc": "NOVI-vetted tool list. Every vendor our top providers use to launch and grow.",
+          "priority": 270,
+          "embedded_tool": "vendor_directory",
+          "coming_soon": true
+        }
+      ]
+    },
+    {
+      "id": "growth",
+      "label": "Growth",
+      "description": "Build your brand and attract consistent new patients",
+      "color": "#FA6F30",
+      "textColor": "#b84a10",
+      "icon": "trendingUp",
+      "steps": [
+        {
+          "id": "brand_builder",
+          "label": "Brand Builder",
+          "desc": "8-step brand identity wizard",
+          "priority": 300,
+          "embedded_tool": "brand_builder",
+          "coming_soon": true
+        },
+        {
+          "id": "instagram",
+          "label": "Start Posting on Instagram",
+          "desc": "Primary free patient acquisition channel. Post before/afters, tips, and your face 3x a week.",
+          "priority": 310,
+          "links": [
+            {
+              "url": "https://business.instagram.com",
+              "label": "Switch to Instagram Business →"
+            },
+            {
+              "url": "https://www.canva.com",
+              "label": "Create posts with Canva →"
+            }
+          ]
+        },
+        {
+          "id": "google_biz",
+          "label": "Claim Google Business Profile",
+          "desc": "Free. Shows up when someone searches 'Botox near me' in your city.",
+          "priority": 320,
+          "link": "https://business.google.com",
+          "linkLabel": "Claim your free Google Business Profile →"
+        },
+        {
+          "id": "referral_builder",
+          "label": "Referral Program Builder",
+          "desc": "AI-generated referral kit",
+          "priority": 330,
+          "embedded_tool": "referral_program_builder",
+          "coming_soon": true
+        },
+        {
+          "id": "bundle_loyalty",
+          "label": "Create Bundle/Loyalty Reward",
+          "desc": "Increases avg spend + retention. Add packages in your Treatments tab.",
+          "priority": 340,
+          "navigate_to": "ProviderPractice",
+          "navigate_params": "?tab=treatments"
+        },
+        {
+          "id": "creative_studio",
+          "label": "Creative Studio",
+          "desc": "AI content generator",
+          "priority": 350,
+          "embedded_tool": "creative_studio",
+          "coming_soon": true
+        },
+        {
+          "id": "provider_community",
+          "label": "Provider Community",
+          "desc": "Peer network + spotlights",
+          "priority": 360,
+          "embedded_tool": "provider_community",
+          "coming_soon": true
+        }
+      ]
+    },
+    {
+      "id": "scale",
+      "label": "Scale",
+      "description": "Accelerate with education, strategy, and AI coaching",
+      "color": "#DA6A63",
+      "textColor": "#a03030",
+      "icon": "rocket",
+      "coming_soon": true,
+      "steps": [
+        {
+          "id": "education_hub",
+          "label": "Education Hub",
+          "desc": "Clinical + business articles",
+          "priority": 400,
+          "embedded_tool": "education_hub",
+          "coming_soon": true
+        },
+        {
+          "id": "webinars",
+          "label": "Webinars",
+          "desc": "Live + on-demand sessions",
+          "priority": 410,
+          "embedded_tool": "webinars",
+          "coming_soon": true
+        },
+        {
+          "id": "ask_mentor",
+          "label": "Ask Your Mentor",
+          "desc": "AI business coach (24/7)",
+          "priority": 420,
+          "embedded_tool": "ask_mentor",
+          "coming_soon": true
+        }
+      ]
+    }
+  ]
+}

@@ -10,7 +10,6 @@ import {
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { useProviderAccess } from "@/components/useProviderAccess";
-import { providerOnboardingApi } from "@/api/providerOnboardingApi";
 import { isToday, isTomorrow, format, isWithinInterval, startOfMonth, endOfMonth } from "date-fns";
 import { useAttendanceContext } from "@/components/provider/useAttendanceContext";
 import { Input } from "@/components/ui/input";
@@ -84,29 +83,16 @@ export default function ProviderDashboard() {
     );
   }
 
-  return <ProviderActiveDashboard />;
+  return <ProviderActiveDashboard hasCompletedBasic={dashboardState.hasCompletedBasic} />;
 }
 
-function ProviderActiveDashboard() {
+function ProviderActiveDashboard({ hasCompletedBasic = true }) {
   const { status: accessStatus } = useProviderAccess();
   const attendance = useAttendanceContext();
   const [selectedAttendanceKey, setSelectedAttendanceKey] = useState("");
   const [attendanceCode, setAttendanceCode] = useState("");
   const [attendanceMessage, setAttendanceMessage] = useState("");
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => base44.auth.me() });
-
-  const { data: basicOnboarding } = useQuery({
-    queryKey: ["provider-basic-onboarding"],
-    queryFn: async () => {
-      try {
-        return await providerOnboardingApi.getMe();
-      } catch {
-        return null;
-      }
-    },
-    enabled: me?.role === "provider",
-    retry: false,
-  });
 
   const { data: myEnrollments = [] } = useQuery({
     queryKey: ["my-enrollments"],
@@ -303,7 +289,7 @@ function ProviderActiveDashboard() {
 
   const dashboardContent = (
     <div className="max-w-5xl space-y-7 w-full overflow-x-hidden">
-      {basicOnboarding?.has_completed_basic === false && (
+      {!hasCompletedBasic && (
         <div
           className="rounded-2xl px-5 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"
           style={{ background: "rgba(250,111,48,0.12)", border: "1px solid rgba(250,111,48,0.35)" }}
