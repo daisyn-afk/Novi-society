@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { pool } from "../db.js";
 import { hasAdminOrStaffModuleAccess, requireAuth } from "../auth/helpers.js";
 import { notifyAdminsOfLicenseSubmission } from "../adminNotifications.js";
+import { getProviderIdAliases } from "../mdSupervisedAccess.js";
 
 export const licensesRouter = Router();
 licensesRouter.use(requireAuth);
@@ -17,6 +18,10 @@ const supabaseAdmin = supabaseUrl && supabaseServiceRoleKey
       auth: { persistSession: false, autoRefreshToken: false }
     })
   : null;
+
+function isMedicalDirectorRole(role) {
+  return String(role || "").trim().toLowerCase() === "medical_director";
+}
 
 function pickNameFromMetadata(meta = {}) {
   const first = String(meta.first_name || meta.given_name || meta.firstName || "").trim();
@@ -279,21 +284,30 @@ licensesRouter.get("/", async (req, res, next) => {
       where.push(`l.status = $${params.length}`);
     }
     if (providerId) {
-      params.push(providerId);
-      where.push(`l.provider_id = $${params.length}`);
+      const { aliases } = await getProviderIdAliases(providerId);
+      params.push(aliases.length ? aliases : [providerId]);
+      where.push(`l.provider_id::text = any($${params.length}::text[])`);
     }
     if (providerEmail) {
       params.push(providerEmail.toLowerCase());
       where.push(`lower(l.provider_email) = $${params.length}`);
     }
     if (!canManageLicenses) {
-      params.push(me.id);
-      const providerIdParam = `$${params.length}`;
-      params.push(String(me.email || "").toLowerCase());
-      const providerEmailParam = `$${params.length}`;
-      // Non-admin providers can only see their own licenses.
-      // Support legacy rows keyed by email even if provider_id is missing/mismatched.
-      where.push(`(l.provider_id = ${providerIdParam} or lower(l.provider_email) = ${providerEmailParam})`);
+      if (isMedicalDirectorRole(me.role) && providerId) {
+        params.push(me.id);
+        where.push(`exists (
+          select 1 from public.medical_director_relationship r
+           where r.medical_director_id = $${params.length}
+             and r.provider_id::text = l.provider_id::text
+             and lower(coalesce(r.status, '')) = 'active'
+        )`);
+      } else {
+        params.push(me.id);
+        const providerIdParam = `$${params.length}`;
+        params.push(String(me.email || "").toLowerCase());
+        const providerEmailParam = `$${params.length}`;
+        where.push(`(l.provider_id = ${providerIdParam} or lower(l.provider_email) = ${providerEmailParam})`);
+      }
     }
 
     const sql = `select

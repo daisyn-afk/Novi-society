@@ -3,6 +3,11 @@ import { pool, query } from "../db.js";
 import { hasAdminOrStaffModuleAccess, requireAuth } from "../auth/helpers.js";
 import { notifyProviderOfCourseCertificateIssuance } from "../certificationNotifications.js";
 import { notifyAdminsOfCertificationSubmission } from "../adminNotifications.js";
+import {
+  getProviderIdAliases,
+  isMedicalDirectorRole,
+  mdHasActiveSupervisionOf,
+} from "../mdSupervisedAccess.js";
 
 export const certificationsRouter = Router();
 certificationsRouter.use(requireAuth);
@@ -598,21 +603,68 @@ certificationsRouter.get("/", async (req, res, next) => {
     const hasProviderId = columns.has("provider_id");
     const hasProviderEmail = columns.has("provider_email");
     const hasCreatedBy = columns.has("created_by");
+    const providerIdFilter = String(req.query?.provider_id || "").trim();
+    const statusFilter = String(req.query?.status || "").trim().toLowerCase();
 
     if (!canManageCertifications) {
-      const ownership = await getProviderOwnershipAliases(me);
-      const ownershipChecks = [];
-      if (hasProviderId && ownership.aliases.size > 0) {
-        params.push(Array.from(ownership.aliases));
-        ownershipChecks.push(`${certAlias}.provider_id::text = any($${params.length}::text[])`);
+      if (isMedicalDirectorRole(me.role) && providerIdFilter) {
+        const allowed = await mdHasActiveSupervisionOf(me, providerIdFilter);
+        if (!allowed) {
+          return res.status(403).json({ error: "Forbidden." });
+        }
+        const { aliases, email } = await getProviderIdAliases(providerIdFilter);
+        const supervisedChecks = [];
+        if (hasProviderId && aliases.length) {
+          params.push(aliases);
+          supervisedChecks.push(`${certAlias}.provider_id::text = any($${params.length}::text[])`);
+        }
+        if (hasProviderEmail && email) {
+          params.push(email);
+          supervisedChecks.push(`lower(coalesce(${certAlias}.provider_email, '')) = $${params.length}`);
+        }
+        if (supervisedChecks.length) {
+          where.push(`(${supervisedChecks.join(" or ")})`);
+        } else {
+          where.push("false");
+        }
+      } else if (isMedicalDirectorRole(me.role) && !providerIdFilter) {
+        const { rows: rels } = await query(
+          `select provider_id from public.medical_director_relationship
+           where medical_director_id = $1 and lower(coalesce(status, '')) = 'active'`,
+          [me.id]
+        );
+        const supervisedIds = [...new Set((rels || []).map((r) => String(r.provider_id || "").trim()).filter(Boolean))];
+        if (!supervisedIds.length) {
+          return res.json([]);
+        }
+        if (hasProviderId) {
+          params.push(supervisedIds);
+          where.push(`${certAlias}.provider_id::text = any($${params.length}::text[])`);
+        }
+      } else {
+        const ownership = await getProviderOwnershipAliases(me);
+        const ownershipChecks = [];
+        if (hasProviderId && ownership.aliases.size > 0) {
+          params.push(Array.from(ownership.aliases));
+          ownershipChecks.push(`${certAlias}.provider_id::text = any($${params.length}::text[])`);
+        }
+        if (hasProviderEmail && ownership.authEmail) {
+          params.push(ownership.authEmail);
+          ownershipChecks.push(`lower(coalesce(${certAlias}.provider_email, '')) = $${params.length}`);
+        }
+        if (ownershipChecks.length > 0) {
+          where.push(`(${ownershipChecks.join(" or ")})`);
+        }
       }
-      if (hasProviderEmail && ownership.authEmail) {
-        params.push(ownership.authEmail);
-        ownershipChecks.push(`lower(coalesce(${certAlias}.provider_email, '')) = $${params.length}`);
-      }
-      if (ownershipChecks.length > 0) {
-        where.push(`(${ownershipChecks.join(" or ")})`);
-      }
+    } else if (providerIdFilter && hasProviderId) {
+      const { aliases } = await getProviderIdAliases(providerIdFilter);
+      params.push(aliases.length ? aliases : [providerIdFilter]);
+      where.push(`${certAlias}.provider_id::text = any($${params.length}::text[])`);
+    }
+
+    if (statusFilter) {
+      params.push(statusFilter);
+      where.push(`lower(coalesce(${certAlias}.status, '')) = $${params.length}`);
     }
 
     const hasProviderName = columns.has("provider_name");

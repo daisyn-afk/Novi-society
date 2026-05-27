@@ -1,18 +1,22 @@
-import { useState, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useState, useMemo, useEffect } from "react";
+import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { base44 } from "@/api/base44Client";
-import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Search, Star, MapPin, Award, Calendar, DollarSign, MessageSquare, Info, Sparkles, Filter, Gift, Package, Tag } from "lucide-react";
+import { Search, Star, MapPin, Award, Calendar, DollarSign, MessageSquare, Sparkles, Filter, Gift, Package, Tag, ImageIcon, Info } from "lucide-react";
 import MessageThread from "@/components/messaging/MessageThread";
+import { broadcastAppointmentsRefresh } from "@/lib/appointmentSync";
+import { providerReviewAverage } from "@/lib/providerRating";
+import { galleryPairsForPatientDisplay } from "@/lib/galleryPhotos";
+import { BeforeAfterGallery } from "@/components/marketplace/BeforeAfterGallery";
+import { referralCodeMatchesProvider } from "@/lib/referralCode";
 
 /** Matches AI scan treatment categories → service_types.category (MD marketplace). */
 const JOURNEY_CATEGORY_SLUGS = new Set([
@@ -25,79 +29,117 @@ const JOURNEY_CATEGORY_SLUGS = new Set([
   "other",
 ]);
 
+const US_STATES = [
+  "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA", "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA",
+  "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM", "NY", "NC", "ND", "OH", "OK",
+  "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY", "DC",
+];
+
+const surfaceCard = {
+  background: "#ffffff",
+  border: "1px solid rgba(30,37,53,0.07)",
+  boxShadow: "0 2px 16px rgba(30,37,53,0.06)",
+};
+
+const servicePill = {
+  background: "rgba(123,142,200,0.1)",
+  color: "#4a5fa8",
+  border: "1px solid rgba(123,142,200,0.2)",
+};
+
 function serviceTypeForMdSub(sub, serviceTypes) {
   return serviceTypes.find(
     (s) => String(s.id) === String(sub.service_type_id) || s.name === sub.service_type_name
   );
 }
 
+function displayName(provider) {
+  return provider.practice_name || provider.full_name || "Provider";
+}
+
+function specialtyLabels(provider, serviceTypes = []) {
+  const ids = Array.isArray(provider.specialties) ? provider.specialties : [];
+  if (ids.length) {
+    return ids
+      .map((id) => {
+        const st = serviceTypes.find((s) => String(s.id) === String(id));
+        return st?.name || null;
+      })
+      .filter(Boolean);
+  }
+  if (provider.specialty) return [provider.specialty];
+  return [];
+}
+
+function activePackages(provider) {
+  return (provider.practice_packages || []).filter((pkg) => pkg && pkg.is_active !== false);
+}
+
 export default function PatientMarketplace() {
+  const qc = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
-  const journeyCategory = String(searchParams.get("category") || "")
-    .trim()
-    .toLowerCase();
+  const journeyCategory = String(searchParams.get("category") || "").trim().toLowerCase();
+  const deepLinkProviderId = String(searchParams.get("provider") || "").trim();
 
   const [search, setSearch] = useState("");
   const [serviceFilter, setServiceFilter] = useState("all");
+  const [stateFilter, setStateFilter] = useState("all");
   const [selectedProvider, setSelectedProvider] = useState(null);
   const [bookDialog, setBookDialog] = useState(null);
-  const [bookForm, setBookForm] = useState({ service: "", appointment_date: "", appointment_time: "", patient_notes: "" });
+  const [bookForm, setBookForm] = useState({
+    service: "",
+    appointment_date: "",
+    appointment_time: "",
+    patient_notes: "",
+    referral_code: "",
+  });
   const [booked, setBooked] = useState(false);
   const [msgDialog, setMsgDialog] = useState(null);
   const [aiMatching, setAiMatching] = useState(false);
   const [aiMatchDialog, setAiMatchDialog] = useState(false);
+  const [bookingError, setBookingError] = useState("");
 
-  const { data: users = [] } = useQuery({
-    queryKey: ["users"],
-    queryFn: () => base44.entities.User.list(),
+  const { data: me } = useQuery({
+    queryKey: ["me"],
+    queryFn: () => base44.auth.me(),
+    staleTime: 60_000,
   });
 
-  const { data: certs = [] } = useQuery({
-    queryKey: ["certifications"],
-    queryFn: () => base44.entities.Certification.filter({ status: "active" }),
+  const { data: catalog, isLoading: catalogLoading } = useQuery({
+    queryKey: ["marketplace-catalog"],
+    queryFn: () => base44.marketplace.getCatalog(),
+    staleTime: 0,
+    refetchInterval: 5_000,
+    refetchIntervalInBackground: false,
   });
 
-  const { data: reviews = [] } = useQuery({
-    queryKey: ["reviews"],
-    queryFn: () => base44.entities.Review.filter({ is_verified: true }),
-  });
-
-  const { data: licenses = [] } = useQuery({
-    queryKey: ["all-licenses"],
-    queryFn: () => base44.entities.License.filter({ status: "verified" }),
-  });
-
-  const { data: mdSubs = [] } = useQuery({
-    queryKey: ["all-md-subs"],
-    queryFn: () => base44.entities.MDSubscription.filter({ status: "active" }),
-  });
+  const providers = catalog?.providers || [];
+  const mdSubs = catalog?.md_subscriptions || [];
+  const certs = catalog?.certifications || [];
+  const reviews = catalog?.reviews || [];
 
   const { data: serviceTypes = [] } = useQuery({
     queryKey: ["service-types"],
     queryFn: () => base44.entities.ServiceType.filter({ is_active: true }),
   });
 
-  // Only show providers with at least 1 verified license AND active MD coverage
-  const verifiedProviderIds = new Set(licenses.map(l => l.provider_id));
-  const mdCoveredProviderIds = new Set(mdSubs.map(s => s.provider_id));
-
-  const providers = users.filter(u =>
-    u.role === "provider" &&
-    u.accepts_new_patients !== false &&
-    verifiedProviderIds.has(u.id) &&
-    mdCoveredProviderIds.has(u.id)
-  );
-
   const serviceFiltered = useMemo(() => {
     const activeSub = (sub) => String(sub.status || "").toLowerCase() === "active";
 
+    let list = providers;
+
+    if (stateFilter !== "all") {
+      list = list.filter((p) => String(p.state || "").toUpperCase() === stateFilter);
+    }
+
     if (serviceFilter !== "all") {
-      return providers.filter((p) =>
+      list = list.filter((p) =>
         mdSubs.some((sub) => sub.provider_id === p.id && activeSub(sub) && sub.service_type_name === serviceFilter)
       );
     }
-    if (JOURNEY_CATEGORY_SLUGS.has(journeyCategory)) {
-      return providers.filter((p) =>
+
+    if (JOURNEY_CATEGORY_SLUGS.has(journeyCategory) && serviceFilter === "all") {
+      list = list.filter((p) =>
         mdSubs.some((sub) => {
           if (sub.provider_id !== p.id || !activeSub(sub)) return false;
           const st = serviceTypeForMdSub(sub, serviceTypes);
@@ -105,44 +147,52 @@ export default function PatientMarketplace() {
         })
       );
     }
-    return providers;
-  }, [providers, mdSubs, serviceFilter, serviceTypes, journeyCategory]);
 
-  const filtered = serviceFiltered.filter(p =>
-    !search || p.full_name?.toLowerCase().includes(search.toLowerCase()) ||
+    return list;
+  }, [providers, mdSubs, serviceFilter, serviceTypes, journeyCategory, stateFilter]);
+
+  const filtered = serviceFiltered.filter((p) =>
+    !search ||
+    displayName(p).toLowerCase().includes(search.toLowerCase()) ||
+    p.full_name?.toLowerCase().includes(search.toLowerCase()) ||
     p.specialty?.toLowerCase().includes(search.toLowerCase()) ||
     p.city?.toLowerCase().includes(search.toLowerCase())
   );
 
-  const servicesFor = (providerId) => {
-    return mdSubs
-      .filter(sub => sub.provider_id === providerId)
-      .map(sub => sub.service_type_name);
-  };
+  const availableServiceNames = useMemo(
+    () => [...new Set(mdSubs.map((s) => s.service_type_name).filter(Boolean))].sort(),
+    [mdSubs]
+  );
 
-  const certsFor = (id) => certs.filter(c => c.provider_id === id);
-  const avgRating = (id) => {
-    const r = reviews.filter(rv => rv.provider_id === id);
-    if (!r.length) return null;
-    return (r.reduce((s, rv) => s + rv.rating, 0) / r.length).toFixed(1);
-  };
+  const availableStates = useMemo(() => {
+    const fromProviders = providers.map((p) => String(p.state || "").toUpperCase()).filter(Boolean);
+    return [...new Set(fromProviders)].sort();
+  }, [providers]);
 
-  const [bookingError, setBookingError] = useState("");
-  const [bookingLoading, setBookingLoading] = useState(false);
+  const servicesFor = (providerId) =>
+    mdSubs.filter((sub) => sub.provider_id === providerId).map((sub) => sub.service_type_name);
+
+  const certsFor = (id) => certs.filter((c) => c.provider_id === id);
+  const ratingFor = (id) => providerReviewAverage(reviews, id, { verifiedOnly: true });
+
+  useEffect(() => {
+    if (!deepLinkProviderId || !providers.length) return;
+    const match = providers.find((p) => String(p.id) === deepLinkProviderId);
+    if (match) setSelectedProvider(match);
+  }, [deepLinkProviderId, providers]);
 
   const handleAIMatch = async () => {
     setAiMatching(true);
     try {
       const me = await base44.auth.me();
       const journey = await base44.entities.PatientJourney.filter({ patient_id: me.id });
-      
       const concerns = journey[0]?.skin_concerns || [];
       const goals = journey[0]?.treatment_goals || [];
-      
+
       const prompt = `I'm looking for aesthetic treatment providers. My skin concerns: ${concerns.join(", ")}. My goals: ${goals.join(", ")}. 
       
 Available services and their typical uses:
-${serviceTypes.map(st => `- ${st.name}: ${st.description || "aesthetic treatment"}`).join("\n")}
+${serviceTypes.map((st) => `- ${st.name}: ${st.description || "aesthetic treatment"}`).join("\n")}
 
 Based on my concerns and goals, which service types would be most relevant? Return a JSON array of service names in priority order.`;
 
@@ -151,13 +201,10 @@ Based on my concerns and goals, which service types would be most relevant? Retu
         response_json_schema: {
           type: "object",
           properties: {
-            recommended_services: {
-              type: "array",
-              items: { type: "string" }
-            },
-            reasoning: { type: "string" }
-          }
-        }
+            recommended_services: { type: "array", items: { type: "string" } },
+            reasoning: { type: "string" },
+          },
+        },
       });
 
       setAiMatchDialog(res.recommended_services?.[0] || serviceTypes[0]?.name || "all");
@@ -168,75 +215,158 @@ Based on my concerns and goals, which service types would be most relevant? Retu
     }
   };
 
-  const handleBook = async () => {
+  const openBookDialog = (provider) => {
+    setBookDialog(provider);
+    setBookForm({
+      service: "",
+      appointment_date: "",
+      appointment_time: "",
+      patient_notes: "",
+      referral_code: "",
+    });
+    setBooked(false);
     setBookingError("");
-    setBookingLoading(true);
-    
-    try {
-      // Validate provider scope eligibility before booking
-      try {
-        const validation = await base44.functions.invoke("validateBookingScope", {
-          provider_id: bookDialog.id,
-          service: bookForm.service,
-        });
-        if (!validation.data?.eligible) {
-          setBookingError(validation.data?.reason || "This provider is not currently eligible to perform this service.");
-          setBookingLoading(false);
-          return;
-        }
-      } catch (fnError) {
-        console.warn('Scope validation skipped:', fnError);
+  };
+
+  const bookMutation = useMutation({
+    mutationFn: async () => {
+      const activeProvider = bookDialog ?? selectedProvider;
+      if (!me?.id) throw new Error("Please sign in to book an appointment.");
+      if (!activeProvider?.id) throw new Error("No provider selected.");
+
+      const enteredReferral = bookForm.referral_code?.trim() || "";
+      if (
+        enteredReferral &&
+        activeProvider.referral_program_active &&
+        activeProvider.referral_code &&
+        !referralCodeMatchesProvider(enteredReferral, activeProvider.referral_code)
+      ) {
+        const code = String(activeProvider.referral_code || "").trim();
+        const disc = activeProvider.referral_discount ? ` (${activeProvider.referral_discount})` : "";
+        const err = new Error(`Enter proper referral code: ${code}${disc}.`);
+        err.isEligibilityError = true;
+        throw err;
       }
 
-      const me = await base44.auth.me();
-      await base44.entities.Appointment.create({
+      const validation = await base44.functions.invoke("validateBookingScope", {
+        provider_id: activeProvider.id,
+        service: bookForm.service,
+        referral_code: enteredReferral || undefined,
+      });
+      if (!validation.data?.eligible) {
+        const reason = validation.data?.reason || "This provider is not currently eligible to perform this service.";
+        const err = new Error(reason);
+        err.isEligibilityError = true;
+        throw err;
+      }
+
+      return base44.entities.Appointment.create({
         patient_id: me.id,
         patient_email: me.email,
         patient_name: me.full_name,
-        provider_id: bookDialog.id,
-        provider_email: bookDialog.email,
-        provider_name: bookDialog.full_name,
+        provider_id: activeProvider.id,
+        provider_email: activeProvider.email,
+        provider_name: activeProvider.full_name,
         service: bookForm.service,
         appointment_date: bookForm.appointment_date,
         appointment_time: bookForm.appointment_time || "09:00",
         patient_notes: bookForm.patient_notes,
+        referral_code: validation.data?.referral_code || undefined,
         status: "requested",
       });
-
-      // Notify provider
-      await base44.entities.Notification.create({
-        user_id: bookDialog.id,
-        user_email: bookDialog.email,
-        type: 'appointment_request',
-        message: `New appointment request from ${me.full_name} for ${bookForm.service}`,
-        link_page: 'ProviderAppointments'
-      });
-
+    },
+    onSuccess: (appointment) => {
+      const activeProvider = bookDialog ?? selectedProvider;
+      if (appointment?.id) {
+        qc.setQueryData(["patient-appointments"], (old) => {
+          const list = Array.isArray(old) ? old : [];
+          return [appointment, ...list];
+        });
+      }
+      if (activeProvider?.id) {
+        void base44.entities.Notification.create({
+          user_id: activeProvider.id,
+          user_email: activeProvider.email,
+          type: "appointment_request",
+          message: `New appointment request from ${me?.full_name || "A patient"} for ${bookForm.service}`,
+          link_page: "ProviderPractice?tab=appointments",
+        }).catch(() => {});
+      }
+      broadcastAppointmentsRefresh();
+      void qc.refetchQueries({ queryKey: ["patient-appointments"] });
+      void qc.invalidateQueries({ queryKey: ["my-notifications"] });
       setBooked(true);
-    } catch (error) {
-      setBookingError(error.message || "Failed to create appointment");
-    } finally {
-      setBookingLoading(false);
-    }
+      setBookingError("");
+    },
+    onError: (error) => {
+      let message = error.message || "Failed to create appointment";
+      try {
+        const parsed = JSON.parse(message.replace(/^\[lovable-provider\] \d+ /, ""));
+        message = parsed.reason || parsed.error || message;
+      } catch {
+        // keep original message
+      }
+      setBookingError(message);
+    },
+  });
+
+  const handleBook = () => {
+    setBookingError("");
+    bookMutation.mutate();
+  };
+
+  const bookingLoading = bookMutation.isPending;
+
+  const ProviderAvatar = ({ provider, size = "w-12 h-12" }) => {
+    const logo = provider.brand_logo_url || provider.avatar_url;
+    const label = displayName(provider);
+    return (
+      <Avatar className={size}>
+        {logo ? <AvatarImage src={logo} alt={label} /> : null}
+        <AvatarFallback
+          style={{ background: "linear-gradient(135deg, #7B8EC8, #2D6B7F)", color: "#fff" }}
+          className="font-bold text-lg"
+        >
+          {label[0] || "P"}
+        </AvatarFallback>
+      </Avatar>
+    );
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex-1">
-          <h2 className="text-2xl font-bold text-slate-900">Find Providers</h2>
-          <p className="text-slate-500 text-sm mt-1">Book appointments with certified aesthetic providers</p>
+    <div className="space-y-6" style={{ fontFamily: "'DM Sans', sans-serif" }}>
+      <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
+        <div>
+          <h1 className="text-2xl leading-tight" style={{ fontFamily: "'DM Serif Display', serif", color: "#2a3050" }}>
+            Find a Provider
+          </h1>
+          <p className="text-sm mt-1" style={{ color: "rgba(42,48,80,0.55)" }}>
+            Browse Novi-verified providers with active medical director coverage.
+          </p>
         </div>
-        <Button onClick={handleAIMatch} disabled={aiMatching} variant="outline" className="flex items-center gap-2 whitespace-nowrap">
-          <Sparkles className="w-4 h-4" />
-          {aiMatching ? "Matching..." : "AI Match"}
+        <Button
+          type="button"
+          onClick={handleAIMatch}
+          disabled={aiMatching}
+          variant="outline"
+          className="rounded-xl font-semibold shrink-0"
+          style={{ borderColor: "rgba(123,142,200,0.35)", color: "#4a5fa8", background: "rgba(255,255,255,0.85)" }}
+        >
+          <Sparkles className="w-4 h-4 mr-2" />
+          {aiMatching ? "Matching…" : "AI Match"}
         </Button>
       </div>
 
-      <div className="grid md:grid-cols-2 gap-3">
-        <div className="relative">
+      <div className="rounded-2xl p-4" style={surfaceCard}>
+      <div className="grid sm:grid-cols-3 gap-3">
+        <div className="relative md:col-span-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-          <Input className="pl-9" placeholder="Search by name, specialty, or city..." value={search} onChange={e => setSearch(e.target.value)} />
+          <Input
+            className="pl-9"
+            placeholder="Search by name, specialty, or city..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
         </div>
         <div className="relative">
           <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -246,16 +376,34 @@ Based on my concerns and goals, which service types would be most relevant? Retu
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Services</SelectItem>
-              {[...new Set(mdSubs.map(s => s.service_type_name))].sort().map(service => (
+              {availableServiceNames.map((service) => (
                 <SelectItem key={service} value={service}>{service}</SelectItem>
               ))}
             </SelectContent>
           </Select>
         </div>
+        <div className="relative">
+          <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+          <Select value={stateFilter} onValueChange={setStateFilter}>
+            <SelectTrigger className="pl-9">
+              <SelectValue placeholder="Filter by state" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All States</SelectItem>
+              {(availableStates.length ? availableStates : US_STATES).map((st) => (
+                <SelectItem key={st} value={st}>{st}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
       </div>
 
       {JOURNEY_CATEGORY_SLUGS.has(journeyCategory) && serviceFilter === "all" && (
-        <div className="flex flex-wrap items-center gap-2 px-4 py-3 rounded-xl bg-indigo-50 border border-indigo-100 text-sm text-indigo-900">
+        <div
+          className="flex flex-wrap items-center gap-2 px-4 py-3 rounded-2xl text-sm"
+          style={{ background: "rgba(123,142,200,0.08)", border: "1px solid rgba(123,142,200,0.2)", color: "#243257" }}
+        >
           <Tag className="w-4 h-4 flex-shrink-0" />
           <span>
             Showing providers with active coverage in the <strong className="font-semibold">{journeyCategory}</strong> category (from your NOVI scan).
@@ -264,7 +412,8 @@ Based on my concerns and goals, which service types would be most relevant? Retu
             type="button"
             variant="ghost"
             size="sm"
-            className="text-indigo-700 font-semibold h-8"
+            className="font-semibold h-8"
+            style={{ color: "#4a5fa8" }}
             onClick={() => {
               setSearchParams((prev) => {
                 const next = new URLSearchParams(prev);
@@ -279,385 +428,729 @@ Based on my concerns and goals, which service types would be most relevant? Retu
       )}
 
       {aiMatchDialog && (
-        <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-gradient-to-r from-purple-50 to-pink-50 border border-purple-200">
-          <Sparkles className="w-4 h-4 text-purple-600 flex-shrink-0" />
-          <p className="text-sm text-purple-900 flex-1">
-            <strong>AI Recommendation:</strong> Based on your journey, we suggest starting with <strong>{aiMatchDialog}</strong> providers
+        <div
+          className="flex flex-wrap items-center gap-2 px-4 py-3 rounded-2xl text-sm"
+          style={{ background: "rgba(200,230,60,0.18)", color: "#3D5600", border: "1px solid rgba(90,122,32,0.25)" }}
+        >
+          <Sparkles className="w-4 h-4 flex-shrink-0" style={{ color: "#5a7a20" }} />
+          <p className="flex-1">
+            Based on your journey, we suggest providers offering <strong>{aiMatchDialog}</strong>.
           </p>
-          <Button size="sm" onClick={() => setServiceFilter(aiMatchDialog)} className="bg-purple-600 text-white hover:bg-purple-700">
-            Apply Filter
-          </Button>
+          <button
+            type="button"
+            onClick={() => setServiceFilter(aiMatchDialog)}
+            className="text-xs px-3 py-1.5 rounded-full font-semibold"
+            style={{ background: "rgba(200,230,60,0.35)", color: "#3D5600", border: "1px solid rgba(90,122,32,0.25)" }}
+          >
+            Apply filter
+          </button>
         </div>
       )}
 
-      <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {filtered.map(p => {
-          const rating = avgRating(p.id);
-          const providerCerts = certsFor(p.id);
-          return (
-            <Card key={p.id} className="hover:shadow-lg transition-shadow">
-              <CardContent className="pt-5 space-y-3">
-                <div className="flex items-start gap-3">
-                  <Avatar className="w-12 h-12">
-                    <AvatarFallback style={{ background: "var(--novi-gold)", color: "#1A1A2E" }} className="font-bold text-lg">
-                      {p.full_name?.[0] || "P"}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div>
-                    <p className="font-semibold text-slate-900">{p.full_name}</p>
-                    {p.specialty && <p className="text-xs text-slate-500">{p.specialty}</p>}
-                    <div className="flex items-center gap-2 mt-1">
-                      {p.city && <span className="text-xs text-slate-400 flex items-center gap-1"><MapPin className="w-3 h-3" />{p.city}{p.state ? `, ${p.state}` : ""}</span>}
-                      {rating && <span className="text-xs flex items-center gap-1 text-amber-600"><Star className="w-3 h-3 fill-amber-400" />{rating}</span>}
-                    </div>
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  {servicesFor(p.id).length > 0 && (
-                    <div className="flex gap-1 flex-wrap">
-                      {servicesFor(p.id).slice(0, 3).map(service => (
-                        <Badge key={service} className="text-xs bg-green-50 text-green-700 border-green-200">
-                          {service}
-                        </Badge>
-                      ))}
-                      {servicesFor(p.id).length > 3 && <Badge variant="outline" className="text-xs">+{servicesFor(p.id).length - 3} more</Badge>}
-                    </div>
-                  )}
-                  {providerCerts.length > 0 && (
-                    <div className="flex gap-1 flex-wrap">
-                      {providerCerts.slice(0, 2).map(c => (
-                        <Badge key={c.id} className="text-xs bg-amber-50 text-amber-700 border-amber-200 flex items-center gap-1">
-                          <Award className="w-3 h-3" />{c.certification_name}
-                        </Badge>
-                      ))}
-                      {providerCerts.length > 2 && <Badge variant="outline" className="text-xs">+{providerCerts.length - 2}</Badge>}
-                    </div>
-                  )}
-                </div>
-                {p.bio && <p className="text-xs text-slate-500 line-clamp-2">{p.bio}</p>}
-                
-                <div className="flex items-center gap-2 text-xs text-slate-600">
-                  {p.consultation_fee && (
-                    <span className="flex items-center gap-1">
-                      <DollarSign className="w-3 h-3" />${p.consultation_fee} consult
-                    </span>
-                  )}
-                  {p.booking_deposit && (
-                    <span className="flex items-center gap-1 text-purple-600">
-                      ${p.booking_deposit} deposit
-                    </span>
-                  )}
-                </div>
+      {!catalogLoading && filtered.length > 0 && (
+        <p className="text-xs px-1" style={{ color: "#94a3b8" }}>
+          {filtered.length} provider{filtered.length !== 1 ? "s" : ""} with active MD coverage
+        </p>
+      )}
 
-                <div className="flex gap-2">
-                  <Button className="flex-1" style={{ background: "#FA6F30", color: "#fff" }}
-                    onClick={() => setSelectedProvider(p)}>
-                    <Info className="w-3.5 h-3.5 mr-2" /> View Profile
-                  </Button>
-                  <Button variant="outline" size="icon" onClick={() => setMsgDialog(p)} title="Message provider">
-                    <MessageSquare className="w-4 h-4" />
-                  </Button>
+      {catalogLoading ? (
+        <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-5">
+          {[...Array(6)].map((_, i) => (
+            <div key={i} className="rounded-2xl p-5 animate-pulse space-y-4" style={surfaceCard}>
+              <div className="flex gap-3">
+                <div className="w-12 h-12 rounded-full bg-slate-100" />
+                <div className="flex-1 space-y-2 pt-1">
+                  <div className="h-4 bg-slate-100 rounded-md w-3/4" />
+                  <div className="h-3 bg-slate-100 rounded-md w-1/2" />
                 </div>
-              </CardContent>
-            </Card>
-          );
-        })}
-        {filtered.length === 0 && (
-          <div className="col-span-3 text-center py-16 text-slate-400">No providers found</div>
-        )}
-      </div>
+              </div>
+              <div className="flex gap-2">
+                <div className="h-6 bg-slate-100 rounded-full w-20" />
+                <div className="h-6 bg-slate-100 rounded-full w-16" />
+              </div>
+              <div className="h-10 bg-slate-100 rounded-xl" />
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-5">
+          {filtered.map((p) => (
+            <MarketplaceProviderCard
+              key={p.id}
+              provider={p}
+              services={servicesFor(p.id)}
+              certs={certsFor(p.id)}
+              specialties={specialtyLabels(p, serviceTypes)}
+              rating={ratingFor(p.id).average}
+              reviewCount={ratingFor(p.id).count}
+              onBook={() => openBookDialog(p)}
+              onProfile={() => setSelectedProvider(p)}
+              onMessage={() => setMsgDialog(p)}
+            />
+          ))}
+          {filtered.length === 0 && (
+            <div className="col-span-full text-center py-16 rounded-2xl" style={surfaceCard}>
+              <Search className="w-10 h-10 mx-auto mb-3" style={{ color: "rgba(123,142,200,0.45)" }} />
+              <p className="font-semibold text-slate-800">No providers found</p>
+              <p className="text-sm mt-1" style={{ color: "rgba(42,48,80,0.5)" }}>
+                Try adjusting your filters or search term.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
 
-      {/* Provider Profile Dialog */}
       <Dialog open={!!selectedProvider} onOpenChange={() => setSelectedProvider(null)}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader><DialogTitle>{selectedProvider?.full_name}</DialogTitle></DialogHeader>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto p-0 gap-0">
           {selectedProvider && (
-            <Tabs defaultValue="about">
-              <TabsList className="grid w-full grid-cols-2">
-                <TabsTrigger value="about">About</TabsTrigger>
-                <TabsTrigger value="book">Book Appointment</TabsTrigger>
-              </TabsList>
+            <Tabs defaultValue="about" className="w-full">
+              <div className="sticky top-0 z-10 bg-white border-b px-6 pt-6 pb-0">
+                <DialogHeader className="text-left pb-4">
+                  <DialogTitle className="sr-only">{displayName(selectedProvider)}</DialogTitle>
+                </DialogHeader>
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="about">Profile</TabsTrigger>
+                  <TabsTrigger value="book">Book Appointment</TabsTrigger>
+                </TabsList>
+              </div>
 
-              <TabsContent value="about" className="space-y-4">
-                <div className="flex items-start gap-4">
-                  <Avatar className="w-16 h-16">
-                    <AvatarFallback style={{ background: "var(--novi-gold)", color: "#1A1A2E" }} className="font-bold text-2xl">
-                      {selectedProvider.full_name?.[0] || "P"}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="flex-1">
-                    <h3 className="font-semibold text-lg">{selectedProvider.full_name}</h3>
-                    {selectedProvider.specialty && <p className="text-sm text-slate-500">{selectedProvider.specialty}</p>}
-                    {selectedProvider.practice_name && <p className="text-sm text-slate-600 mt-1">{selectedProvider.practice_name}</p>}
-                    <div className="flex items-center gap-2 mt-2">
-                      {selectedProvider.city && (
-                        <span className="text-sm text-slate-400 flex items-center gap-1">
-                          <MapPin className="w-3.5 h-3.5" />
-                          {selectedProvider.city}{selectedProvider.state ? `, ${selectedProvider.state}` : ""}
-                        </span>
-                      )}
-                      {avgRating(selectedProvider.id) && (
-                        <span className="text-sm flex items-center gap-1 text-amber-600">
-                          <Star className="w-3.5 h-3.5 fill-amber-400" />
-                          {avgRating(selectedProvider.id)} ({reviews.filter(r => r.provider_id === selectedProvider.id).length} reviews)
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {selectedProvider.bio && (
-                  <div>
-                    <h4 className="font-semibold text-sm mb-2">About</h4>
-                    <p className="text-sm text-slate-600">{selectedProvider.bio}</p>
-                  </div>
-                )}
-
-                {selectedProvider.years_experience && (
-                  <div>
-                    <h4 className="font-semibold text-sm mb-2">Experience</h4>
-                    <p className="text-sm text-slate-600">{selectedProvider.years_experience} years in aesthetic medicine</p>
-                  </div>
-                )}
-
-                {servicesFor(selectedProvider.id).length > 0 && (
-                  <div>
-                    <h4 className="font-semibold text-sm mb-2">Services Offered</h4>
-                    <div className="flex gap-2 flex-wrap">
-                      {servicesFor(selectedProvider.id).map(service => (
-                        <Badge key={service} className="bg-green-50 text-green-700 border-green-200">
-                          {service}
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {certsFor(selectedProvider.id).length > 0 && (
-                  <div>
-                    <h4 className="font-semibold text-sm mb-2">Certifications</h4>
-                    <div className="flex gap-2 flex-wrap">
-                      {certsFor(selectedProvider.id).map(c => (
-                        <Badge key={c.id} className="bg-amber-50 text-amber-700 border-amber-200">
-                          {c.certification_name}
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                <div className="grid grid-cols-2 gap-4 pt-4 border-t">
-                  {selectedProvider.consultation_fee && (
-                    <div>
-                      <p className="text-xs text-slate-500 mb-1">Consultation Fee</p>
-                      <p className="text-lg font-semibold text-slate-900">${selectedProvider.consultation_fee}</p>
-                    </div>
-                  )}
-                  {selectedProvider.booking_deposit && (
-                    <div>
-                      <p className="text-xs text-slate-500 mb-1">Booking Deposit</p>
-                      <p className="text-lg font-semibold text-purple-600">${selectedProvider.booking_deposit}</p>
-                    </div>
-                  )}
-                </div>
-
-                {(selectedProvider.deposit_percent || selectedProvider.cancellation_hours) && (
-                  <div className="bg-slate-50 p-3 rounded-xl text-xs text-slate-600 space-y-1">
-                    <h4 className="font-semibold text-sm text-slate-800 mb-1">Booking Policy</h4>
-                    {selectedProvider.deposit_percent && <p>💳 {selectedProvider.deposit_percent}% deposit required at booking</p>}
-                    {selectedProvider.cancellation_hours && <p>⏰ Cancel {selectedProvider.cancellation_hours}+ hours in advance</p>}
-                  </div>
-                )}
-
-                {(selectedProvider.practice_packages || []).filter(p => p.is_active).length > 0 && (
-                  <div>
-                    <h4 className="font-semibold text-sm mb-2">Packages & Deals</h4>
-                    <div className="space-y-2">
-                      {selectedProvider.practice_packages.filter(p => p.is_active).map((pkg, i) => {
-                        const icons = { bundle: Package, reward: Gift, promo: Tag };
-                        const PIcon = icons[pkg.type] || Package;
-                        return (
-                          <div key={i} className="flex items-start gap-3 p-3 rounded-xl" style={{ background: "rgba(200,230,60,0.07)", border: "1px solid rgba(200,230,60,0.25)" }}>
-                            <PIcon className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: "#4a6b10" }} />
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <p className="text-sm font-bold text-slate-900">{pkg.title}</p>
-                                {pkg.price && <span className="text-xs font-bold" style={{ color: "#FA6F30" }}>${pkg.price}</span>}
-                                {pkg.original_price && <span className="text-xs line-through text-slate-400">${pkg.original_price}</span>}
-                                {pkg.sessions && <span className="text-xs text-slate-500">{pkg.sessions} sessions</span>}
-                              </div>
-                              {pkg.description && <p className="text-xs text-slate-500 mt-0.5">{pkg.description}</p>}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-
-                <Button
-                  className="w-full"
-                  style={{ background: "#FA6F30", color: "#fff" }}
-                  onClick={() => {
-                    setBookDialog(selectedProvider);
-                    setBookForm({ service: "", appointment_date: "", appointment_time: "", patient_notes: "" });
-                    setBooked(false);
+              <TabsContent value="about" className="mt-0 px-6 py-5">
+                <ProviderProfilePanel
+                  provider={selectedProvider}
+                  mdServices={servicesFor(selectedProvider.id)}
+                  certs={certsFor(selectedProvider.id)}
+                  rating={ratingFor(selectedProvider.id).average}
+                  reviewCount={ratingFor(selectedProvider.id).count}
+                  serviceTypes={serviceTypes}
+                  onBook={() => {
+                    openBookDialog(selectedProvider);
                     setSelectedProvider(null);
                   }}
-                >
-                  <Calendar className="w-4 h-4 mr-2" />
-                  Book Appointment
-                </Button>
+                />
               </TabsContent>
 
-              <TabsContent value="book" className="space-y-4">
-                <div className="space-y-4">
-                  <div>
-                    <Label>Service *</Label>
-                    <Select value={bookForm.service} onValueChange={v => setBookForm({ ...bookForm, service: v })}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select a service" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {servicesFor(selectedProvider.id).map(service => (
-                          <SelectItem key={service} value={service}>{service}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <Label>Date *</Label>
-                      <Input type="date" value={bookForm.appointment_date} onChange={e => setBookForm({ ...bookForm, appointment_date: e.target.value })} />
-                    </div>
-                    <div>
-                      <Label>Time</Label>
-                      <Input type="time" value={bookForm.appointment_time} onChange={e => setBookForm({ ...bookForm, appointment_time: e.target.value })} />
-                    </div>
-                  </div>
-                  <div>
-                    <Label>Notes</Label>
-                    <Input value={bookForm.patient_notes} onChange={e => setBookForm({ ...bookForm, patient_notes: e.target.value })} placeholder="Any special requests or info..." />
-                  </div>
-                  {bookingError && (
-                    <div className="rounded-xl overflow-hidden border border-red-200">
-                      <div className="px-4 py-3 bg-red-50 flex items-start gap-2">
-                        <span className="text-base flex-shrink-0 mt-0.5">⚠️</span>
-                        <div>
-                          <p className="text-sm font-semibold text-red-700">Provider Not Currently Eligible</p>
-                          <p className="text-xs text-red-600 mt-0.5">{bookingError}</p>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                  <div className="bg-purple-50 p-3 rounded-xl border border-purple-200">
-                    <p className="text-xs font-semibold text-purple-700 mb-1">Payment Required</p>
-                    <p className="text-xs text-purple-600">
-                      A ${selectedProvider.booking_deposit || 50} deposit will be required after request confirmation.
-                    </p>
-                  </div>
-                  <div className="flex gap-2 justify-end">
-                    <Button variant="outline" onClick={() => setSelectedProvider(null)}>Cancel</Button>
-                    <Button style={{ background: "#FA6F30", color: "#fff" }} onClick={handleBook} disabled={!bookForm.service || !bookForm.appointment_date || bookingLoading}>
-                      {bookingLoading ? "Checking eligibility…" : "Request Appointment"}
-                    </Button>
-                  </div>
-                </div>
+              <TabsContent value="book" className="mt-0 px-6 py-5 space-y-4">
+                <BookingForm
+                  provider={selectedProvider}
+                  bookForm={bookForm}
+                  setBookForm={setBookForm}
+                  services={servicesFor(selectedProvider.id)}
+                  bookingError={bookingError}
+                  bookingLoading={bookingLoading}
+                  onCancel={() => setSelectedProvider(null)}
+                  onSubmit={handleBook}
+                />
               </TabsContent>
             </Tabs>
           )}
         </DialogContent>
       </Dialog>
 
-      {/* Quick Book Dialog */}
       <Dialog open={!!bookDialog} onOpenChange={() => setBookDialog(null)}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Book with {bookDialog?.full_name}</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>Book with {bookDialog ? displayName(bookDialog) : ""}</DialogTitle>
+          </DialogHeader>
           {booked ? (
             <div className="text-center py-6">
               <p className="text-green-600 font-semibold text-lg">Request Sent!</p>
               <p className="text-slate-500 text-sm mt-1">The provider will confirm your appointment soon.</p>
-              <Button className="mt-4" onClick={() => setBookDialog(null)} style={{ background: "#FA6F30", color: "#fff" }}>Done</Button>
+              <Button className="mt-4" onClick={() => setBookDialog(null)} style={{ background: "#FA6F30", color: "#fff" }}>
+                Done
+              </Button>
             </div>
-          ) : (
-            <div className="space-y-4">
-              <div>
-                <Label>Service *</Label>
-                <Select value={bookForm.service} onValueChange={v => setBookForm({ ...bookForm, service: v })}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select a service" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {bookDialog && servicesFor(bookDialog.id).map(service => (
-                      <SelectItem key={service} value={service}>{service}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label>Date *</Label>
-                  <Input type="date" value={bookForm.appointment_date} onChange={e => setBookForm({ ...bookForm, appointment_date: e.target.value })} />
-                </div>
-                <div>
-                  <Label>Time</Label>
-                  <Input type="time" value={bookForm.appointment_time} onChange={e => setBookForm({ ...bookForm, appointment_time: e.target.value })} />
-                </div>
-              </div>
-              <div>
-                <Label>Notes</Label>
-                <Input value={bookForm.patient_notes} onChange={e => setBookForm({ ...bookForm, patient_notes: e.target.value })} placeholder="Any special requests or info..." />
-              </div>
-              {bookingError && (
-                <div className="rounded-xl overflow-hidden border border-red-200">
-                  <div className="px-4 py-3 bg-red-50 flex items-start gap-2">
-                    <span className="text-base flex-shrink-0 mt-0.5">⚠️</span>
-                    <div>
-                      <p className="text-sm font-semibold text-red-700">Provider Not Currently Eligible</p>
-                      <p className="text-xs text-red-600 mt-0.5">{bookingError}</p>
-                    </div>
-                  </div>
-                  <div className="px-4 py-3 bg-orange-50 border-t border-orange-100">
-                    <p className="text-xs font-semibold text-orange-700 mb-1.5">What you can do:</p>
-                    <ul className="space-y-1">
-                      {[
-                        "Try a different service this provider offers",
-                        "Search for another provider certified for this treatment",
-                        "Contact the provider directly to discuss your options",
-                      ].map(tip => (
-                        <li key={tip} className="flex items-start gap-1.5 text-xs text-orange-600">
-                          <span className="flex-shrink-0 mt-0.5">›</span>{tip}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                </div>
-              )}
-              <div className="flex gap-2 justify-end">
-                <Button variant="outline" onClick={() => setBookDialog(null)}>Cancel</Button>
-                <Button style={{ background: "#FA6F30", color: "#fff" }} onClick={handleBook} disabled={!bookForm.service || !bookForm.appointment_date || bookingLoading}>
-                  {bookingLoading ? "Checking eligibility…" : "Request Appointment"}
-                </Button>
-              </div>
-            </div>
-          )}
+          ) : bookDialog ? (
+            <BookingForm
+              provider={bookDialog}
+              bookForm={bookForm}
+              setBookForm={setBookForm}
+              services={servicesFor(bookDialog.id)}
+              bookingError={bookingError}
+              bookingLoading={bookingLoading}
+              onCancel={() => setBookDialog(null)}
+              onSubmit={handleBook}
+            />
+          ) : null}
         </DialogContent>
       </Dialog>
 
-      {/* Pre-booking Message Dialog */}
       <Dialog open={!!msgDialog} onOpenChange={() => setMsgDialog(null)}>
         <DialogContent className="max-w-2xl">
-          <DialogHeader><DialogTitle>Message {msgDialog?.full_name}</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>Message {msgDialog ? displayName(msgDialog) : ""}</DialogTitle>
+          </DialogHeader>
           <p className="text-sm text-slate-500 mb-4">Ask questions before booking your appointment</p>
           {msgDialog && (
             <MessageThread
               appointmentId={`pre-${msgDialog.id}`}
               recipientId={msgDialog.id}
-              recipientName={msgDialog.full_name}
+              recipientName={displayName(msgDialog)}
             />
           )}
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+function ProfileSection({ title, icon: Icon = null, children, emptyText }) {
+  const hasContent = children != null && children !== false;
+  return (
+    <section>
+      <h4 className="text-xs font-bold uppercase tracking-wider mb-2.5 flex items-center gap-1.5" style={{ color: "rgba(30,37,53,0.45)" }}>
+        {Icon && <Icon className="w-3.5 h-3.5" />}
+        {title}
+      </h4>
+      {hasContent ? children : emptyText ? (
+        <p className="text-sm" style={{ color: "rgba(42,48,80,0.4)" }}>{emptyText}</p>
+      ) : null}
+    </section>
+  );
+}
+
+function ProviderProfilePanel({ provider, mdServices, certs, rating, reviewCount, serviceTypes, onBook }) {
+  const brandLogo = provider.brand_logo_url;
+  const avatarUrl = provider.avatar_url;
+  const specialties = specialtyLabels(provider, serviceTypes);
+  const packages = activePackages(provider);
+  const photoPairs = galleryPairsForPatientDisplay(provider.gallery_photos);
+  const showReferral = provider.referral_program_active && provider.referral_code;
+  const showGallery = photoPairs.length > 0;
+
+  return (
+    <div className="space-y-6">
+      <div
+        className="flex items-start gap-5 p-4 rounded-2xl"
+        style={{ background: "rgba(123,142,200,0.06)", border: "1px solid rgba(123,142,200,0.12)" }}
+      >
+        {avatarUrl ? (
+          <img
+            src={avatarUrl}
+            alt={displayName(provider)}
+            className="w-28 h-28 sm:w-32 sm:h-32 rounded-full object-cover flex-shrink-0 border-2 border-white shadow-md ring-1 ring-slate-200/80"
+          />
+        ) : brandLogo ? (
+          <img
+            src={brandLogo}
+            alt={displayName(provider)}
+            className="w-28 h-28 sm:w-32 sm:h-32 rounded-2xl object-contain bg-white border border-slate-100 p-2 flex-shrink-0 shadow-sm"
+          />
+        ) : (
+          <div
+            className="w-28 h-28 sm:w-32 sm:h-32 rounded-full flex items-center justify-center font-bold text-3xl text-white flex-shrink-0 shadow-md"
+            style={{ background: "linear-gradient(135deg, #7B8EC8, #2D6B7F)" }}
+          >
+            {displayName(provider)[0] || "P"}
+          </div>
+        )}
+        <div className="flex-1 min-w-0 flex flex-col gap-2.5">
+          <div className="space-y-1 min-w-0">
+            <h2 className="text-xl font-semibold text-slate-900 leading-tight tracking-tight">{displayName(provider)}</h2>
+            {provider.practice_name && provider.full_name && provider.practice_name !== provider.full_name && (
+              <p className="text-sm text-slate-600 leading-snug">{provider.full_name}</p>
+            )}
+            {provider.email && (
+              <p className="text-xs text-slate-500 truncate" title={provider.email}>{provider.email}</p>
+            )}
+          </div>
+          <div className="flex flex-col gap-2 text-sm text-slate-600">
+            {(provider.city || provider.state) && (
+              <span className="inline-flex items-center gap-1.5">
+                <MapPin className="w-3.5 h-3.5 shrink-0 text-slate-400" />
+                <span>
+                  {provider.city}
+                  {provider.city && provider.state ? ", " : ""}
+                  {provider.state || ""}
+                </span>
+              </span>
+            )}
+            {provider.consultation_fee != null && provider.consultation_fee !== "" && (
+              <p className="text-sm leading-relaxed">
+                <span className="text-slate-500">Consultation </span>
+                <strong className="text-slate-900 font-semibold">${provider.consultation_fee}</strong>
+                {provider.booking_deposit != null && provider.booking_deposit !== "" && (
+                  <span className="text-slate-500">
+                    {" "}
+                    · Deposit <strong style={{ color: "#7B8EC8" }}>${provider.booking_deposit}</strong>
+                  </span>
+                )}
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <ProfileSection title="About" emptyText={!provider.bio ? "No bio added yet." : null}>
+        {provider.bio && <p className="text-sm text-slate-600 leading-relaxed">{provider.bio}</p>}
+      </ProfileSection>
+
+      <ProfileSection title="Star rating" emptyText={rating ? null : "No patient reviews yet."}>
+        {rating && <StarRatingDisplay average={rating} reviewCount={reviewCount} size="md" />}
+      </ProfileSection>
+
+      <ProfileSection title="Specialties" emptyText={specialties.length ? null : "No specialties listed."}>
+        {specialties.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {specialties.map((label) => (
+              <Badge key={label} variant="outline" className="text-xs font-medium border" style={{ color: "#4a5fa8", borderColor: "rgba(123,142,200,0.35)", background: "rgba(123,142,200,0.08)" }}>
+                {label}
+              </Badge>
+            ))}
+          </div>
+        )}
+      </ProfileSection>
+
+      <ProfileSection title="MD-covered services" emptyText={mdServices.length ? null : "No active MD coverage listed."}>
+        {mdServices.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {mdServices.map((service) => (
+              <Badge key={service} variant="outline" className="bg-green-50 text-green-700 border-green-200 text-xs font-medium">
+                {service}
+              </Badge>
+            ))}
+          </div>
+        )}
+      </ProfileSection>
+
+      <ProfileSection title="Certifications" emptyText={certs.length ? null : "No certifications on file."}>
+        {certs.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {certs.map((c) => (
+              <Badge key={c.id} variant="outline" className="bg-amber-50 text-amber-800 border-amber-200 text-xs font-medium inline-flex items-center gap-1">
+                <Award className="w-3 h-3" />
+                {c.certification_name || c.cert_name}
+              </Badge>
+            ))}
+          </div>
+        )}
+      </ProfileSection>
+
+      {showGallery && (
+        <ProfileSection title="Before & after gallery" icon={ImageIcon}>
+          <BeforeAfterGallery pairs={photoPairs} variant="profile" />
+        </ProfileSection>
+      )}
+
+      {packages.length > 0 && (
+        <ProfileSection title="Packages & deals" icon={Package}>
+          <div className="space-y-2">
+            {packages.map((pkg, i) => {
+              const icons = { bundle: Package, reward: Gift, promo: Tag };
+              const PIcon = icons[pkg.type] || Package;
+              const typeLabel = pkg.type === "promo" ? "Promo" : pkg.type === "reward" ? "Reward" : "Bundle";
+              return (
+                <div
+                  key={i}
+                  className="flex items-start gap-3 p-3 rounded-xl"
+                  style={{ background: "rgba(200,230,60,0.07)", border: "1px solid rgba(200,230,60,0.25)" }}
+                >
+                  <PIcon className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: "#4a6b10" }} />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-sm font-bold text-slate-900">{pkg.title}</p>
+                      <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded" style={{ background: "rgba(123,142,200,0.12)", color: "#4a5fa8" }}>
+                        {typeLabel}
+                      </span>
+                      {pkg.price != null && pkg.price !== "" && (
+                        <span className="text-xs font-bold" style={{ color: "#FA6F30" }}>${pkg.price}</span>
+                      )}
+                      {pkg.original_price != null && pkg.original_price !== "" && (
+                        <span className="text-xs line-through text-slate-400">${pkg.original_price}</span>
+                      )}
+                      {pkg.sessions && <span className="text-xs text-slate-500">{pkg.sessions} sessions</span>}
+                    </div>
+                    {pkg.description && <p className="text-xs text-slate-500 mt-1 leading-relaxed">{pkg.description}</p>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </ProfileSection>
+      )}
+
+      {showReferral && (
+        <section className="p-4 rounded-2xl" style={{ background: "rgba(123,142,200,0.08)", border: "1px solid rgba(123,142,200,0.2)" }}>
+          <h4 className="font-semibold text-sm flex items-center gap-1.5 mb-2" style={{ color: "#2a3050" }}>
+            <Gift className="w-4 h-4" style={{ color: "#7B8EC8" }} />
+            Referral program
+          </h4>
+          <p className="text-sm text-slate-600">
+            Use code{" "}
+            <strong className="font-mono px-2 py-0.5 rounded bg-white border border-slate-200">{provider.referral_code}</strong>
+            {provider.referral_discount ? ` — ${provider.referral_discount}` : " when you book."}
+          </p>
+        </section>
+      )}
+
+      <Button className="w-full h-11 rounded-xl font-semibold" style={{ background: "#FA6F30", color: "#fff" }} onClick={onBook}>
+        <Calendar className="w-4 h-4 mr-2" />
+        Book appointment
+      </Button>
+    </div>
+  );
+}
+
+function CardBrandMark({ provider, className = "w-24 h-24 sm:w-28 sm:h-28" }) {
+  const label = displayName(provider);
+  const avatar = provider.avatar_url;
+  const brand = provider.brand_logo_url;
+
+  // Headshot first on marketplace: large circle so patients recognize the provider.
+  if (avatar) {
+    return (
+      <img
+        src={avatar}
+        alt={label}
+        className={`${className} rounded-full object-cover flex-shrink-0 border-2 border-white shadow-md ring-1 ring-slate-200/80`}
+      />
+    );
+  }
+  if (brand) {
+    return (
+      <img
+        src={brand}
+        alt={label}
+        className={`${className} rounded-2xl object-contain bg-white border border-slate-100 p-1.5 flex-shrink-0 shadow-sm`}
+      />
+    );
+  }
+  return (
+    <div
+      className={`${className} rounded-full flex items-center justify-center flex-shrink-0 font-bold text-2xl sm:text-3xl shadow-md`}
+      style={{ background: "linear-gradient(135deg, #7B8EC8, #2D6B7F)", color: "white" }}
+    >
+      {label[0] || "P"}
+    </div>
+  );
+}
+
+/** Small section heading — text only, no boxes */
+function CardSectionHeading({ children }) {
+  return (
+    <p className="text-sm font-semibold text-slate-900 mt-3 mb-1.5">{children}</p>
+  );
+}
+
+function StarRatingDisplay({ average, reviewCount, size = "sm" }) {
+  if (!average) return null;
+  const starClass = size === "md" ? "w-4 h-4" : "w-3.5 h-3.5";
+  const textClass = size === "md" ? "text-base" : "text-sm";
+  return (
+    <span className={`inline-flex items-center gap-1.5 font-semibold text-amber-700 ${textClass}`}>
+      <Star className={`${starClass} fill-amber-400 text-amber-400`} />
+      {average}
+      {reviewCount > 0 && (
+        <span className="font-normal text-slate-500">
+          ({reviewCount} review{reviewCount !== 1 ? "s" : ""})
+        </span>
+      )}
+    </span>
+  );
+}
+
+const mdServiceBadge = "text-[11px] font-medium px-2.5 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200";
+const certBadge = "text-[11px] font-medium px-2 py-0.5 rounded-full inline-flex items-center gap-1 bg-amber-50 text-amber-800 border border-amber-200";
+
+function MarketplaceProviderCard({
+  provider,
+  services,
+  certs,
+  specialties,
+  rating,
+  reviewCount,
+  onBook,
+  onProfile,
+  onMessage,
+}) {
+  const photoPairs = galleryPairsForPatientDisplay(provider.gallery_photos);
+  const packages = activePackages(provider);
+  const showReferral = provider.referral_program_active && provider.referral_code;
+  const showGallery = photoPairs.length > 0;
+
+  return (
+    <article
+      className="rounded-2xl p-5 flex flex-col h-full transition-shadow hover:shadow-md"
+      style={surfaceCard}
+    >
+      <div className="flex items-start gap-4">
+        <CardBrandMark provider={provider} />
+        <div className="flex-1 min-w-0 flex flex-col gap-2.5">
+          <div className="min-w-0 space-y-1">
+            <h3 className="font-semibold text-base text-slate-900 leading-tight tracking-tight truncate">
+              {displayName(provider)}
+            </h3>
+            {provider.practice_name && provider.full_name && provider.practice_name !== provider.full_name && (
+              <p className="text-sm text-slate-600 leading-snug truncate">{provider.full_name}</p>
+            )}
+            {provider.email && (
+              <p className="text-xs text-slate-500 leading-normal truncate" title={provider.email}>
+                {provider.email}
+              </p>
+            )}
+          </div>
+          {(provider.city || provider.state || (provider.consultation_fee != null && provider.consultation_fee !== "")) && (
+            <div className="flex flex-col gap-1.5 text-sm text-slate-600">
+              {(provider.city || provider.state) && (
+                <span className="inline-flex items-center gap-1.5 min-w-0">
+                  <MapPin className="w-3.5 h-3.5 shrink-0 text-slate-400" />
+                  <span className="truncate">
+                    {provider.city}
+                    {provider.city && provider.state ? ", " : ""}
+                    {provider.state || ""}
+                  </span>
+                </span>
+              )}
+              {provider.consultation_fee != null && provider.consultation_fee !== "" && (
+                <span className="inline-flex items-center gap-1.5">
+                  <DollarSign className="w-3.5 h-3.5 shrink-0 text-slate-400" />
+                  <span>
+                    <strong className="text-slate-900 font-semibold">${provider.consultation_fee}</strong>
+                    <span className="text-slate-500 font-normal"> consultation</span>
+                  </span>
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {provider.bio && (
+        <p className="text-sm text-slate-600 line-clamp-2 leading-relaxed mt-3">{provider.bio}</p>
+      )}
+
+      {rating && (
+        <div>
+          <CardSectionHeading>Star Rating:</CardSectionHeading>
+          <StarRatingDisplay average={rating} reviewCount={reviewCount} />
+        </div>
+      )}
+
+      {specialties.length > 0 && (
+        <div>
+          <CardSectionHeading>Specialties:</CardSectionHeading>
+          <div className="flex flex-wrap gap-1.5">
+            {specialties.slice(0, 4).map((name) => (
+              <span key={name} className="text-[11px] font-medium px-2.5 py-0.5 rounded-full border" style={servicePill}>
+                {name}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {services.length > 0 && (
+        <div>
+          <CardSectionHeading>MD-covered services:</CardSectionHeading>
+          <div className="flex flex-wrap gap-1.5">
+            {services.slice(0, 4).map((service) => (
+              <span key={service} className={mdServiceBadge}>
+                {service}
+              </span>
+            ))}
+            {services.length > 4 && (
+              <span className="text-[11px] px-2 py-0.5 rounded-full text-slate-500 bg-slate-50 border border-slate-100">
+                +{services.length - 4}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {certs.length > 0 && (
+        <div>
+          <CardSectionHeading>Certifications:</CardSectionHeading>
+          <div className="flex flex-wrap gap-1.5">
+            {certs.slice(0, 3).map((c) => (
+              <span key={c.id} className={certBadge}>
+                <Award className="w-3 h-3 shrink-0" />
+                {c.certification_name || c.cert_name}
+              </span>
+            ))}
+            {certs.length > 3 && (
+              <span className="text-[11px] text-slate-500">+{certs.length - 3} more</span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {showGallery && (
+        <div>
+          <CardSectionHeading>Before/After Gallery Photos:</CardSectionHeading>
+          <BeforeAfterGallery pairs={photoPairs} variant="card" maxSets={2} />
+        </div>
+      )}
+
+      {packages.length > 0 && (
+        <div>
+          <CardSectionHeading>Packages & deals:</CardSectionHeading>
+          <div className="space-y-1.5">
+            {packages.slice(0, 2).map((pkg, i) => (
+              <div
+                key={i}
+                className="flex items-center gap-2 text-xs px-2.5 py-1.5 rounded-lg"
+                style={{ background: "rgba(200,230,60,0.08)", border: "1px solid rgba(200,230,60,0.2)" }}
+              >
+                <Package className="w-3.5 h-3.5 shrink-0" style={{ color: "#4a6b10" }} />
+                <span className="font-semibold text-slate-800 truncate">{pkg.title}</span>
+                {pkg.price != null && pkg.price !== "" && (
+                  <span className="font-bold shrink-0" style={{ color: "#FA6F30" }}>${pkg.price}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {showReferral && (
+        <div className="mt-3 flex items-center gap-1.5 text-xs text-slate-600 px-2.5 py-2 rounded-lg" style={{ background: "rgba(123,142,200,0.08)", border: "1px solid rgba(123,142,200,0.15)" }}>
+          <Gift className="w-3.5 h-3.5 shrink-0" style={{ color: "#7B8EC8" }} />
+          <span>
+            Referral: <strong className="font-mono text-slate-800">{provider.referral_code}</strong>
+            {provider.referral_discount ? ` · ${provider.referral_discount}` : ""}
+          </span>
+        </div>
+      )}
+
+      <div className="flex-1 min-h-2" />
+
+      <div className="flex gap-2 mt-4 pt-3 border-t border-slate-100">
+        <Button
+          type="button"
+          className="flex-1 h-10 rounded-xl font-semibold text-sm"
+          style={{ background: "#FA6F30", color: "#fff" }}
+          onClick={onBook}
+        >
+          <Calendar className="w-4 h-4 mr-1.5" />
+          Book
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className="h-10 w-10 rounded-xl shrink-0"
+          style={{ borderColor: "rgba(123,142,200,0.25)", color: "#7B8EC8" }}
+          onClick={onProfile}
+          title="View profile"
+        >
+          <Info className="w-4 h-4" />
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className="h-10 w-10 rounded-xl shrink-0"
+          style={{ borderColor: "rgba(123,142,200,0.25)", color: "#7B8EC8" }}
+          onClick={onMessage}
+          title="Message"
+        >
+          <MessageSquare className="w-4 h-4" />
+        </Button>
+      </div>
+    </article>
+  );
+}
+
+function BookingForm({ provider, bookForm, setBookForm, services, bookingError, bookingLoading, onCancel, onSubmit }) {
+  const showReferral = provider?.referral_program_active && provider?.referral_code;
+  const enteredReferral = bookForm.referral_code?.trim() || "";
+  const referralMismatch =
+    showReferral &&
+    enteredReferral &&
+    !referralCodeMatchesProvider(enteredReferral, provider.referral_code);
+  const referralOk =
+    !showReferral ||
+    !enteredReferral ||
+    referralCodeMatchesProvider(enteredReferral, provider.referral_code);
+  const displayError = referralMismatch ? "" : bookingError;
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <Label>Service *</Label>
+        <Select value={bookForm.service} onValueChange={(v) => setBookForm({ ...bookForm, service: v })}>
+          <SelectTrigger>
+            <SelectValue placeholder="Select a service" />
+          </SelectTrigger>
+          <SelectContent>
+            {services.map((service) => (
+              <SelectItem key={service} value={service}>{service}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <Label>Date *</Label>
+          <Input
+            type="date"
+            value={bookForm.appointment_date}
+            onChange={(e) => setBookForm({ ...bookForm, appointment_date: e.target.value })}
+          />
+        </div>
+        <div>
+          <Label>Time</Label>
+          <Input
+            type="time"
+            value={bookForm.appointment_time}
+            onChange={(e) => setBookForm({ ...bookForm, appointment_time: e.target.value })}
+          />
+        </div>
+      </div>
+      <div>
+        <Label>Notes</Label>
+        <Input
+          value={bookForm.patient_notes}
+          onChange={(e) => setBookForm({ ...bookForm, patient_notes: e.target.value })}
+          placeholder="Any special requests or info..."
+        />
+      </div>
+      {showReferral && (
+        <div>
+          <Label>Referral code (optional)</Label>
+          <Input
+            value={bookForm.referral_code}
+            onChange={(e) => setBookForm({ ...bookForm, referral_code: e.target.value.toUpperCase() })}
+            placeholder={provider.referral_code}
+            className={referralMismatch ? "border-red-400 focus-visible:ring-red-200" : ""}
+            aria-invalid={referralMismatch}
+            aria-describedby={referralMismatch ? "referral-code-error" : undefined}
+          />
+          {referralMismatch ? (
+            <p id="referral-code-error" className="text-xs text-red-600 mt-1.5 font-medium">
+              Enter proper referral code:{" "}
+              <span className="font-mono font-semibold">{provider.referral_code}</span>
+              {provider.referral_discount ? ` (${provider.referral_discount})` : ""}.
+            </p>
+          ) : (
+            <p className="text-xs text-slate-500 mt-1">
+              Enter{" "}
+              <span className="font-mono font-semibold">{provider.referral_code}</span>
+              {provider.referral_discount ? ` (${provider.referral_discount})` : ""}.
+            </p>
+          )}
+        </div>
+      )}
+      {displayError && (
+        <div className="rounded-xl overflow-hidden border border-red-200">
+          <div className="px-4 py-3 bg-red-50 flex items-start gap-2">
+            <span className="text-base flex-shrink-0 mt-0.5">⚠️</span>
+            <div>
+              <p className="text-sm font-semibold text-red-700">Provider Not Currently Eligible</p>
+              <p className="text-xs text-red-600 mt-0.5">{displayError}</p>
+            </div>
+          </div>
+        </div>
+      )}
+      <div className="flex gap-2 justify-end">
+        <Button variant="outline" onClick={onCancel}>Cancel</Button>
+        <Button
+          style={{ background: "#FA6F30", color: "#fff" }}
+          onClick={onSubmit}
+          disabled={!bookForm.service || !bookForm.appointment_date || bookingLoading || !referralOk}
+        >
+          {bookingLoading ? "Checking eligibility…" : "Request Appointment"}
+        </Button>
+      </div>
     </div>
   );
 }

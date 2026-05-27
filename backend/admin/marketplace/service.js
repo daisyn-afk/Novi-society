@@ -25,6 +25,7 @@ function mapProviderRow(row) {
     full_name: row.full_name,
     role: row.role,
     specialty: metadataValue(metadata, "specialty"),
+    specialties: Array.isArray(metadata.specialties) ? metadata.specialties : [],
     bio: metadataValue(metadata, "bio"),
     phone: metadataValue(metadata, "phone"),
     avatar_url: metadataValue(metadata, "avatar_url"),
@@ -65,7 +66,7 @@ export async function listMarketplaceProviders() {
          on l.provider_id = u.auth_user_id
         and l.status = 'verified'
        inner join public.md_subscription ms
-         on ms.provider_id = u.auth_user_id
+         on ms.provider_id = u.auth_user_id::text
         and lower(ms.status) = 'active'
       where u.role = 'provider'
         and coalesce(u.is_active, true) = true

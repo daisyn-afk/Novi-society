@@ -501,27 +501,16 @@ export function createLovableProviderClient() {
         return {
           list: () => authRequest("/admin/certifications", { method: "GET" }),
           filter: async (filters = {}) => {
-            const all = await authRequest("/admin/certifications", { method: "GET" });
+            const params = new URLSearchParams();
             const providerId = filters?.provider_id ? String(filters.provider_id) : "";
-            const providerEmail = filters?.provider_email ? String(filters.provider_email).toLowerCase() : "";
-            const status = filters?.status ? String(filters.status).toLowerCase() : "";
-            return (all || []).filter((row) => {
-              if (providerId || providerEmail) {
-                const rowProviderId = String(row?.provider_id || "");
-                const rowProviderEmail = String(row?.provider_email || "").toLowerCase();
-                const idMatch = providerId && rowProviderId === providerId;
-                const emailMatch = providerEmail && rowProviderEmail === providerEmail;
-                if (providerId && providerEmail) {
-                  if (!idMatch && !emailMatch) return false;
-                } else if (providerId && !idMatch) {
-                  return false;
-                } else if (providerEmail && !emailMatch) {
-                  return false;
-                }
-              }
-              if (status && String(row?.status || "").toLowerCase() !== status) return false;
-              return true;
-            });
+            const providerEmail = filters?.provider_email ? String(filters.provider_email) : "";
+            const status = filters?.status ? String(filters.status) : "";
+            if (providerId) params.set("provider_id", providerId);
+            if (providerEmail) params.set("provider_email", providerEmail);
+            if (status) params.set("status", status);
+            const qs = params.toString();
+            const rows = await authRequest(`/admin/certifications${qs ? `?${qs}` : ""}`, { method: "GET" });
+            return rows || [];
           },
           get: (id) => authRequest(`/admin/certifications/${encodeURIComponent(id)}`, { method: "GET" }),
           create: (payload) => authRequest("/admin/certifications", {
@@ -685,9 +674,14 @@ export function createLovableProviderClient() {
         return {
           list: () => authRequest("/admin/md-subscriptions", { method: "GET" }),
           filter: async (filters = {}) => {
+            const params = new URLSearchParams();
             const pid = String(filters?.provider_id || "").trim();
-            const qs = pid ? `?provider_id=${encodeURIComponent(pid)}` : "";
-            return authRequest(`/admin/md-subscriptions${qs}`, { method: "GET" });
+            if (pid) params.set("provider_id", pid);
+            if (Object.hasOwn(filters, "status") && filters.status) {
+              params.set("status", String(filters.status));
+            }
+            const qs = params.toString();
+            return authRequest(`/admin/md-subscriptions${qs ? `?${qs}` : ""}`, { method: "GET" });
           },
           create: (payload) =>
             authRequest("/admin/md-subscriptions", { method: "POST", body: JSON.stringify(payload || {}) }),
@@ -699,6 +693,11 @@ export function createLovableProviderClient() {
       if (name === "MedicalDirectorRelationship") {
         return {
           list: () => authRequest("/admin/md-relationships", { method: "GET" }),
+          getSupervisedProvider: (providerId) =>
+            authRequest(
+              `/admin/md-relationships/supervised-provider?provider_id=${encodeURIComponent(String(providerId || ""))}`,
+              { method: "GET" }
+            ),
           filter: async (filters = {}) => {
             const pid = String(filters?.provider_id || "").trim();
             const qs = pid ? `?provider_id=${encodeURIComponent(pid)}` : "";
@@ -753,6 +752,38 @@ export function createLovableProviderClient() {
             }),
           get: createNotImplementedMethod("entities.TreatmentRecord.get"),
           delete: createNotImplementedMethod("entities.TreatmentRecord.delete")
+        };
+      }
+      if (name === "Review") {
+        const fetchReviews = async (filters = {}, sort = "", limit) => {
+          const params = new URLSearchParams();
+          if (Object.hasOwn(filters, "provider_id") && filters.provider_id) {
+            params.set("provider_id", String(filters.provider_id));
+          }
+          if (Object.hasOwn(filters, "patient_id") && filters.patient_id) {
+            params.set("patient_id", String(filters.patient_id));
+          }
+          if (Object.hasOwn(filters, "is_verified")) {
+            params.set("is_verified", String(Boolean(filters.is_verified)));
+          }
+          const lim = limit || 200;
+          params.set("limit", String(lim));
+          const qs = params.toString();
+          const rows = await authRequest(`/admin/reviews${qs ? `?${qs}` : ""}`, { method: "GET" });
+          return sortEntityRows(Array.isArray(rows) ? rows : [], sort);
+        };
+        return {
+          list: (sort, limit) => fetchReviews({}, sort, limit),
+          filter: fetchReviews,
+          create: (payload) =>
+            authRequest("/admin/reviews", { method: "POST", body: JSON.stringify(payload || {}) }),
+          update: (id, payload) =>
+            authRequest(`/admin/reviews/${encodeURIComponent(id)}`, {
+              method: "PATCH",
+              body: JSON.stringify(payload || {}),
+            }),
+          get: createNotImplementedMethod("entities.Review.get"),
+          delete: createNotImplementedMethod("entities.Review.delete"),
         };
       }
       if (name === "PatientJourney") {
@@ -860,6 +891,13 @@ export function createLovableProviderClient() {
       }
     },
     entities: entityProxy,
+    marketplace: {
+      getCatalog: () => authRequest("/admin/marketplace/providers", { method: "GET" }),
+      getProvider: (providerId) =>
+        authRequest(`/admin/marketplace/providers?provider_id=${encodeURIComponent(String(providerId || ""))}`, {
+          method: "GET",
+        }),
+    },
     appLogs: {
       logUserInApp: async () => ({ ok: true })
     },

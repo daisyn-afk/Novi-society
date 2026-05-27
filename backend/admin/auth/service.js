@@ -424,6 +424,21 @@ async function upsertProviderProfile({ userId, updates }) {
   const hasZip = Object.prototype.hasOwnProperty.call(updates || {}, "zip");
   const hasOnboardingCompleted = Object.prototype.hasOwnProperty.call(updates || {}, "onboarding_completed");
   const metadataUpdates = buildProviderMetadataUpdates(updates);
+  if (Object.prototype.hasOwnProperty.call(updates || {}, "referral_code")) {
+    metadataUpdates.referral_code = normalizeNullableText(updates.referral_code);
+  }
+  if (Object.prototype.hasOwnProperty.call(updates || {}, "referral_discount")) {
+    metadataUpdates.referral_discount = updates.referral_discount ?? null;
+  }
+  if (Object.prototype.hasOwnProperty.call(updates || {}, "referral_program_active")) {
+    metadataUpdates.referral_program_active = Boolean(updates.referral_program_active);
+  }
+  if (Object.prototype.hasOwnProperty.call(updates || {}, "brand_logo_url")) {
+    metadataUpdates.brand_logo_url = normalizeNullableText(updates.brand_logo_url);
+  }
+  if (Object.prototype.hasOwnProperty.call(updates || {}, "years_experience")) {
+    metadataUpdates.years_experience = updates.years_experience ?? null;
+  }
   const hasMetadataUpdates = Object.keys(metadataUpdates).length > 0;
   const hasProviderProfileUpdates =
     hasDob ||
@@ -675,6 +690,15 @@ export async function getMeFromAccessToken(accessToken) {
       website_url: normalizeNullableText(providerMetadata.website_url),
       instagram_handle: normalizeNullableText(providerMetadata.instagram_handle),
       ...(resolvedRole === "provider" ? mapProviderProfileToMeExtras(providerProfile) : {}),
+      ...(resolvedRole === "provider"
+        ? {
+            years_experience: providerMetadata.years_experience ?? null,
+            referral_program_active: Boolean(providerMetadata.referral_program_active),
+            referral_code: normalizeNullableText(providerMetadata.referral_code),
+            referral_discount: providerMetadata.referral_discount ?? null,
+            brand_logo_url: normalizeNullableText(providerMetadata.brand_logo_url),
+          }
+        : {}),
       launch_checklist: resolvedRole === "provider"
         ? await getProviderLaunchChecklist(data.user.id)
         : {},
@@ -873,6 +897,7 @@ export async function updateMe({ accessToken, updates }) {
   // Strip `role` — role changes must go through /admin/users (admin-only endpoint).
   // Accepting a caller-supplied role here would allow any user to self-escalate.
   const { role: _droppedRole, ...safeUpdates } = updates || {};
+  const sessionRole = String(me.role || "").trim().toLowerCase();
   const firstName = Object.prototype.hasOwnProperty.call(safeUpdates, "first_name")
     ? String(safeUpdates.first_name || "").trim() || null
     : me.first_name;
@@ -911,14 +936,32 @@ export async function updateMe({ accessToken, updates }) {
     client.release();
   }
 
-  if (nextRole === "provider" && userRow?.id) {
+  if (sessionRole === "provider" && userRow?.id) {
     await upsertProviderProfile({
       userId: userRow.id,
       updates: normalizeProviderProfileUpdates(updates),
     });
   }
-  if (effectiveRole === "patient" && userRow?.id) {
-    await upsertPatientProfile({ userId: userRow.id, updates: safeUpdates });
+  if (userRow?.id) {
+    const patientProfileFields = [
+      "phone",
+      "city",
+      "state",
+      "date_of_birth",
+      "gender",
+      "allergies",
+      "current_medications",
+      "medical_conditions",
+      "health_notes",
+      "emergency_contact_name",
+      "emergency_contact_phone",
+    ];
+    const hasPatientProfileUpdates = patientProfileFields.some((key) =>
+      Object.prototype.hasOwnProperty.call(updates || {}, key)
+    );
+    if (sessionRole === "patient" || hasPatientProfileUpdates) {
+      await upsertPatientProfile({ userId: userRow.id, updates: safeUpdates });
+    }
   }
 
   if (Object.prototype.hasOwnProperty.call(updates || {}, "launch_checklist")) {

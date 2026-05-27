@@ -150,11 +150,12 @@ reviewsRouter.post("/", async (req, res, next) => {
     const review = rows[0];
     await query(
       `insert into public.notifications (user_id, user_email, type, message, link_page)
-       values ($1, $2, 'general', $3, 'ProviderPractice')`,
+       values ($1, $2, 'general', $3, $4)`,
       [
         appt.provider_id,
         appt.provider_email,
         `New ${rating}-star review from ${body.patient_name || me.full_name || "a patient"} for ${appt.service}.`,
+        "ProviderPractice?tab=performance",
       ]
     ).catch(() => {});
 

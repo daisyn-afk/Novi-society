@@ -47,7 +47,17 @@ export default function PatientReviews() {
         comment: form.comment,
       });
     },
-    onSuccess: () => { qc.invalidateQueries(["my-reviews"]); setOpen(false); setForm({ rating: 5, comment: "" }); setSelectedAppt(null); },
+    onError: (err) => {
+      alert(err?.message || "Could not submit review. You may have already reviewed this visit.");
+    },
+    onSuccess: () => {
+      qc.invalidateQueries(["my-reviews"]);
+      qc.invalidateQueries(["patient-appointments"]);
+      qc.invalidateQueries({ queryKey: ["marketplace-catalog"] });
+      setOpen(false);
+      setForm({ rating: 5, comment: "" });
+      setSelectedAppt(null);
+    },
   });
 
   const renderStars = (rating, interactive = false) => Array.from({ length: 5 }, (_, i) => (
@@ -96,8 +106,14 @@ export default function PatientReviews() {
             <Card key={r.id}>
               <CardContent className="pt-4 pb-4">
                 <div className="flex gap-2 mb-1">{renderStars(r.rating)}</div>
-                <p className="text-sm text-slate-700">{r.comment}</p>
+                {r.comment && <p className="text-sm text-slate-700">{r.comment}</p>}
                 <p className="text-xs text-slate-400 mt-1">{r.created_date ? format(new Date(r.created_date), "MMM d, yyyy") : ""}</p>
+                {r.response && (
+                  <div className="mt-3 rounded-lg px-3 py-2 bg-slate-50 border border-slate-100">
+                    <p className="text-xs font-semibold text-slate-500 mb-0.5">Provider response</p>
+                    <p className="text-sm text-slate-600">{r.response}</p>
+                  </div>
+                )}
               </CardContent>
             </Card>
           ))}

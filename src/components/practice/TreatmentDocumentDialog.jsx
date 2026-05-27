@@ -167,6 +167,8 @@ export default function TreatmentDocumentDialog({ open, onClose, appointment, ex
         products_used: sanitizeProductsUsed(products),
         before_photo_urls: beforePhotos,
         after_photo_urls: afterPhotos,
+        gfe_status: appointment.gfe_status || null,
+        gfe_exam_url: appointment.gfe_exam_url || null,
         status,
         ...form,
       };
@@ -184,6 +186,7 @@ export default function TreatmentDocumentDialog({ open, onClose, appointment, ex
     },
     onSuccess: (record) => {
       qc.invalidateQueries({ queryKey: ["treatment-records"] });
+      qc.invalidateQueries({ queryKey: ["my-appointments"] });
       qc.invalidateQueries({ queryKey: ["my-treatment-records-mktplace"] });
       qc.invalidateQueries({ queryKey: ["my-treatment-records-spend"] });
       // Only show aftercare dialog for premium patients

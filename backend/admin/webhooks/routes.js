@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { processCompletedCheckoutSession, verifyStripeWebhook } from "../checkout/service.js";
 import { processModelCheckoutCompletedSession } from "../functions/routes.js";
+import { processMdBoardStripeEvent } from "../mdBillingService.js";
 import { recordStripeWebhookEvent } from "../payments/service.js";
 
 export const webhooksRouter = Router();
@@ -24,7 +25,11 @@ const TRACKED_STRIPE_EVENT_TYPES = new Set([
   "charge.failed",
   "charge.refunded",
   "charge.captured",
-  "charge.dispute.created"
+  "charge.dispute.created",
+  "invoice.paid",
+  "invoice.payment_failed",
+  "customer.subscription.updated",
+  "customer.subscription.deleted"
 ]);
 
 webhooksRouter.post("/stripe", async (req, res, next) => {
@@ -78,9 +83,13 @@ webhooksRouter.post("/stripe", async (req, res, next) => {
       const checkoutType = String(session?.metadata?.checkout_type || "").toLowerCase();
       if (checkoutType === "model") {
         await processModelCheckoutCompletedSession(session);
+      } else if (checkoutType === "md_board_coverage") {
+        await processMdBoardStripeEvent(event);
       } else {
         await processCompletedCheckoutSession(session);
       }
+    } else {
+      await processMdBoardStripeEvent(event);
     }
 
     return res.json({ received: true });

@@ -2,6 +2,10 @@ import { Router } from "express";
 import { query } from "../db.js";
 import { getMeFromAccessToken } from "../auth/service.js";
 import { validateBookingScope } from "../bookingValidation.js";
+import {
+  sendAppointmentConfirmedPatientEmail,
+  sendAppointmentCancelledPatientEmail,
+} from "../patientAppointmentEmails.js";
 
 export const appointmentsRouter = Router();
 
@@ -17,9 +21,13 @@ function hasAdminAccess(role) {
 }
 
 function mapAppointmentRow(row) {
+  const serviceTypeName = row.service_type_name != null ? String(row.service_type_name).trim() : "";
+  const service = String(row.service || "").trim() || serviceTypeName;
   return {
     ...row,
     id: row.id,
+    service,
+    service_type_name: serviceTypeName || row.service_type_name || null,
     requires_gfe: row.requires_gfe === true,
     created_date: row.created_at,
     updated_date: row.updated_at,
@@ -79,7 +87,7 @@ appointmentsRouter.get("/", async (req, res, next) => {
     params.push(limit);
     const limitIdx = params.length;
 
-    const sql = `select a.*, coalesce(st.requires_gfe, false) as requires_gfe
+    const sql = `select a.*, st.name as service_type_name, coalesce(st.requires_gfe, false) as requires_gfe
                    from public.appointments a
                    left join public.service_type st on st.id::text = a.service_type_id::text
                    ${where.length ? `where ${where.join(" and ")}` : ""}
@@ -110,7 +118,11 @@ appointmentsRouter.post("/", async (req, res, next) => {
       return res.status(400).json({ error: "provider_id, service, and appointment_date are required." });
     }
 
-    const validation = await validateBookingScope({ providerId, service });
+    const validation = await validateBookingScope({
+      providerId,
+      service,
+      referral_code: body.referral_code,
+    });
     if (!validation.eligible) {
       return res.status(400).json({
         eligible: false,
@@ -148,11 +160,22 @@ appointmentsRouter.post("/", async (req, res, next) => {
         appointmentDate,
         String(body.appointment_time || "09:00").trim() || "09:00",
         body.patient_notes || null,
-        body.referral_code || null,
+        validation.referral_code || null,
         String(body.status || "requested").trim() || "requested",
         initialGfeStatus,
       ]
     );
+    const createdId = rows[0]?.id;
+    if (createdId) {
+      const { rows: enriched } = await query(
+        `select a.*, st.name as service_type_name, coalesce(st.requires_gfe, false) as requires_gfe
+           from public.appointments a
+           left join public.service_type st on st.id::text = a.service_type_id::text
+          where a.id = $1`,
+        [createdId]
+      );
+      return res.status(201).json(mapAppointmentRow(enriched[0] || rows[0]));
+    }
     return res.status(201).json(mapAppointmentRow(rows[0]));
   } catch (error) {
     return next(error);
@@ -186,7 +209,7 @@ appointmentsRouter.patch("/:id", async (req, res, next) => {
     }
     if (!setParts.length) {
       const { rows: enriched } = await query(
-        `select a.*, coalesce(st.requires_gfe, false) as requires_gfe
+        `select a.*, st.name as service_type_name, coalesce(st.requires_gfe, false) as requires_gfe
            from public.appointments a
            left join public.service_type st on st.id::text = a.service_type_id::text
           where a.id = $1`,
@@ -200,13 +223,50 @@ appointmentsRouter.patch("/:id", async (req, res, next) => {
       params
     );
     const { rows: enriched } = await query(
-      `select a.*, coalesce(st.requires_gfe, false) as requires_gfe
+      `select a.*, st.name as service_type_name, coalesce(st.requires_gfe, false) as requires_gfe
          from public.appointments a
          left join public.service_type st on st.id::text = a.service_type_id::text
         where a.id = $1`,
       [id]
     );
-    return res.json(mapAppointmentRow(enriched[0] || rows[0]));
+    const updated = mapAppointmentRow(enriched[0] || rows[0]);
+
+    const prevStatus = String(existing.status || "").trim().toLowerCase();
+    const nextStatus = String(updated.status || "").trim().toLowerCase();
+    const patientEmail = String(updated.patient_email || existing.patient_email || "").trim();
+    const cancelReason =
+      updates.cancellation_reason != null ? String(updates.cancellation_reason) : String(existing.cancellation_reason || "");
+
+    if (patientEmail) {
+      try {
+        if (prevStatus !== "confirmed" && nextStatus === "confirmed") {
+          await sendAppointmentConfirmedPatientEmail({
+            to: patientEmail,
+            patientName: updated.patient_name || existing.patient_name,
+            providerName: updated.provider_name || existing.provider_name,
+            serviceLabel: updated.service || existing.service,
+            appointmentDate: updated.appointment_date || existing.appointment_date,
+            appointmentTime: updated.appointment_time || existing.appointment_time,
+          });
+        }
+        if (prevStatus !== "cancelled" && nextStatus === "cancelled") {
+          await sendAppointmentCancelledPatientEmail({
+            to: patientEmail,
+            patientName: updated.patient_name || existing.patient_name,
+            providerName: updated.provider_name || existing.provider_name,
+            serviceLabel: updated.service || existing.service,
+            appointmentDate: updated.appointment_date || existing.appointment_date,
+            reason: cancelReason,
+            wasRequest: prevStatus === "requested",
+          });
+        }
+      } catch (emailErr) {
+        // eslint-disable-next-line no-console
+        console.warn("[appointments] patient transactional email failed:", emailErr?.message || emailErr);
+      }
+    }
+
+    return res.json(updated);
   } catch (error) {
     return next(error);
   }

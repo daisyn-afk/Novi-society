@@ -1,5 +1,4 @@
-import { useState } from "react";
-import { createPortal } from "react-dom";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { Button } from "@/components/ui/button";
@@ -249,6 +248,12 @@ function AftercarePlanView({ plan, treatment, sentAftercare, isPending, onSend }
   );
 }
 
+function recordMatchesPatient(record, patient) {
+  if (patient.id && record.patient_id === patient.id) return true;
+  if (patient.email && record.patient_email === patient.email) return true;
+  return false;
+}
+
 export default function PatientDetailModal({ patient, journey, treatmentRecords, appointments, onClose }) {
   const [tab, setTab] = useState("overview");
   const [docDialog, setDocDialog] = useState({ open: false, appt: null, existing: null });
@@ -260,8 +265,13 @@ export default function PatientDetailModal({ patient, journey, treatmentRecords,
   const qc = useQueryClient();
 
   const isPremium = journey?.tier === "premium" && journey?.subscription_status === "active";
-  const patientRecords = treatmentRecords.filter(r => r.patient_id === patient.id);
+  const patientRecords = treatmentRecords.filter(r => recordMatchesPatient(r, patient));
+  const attentionRecords = patientRecords.filter(r => ["flagged", "changes_requested"].includes(r.status));
   const completedAppts = appointments.filter(a => a.status === "completed");
+
+  useEffect(() => {
+    if (attentionRecords.length > 0) setTab("history");
+  }, [patient.id, patient.email]);
   const sortedAppts = [...appointments].sort((a, b) => new Date(b.appointment_date) - new Date(a.appointment_date));
   const checkins = journey?.daily_checkins || [];
 
@@ -379,18 +389,18 @@ Return this exact JSON structure:
     { id: "insights", label: "Patient Insights", badge: isPremium },
     { id: "aftercare", label: "Aftercare Plans", badge: isPremium },
     { id: "checkins", label: `Check-ins (${checkins.length})`, badge: isPremium },
-    { id: "history", label: "Treatment History" },
+    { id: "history", label: "Treatment History", badge: attentionRecords.length > 0 },
   ];
 
-  return createPortal(
-    <div className="fixed inset-0 z-[130] flex justify-end" style={{ background: "rgba(30,37,53,0.45)", backdropFilter: "blur(4px)" }} onClick={onClose}>
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-end" style={{ background: "rgba(30,37,53,0.45)", backdropFilter: "blur(4px)" }} onClick={onClose}>
       <div
-        className="h-full w-full min-w-0 max-w-full sm:max-w-2xl overflow-y-auto overflow-x-hidden flex flex-col"
+        className="h-full w-full max-w-2xl overflow-y-auto flex flex-col"
         style={{ background: "linear-gradient(160deg, #f0eefb 0%, #f5f3ef 50%, #eaf5c8 100%)", boxShadow: "-8px 0 40px rgba(30,37,53,0.18)" }}
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="sticky top-0 z-10 px-4 sm:px-6 py-4 flex items-center gap-4 min-w-0" style={{ background: "rgba(245,243,239,0.92)", backdropFilter: "blur(20px)", borderBottom: "1px solid rgba(30,37,53,0.08)" }}>
+        <div className="sticky top-0 z-10 px-6 py-4 flex items-center gap-4" style={{ background: "rgba(245,243,239,0.92)", backdropFilter: "blur(20px)", borderBottom: "1px solid rgba(30,37,53,0.08)" }}>
           <div className="relative flex-shrink-0">
             <div className="w-12 h-12 rounded-full flex items-center justify-center text-base font-bold text-white"
               style={{ background: isPremium ? "linear-gradient(135deg, #C8E63C, #7B8EC8)" : "rgba(123,142,200,0.5)" }}>
@@ -419,18 +429,41 @@ Return this exact JSON structure:
         </div>
 
         {/* Tab Bar */}
-        <div className="px-4 sm:px-6 pt-4 pb-0 flex gap-1 overflow-x-auto min-w-0" style={{ borderBottom: "1px solid rgba(30,37,53,0.08)" }}>
+        <div className="px-6 pt-4 pb-0 flex gap-1 overflow-x-auto" style={{ borderBottom: "1px solid rgba(30,37,53,0.08)" }}>
           {tabs.map(t => (
             <button key={t.id} onClick={() => setTab(t.id)}
               className="px-3 pb-3 text-sm font-semibold whitespace-nowrap flex items-center gap-1.5 transition-all relative"
               style={{ color: tab === t.id ? "#FA6F30" : "rgba(30,37,53,0.45)", borderBottom: tab === t.id ? "2px solid #FA6F30" : "2px solid transparent" }}>
               {t.label}
-              {t.badge && <Sparkles className="w-3 h-3" style={{ color: "#4a6b10" }} />}
+              {t.badge && t.id !== "history" && <Sparkles className="w-3 h-3" style={{ color: "#4a6b10" }} />}
+              {t.badge && t.id === "history" && <AlertTriangle className="w-3 h-3" style={{ color: "#DA6A63" }} />}
             </button>
           ))}
         </div>
 
-        <div className="flex-1 p-4 sm:p-6 space-y-4 min-w-0 overflow-x-hidden">
+        <div className="flex-1 p-6 space-y-4">
+
+          {attentionRecords.length > 0 && (
+            <div className="rounded-2xl px-4 py-3 flex items-start gap-3" style={{ background: "rgba(218,106,99,0.1)", border: "1.5px solid rgba(218,106,99,0.35)" }}>
+              <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" style={{ color: "#DA6A63" }} />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-bold" style={{ color: "#1e2535" }}>
+                  {attentionRecords.length} record{attentionRecords.length !== 1 ? "s" : ""} need your attention
+                </p>
+                <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.55)" }}>
+                  Your MD flagged or requested changes. Open Treatment History, tap View, address feedback, then resubmit.
+                </p>
+                {attentionRecords[0]?.md_review_notes && (
+                  <p className="text-xs mt-2 italic" style={{ color: "#c2440a" }}>MD: {attentionRecords[0].md_review_notes}</p>
+                )}
+              </div>
+              <Button size="sm" className="flex-shrink-0 text-xs font-bold h-8"
+                style={{ background: "#DA6A63", color: "#fff" }}
+                onClick={() => setTab("history")}>
+                Review
+              </Button>
+            </div>
+          )}
 
           {/* OVERVIEW TAB */}
           {tab === "overview" && (
@@ -782,7 +815,6 @@ Return this exact JSON structure:
         appointment={docDialog.appt}
         existingRecord={docDialog.existing}
       />
-    </div>,
-    document.body
+    </div>
   );
 }

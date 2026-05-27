@@ -19,6 +19,40 @@ function isMedicalDirectorRole(role) {
   return String(role || "").trim().toLowerCase() === "medical_director";
 }
 
+const MD_REVIEW_STATUSES = new Set(["approved", "flagged", "changes_requested"]);
+
+async function notifyProviderOfTreatmentRecordReview(record) {
+  const status = String(record?.status || "").trim();
+  if (!MD_REVIEW_STATUSES.has(status)) return;
+  const service = String(record?.service || "treatment").trim();
+  const patient = String(record?.patient_name || record?.patient_email || "patient").trim();
+  const notes = String(record?.md_review_notes || "").trim();
+  const messages = {
+    approved: `Your MD approved your treatment record for ${service} (${patient}).`,
+    flagged: `Your MD flagged your treatment record for ${service} (${patient}).${notes ? ` Notes: ${notes}` : ""}`,
+    changes_requested: `Your MD requested changes on your treatment record for ${service} (${patient}).${notes ? ` Notes: ${notes}` : ""}`,
+  };
+  const types = {
+    approved: "treatment_record_approved",
+    flagged: "treatment_record_flagged",
+    changes_requested: "treatment_record_changes_requested",
+  };
+  const message = messages[status];
+  const type = types[status];
+  if (!message || !record?.provider_id) return;
+  await query(
+    `insert into public.notifications (user_id, user_email, type, message, link_page)
+     values ($1, $2, $3, $4, $5)`,
+    [
+      record.provider_id,
+      record.provider_email || null,
+      type,
+      message,
+      "ProviderPractice",
+    ]
+  ).catch(() => {});
+}
+
 function mapRow(row) {
   return {
     ...row,
@@ -260,7 +294,16 @@ treatmentRecordsRouter.patch("/:id", async (req, res, next) => {
       `update public.treatment_records set ${setParts.join(", ")}, updated_at = now() where id = $1 returning *`,
       params
     );
-    return res.json(mapRow(rows[0]));
+    const updated = mapRow(rows[0]);
+    const prevStatus = String(existing.status || "").trim();
+    const nextStatus = String(updated.status || "").trim();
+    const mdActed =
+      (isMedicalDirectorRole(me.role) || hasAdminAccess(me.role)) &&
+      Object.prototype.hasOwnProperty.call(body, "status");
+    if (mdActed && prevStatus !== nextStatus && MD_REVIEW_STATUSES.has(nextStatus)) {
+      await notifyProviderOfTreatmentRecordReview(updated);
+    }
+    return res.json(updated);
   } catch (error) {
     return next(error);
   }

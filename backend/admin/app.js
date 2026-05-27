@@ -45,8 +45,10 @@ const { providerRepCallsRouter } = await import("./manufacturers/providerRepCall
 const { googleCalendarRouter } = await import("./manufacturers/googleCalendarRoutes.js");
 const { gmailRouter } = await import("./manufacturers/gmailRoutes.js");
 const { mdMessagesRouter } = await import("./md-messages/routes.js");
+const { marketplaceRouter } = await import("./marketplace/routes.js");
 const { appointmentsRouter } = await import("./appointments/routes.js");
 const { treatmentRecordsRouter } = await import("./treatment-records/routes.js");
+const { reviewsRouter } = await import("./reviews/routes.js");
 const { launchRoadmapRouter } = await import("./launch-roadmap/routes.js");
 
 export function createAdminApp() {
@@ -95,8 +97,10 @@ export function createAdminApp() {
   app.use("/admin/integrations/google-calendar", googleCalendarRouter);
   app.use("/admin/integrations/gmail", gmailRouter);
   app.use("/admin/md-messages", mdMessagesRouter);
+  app.use("/admin/marketplace", marketplaceRouter);
   app.use("/admin/appointments", appointmentsRouter);
   app.use("/admin/treatment-records", treatmentRecordsRouter);
+  app.use("/admin/reviews", reviewsRouter);
   app.use("/admin/launch-roadmap", launchRoadmapRouter);
   app.use("/functions", functionsRouter);
 

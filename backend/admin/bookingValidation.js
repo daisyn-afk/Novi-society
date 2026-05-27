@@ -13,11 +13,43 @@ function metadataBool(metadata, key, defaultValue = true) {
   return Boolean(raw);
 }
 
+export function normalizeReferralCode(code) {
+  return String(code || "").trim().toUpperCase();
+}
+
+/**
+ * @returns {{ valid: boolean, reason?: string, referral_code?: string | null }}
+ */
+export function validateReferralAgainstProvider({ referralCodeInput, metadata }) {
+  const input = String(referralCodeInput || "").trim();
+  if (!input) return { valid: true, referral_code: null };
+
+  const programActive = metadataBool(metadata, "referral_program_active", false);
+  const expectedRaw = metadata?.referral_code != null ? String(metadata.referral_code).trim() : "";
+  const expected = normalizeReferralCode(expectedRaw);
+
+  if (!programActive || !expected) {
+    return {
+      valid: false,
+      reason: "This provider does not have an active referral program.",
+    };
+  }
+  if (normalizeReferralCode(input) !== expected) {
+    const discRaw = metadata?.referral_discount != null ? String(metadata.referral_discount).trim() : "";
+    const disc = discRaw ? ` (${discRaw})` : "";
+    return {
+      valid: false,
+      reason: `Enter proper referral code: ${expected}${disc}.`,
+    };
+  }
+  return { valid: true, referral_code: expected };
+}
+
 /**
  * Validates that a provider can accept a booking for the given service name.
- * @returns {{ eligible: boolean, reason?: string, service_type_id?: string }}
+ * @returns {{ eligible: boolean, reason?: string, service_type_id?: string, referral_code?: string | null }}
  */
-export async function validateBookingScope({ providerId, service }) {
+export async function validateBookingScope({ providerId, service, referral_code }) {
   const pid = String(providerId || "").trim();
   const serviceName = String(service || "").trim();
   if (!pid) {
@@ -49,12 +81,35 @@ export async function validateBookingScope({ providerId, service }) {
     return { eligible: false, reason: "This provider is not accepting new patients right now." };
   }
 
-  const { rows: licenseRows } = await query(
-    `select id from public.licenses
-      where provider_id = $1 and status = 'verified'
-      limit 1`,
-    [pid]
-  );
+  const [{ rows: licenseRows }, { rows: subRows }, { rows: relRows }] = await Promise.all([
+    query(
+      `select id from public.licenses
+        where provider_id = $1 and status = 'verified'
+        limit 1`,
+      [pid]
+    ),
+    query(
+      `select id, service_type_id, service_type_name, status
+         from public.md_subscription
+        where provider_id = $1
+          and lower(status) = 'active'
+          and (
+            lower(trim(coalesce(service_type_name, ''))) = lower($2)
+            or service_type_id in (
+              select id::text from public.service_type where lower(trim(name)) = lower($2) limit 1
+            )
+          )
+        limit 1`,
+      [pid, serviceName]
+    ),
+    query(
+      `select id from public.medical_director_relationship
+        where provider_id = $1 and lower(status) = 'suspended'
+        limit 1`,
+      [pid]
+    ),
+  ]);
+
   if (!licenseRows.length) {
     return {
       eligible: false,
@@ -62,20 +117,6 @@ export async function validateBookingScope({ providerId, service }) {
     };
   }
 
-  const { rows: subRows } = await query(
-    `select id, service_type_id, service_type_name, status
-       from public.md_subscription
-      where provider_id = $1
-        and lower(status) = 'active'
-        and (
-          lower(trim(coalesce(service_type_name, ''))) = lower($2)
-          or service_type_id in (
-            select id::text from public.service_type where lower(trim(name)) = lower($2) limit 1
-          )
-        )
-      limit 1`,
-    [pid, serviceName]
-  );
   if (!subRows.length) {
     const { rows: suspendedSubs } = await query(
       `select id from public.md_subscription
@@ -97,12 +138,6 @@ export async function validateBookingScope({ providerId, service }) {
     };
   }
 
-  const { rows: relRows } = await query(
-    `select id from public.medical_director_relationship
-      where provider_id = $1 and lower(status) = 'suspended'
-      limit 1`,
-    [pid]
-  );
   if (relRows.length) {
     return {
       eligible: false,
@@ -110,8 +145,17 @@ export async function validateBookingScope({ providerId, service }) {
     };
   }
 
+  const referralCheck = validateReferralAgainstProvider({
+    referralCodeInput: referral_code,
+    metadata,
+  });
+  if (!referralCheck.valid) {
+    return { eligible: false, reason: referralCheck.reason };
+  }
+
   return {
     eligible: true,
     service_type_id: subRows[0].service_type_id || null,
+    referral_code: referralCheck.referral_code ?? null,
   };
 }

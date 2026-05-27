@@ -16,6 +16,7 @@ import {
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { format, differenceInMonths } from "date-fns";
+import { monthlyFeeForNewMdService } from "@/lib/mdMembershipPricing";
 
 const CERT_TYPES = ["RN", "NP", "PA", "MD", "DO", "esthetician", "other"];
 
@@ -216,12 +217,18 @@ export default function ProviderMDCoverage() {
         code_used: true,
         code_used_at: now,
       });
+      const activeOtherCount = (mySubscriptions || []).filter(
+        (s) =>
+          String(s?.status || "").toLowerCase() === "active" &&
+          String(s?.service_type_id || "") !== String(selectedServiceTypeId)
+      ).length;
       await base44.entities.MDSubscription.create({
         provider_id: me.id,
         provider_email: me.email,
         provider_name: me.full_name,
         service_type_id: selectedServiceTypeId,
         service_type_name: serviceTypes.find(s => s.id === selectedServiceTypeId)?.name,
+        service_type_monthly_fee: monthlyFeeForNewMdService(activeOtherCount),
         status: "active",
         signed_at: now,
         signature_data: signatureData,
@@ -286,7 +293,6 @@ export default function ProviderMDCoverage() {
   const selectedService = serviceTypes.find(s => s.id === selectedServiceTypeId);
 
   const activeRelationships = relationships.filter(r => r.status === "active");
-  const pendingRelationships = relationships.filter(r => r.status === "pending");
 
   return (
     <div className="max-w-4xl space-y-6">
@@ -544,28 +550,6 @@ export default function ProviderMDCoverage() {
             </Link>
           </div>
 
-          {pendingRelationships.length > 0 && (
-            <div className="space-y-2">
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Pending Approval</p>
-              {pendingRelationships.map(rel => (
-                <Card key={rel.id}>
-                  <CardContent className="py-3">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="font-semibold text-slate-900">{rel.medical_director_name}</p>
-                        <p className="text-sm text-slate-500">{rel.medical_director_email}</p>
-                      </div>
-                      <Badge className="bg-yellow-100 text-yellow-800">
-                        <Clock className="w-3 h-3 mr-1" />
-                        Pending
-                      </Badge>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          )}
-
           {activeRelationships.length > 0 ? (
             <div className="space-y-2">
               <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Active Supervision</p>
@@ -602,19 +586,17 @@ export default function ProviderMDCoverage() {
               })}
             </div>
           ) : (
-            pendingRelationships.length === 0 && (
-              <Card>
-                <CardContent className="py-8 text-center">
-                  <Shield className="w-10 h-10 mx-auto text-slate-200 mb-3" />
-                  <p className="text-slate-600 text-sm max-w-md mx-auto">
-                    After you sign and pay for MD coverage for a service, NOVI assigns you to a supervising physician from the Board pool for that service.
-                  </p>
-                  <Button variant="outline" size="sm" className="mt-4" asChild>
-                    <Link to={createPageUrl("ProviderCredentialsCoverage")}>Apply for MD coverage</Link>
-                  </Button>
-                </CardContent>
-              </Card>
-            )
+            <Card>
+              <CardContent className="py-8 text-center">
+                <Shield className="w-10 h-10 mx-auto text-slate-200 mb-3" />
+                <p className="text-slate-600 text-sm max-w-md mx-auto">
+                  After you sign and pay for MD coverage for a service, NOVI assigns you to a supervising physician from the Board pool. Supervision is active as soon as you are assigned.
+                </p>
+                <Button variant="outline" size="sm" className="mt-4" asChild>
+                  <Link to={createPageUrl("ProviderCredentialsCoverage")}>Apply for MD coverage</Link>
+                </Button>
+              </CardContent>
+            </Card>
           )}
         </TabsContent>
       </Tabs>

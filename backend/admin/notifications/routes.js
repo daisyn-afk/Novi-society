@@ -157,7 +157,11 @@ notificationsRouter.get("/", async (req, res, next) => {
 notificationsRouter.post("/", async (req, res, next) => {
   try {
     const { me } = await requireAuth(req);
-    if (!hasAdminAccess(me.role)) {
+    const body = req.body || {};
+    const isPatientAppointmentRequest =
+      String(me.role || "").trim().toLowerCase() === "patient" &&
+      String(body.type || "").trim().toLowerCase() === "appointment_request";
+    if (!hasAdminAccess(me.role) && !isPatientAppointmentRequest) {
       const err = new Error("Forbidden.");
       err.statusCode = 403;
       throw err;
@@ -168,7 +172,6 @@ notificationsRouter.post("/", async (req, res, next) => {
       err.statusCode = 500;
       throw err;
     }
-    const body = req.body || {};
     const valuesByColumn = {
       user_id: body.user_id || null,
       user_email: body.user_email || null,

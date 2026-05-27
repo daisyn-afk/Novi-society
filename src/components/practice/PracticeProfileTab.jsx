@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
@@ -7,10 +7,12 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 import {
   Save, CheckCircle, MapPin, Phone, Globe, Instagram, User, DollarSign,
   Camera, Lock, Facebook, Twitter, Mail, Building2, Award,
-  Plus, X, ChevronDown, ChevronUp, ShieldCheck, Eye, Star, Clock, Shield, Copy, Link
+  Plus, X, ChevronDown, ChevronUp, ShieldCheck, Eye, Star, Clock, Shield, Copy, Link, Upload
 } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import CprBlsCertSection from "@/components/practice/CprBlsCertSection.jsx";
+import { providerReviewAverage } from "@/lib/providerRating";
+import { emptyGalleryPair } from "@/lib/galleryPhotos";
 
 const GLASS_STYLE = {
   background: "rgba(255,255,255,0.5)",
@@ -92,8 +94,24 @@ export default function PracticeProfileTab({ form, setForm, me, onSave, saving, 
   const qc = useQueryClient();
   const f = (key, val) => setForm(prev => ({ ...prev, [key]: val }));
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [uploadingGallerySlot, setUploadingGallerySlot] = useState(null);
   const [expandedSections, setExpandedSections] = useState({ hours: true, specialties: true });
   const [previewOpen, setPreviewOpen] = useState(false);
+
+  const { data: myReviews = [] } = useQuery({
+    queryKey: ["my-reviews"],
+    queryFn: async () => {
+      const user = me || (await base44.auth.me());
+      return base44.entities.Review.filter({ provider_id: user.id }, "-created_date");
+    },
+    enabled: Boolean(me?.id),
+    staleTime: 30_000,
+  });
+  const { average: marketplaceRating, count: marketplaceReviewCount } = providerReviewAverage(
+    myReviews,
+    me?.id,
+    { verifiedOnly: true }
+  );
 
   const toggleSection = (key) => setExpandedSections(prev => ({ ...prev, [key]: !prev[key] }));
 
@@ -104,13 +122,7 @@ export default function PracticeProfileTab({ form, setForm, me, onSave, saving, 
   const [newCredential, setNewCredential] = useState({ title: "", institution: "", year: "" });
 
   const updateDay = (day, field, val) => {
-    const current = schedule[day] || {};
-    const next = { ...current, [field]: val };
-    if (field === "open" && val) {
-      if (!next.start) next.start = "9:00 AM";
-      if (!next.end) next.end = "5:00 PM";
-    }
-    f("schedule", { ...schedule, [day]: next });
+    f("schedule", { ...schedule, [day]: { ...schedule[day], [field]: val } });
   };
 
   const toggleSpecialty = (s) => {
@@ -143,8 +155,27 @@ export default function PracticeProfileTab({ form, setForm, me, onSave, saving, 
     }
   };
 
+  const handleGalleryUpload = async (e, pairIndex, side) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const slot = `${pairIndex}-${side}`;
+    setUploadingGallerySlot(slot);
+    try {
+      const { file_url } = await base44.integrations.Core.UploadFile({ file });
+      const next = [...(form.gallery_photos || [])];
+      const row = { ...(next[pairIndex] || emptyGalleryPair()) };
+      if (side === "before") row.before_url = file_url;
+      else row.after_url = file_url;
+      next[pairIndex] = row;
+      f("gallery_photos", next);
+    } finally {
+      setUploadingGallerySlot(null);
+      e.target.value = "";
+    }
+  };
+
   return (
-    <div className="space-y-5 w-full">
+    <div className="space-y-5 max-w-4xl">
 
       {/* ── Profile Preview ── */}
       <GlassCard>
@@ -159,7 +190,7 @@ export default function PracticeProfileTab({ form, setForm, me, onSave, saving, 
           </button>
         </div>
         <div className="px-6 py-5">
-          <div className="flex items-start gap-5 w-full">
+          <div className="flex items-start gap-5">
             {/* Avatar with upload */}
             <div className="relative flex-shrink-0">
               <div className="w-20 h-20 rounded-2xl overflow-hidden flex items-center justify-center text-2xl font-bold text-white"
@@ -209,7 +240,6 @@ export default function PracticeProfileTab({ form, setForm, me, onSave, saving, 
         </div>
       </GlassCard>
 
-      {/* ── CPR / BLS Compliance ── */}
       <CprBlsCertSection me={me} focusSection={focusSection} />
 
       {/* ── Practice Info ── */}
@@ -311,8 +341,34 @@ export default function PracticeProfileTab({ form, setForm, me, onSave, saving, 
               <p className="text-xs mt-1 text-gray-400">How far in advance they must cancel</p>
             </div>
           </div>
+          <div className="flex items-center gap-4 px-4 py-3.5 rounded-xl mb-4" style={{ background: "rgba(255,255,255,0.65)", border: "1px solid rgba(30,37,53,0.1)" }}>
+            <Switch id="referral-program" checked={!!form.referral_program_active} onCheckedChange={val => f("referral_program_active", val)} />
+            <div className="flex-1">
+              <p className="text-sm font-semibold" style={{ color: "#1e2535" }}>Referral program</p>
+              <p className="text-xs" style={{ color: "rgba(30,37,53,0.5)" }}>Show your referral code on the patient marketplace</p>
+            </div>
+          </div>
+          {form.referral_program_active && (
+            <div className="grid sm:grid-cols-2 gap-4 mb-4">
+              <div>
+                <FieldLabel>Referral code</FieldLabel>
+                <GlassInput placeholder="e.g. FRIEND25" value={form.referral_code || ""} onChange={e => f("referral_code", e.target.value)} />
+              </div>
+              <div>
+                <FieldLabel>Offer description</FieldLabel>
+                <GlassInput placeholder="e.g. You both save $25" value={form.referral_discount || ""} onChange={e => f("referral_discount", e.target.value)} />
+              </div>
+            </div>
+          )}
           <div className="flex items-center gap-4 px-4 py-3.5 rounded-xl" style={{ background: "rgba(255,255,255,0.65)", border: "1px solid rgba(30,37,53,0.1)" }}>
-            <Switch id="new-patients" checked={form.accepts_new_patients} onCheckedChange={val => f("accepts_new_patients", val)} />
+            <Switch
+              id="new-patients"
+              checked={form.accepts_new_patients}
+              onCheckedChange={(val) => {
+                f("accepts_new_patients", val);
+                onSave({ accepts_new_patients: val });
+              }}
+            />
             <div className="flex-1">
               <p className="text-sm font-semibold" style={{ color: "#1e2535" }}>Accepting New Patients</p>
               <p className="text-xs" style={{ color: "rgba(30,37,53,0.5)" }}>Patients can only book if this is on</p>
@@ -321,6 +377,128 @@ export default function PracticeProfileTab({ form, setForm, me, onSave, saving, 
               {form.accepts_new_patients ? "Open" : "Closed"}
             </span>
           </div>
+        </div>
+      </GlassCard>
+
+      {/* ── Before / After Gallery ── */}
+      <GlassCard>
+        <CardHeader label="Before/After Gallery Photos" color="#7B8EC8" />
+        <div className="px-6 py-5 space-y-4">
+          <div className="text-xs space-y-1.5 leading-relaxed" style={{ color: "rgba(30,37,53,0.55)" }}>
+            <p>
+              <span className="font-semibold text-slate-800">Where to set up:</span>{" "}
+              Upload before and after images for each set, then click <strong>Save Profile</strong>.
+            </p>
+            <p>
+              <span className="font-semibold text-slate-800">How it appears:</span>{" "}
+              Shown on your patient marketplace card and detailed profile.
+            </p>
+          </div>
+
+          {(form.gallery_photos || []).map((pair, i) => {
+            const labelColor = "#c97b84";
+            const slotBefore = `${i}-before`;
+            const slotAfter = `${i}-after`;
+            return (
+              <div key={i} className="space-y-3 pb-4 border-b border-slate-100 last:border-0 last:pb-0">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
+                  <div>
+                    <p className="text-sm font-semibold mb-2" style={{ color: labelColor }}>
+                      Before Photos
+                    </p>
+                    <label className="block cursor-pointer group">
+                      <div
+                        className="relative flex aspect-square max-h-44 w-full max-w-[200px] items-center justify-center rounded-xl border-2 border-dashed border-slate-300 bg-slate-50/80 transition-colors group-hover:border-slate-400 group-hover:bg-slate-50 overflow-hidden"
+                      >
+                        {pair.before_url ? (
+                          <img src={pair.before_url} alt="" className="h-full w-full object-cover" />
+                        ) : (
+                          <Upload className="h-10 w-10 text-slate-300" strokeWidth={1.25} />
+                        )}
+                        {uploadingGallerySlot === slotBefore && (
+                          <div className="absolute inset-0 flex items-center justify-center bg-white/70">
+                            <div className="h-6 w-6 border-2 border-slate-400 border-t-transparent rounded-full animate-spin" />
+                          </div>
+                        )}
+                      </div>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        disabled={uploadingGallerySlot === slotBefore}
+                        onChange={(e) => handleGalleryUpload(e, i, "before")}
+                      />
+                    </label>
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold mb-2" style={{ color: labelColor }}>
+                      After Photos
+                    </p>
+                    <label className="block cursor-pointer group">
+                      <div
+                        className="relative flex aspect-square max-h-44 w-full max-w-[200px] items-center justify-center rounded-xl border-2 border-dashed border-slate-300 bg-slate-50/80 transition-colors group-hover:border-slate-400 group-hover:bg-slate-50 overflow-hidden"
+                      >
+                        {pair.after_url ? (
+                          <img src={pair.after_url} alt="" className="h-full w-full object-cover" />
+                        ) : (
+                          <Upload className="h-10 w-10 text-slate-300" strokeWidth={1.25} />
+                        )}
+                        {uploadingGallerySlot === slotAfter && (
+                          <div className="absolute inset-0 flex items-center justify-center bg-white/70">
+                            <div className="h-6 w-6 border-2 border-slate-400 border-t-transparent rounded-full animate-spin" />
+                          </div>
+                        )}
+                      </div>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        disabled={uploadingGallerySlot === slotAfter}
+                        onChange={(e) => handleGalleryUpload(e, i, "after")}
+                      />
+                    </label>
+                  </div>
+                </div>
+                <div className="flex flex-col sm:flex-row sm:items-end gap-2">
+                  <div className="flex-1 min-w-0">
+                    <FieldLabel>Optional caption for this set</FieldLabel>
+                    <GlassInput
+                      placeholder="e.g. Lip filler — 2 weeks apart"
+                      value={pair.caption || ""}
+                      onChange={(e) => {
+                        const next = [...(form.gallery_photos || [])];
+                        next[i] = { ...next[i], caption: e.target.value };
+                        f("gallery_photos", next);
+                      }}
+                    />
+                  </div>
+                  {(form.gallery_photos || []).length > 1 || pair.before_url || pair.after_url || pair.caption ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const rows = [...(form.gallery_photos || [])];
+                        rows.splice(i, 1);
+                        f("gallery_photos", rows.length ? rows : [emptyGalleryPair()]);
+                      }}
+                      className="text-xs font-semibold text-red-500 hover:text-red-600 px-2 py-2 self-start sm:self-center"
+                    >
+                      Remove set
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            );
+          })}
+
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="gap-1"
+            onClick={() => f("gallery_photos", [...(form.gallery_photos || []), emptyGalleryPair()])}
+          >
+            <Plus className="w-3.5 h-3.5" /> Add another before/after set
+          </Button>
         </div>
       </GlassCard>
 
@@ -522,6 +700,15 @@ export default function PracticeProfileTab({ form, setForm, me, onSave, saving, 
                 {(form.city || form.state) && (
                   <p className="text-xs mt-1 flex items-center gap-1" style={{ color: "rgba(30,37,53,0.45)" }}>
                     <MapPin className="w-3 h-3" />{[form.city, form.state].filter(Boolean).join(", ")}
+                  </p>
+                )}
+                {marketplaceRating && (
+                  <p className="text-xs mt-1.5 flex items-center gap-1 font-semibold" style={{ color: "#b45309" }}>
+                    <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
+                    {marketplaceRating}
+                    <span className="font-normal" style={{ color: "rgba(30,37,53,0.45)" }}>
+                      ({marketplaceReviewCount} review{marketplaceReviewCount !== 1 ? "s" : ""})
+                    </span>
                   </p>
                 )}
               </div>
