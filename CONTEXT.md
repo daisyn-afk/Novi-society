@@ -10,7 +10,11 @@ A named stage in Growth Studio (Foundation, Activation, Growth, Scale). **Phase 
 
 ## Launch Roadmap Step
 
-A single action inside a phase (e.g. "License Verified by NOVI Admin", "Complete Your Profile"). Steps may auto-complete from provider data or be marked done manually.
+A single action inside a phase (e.g. "License Verified by NOVI Admin", "Complete Your Profile"). Steps may auto-complete from provider data or be marked done manually. Embedded tools and steps marked Soon do not count toward progress percentages.
+
+## Launch Roadmap Phase (Coming Soon)
+
+A phase visible in Growth Studio but locked from interaction — excluded from overall progress and phase completion counts. The Scale phase is currently Coming Soon.
 
 ## Manual Launch Step
 
@@ -27,3 +31,7 @@ The lowest-priority incomplete step across all phases — the single recommended
 ## Next Step Bar
 
 A persistent reminder strip at the **top of every provider portal page** (including Growth Studio). Shows the same underlying action as Next Best Action in compact form and navigates to the right destination when clicked.
+
+## Ready to Go Live
+
+Operational launch readiness — distinct from overall roadmap progress. Measured as completion of six gates: license verified, MD on MPI, public profile (bio + photo + city), live treatments, deposit/cancellation policy, and booking link readiness (practice name or bio). When all six are complete, the provider is **Ready to Accept Patients**.

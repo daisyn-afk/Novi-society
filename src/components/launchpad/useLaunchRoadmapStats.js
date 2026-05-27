@@ -72,6 +72,17 @@ export function useLaunchRoadmapStats({ enabled = true } = {}) {
     staleTime: 30_000,
   });
 
+  const { data: mdRelationships = [], isLoading: mdRelationshipsLoading } = useQuery({
+    queryKey: ["my-md-relationships"],
+    queryFn: async () => {
+      const u = await base44.auth.me();
+      return base44.entities.MedicalDirectorRelationship.filter({ provider_id: u.id });
+    },
+    enabled: enabled && !!me,
+    refetchOnWindowFocus: true,
+    staleTime: 30_000,
+  });
+
   const roadmapPhases = useMemo(
     () =>
       dbPhases
@@ -88,9 +99,10 @@ export function useLaunchRoadmapStats({ enabled = true } = {}) {
         certs,
         enrollments,
         mdSubs,
+        mdRelationships,
         phases: roadmapPhases,
       }),
-    [me, licenses, certs, enrollments, mdSubs, roadmapPhases]
+    [me, licenses, certs, enrollments, mdSubs, mdRelationships, roadmapPhases]
   );
 
   const isLoading =
@@ -99,7 +111,8 @@ export function useLaunchRoadmapStats({ enabled = true } = {}) {
     licensesLoading ||
     certsLoading ||
     enrollmentsLoading ||
-    mdSubsLoading;
+    mdSubsLoading ||
+    mdRelationshipsLoading;
 
   return {
     me,

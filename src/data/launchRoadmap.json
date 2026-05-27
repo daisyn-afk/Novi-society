@@ -22,6 +22,7 @@
           "label": "Add MD to MPI",
           "desc": "Legally required in most states. Add your supervising medical director to your practice profile.",
           "priority": 20,
+          "autoCheck": "md_mpi",
           "navigate_to": "ProviderPractice",
           "navigate_params": "?tab=profile"
         },
@@ -164,6 +165,7 @@
           "label": "Set Deposit & Cancellation Policy",
           "desc": "Eliminate no-shows. A 20–30% deposit at booking kills last-minute cancellations.",
           "priority": 250,
+          "autoCheck": "deposit_policy",
           "navigate_to": "ProviderPractice",
           "navigate_params": "?tab=profile"
         },
@@ -266,6 +268,7 @@
       "color": "#DA6A63",
       "textColor": "#a03030",
       "icon": "rocket",
+      "coming_soon": true,
       "steps": [
         {
           "id": "education_hub",

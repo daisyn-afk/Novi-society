@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { getPhaseTheme, LAUNCH_PAD } from "@/lib/launchRoadmapTheme";
-import { CheckCircle2, ExternalLink, Globe } from "lucide-react";
+import { isPhaseComingSoon } from "@/lib/launchRoadmapUtils";
+import { CheckCircle2, ExternalLink, Globe, Lock } from "lucide-react";
 import EmbeddedPricingTool from "../launchpad/EmbeddedPricingTool";
 import EmbeddedEducationHub from "../launchpad/EmbeddedEducationHub";
 import EmbeddedWebinars from "../launchpad/EmbeddedWebinars";
@@ -59,14 +60,90 @@ function getDefaultStepIndex(steps, focusStepId) {
   return firstIncomplete >= 0 ? firstIncomplete : 0;
 }
 
+function PhaseComingSoonBlock({ phase, theme }) {
+  return (
+    <div className="space-y-4">
+      <div>
+        <div className="flex items-baseline gap-2 flex-wrap">
+          <h3
+            className="font-bold"
+            style={{ fontFamily: "'DM Serif Display', serif", fontSize: 20, color: LAUNCH_PAD.navy }}
+          >
+            {phase.label}
+          </h3>
+          <span
+            className="text-[10px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-full"
+            style={{ background: "rgba(250,111,48,0.15)", color: "#b84a10" }}
+          >
+            Coming Soon
+          </span>
+        </div>
+        <div
+          className="h-1 rounded-full mt-2 overflow-hidden"
+          style={{ background: LAUNCH_PAD.greyLight }}
+        />
+        <p className="text-xs mt-1.5" style={{ color: LAUNCH_PAD.grey }}>
+          {phase.description}
+        </p>
+      </div>
+
+      <div
+        className="rounded-2xl px-5 py-8 text-center"
+        style={{
+          background: "rgba(255,255,255,0.75)",
+          border: `1.5px solid ${LAUNCH_PAD.greyBorder}`,
+          boxShadow: "0 2px 12px rgba(30,37,53,0.06)",
+        }}
+      >
+        <div
+          className="w-12 h-12 rounded-2xl mx-auto mb-4 flex items-center justify-center"
+          style={{ background: `${theme.color}18` }}
+        >
+          <Lock className="w-5 h-5" style={{ color: theme.color }} />
+        </div>
+        <p
+          className="text-base font-bold mb-2"
+          style={{ fontFamily: "'DM Serif Display', serif", color: LAUNCH_PAD.navy }}
+        >
+          This phase is coming soon
+        </p>
+        <p className="text-sm leading-relaxed max-w-sm mx-auto" style={{ color: "rgba(30,37,53,0.55)" }}>
+          Education Hub, Webinars, and Ask Your Mentor will unlock here. Focus on Foundation, Activation, and Growth for now.
+        </p>
+        <ul className="mt-5 space-y-2 text-left max-w-xs mx-auto">
+          {(phase.steps || []).map((s) => (
+            <li
+              key={s.id}
+              className="flex items-center gap-2 text-sm px-3 py-2 rounded-xl"
+              style={{
+                background: "rgba(30,37,53,0.03)",
+                color: "rgba(30,37,53,0.45)",
+              }}
+            >
+              <Lock className="w-3.5 h-3.5 flex-shrink-0" />
+              <span>{s.label}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 export default function LaunchPhaseCarousel({ phase, onToggle, canToggle, me, focusStepId }) {
   const navigate = useNavigate();
   const theme = getPhaseTheme(phase.id);
+  const phaseLocked = isPhaseComingSoon(phase);
   const [stepIndex, setStepIndex] = useState(() => getDefaultStepIndex(phase.steps, focusStepId));
 
   useEffect(() => {
+    if (phaseLocked) return;
     setStepIndex(getDefaultStepIndex(phase.steps, focusStepId));
-  }, [phase.id, phase.doneCount, focusStepId]);
+  }, [phase.id, phase.doneCount, focusStepId, phaseLocked]);
+
+  if (phaseLocked) {
+    return <PhaseComingSoonBlock phase={phase} theme={theme} />;
+  }
 
   const step = phase.steps[stepIndex];
   if (!step) return null;
@@ -95,7 +172,7 @@ export default function LaunchPhaseCarousel({ phase, onToggle, canToggle, me, fo
             {phase.label}
           </h3>
           <span className="text-sm font-bold" style={{ color: theme.color }}>
-            {phase.pct}%
+            {phase.pct === 100 ? "Complete" : `${phase.pct ?? 0}%`}
           </span>
         </div>
         <div
@@ -286,7 +363,7 @@ export default function LaunchPhaseCarousel({ phase, onToggle, canToggle, me, fo
               >
                 Completed <CheckCircle2 className="w-4 h-4" />
               </button>
-            ) : canToggle(step) ? (
+            ) : canToggle(step) && !step.coming_soon && !step.embedded_tool ? (
               <button
                 type="button"
                 onClick={() => onToggle(step.id)}

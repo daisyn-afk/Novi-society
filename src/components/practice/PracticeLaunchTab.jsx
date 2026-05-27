@@ -38,7 +38,8 @@ export default function PracticeLaunchTab() {
     toggleMutation.mutate(updated);
   };
 
-  const canToggle = (step) => !step.autoCheck;
+  const canToggle = (step) =>
+    !step.autoCheck && !step.coming_soon && !step.embedded_tool;
 
   return (
     <div className="max-w-3xl space-y-10">

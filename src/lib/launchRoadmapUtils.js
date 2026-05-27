@@ -9,6 +9,16 @@ const PROFILE_FIELDS = [
   "phone",
 ];
 
+/** Operational launch readiness — 6 gates before accepting patients. */
+export const READINESS_MODULE_IDS = [
+  "license_verified",
+  "md_mpi",
+  "profile",
+  "treatments",
+  "deposit_policy",
+  "book_link",
+];
+
 function hasActiveSchedule(me) {
   const schedule = me?.schedule || {};
   return Object.values(schedule).some(
@@ -16,10 +26,20 @@ function hasActiveSchedule(me) {
   );
 }
 
-function buildAutoChecks({ me, licenses = [], certs = [], enrollments = [], mdSubs = [] }) {
+function buildAutoChecks({
+  me,
+  licenses = [],
+  certs = [],
+  enrollments = [],
+  mdSubs = [],
+  mdRelationships = [],
+}) {
   const verifiedLicense = licenses.some((l) => l.status === "verified");
   const activeCert = certs.some((c) => c.status === "active");
   const activeMd = mdSubs.some((s) => s.status === "active");
+  const activeMdRelationship = mdRelationships.some(
+    (r) => String(r.status || "").toLowerCase() === "active"
+  );
   const hasLiveTreatment = !!(
     me?.service_offerings_v2 &&
     Object.values(me.service_offerings_v2).some((v) => v?.is_live)
@@ -36,6 +56,10 @@ function buildAutoChecks({ me, licenses = [], certs = [], enrollments = [], mdSu
   return {
     license_uploaded: licenses.length > 0,
     license_verified: verifiedLicense,
+    md_mpi: activeMdRelationship || activeMd,
+    deposit_policy: !!(
+      Number(me?.deposit_percent) > 0 || Number(me?.cancellation_hours) > 0
+    ),
     cpr_bls: !!(
       me?.launch_checklist?.cpr_bls ||
       certs.some((c) =>
@@ -57,13 +81,25 @@ function buildAutoChecks({ me, licenses = [], certs = [], enrollments = [], mdSu
     _profileCompletePct: Math.round(
       (profileCompleteScore / (PROFILE_FIELDS.length + 2)) * 100
     ),
-    _goLiveGates: {
-      license_verified: verifiedLicense,
-      md_active: activeMd,
-      profile_complete: profileBasic && hasActiveSchedule(me) && !!me?.practice_name,
-      treatments_live: hasLiveTreatment,
-    },
   };
+}
+
+/** Merged completion map: auto-detected readiness + manual checklist overrides. */
+export function buildCompleted(ctx) {
+  const autoChecks = buildAutoChecks(ctx);
+  const manualChecklist = ctx.me?.launch_checklist || {};
+  const profileBasic = !!(ctx.me?.bio && ctx.me?.avatar_url && ctx.me?.city);
+
+  const autoDetected = {
+    license_verified: autoChecks.license_verified,
+    md_mpi: autoChecks.md_mpi,
+    profile: profileBasic,
+    treatments: autoChecks.treatments_live,
+    deposit_policy: autoChecks.deposit_policy,
+    book_link: !!(ctx.me?.practice_name || ctx.me?.bio),
+  };
+
+  return { ...autoDetected, ...manualChecklist };
 }
 
 function isStepComplete(step, autoChecks, manualChecklist = {}) {
@@ -71,6 +107,24 @@ function isStepComplete(step, autoChecks, manualChecklist = {}) {
     return !!autoChecks[step.autoCheck];
   }
   return !!manualChecklist[step.id];
+}
+
+/** Entire phase locked — visible but not interactive, excluded from progress. */
+export function isPhaseComingSoon(phase) {
+  return !!(phase?.coming_soon || phase?.comingSoon);
+}
+
+/** Checklist steps only — excludes Soon tools, embedded tools, and non-checklist types. */
+export function countsTowardProgress(step, phase) {
+  if (isPhaseComingSoon(phase)) return false;
+  if (step.coming_soon) return false;
+  if (step.embedded_tool) return false;
+  if (step.type && step.type !== "checklist") return false;
+  return true;
+}
+
+function getChecklistSteps(steps, phase) {
+  return (steps || []).filter((step) => countsTowardProgress(step, phase));
 }
 
 export function getStaticLaunchRoadmapPhases() {
@@ -114,44 +168,69 @@ export function computeLaunchRoadmapStats({
   certs = [],
   enrollments = [],
   mdSubs = [],
+  mdRelationships = [],
   phases = getStaticLaunchRoadmapPhases(),
 }) {
   const manualChecklist = me?.launch_checklist || {};
-  const autoChecks = buildAutoChecks({ me, licenses, certs, enrollments, mdSubs });
+  const ctx = { me, licenses, certs, enrollments, mdSubs, mdRelationships };
+  const autoChecks = buildAutoChecks(ctx);
+  const completed = buildCompleted(ctx);
 
   const phasesWithProgress = phases.map((phase) => {
     const steps = phase.steps.map((step) => ({
       ...step,
       done: isStepComplete(step, autoChecks, manualChecklist),
     }));
-    const doneCount = steps.filter((s) => s.done).length;
-    const pct = steps.length
-      ? Math.round((doneCount / steps.length) * 100)
-      : 0;
-    const complete = doneCount === steps.length;
-    return { ...phase, steps, doneCount, pct, complete };
+    const checklistSteps = getChecklistSteps(steps, phase);
+    const doneCount = checklistSteps.filter((s) => s.done).length;
+    const comingSoon = isPhaseComingSoon(phase);
+    const pct = comingSoon
+      ? null
+      : checklistSteps.length
+        ? Math.round((doneCount / checklistSteps.length) * 100)
+        : 0;
+    const complete =
+      !comingSoon &&
+      checklistSteps.length > 0 &&
+      doneCount === checklistSteps.length;
+    return {
+      ...phase,
+      steps,
+      doneCount,
+      checklistTotal: checklistSteps.length,
+      pct,
+      complete,
+      comingSoon,
+    };
   });
 
-  const allSteps = phasesWithProgress.flatMap((p) =>
-    p.steps.map((s) => ({ ...s, phaseId: p.id, phaseLabel: p.label }))
+  const activePhases = phasesWithProgress.filter((p) => !p.comingSoon);
+  const allChecklistSteps = activePhases.flatMap((p) =>
+    getChecklistSteps(p.steps, p).map((s) => ({
+      ...s,
+      phaseId: p.id,
+      phaseLabel: p.label,
+    }))
   );
-  const totalSteps = allSteps.length;
-  const completedCount = allSteps.filter((s) => s.done).length;
+  const totalSteps = allChecklistSteps.length;
+  const completedCount = allChecklistSteps.filter((s) => s.done).length;
   const overallPct = totalSteps
     ? Math.round((completedCount / totalSteps) * 100)
     : 0;
 
-  const goLiveGates = autoChecks._goLiveGates;
-  const goLiveComplete = Object.values(goLiveGates).filter(Boolean).length;
-  const readyToGoLivePct = Math.round((goLiveComplete / 4) * 100);
+  const readinessDone = READINESS_MODULE_IDS.filter((id) => completed[id]).length;
+  const readyToGoLivePct = Math.round(
+    (readinessDone / READINESS_MODULE_IDS.length) * 100
+  );
   const profileCompletePct = autoChecks._profileCompletePct;
-  const phasesDone = phasesWithProgress.filter((p) => p.complete).length;
+  const phasesDone = activePhases.filter((p) => p.complete).length;
 
-  const isReadyForPatients = goLiveComplete === 4;
+  const isReadyForPatients = readinessDone === READINESS_MODULE_IDS.length;
 
-  const nextAction = allSteps
-    .filter((s) => !s.done)
-    .sort((a, b) => (a.priority || 999) - (b.priority || 999))[0] || null;
+  const nextAction =
+    allChecklistSteps
+      .filter((s) => !s.done)
+      .sort((a, b) => (a.priority || 999) - (b.priority || 999))[0] || null;
 
   return {
     phases: phasesWithProgress,
@@ -161,11 +240,16 @@ export function computeLaunchRoadmapStats({
     readyToGoLivePct,
     profileCompletePct,
     phasesDone,
-    totalPhases: phases.length,
+    totalPhases: activePhases.length,
     isReadyForPatients,
     nextAction,
     manualChecklist,
     autoChecks,
+    completed,
+    readinessModules: READINESS_MODULE_IDS.map((id) => ({
+      id,
+      done: !!completed[id],
+    })),
   };
 }
 
