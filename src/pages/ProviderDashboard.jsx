@@ -123,6 +123,9 @@ export default function ProviderDashboard() {
   const { data: myAppointments = [] } = useQuery({
     queryKey: ["my-appointments"],
     queryFn: async () => { const u = await base44.auth.me(); return base44.entities.Appointment.filter({ provider_id: u.id }, "-appointment_date"); },
+    staleTime: 0,
+    refetchInterval: 5_000,
+    refetchIntervalInBackground: false,
   });
   const { data: myMDSubs = [] } = useQuery({
     queryKey: ["my-md-subscriptions"],

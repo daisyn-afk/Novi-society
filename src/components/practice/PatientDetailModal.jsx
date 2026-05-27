@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { Button } from "@/components/ui/button";
@@ -248,6 +248,12 @@ function AftercarePlanView({ plan, treatment, sentAftercare, isPending, onSend }
   );
 }
 
+function recordMatchesPatient(record, patient) {
+  if (patient.id && record.patient_id === patient.id) return true;
+  if (patient.email && record.patient_email === patient.email) return true;
+  return false;
+}
+
 export default function PatientDetailModal({ patient, journey, treatmentRecords, appointments, onClose }) {
   const [tab, setTab] = useState("overview");
   const [docDialog, setDocDialog] = useState({ open: false, appt: null, existing: null });
@@ -259,8 +265,13 @@ export default function PatientDetailModal({ patient, journey, treatmentRecords,
   const qc = useQueryClient();
 
   const isPremium = journey?.tier === "premium" && journey?.subscription_status === "active";
-  const patientRecords = treatmentRecords.filter(r => r.patient_id === patient.id);
+  const patientRecords = treatmentRecords.filter(r => recordMatchesPatient(r, patient));
+  const attentionRecords = patientRecords.filter(r => ["flagged", "changes_requested"].includes(r.status));
   const completedAppts = appointments.filter(a => a.status === "completed");
+
+  useEffect(() => {
+    if (attentionRecords.length > 0) setTab("history");
+  }, [patient.id, patient.email]);
   const sortedAppts = [...appointments].sort((a, b) => new Date(b.appointment_date) - new Date(a.appointment_date));
   const checkins = journey?.daily_checkins || [];
 
@@ -378,7 +389,7 @@ Return this exact JSON structure:
     { id: "insights", label: "Patient Insights", badge: isPremium },
     { id: "aftercare", label: "Aftercare Plans", badge: isPremium },
     { id: "checkins", label: `Check-ins (${checkins.length})`, badge: isPremium },
-    { id: "history", label: "Treatment History" },
+    { id: "history", label: "Treatment History", badge: attentionRecords.length > 0 },
   ];
 
   return (
@@ -424,12 +435,35 @@ Return this exact JSON structure:
               className="px-3 pb-3 text-sm font-semibold whitespace-nowrap flex items-center gap-1.5 transition-all relative"
               style={{ color: tab === t.id ? "#FA6F30" : "rgba(30,37,53,0.45)", borderBottom: tab === t.id ? "2px solid #FA6F30" : "2px solid transparent" }}>
               {t.label}
-              {t.badge && <Sparkles className="w-3 h-3" style={{ color: "#4a6b10" }} />}
+              {t.badge && t.id !== "history" && <Sparkles className="w-3 h-3" style={{ color: "#4a6b10" }} />}
+              {t.badge && t.id === "history" && <AlertTriangle className="w-3 h-3" style={{ color: "#DA6A63" }} />}
             </button>
           ))}
         </div>
 
         <div className="flex-1 p-6 space-y-4">
+
+          {attentionRecords.length > 0 && (
+            <div className="rounded-2xl px-4 py-3 flex items-start gap-3" style={{ background: "rgba(218,106,99,0.1)", border: "1.5px solid rgba(218,106,99,0.35)" }}>
+              <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" style={{ color: "#DA6A63" }} />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-bold" style={{ color: "#1e2535" }}>
+                  {attentionRecords.length} record{attentionRecords.length !== 1 ? "s" : ""} need your attention
+                </p>
+                <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.55)" }}>
+                  Your MD flagged or requested changes. Open Treatment History, tap View, address feedback, then resubmit.
+                </p>
+                {attentionRecords[0]?.md_review_notes && (
+                  <p className="text-xs mt-2 italic" style={{ color: "#c2440a" }}>MD: {attentionRecords[0].md_review_notes}</p>
+                )}
+              </div>
+              <Button size="sm" className="flex-shrink-0 text-xs font-bold h-8"
+                style={{ background: "#DA6A63", color: "#fff" }}
+                onClick={() => setTab("history")}>
+                Review
+              </Button>
+            </div>
+          )}
 
           {/* OVERVIEW TAB */}
           {tab === "overview" && (

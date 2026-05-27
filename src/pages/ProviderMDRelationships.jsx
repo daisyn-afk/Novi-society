@@ -4,7 +4,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Shield, Clock, CheckCircle2, AlertTriangle, Calendar } from "lucide-react";
+import { Shield, CheckCircle2, AlertTriangle, Calendar } from "lucide-react";
 import { format, differenceInMonths } from "date-fns";
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
@@ -27,7 +27,6 @@ export default function ProviderMDRelationships() {
     enabled: !!me,
   });
 
-  const pendingRelationships = relationships.filter(r => r.status === "pending");
   const activeRelationships = relationships.filter(r => r.status === "active");
   const suspendedRelationships = relationships.filter(r => r.status === "suspended");
 
@@ -52,31 +51,6 @@ export default function ProviderMDRelationships() {
             When you complete MD coverage checkout for a service, the platform links you to a supervising physician from the NOVI pool for that service. If you already have an active supervisor who covers your new service, that relationship is reused.
           </AlertDescription>
         </Alert>
-
-        {pendingRelationships.length > 0 && (
-          <div className="space-y-4">
-            <h3 className="font-semibold text-slate-900 flex items-center gap-2">
-              <Clock className="w-4 h-4" />
-              Pending Approval
-            </h3>
-            <div className="space-y-3">
-              {pendingRelationships.map(rel => (
-                <Card key={rel.id}>
-                  <CardContent className="py-4">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <h4 className="font-semibold text-slate-900">{rel.medical_director_name}</h4>
-                        <p className="text-sm text-slate-500">{rel.medical_director_email}</p>
-                        <p className="text-sm text-slate-600 mt-2">Waiting for approval...</p>
-                      </div>
-                      <Badge className="bg-yellow-100 text-yellow-800">Pending</Badge>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          </div>
-        )}
 
         {suspendedRelationships.length > 0 && (
           <Alert variant="destructive">

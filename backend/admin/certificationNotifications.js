@@ -295,7 +295,7 @@ function buildMdAutoAssignmentEmailHtml({ mdFirstName, providerLabel, serviceLab
         </td></tr>
         <tr><td style="background:#fff;padding:48px 40px;border-radius:0 0 16px 16px">
           <p style="margin:0 0 24px;font-size:16px;color:#374151;line-height:1.6">Hi Dr. ${safeMd},</p>
-          <p style="margin:0 0 24px;font-size:16px;color:#374151;line-height:1.6">Welcome to NOVI Society — you have been <strong>auto-assigned</strong> as the supervising medical director for a new provider coverage request.</p>
+          <p style="margin:0 0 24px;font-size:16px;color:#374151;line-height:1.6">A provider was <strong>assigned to your supervision</strong> for Board MD coverage. Supervision is active immediately.</p>
           <div style="background:#f9f8f6;border-radius:12px;padding:24px;margin-bottom:32px;border:1px solid rgba(0,0,0,0.07)">
             <p style="margin:0 0 12px;font-size:13px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#2D6B7F">Request Details</p>
             <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
@@ -304,7 +304,7 @@ function buildMdAutoAssignmentEmailHtml({ mdFirstName, providerLabel, serviceLab
             </table>
           </div>
           <p style="margin:0 0 24px;font-size:15px;color:#374151;line-height:1.6">
-            Please log in to NOVI and <strong>approve or decline</strong> this supervision request under <strong>Provider Supervision</strong>.
+            Supervision is <strong>active automatically</strong>. Review this provider under <strong>Provider Supervision</strong> in your NOVI dashboard.
           </p>
           ${safeOpenUrl ? `<p style="margin:0 0 32px"><a href="${safeOpenUrl}" style="display:inline-block;background:#2D6B7F;color:#fff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:600;font-size:14px">Open NOVI</a></p>` : ""}
           <p style="margin:0;font-size:15px;color:#374151">Best,<br><strong>The NOVI Society Team</strong></p>
@@ -351,6 +351,7 @@ export async function notifyMdOfAutoAssignment({
   medicalDirectorId,
   medicalDirectorEmail,
   medicalDirectorName,
+  providerId,
   providerName,
   providerEmail,
   serviceTypeName,
@@ -360,15 +361,28 @@ export async function notifyMdOfAutoAssignment({
   const mdEmail = resolved?.email || String(medicalDirectorEmail || "").trim().toLowerCase() || null;
   const providerLabel = String(providerName || providerEmail || "A provider").trim();
   const serviceLabel = String(serviceTypeName || "a service").trim();
-  const msg = `${providerLabel} requested NOVI Board MD coverage for ${serviceLabel}. Please approve or decline in Provider Supervision.`;
+  const mdName = String(medicalDirectorName || resolved?.full_name || "your medical director").trim();
+  const msg = `${providerLabel} was assigned to your supervision for ${serviceLabel}. Supervision is active — view them in Provider Supervision.`;
 
   const notified = await insertAppNotification({
     user_id: mdId || null,
     user_email: mdEmail || null,
-    type: "md_coverage_pending",
+    type: "md_relationship_approved",
     message: msg,
     link_page: "MDProviderRelationships",
   });
+
+  const providerIdResolved = String(providerId || "").trim();
+  const providerEmailLower = String(providerEmail || "").trim().toLowerCase();
+  if (providerIdResolved || providerEmailLower) {
+    await insertAppNotification({
+      user_id: providerIdResolved || null,
+      user_email: providerEmailLower || null,
+      type: "md_relationship_approved",
+      message: `Dr. ${mdName} is now your supervising medical director for ${serviceLabel}. MD Board coverage is active.`,
+      link_page: "ProviderCredentialsCoverage",
+    });
+  }
 
   let emailed = false;
   if (mdEmail && resendApiKey) {
@@ -395,7 +409,7 @@ export async function notifyMdOfAutoAssignment({
         body: JSON.stringify({
           from: resendFromEmail,
           to: [mdEmail],
-          subject: `NOVI: New supervision request — ${serviceLabel}`,
+          subject: `NOVI: New supervised provider — ${serviceLabel}`,
           html,
         }),
       });

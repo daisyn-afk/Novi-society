@@ -416,11 +416,31 @@ async function upsertProviderProfile({ userId, updates }) {
   const hasState = Object.prototype.hasOwnProperty.call(updates || {}, "state");
   const hasZip = Object.prototype.hasOwnProperty.call(updates || {}, "zip");
   const hasOnboardingCompleted = Object.prototype.hasOwnProperty.call(updates || {}, "onboarding_completed");
-  const metadataFieldKeys = ["bio", "phone", "specialty", "avatar_url", "website_url", "instagram_handle"];
+  const metadataTextKeys = [
+    "bio", "phone", "specialty", "avatar_url", "website_url", "instagram_handle",
+    "practice_name", "consultation_fee", "booking_deposit", "deposit_percent",
+    "cancellation_hours", "years_experience", "referral_code", "referral_discount",
+    "brand_logo_url", "contact_email", "address", "facebook", "tiktok", "starting_price",
+  ];
+  const metadataJsonKeys = [
+    "practice_packages", "service_offerings_v2", "gallery_photos",
+    "schedule", "specialties", "languages", "credentials",
+  ];
+  const metadataBoolKeys = ["accepts_new_patients", "referral_program_active"];
   const metadataUpdates = {};
-  for (const key of metadataFieldKeys) {
+  for (const key of metadataTextKeys) {
     if (Object.prototype.hasOwnProperty.call(updates || {}, key)) {
       metadataUpdates[key] = normalizeNullableText(updates[key]);
+    }
+  }
+  for (const key of metadataJsonKeys) {
+    if (Object.prototype.hasOwnProperty.call(updates || {}, key)) {
+      metadataUpdates[key] = updates[key];
+    }
+  }
+  for (const key of metadataBoolKeys) {
+    if (Object.prototype.hasOwnProperty.call(updates || {}, key)) {
+      metadataUpdates[key] = Boolean(updates[key]);
     }
   }
   const hasMetadataUpdates = Object.keys(metadataUpdates).length > 0;
@@ -665,6 +685,31 @@ export async function getMeFromAccessToken(accessToken) {
       avatar_url: normalizeNullableText(providerMetadata.avatar_url),
       website_url: normalizeNullableText(providerMetadata.website_url),
       instagram_handle: normalizeNullableText(providerMetadata.instagram_handle),
+      practice_name: normalizeNullableText(providerMetadata.practice_name),
+      consultation_fee: providerMetadata.consultation_fee ?? null,
+      booking_deposit: providerMetadata.booking_deposit ?? null,
+      deposit_percent: providerMetadata.deposit_percent ?? null,
+      cancellation_hours: providerMetadata.cancellation_hours ?? null,
+      years_experience: providerMetadata.years_experience ?? null,
+      accepts_new_patients: Object.prototype.hasOwnProperty.call(providerMetadata, "accepts_new_patients")
+        ? Boolean(providerMetadata.accepts_new_patients)
+        : true,
+      practice_packages: Array.isArray(providerMetadata.practice_packages) ? providerMetadata.practice_packages : [],
+      service_offerings_v2: Array.isArray(providerMetadata.service_offerings_v2) ? providerMetadata.service_offerings_v2 : [],
+      gallery_photos: Array.isArray(providerMetadata.gallery_photos) ? providerMetadata.gallery_photos : [],
+      referral_program_active: Boolean(providerMetadata.referral_program_active),
+      referral_code: normalizeNullableText(providerMetadata.referral_code),
+      referral_discount: providerMetadata.referral_discount ?? null,
+      brand_logo_url: normalizeNullableText(providerMetadata.brand_logo_url),
+      schedule: providerMetadata.schedule && typeof providerMetadata.schedule === "object" ? providerMetadata.schedule : {},
+      specialties: Array.isArray(providerMetadata.specialties) ? providerMetadata.specialties : [],
+      languages: Array.isArray(providerMetadata.languages) ? providerMetadata.languages : [],
+      credentials: Array.isArray(providerMetadata.credentials) ? providerMetadata.credentials : [],
+      contact_email: normalizeNullableText(providerMetadata.contact_email),
+      address: normalizeNullableText(providerMetadata.address),
+      facebook: normalizeNullableText(providerMetadata.facebook),
+      tiktok: normalizeNullableText(providerMetadata.tiktok),
+      starting_price: providerMetadata.starting_price ?? null,
       date_of_birth: normalizeDateOnly(patientProfile?.date_of_birth),
       gender: normalizeNullableText(patientProfile?.gender),
       allergies: normalizeNullableText(patientProfile?.allergies),
@@ -885,8 +930,26 @@ export async function updateMe({ accessToken, updates }) {
   if (nextRole === "provider" && userRow?.id) {
     await upsertProviderProfile({ userId: userRow.id, updates });
   }
-  if (nextRole === "patient" && userRow?.id) {
-    await upsertPatientProfile({ userId: userRow.id, updates });
+  if (userRow?.id) {
+    const patientProfileFields = [
+      "phone",
+      "city",
+      "state",
+      "date_of_birth",
+      "gender",
+      "allergies",
+      "current_medications",
+      "medical_conditions",
+      "health_notes",
+      "emergency_contact_name",
+      "emergency_contact_phone",
+    ];
+    const hasPatientProfileUpdates = patientProfileFields.some((key) =>
+      Object.prototype.hasOwnProperty.call(updates || {}, key)
+    );
+    if (nextRole === "patient" || hasPatientProfileUpdates) {
+      await upsertPatientProfile({ userId: userRow.id, updates });
+    }
   }
 
   return getMeFromAccessToken(accessToken);

@@ -28,12 +28,13 @@ export default function MDTreatmentRecords() {
     queryKey: ["md-provider-details", selectedProvider],
     queryFn: async () => {
       if (!selectedProvider) return null;
-      const [licenses, certs, subs] = await Promise.all([
+      const [licenses, certs, subs, profile] = await Promise.all([
         base44.entities.License.filter({ provider_id: selectedProvider }),
         base44.entities.Certification.filter({ provider_id: selectedProvider }),
         base44.entities.MDSubscription.filter({ provider_id: selectedProvider, status: "active" }),
+        base44.entities.MedicalDirectorRelationship.getSupervisedProvider(selectedProvider).catch(() => null),
       ]);
-      return { licenses, certs, subs };
+      return { licenses, certs, subs, profile };
     },
     enabled: !!selectedProvider,
   });
@@ -92,10 +93,20 @@ export default function MDTreatmentRecords() {
                         <p className="text-xs text-slate-400 mb-0.5">Email</p>
                         <p className="font-medium">{selectedRel.user?.email || selectedRel.provider_email}</p>
                       </div>
-                      {selectedRel.user?.city && (
+                      {(providerDetails?.profile?.location_label ||
+                        providerDetails?.profile?.city ||
+                        selectedRel.user?.city) && (
                         <div className="flex items-start gap-1 col-span-2">
                           <MapPin className="w-3.5 h-3.5 text-slate-400 mt-0.5 flex-shrink-0" />
-                          <p className="text-sm">{[selectedRel.user.city, selectedRel.user.state].filter(Boolean).join(", ")}</p>
+                          <div>
+                            <p className="text-xs text-slate-400 mb-0.5">Location</p>
+                            <p className="text-sm font-medium">
+                              {providerDetails?.profile?.location_label ||
+                                [providerDetails?.profile?.city || selectedRel.user?.city, providerDetails?.profile?.state || selectedRel.user?.state]
+                                  .filter(Boolean)
+                                  .join(", ")}
+                            </p>
+                          </div>
                         </div>
                       )}
                     </div>
@@ -136,8 +147,11 @@ export default function MDTreatmentRecords() {
                       {providerDetails?.certs?.map(cert => (
                         <div key={cert.id} className="flex items-center justify-between rounded-lg px-3 py-2 bg-slate-50 border border-slate-100">
                           <div>
-                            <p className="text-sm font-semibold">{cert.certification_name}</p>
-                            <p className="text-xs text-slate-400">{cert.service_type_name} · Issued: {cert.issued_at ? new Date(cert.issued_at).toLocaleDateString() : "—"}</p>
+                            <p className="text-sm font-semibold">{cert.certification_name || cert.cert_name || "Certification"}</p>
+                            <p className="text-xs text-slate-400">
+                              {cert.service_type_name || cert.service_name || "—"}
+                              {cert.issued_at ? ` · Issued: ${new Date(cert.issued_at).toLocaleDateString()}` : ""}
+                            </p>
                           </div>
                           <Badge className={`text-xs border-0 ${cert.status === "active" ? "bg-green-100 text-green-700" : "bg-red-100 text-red-600"}`}>
                             {cert.status}
@@ -163,7 +177,9 @@ export default function MDTreatmentRecords() {
                         <div key={sub.id} className="flex items-center justify-between rounded-lg px-3 py-2.5 bg-slate-50 border border-slate-100">
                           <div>
                             <p className="text-sm font-semibold">{sub.service_type_name}</p>
-                            <p className="text-xs text-slate-400">Tier {sub.coverage_tier || 1} · ${sub.service_type_monthly_fee || 0}/mo</p>
+                            <p className="text-xs text-slate-400">
+                              Tier {sub.coverage_tier || 1} · ${Number(sub.service_type_monthly_fee ?? 0).toLocaleString()}/mo
+                            </p>
                           </div>
                           <Badge className="bg-green-100 text-green-700 text-xs border-0">Active</Badge>
                         </div>
@@ -175,7 +191,7 @@ export default function MDTreatmentRecords() {
 
               {/* Treatment Records Tab */}
               <TabsContent value="records">
-                <TreatmentRecordsReview />
+                <TreatmentRecordsReview providerId={selectedProvider} />
               </TabsContent>
             </Tabs>
           ) : (

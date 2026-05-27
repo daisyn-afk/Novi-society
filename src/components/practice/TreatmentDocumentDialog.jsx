@@ -94,6 +94,8 @@ export default function TreatmentDocumentDialog({ open, onClose, appointment, ex
         products_used: products.filter(p => p.product_name),
         before_photo_urls: beforePhotos,
         after_photo_urls: afterPhotos,
+        gfe_status: appointment.gfe_status || null,
+        gfe_exam_url: appointment.gfe_exam_url || null,
         status,
         ...form,
       };
@@ -111,6 +113,7 @@ export default function TreatmentDocumentDialog({ open, onClose, appointment, ex
     },
     onSuccess: (record) => {
       qc.invalidateQueries(["treatment-records"]);
+      qc.invalidateQueries(["my-appointments"]);
       // Only show aftercare dialog for premium patients
       if (patientJourney) {
         setSavedRecord(record);

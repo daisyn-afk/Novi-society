@@ -1,6 +1,12 @@
 import { Router } from "express";
 import { query } from "../db.js";
 import { getMeFromAccessToken } from "../auth/service.js";
+import {
+  getProviderIdAliases,
+  isMedicalDirectorRole,
+  mdHasActiveSupervisionOf,
+} from "../mdSupervisedAccess.js";
+import { enrichMdSubscriptionMonthlyFees, monthlyFeeForNewMdService } from "../mdMembershipPricing.js";
 
 export const mdSubscriptionsRouter = Router();
 
@@ -21,24 +27,68 @@ mdSubscriptionsRouter.get("/", async (req, res, next) => {
     if (!token) return res.status(401).json({ error: "Missing bearer token." });
     const me = await getMeFromAccessToken(token);
     const providerIdFilter = String(req.query.provider_id || "").trim();
+    const statusFilter = String(req.query.status || "").trim().toLowerCase();
+    const isPatient = String(me.role || "").trim().toLowerCase() === "patient";
 
-    if (hasAdminAccess(me.role)) {
+    if (isPatient || hasAdminAccess(me.role)) {
+      const where = [];
+      const params = [];
       if (providerIdFilter) {
-        const { rows } = await query(
-          `select * from public.md_subscription
-           where provider_id = $1
-           order by created_at desc nulls last
-           limit 200`,
-          [providerIdFilter]
-        );
-        return res.json(rows || []);
+        params.push(providerIdFilter);
+        where.push(`provider_id = $${params.length}`);
       }
+      if (statusFilter) {
+        params.push(statusFilter);
+        where.push(`lower(status) = $${params.length}`);
+      }
+      const whereSql = where.length ? `where ${where.join(" and ")}` : "";
       const { rows } = await query(
         `select * from public.md_subscription
+         ${whereSql}
          order by created_at desc nulls last
-         limit 500`
+         limit 500`,
+        params
       );
-      return res.json(rows || []);
+      return res.json(enrichMdSubscriptionMonthlyFees(rows || []));
+    }
+
+    if (isMedicalDirectorRole(me.role)) {
+      if (providerIdFilter) {
+        const allowed = await mdHasActiveSupervisionOf(me, providerIdFilter);
+        if (!allowed) {
+          return res.status(403).json({ error: "Forbidden." });
+        }
+        const { aliases } = await getProviderIdAliases(providerIdFilter);
+        const where = [`provider_id::text = any($1::text[])`];
+        const params = [aliases];
+        if (statusFilter) {
+          params.push(statusFilter);
+          where.push(`lower(status) = $${params.length}`);
+        }
+        const { rows } = await query(
+          `select * from public.md_subscription
+           where ${where.join(" and ")}
+           order by created_at desc nulls last
+           limit 200`,
+          params
+        );
+        return res.json(enrichMdSubscriptionMonthlyFees(rows || []));
+      }
+      const { rows: rels } = await query(
+        `select provider_id from public.medical_director_relationship
+         where medical_director_id = $1 and lower(coalesce(status, '')) = 'active'`,
+        [me.id]
+      );
+      const providerIds = [...new Set((rels || []).map((r) => String(r.provider_id || "").trim()).filter(Boolean))];
+      if (!providerIds.length) return res.json([]);
+      const { rows } = await query(
+        `select * from public.md_subscription
+         where provider_id::text = any($1::text[])
+         order by created_at desc nulls last
+         limit 500`,
+        [providerIds]
+      );
+      return res.json(enrichMdSubscriptionMonthlyFees(rows || []));
     }
 
     const { rows } = await query(
@@ -47,6 +97,41 @@ mdSubscriptionsRouter.get("/", async (req, res, next) => {
        order by created_at desc nulls last
        limit 200`,
       [me.id]
+    );
+    return res.json(enrichMdSubscriptionMonthlyFees(rows || []));
+  } catch (error) {
+    return next(error);
+  }
+});
+
+mdSubscriptionsRouter.get("/:id/billing-events", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ error: "Missing bearer token." });
+    const me = await getMeFromAccessToken(token);
+    const id = String(req.params.id || "").trim();
+    if (!id) return res.status(400).json({ error: "id is required." });
+
+    const { rows: subRows } = await query(
+      `select * from public.md_subscription where id = $1::uuid limit 1`,
+      [id]
+    );
+    const sub = subRows[0];
+    if (!sub) return res.status(404).json({ error: "Subscription not found." });
+
+    const isOwner = String(sub.provider_id || "") === String(me.id);
+    const isMd =
+      isMedicalDirectorRole(me.role) && (await mdHasActiveSupervisionOf(me, sub.provider_id));
+    if (!hasAdminAccess(me.role) && !isOwner && !isMd) {
+      return res.status(403).json({ error: "Forbidden." });
+    }
+
+    const { rows } = await query(
+      `select * from public.md_subscription_billing_event
+       where md_subscription_id = $1::uuid
+       order by created_at desc
+       limit 100`,
+      [id]
     );
     return res.json(rows || []);
   } catch (error) {
@@ -69,6 +154,20 @@ mdSubscriptionsRouter.post("/", async (req, res, next) => {
       return res.status(400).json({ error: "service_type_id is required." });
     }
     const status = String(body.status || "active").trim() || "active";
+    let monthlyFee =
+      body.service_type_monthly_fee != null && String(body.service_type_monthly_fee).trim() !== ""
+        ? Number(body.service_type_monthly_fee)
+        : null;
+    if (monthlyFee == null || !Number.isFinite(monthlyFee)) {
+      const { rows: existingActive } = await query(
+        `select id from public.md_subscription
+         where provider_id = $1
+           and lower(coalesce(status, '')) = 'active'
+           and coalesce(service_type_id::text, '') <> $2`,
+        [providerId, serviceTypeId]
+      );
+      monthlyFee = monthlyFeeForNewMdService((existingActive || []).length);
+    }
     const { rows } = await query(
       `insert into public.md_subscription (
         provider_id, provider_email, provider_name, service_type_id, service_type_name,
@@ -81,9 +180,7 @@ mdSubscriptionsRouter.post("/", async (req, res, next) => {
         body.provider_name || me.full_name || null,
         serviceTypeId,
         body.service_type_name || null,
-        body.service_type_monthly_fee != null && String(body.service_type_monthly_fee).trim() !== ""
-          ? Number(body.service_type_monthly_fee)
-          : null,
+        monthlyFee,
         status,
         body.signed_at || null,
         body.signed_by_name || me.full_name || null,

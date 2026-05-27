@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { useNavigate } from "react-router-dom";
 import { createPageUrl } from "@/utils";
-import { Bell, X, Calendar, Award, FileText, Users, CheckCircle } from "lucide-react";
+import { Bell, X, Calendar, Award, FileText, Users, CheckCircle, ShieldCheck } from "lucide-react";
 import { format } from "date-fns";
 
 const NOTIF_ICONS = {
@@ -16,6 +16,12 @@ const NOTIF_ICONS = {
   md_relationship_approved: Users,
   md_relationship_pending: Users,
   md_coverage_pending: Users,
+  gfe_invite: ShieldCheck,
+  gfe_completed: ShieldCheck,
+  gfe_deferred: ShieldCheck,
+  treatment_record_approved: CheckCircle,
+  treatment_record_flagged: FileText,
+  treatment_record_changes_requested: FileText,
 };
 
 const NOTIF_COLORS = {
@@ -28,6 +34,12 @@ const NOTIF_COLORS = {
   md_relationship_approved: "text-purple-500 bg-purple-50",
   md_relationship_pending: "text-yellow-500 bg-yellow-50",
   md_coverage_pending: "text-teal-700 bg-teal-50",
+  gfe_invite: "text-indigo-600 bg-indigo-50",
+  gfe_completed: "text-green-600 bg-green-50",
+  gfe_deferred: "text-red-600 bg-red-50",
+  treatment_record_approved: "text-green-600 bg-green-50",
+  treatment_record_flagged: "text-red-600 bg-red-50",
+  treatment_record_changes_requested: "text-orange-600 bg-orange-50",
 };
 
 const NOTIF_ROW_STYLES = {
@@ -40,6 +52,12 @@ const NOTIF_ROW_STYLES = {
   md_relationship_approved: "bg-purple-50/70 border-purple-100",
   md_relationship_pending: "bg-yellow-50/70 border-yellow-100",
   md_coverage_pending: "bg-teal-50/80 border-teal-200",
+  gfe_invite: "bg-indigo-50/80 border-indigo-200",
+  gfe_completed: "bg-green-50/80 border-green-200",
+  gfe_deferred: "bg-red-50/80 border-red-200",
+  treatment_record_approved: "bg-green-50/80 border-green-200",
+  treatment_record_flagged: "bg-red-50/80 border-red-200",
+  treatment_record_changes_requested: "bg-orange-50/80 border-orange-200",
 };
 
 export default function NotificationBell() {
@@ -93,9 +111,21 @@ export default function NotificationBell() {
       });
       return deduped.slice(0, 30);
     },
-    refetchInterval: 5000, // poll every 5s for near-real-time updates
+    refetchInterval: 2_000,
     refetchOnWindowFocus: true,
   });
+
+  const unreadApptRequestCount = notifications.filter(
+    (n) => n.type === "appointment_request" && !n.read_at
+  ).length;
+  const prevUnreadApptRequests = useRef(0);
+
+  useEffect(() => {
+    if (unreadApptRequestCount > prevUnreadApptRequests.current) {
+      void qc.refetchQueries({ queryKey: ["my-appointments"] });
+    }
+    prevUnreadApptRequests.current = unreadApptRequestCount;
+  }, [unreadApptRequestCount, qc]);
 
   const unread = notifications.filter(n => !n.read_at);
 
@@ -115,6 +145,7 @@ export default function NotificationBell() {
   const resolveNotificationHref = (linkPage) => {
     const raw = String(linkPage || "").trim();
     if (!raw) return null;
+    if (/^https?:\/\//i.test(raw)) return raw;
     if (raw.startsWith("/")) return raw;
     const [pageName, queryString] = raw.split("?");
     const routePath = createPageUrl(String(pageName || "").trim() || raw);
@@ -156,10 +187,20 @@ export default function NotificationBell() {
         tab: type === "cert_submitted" ? "certifications" : "licenses",
         focus_type: type === "cert_submitted" ? "certification" : "license",
       });
+    } else if (type === "appointment_request") {
+      targetHref = appendQueryParams(targetHref || createPageUrl("ProviderPractice"), {
+        tab: "appointments",
+      });
+    } else if (type.startsWith("treatment_record_")) {
+      targetHref = targetHref || createPageUrl("ProviderPractice");
     }
     if (targetHref) {
       setOpen(false);
-      navigate(targetHref);
+      if (/^https?:\/\//i.test(targetHref)) {
+        window.open(targetHref, "_blank", "noopener,noreferrer");
+      } else {
+        navigate(targetHref);
+      }
     }
   };
 
@@ -172,7 +213,7 @@ export default function NotificationBell() {
         <Bell className="w-5 h-5 text-gray-400" />
         {unread.length > 0 && (
           <span className="absolute top-1 right-1 w-4 h-4 rounded-full text-[10px] font-bold flex items-center justify-center text-white"
-            style={{ background: "#FA6F30" }}>
+            style={{ background: unreadApptRequestCount > 0 ? "#dc2626" : "#FA6F30" }}>
             {unread.length > 9 ? "9+" : unread.length}
           </span>
         )}

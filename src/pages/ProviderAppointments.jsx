@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { Card, CardContent } from "@/components/ui/card";
@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import ServiceLockGate from "@/components/ServiceLockGate";
 import MessageThread from "@/components/messaging/MessageThread";
 import PatientChartView from "@/components/provider/PatientChartView";
+import { subscribeAppointmentsRefresh } from "@/lib/appointmentSync";
 
 const statusColor = {
   requested: "bg-yellow-100 text-yellow-700",
@@ -33,7 +34,17 @@ export default function ProviderAppointments() {
       const me = await base44.auth.me();
       return base44.entities.Appointment.filter({ provider_id: me.id }, "-appointment_date");
     },
+    staleTime: 0,
+    refetchInterval: 2_000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
   });
+
+  useEffect(() => {
+    return subscribeAppointmentsRefresh(() => {
+      void qc.refetchQueries({ queryKey: ["my-appointments"] });
+    });
+  }, [qc]);
 
   const update = useMutation({
     mutationFn: ({ id, data }) => base44.entities.Appointment.update(id, data),

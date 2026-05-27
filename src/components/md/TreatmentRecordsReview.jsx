@@ -18,23 +18,33 @@ const STATUS_STYLE = {
   changes_requested: { bg: "bg-orange-100", text: "text-orange-700", label: "Changes Requested" },
 };
 
-export default function TreatmentRecordsReview() {
+export default function TreatmentRecordsReview({ providerId = null }) {
   const qc = useQueryClient();
   const [expanded, setExpanded] = useState(null);
   const [reviewDialog, setReviewDialog] = useState({ open: false, record: null, action: null });
   const [reviewNote, setReviewNote] = useState("");
+  const [statusFilter, setStatusFilter] = useState("submitted");
 
   const { data: records = [], isLoading } = useQuery({
-    queryKey: ["md-treatment-records"],
+    queryKey: ["md-treatment-records", providerId],
     queryFn: async () => {
       const me = await base44.auth.me();
-      // Get providers under this MD
       const rels = await base44.entities.MedicalDirectorRelationship.filter({ medical_director_id: me.id, status: "active" });
-      const providerIds = rels.map(r => r.provider_id);
+      const providerIds = rels.map((r) => r.provider_id);
       if (!providerIds.length) return [];
-      const all = await base44.entities.TreatmentRecord.list("-created_date", 200);
-      return all.filter(r => providerIds.includes(r.provider_id));
+      if (providerId && !providerIds.includes(providerId)) return [];
+      const all = await base44.entities.TreatmentRecord.filter(
+        providerId ? { provider_id: providerId } : {},
+        "-created_date",
+        200
+      );
+      return (all || []).filter((r) => providerIds.includes(r.provider_id));
     },
+  });
+
+  const displayed = records.filter((r) => {
+    if (statusFilter === "all") return true;
+    return r.status === statusFilter;
   });
 
   const review = useMutation({
@@ -46,22 +56,10 @@ export default function TreatmentRecordsReview() {
         md_reviewed_by: me.full_name || me.email,
         md_reviewed_at: new Date().toISOString(),
       });
-      // Notify the provider
-      const msgMap = {
-        approved: `Your treatment record for ${record.service} (${record.patient_name}) has been approved by your MD.`,
-        flagged: `Your treatment record for ${record.service} (${record.patient_name}) has been flagged by your MD. Notes: ${notes}`,
-        changes_requested: `Your MD has requested changes to your treatment record for ${record.service} (${record.patient_name}). Notes: ${notes}`,
-      };
-      await base44.entities.Notification.create({
-        user_id: record.provider_id,
-        user_email: record.provider_email,
-        type: "general",
-        message: msgMap[status] || `Your treatment record status has been updated to: ${status}`,
-        link_page: "ProviderPractice",
-      });
     },
     onSuccess: () => {
       qc.invalidateQueries(["md-treatment-records"]);
+      qc.invalidateQueries({ queryKey: ["my-notifications"] });
       setReviewDialog({ open: false, record: null, action: null });
       setReviewNote("");
     },
@@ -78,18 +76,35 @@ export default function TreatmentRecordsReview() {
         </div>
       </div>
 
-      {/* Filter tabs */}
-      {["submitted", "all"].map(f => null)}
+      <div className="flex gap-2 flex-wrap">
+        {[
+          { key: "submitted", label: "Pending Review" },
+          { key: "all", label: "All" },
+          { key: "flagged", label: "Flagged" },
+          { key: "changes_requested", label: "Changes Requested" },
+        ].map((f) => (
+          <button
+            key={f.key}
+            type="button"
+            onClick={() => setStatusFilter(f.key)}
+            className={`text-xs font-semibold px-3 py-1.5 rounded-full transition-all ${
+              statusFilter === f.key ? "bg-slate-800 text-white" : "bg-slate-100 text-slate-600"
+            }`}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
 
       {isLoading ? (
         <div className="space-y-2">{[1,2].map(i => <Card key={i} className="h-16 animate-pulse" style={{ background: "rgba(198,190,168,0.2)" }} />)}</div>
-      ) : records.length === 0 ? (
+      ) : displayed.length === 0 ? (
         <div className="text-center py-10" style={{ color: "#9a8f7e" }}>
           <p className="text-sm">No treatment records from your providers yet.</p>
         </div>
       ) : (
         <div className="space-y-2">
-          {records.map(r => {
+          {displayed.map(r => {
             const ss = STATUS_STYLE[r.status] || STATUS_STYLE.draft;
             const isOpen = expanded === r.id;
             return (
@@ -113,16 +128,20 @@ export default function TreatmentRecordsReview() {
                         {r.provider_name} → {r.patient_name} · {r.treatment_date ? format(new Date(r.treatment_date), "MMM d, yyyy") : ""}
                       </p>
                     </div>
-                    <div className="flex items-center gap-2 flex-shrink-0">
+                    <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end max-w-[min(100%,320px)]">
                       {r.status === "submitted" && (
                         <>
-                          <Button size="sm" style={{ background: "#FA6F30", color: "#fff" }}
+                          <Button size="sm" className="h-8 px-2 text-xs" style={{ background: "#FA6F30", color: "#fff" }}
                             onClick={e => { e.stopPropagation(); setReviewDialog({ open: true, record: r, action: "approve" }); }}>
                             <CheckCircle className="w-3.5 h-3.5 mr-1" />Approve
                           </Button>
-                          <Button size="sm" variant="outline" className="text-orange-600 border-orange-200"
+                          <Button size="sm" variant="outline" className="h-8 px-2 text-xs text-orange-600 border-orange-200"
                             onClick={e => { e.stopPropagation(); setReviewDialog({ open: true, record: r, action: "flag" }); }}>
                             <Flag className="w-3.5 h-3.5 mr-1" />Flag
+                          </Button>
+                          <Button size="sm" variant="outline" className="h-8 px-2 text-xs text-blue-700 border-blue-200"
+                            onClick={e => { e.stopPropagation(); setReviewDialog({ open: true, record: r, action: "changes_requested" }); }}>
+                            <MessageSquare className="w-3.5 h-3.5 mr-1" />Request Changes
                           </Button>
                         </>
                       )}

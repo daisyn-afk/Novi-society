@@ -1,10 +1,22 @@
 import { Router } from "express";
 import { query } from "../db.js";
 import { getMeFromAccessToken } from "../auth/service.js";
+import { validateBookingScope } from "../bookingValidation.js";
 import { notifyAdminsOfPendingCourseCertIssuance } from "../certificationNotifications.js";
 import { withCourseEmailShell } from "../courseEmailShell.js";
+import {
+  sendAppointmentGfeInviteEmail,
+  sendAppointmentGfeApprovedPatientEmail,
+} from "../patientAppointmentEmails.js";
 import { listEligibleMedicalDirectorsForService } from "../mdEligibleDirectors.js";
 import { submitMdBoardCoverageAssignment } from "../mdAssignmentService.js";
+import {
+  attachCheckoutSessionToMdSubscription,
+  cancelMdSubscriptionForProvider,
+  createPendingMdSubscriptionForCheckout,
+  finalizeMdBoardCoverage,
+} from "../mdBillingService.js";
+import { monthlyFeeForNewMdService } from "../mdMembershipPricing.js";
 import Stripe from "stripe";
 import {
   recordCheckoutInitiated,
@@ -77,6 +89,145 @@ function splitNameParts(fullName) {
   const parts = clean.split(/\s+/).filter(Boolean);
   if (parts.length === 1) return { firstName: parts[0], lastName: "Model" };
   return { firstName: parts[0], lastName: parts.slice(1).join(" ") };
+}
+
+function parseJsonSafely(value, fallback = null) {
+  if (value == null) return fallback;
+  if (typeof value === "object") return value;
+  const raw = String(value || "").trim();
+  if (!raw) return fallback;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+}
+
+function toNonEmptyString(value) {
+  const out = String(value || "").trim();
+  return out || "";
+}
+
+function resolveQualiphyWebhookUrl() {
+  const explicit = toNonEmptyString(process.env.QUALIPHY_WEBHOOK_URL);
+  if (explicit) return explicit;
+  const base = toNonEmptyString(appBaseUrl).replace(/\/+$/, "");
+  if (!base) return "";
+  return `${base}/functions/qualiphyWebhook`;
+}
+
+function extractAppointmentIdFromQualiphyPayload(payload) {
+  const additional = parseJsonSafely(payload?.additional_data, payload?.additional_data || {});
+  const directCandidates = [
+    payload?.appointment_id,
+    payload?.appointmentId,
+    payload?.metadata?.appointment_id,
+    payload?.metadata?.appointmentId,
+    payload?.data?.appointment_id,
+    payload?.data?.appointmentId,
+    additional?.appointment_id,
+    additional?.appointmentId,
+  ];
+  for (const candidate of directCandidates) {
+    const clean = toNonEmptyString(candidate);
+    if (clean) return clean;
+  }
+  return "";
+}
+
+function normalizeQualiphyStatus(payload) {
+  const rawCandidates = [
+    payload?.status,
+    payload?.exam_status,
+    payload?.result,
+    payload?.decision,
+    payload?.state,
+    payload?.data?.status,
+    payload?.data?.exam_status,
+    payload?.data?.result,
+    payload?.data?.decision,
+  ];
+  const normalized = rawCandidates
+    .map((v) => toNonEmptyString(v).toLowerCase())
+    .find(Boolean);
+  if (!normalized) return null;
+  if (["approved", "complete", "completed", "passed", "success", "eligible"].includes(normalized)) {
+    return "approved";
+  }
+  if (["pending", "in_progress", "invited", "started", "processing", "awaiting"].includes(normalized)) {
+    return "pending";
+  }
+  if (["deferred", "declined", "rejected", "failed", "ineligible", "denied", "cancelled", "canceled", "expired"].includes(normalized)) {
+    return "deferred";
+  }
+  return null;
+}
+
+function extractQualiphyMeetingUrl(payload) {
+  const candidates = [
+    payload?.meeting_url,
+    payload?.url,
+    payload?.exam_invite_url,
+    payload?.gfe_url,
+    payload?.exam_url,
+    payload?.data?.meeting_url,
+    payload?.data?.url,
+    payload?.data?.exam_invite_url,
+    payload?.data?.exam_url,
+  ];
+  for (const candidate of candidates) {
+    const clean = toNonEmptyString(candidate);
+    if (clean) return clean;
+  }
+  return "";
+}
+
+function extractGfeProviderName(payload) {
+  const candidates = [
+    payload?.provider_name,
+    payload?.examiner_name,
+    payload?.reviewer_name,
+    payload?.data?.provider_name,
+    payload?.data?.examiner_name,
+  ];
+  for (const candidate of candidates) {
+    const clean = toNonEmptyString(candidate);
+    if (clean) return clean;
+  }
+  return "";
+}
+
+function extractGfeQuestionsAnswers(payload) {
+  const raw =
+    payload?.questions_answers ||
+    payload?.questionnaire ||
+    payload?.questions ||
+    payload?.data?.questions_answers ||
+    payload?.data?.questionnaire;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") return null;
+      const question = toNonEmptyString(entry.question || entry.q || entry.prompt);
+      const answer = toNonEmptyString(entry.answer || entry.a || entry.response);
+      if (!question && !answer) return null;
+      return { question, answer };
+    })
+    .filter(Boolean);
+}
+
+async function insertAppNotification({ userId, userEmail, type, message, linkPage }) {
+  await query(
+    `insert into public.notifications (user_id, user_email, type, message, link_page)
+     values ($1, $2, $3, $4, $5)`,
+    [
+      userId ? String(userId) : null,
+      userEmail ? String(userEmail) : null,
+      String(type || "general"),
+      String(message || "").trim(),
+      linkPage ? String(linkPage) : null,
+    ]
+  ).catch(() => {});
 }
 
 async function resolveQualiphyExamIdForCourse({ courseId, treatmentType }) {
@@ -161,6 +312,22 @@ async function resolveQualiphyExamIdForCourse({ courseId, treatmentType }) {
     if (preferred) return preferred.examIds[0];
   }
   return candidates[0].examIds[0];
+}
+
+async function resolveQualiphyExamIdForServiceType(serviceTypeId) {
+  const id = String(serviceTypeId || "").trim();
+  if (!id) return null;
+  const { rows } = await query(
+    `select id, requires_gfe, qualiphy_exam_ids
+       from public.service_type
+      where id = $1
+      limit 1`,
+    [id]
+  );
+  const row = rows[0];
+  if (!row) return null;
+  const examIds = normalizeExamIds(row.qualiphy_exam_ids);
+  return examIds[0] || null;
 }
 
 function toCurrencyCents(value) {
@@ -519,8 +686,31 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
       return res.status(400).json({ success: false, error: "service_type_id is required." });
     }
 
+    const { rows: activeOtherRows } = await query(
+      `select id from public.md_subscription
+       where provider_id = $1
+         and lower(coalesce(status, '')) = 'active'
+         and service_type_id::text <> $2`,
+      [me.id, serviceTypeId]
+    );
+    const monthlyFee = monthlyFeeForNewMdService((activeOtherRows || []).length);
+    const signatureData = body.signature_data != null ? String(body.signature_data) : null;
+
     if (amountCents <= 0) {
-      return res.json({ success: true });
+      const freeResult = await finalizeMdBoardCoverage({
+        providerId: me.id,
+        providerEmail: me.email,
+        providerName: me.full_name,
+        serviceTypeId,
+        serviceTypeName,
+        enrollmentId: enrollmentId || null,
+        signatureData,
+        signedByName: me.full_name,
+      });
+      if (!freeResult.ok) {
+        return res.status(400).json({ success: false, error: freeResult.error || "Activation failed." });
+      }
+      return res.json({ success: true, md_subscription_id: freeResult.md_subscription_id });
     }
 
     if (!stripe) {
@@ -539,6 +729,18 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
     const successUrl = `${base}/ProviderCredentialsCoverage?${successParams.toString()}`;
     const cancelUrl = `${base}/ProviderCredentialsCoverage?md_payment_status=cancel&service_type_id=${encodeURIComponent(serviceTypeId)}`;
 
+    const pendingRow = await createPendingMdSubscriptionForCheckout({
+      providerId: me.id,
+      providerEmail: me.email,
+      providerName: me.full_name,
+      serviceTypeId,
+      serviceTypeName,
+      monthlyFee,
+      enrollmentId: enrollmentId || null,
+      signatureData,
+      signedByName: me.full_name,
+    });
+
     const checkoutSession = await stripe.checkout.sessions.create({
       mode: "subscription",
       payment_method_types: ["card"],
@@ -549,14 +751,16 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
         checkout_type: "md_board_coverage",
         provider_auth_user_id: String(me.id || ""),
         service_type_id: serviceTypeId,
-        enrollment_id: enrollmentId || ""
+        enrollment_id: enrollmentId || "",
+        md_subscription_id: String(pendingRow.id || ""),
       },
       subscription_data: {
         metadata: {
           checkout_type: "md_board_coverage",
           provider_auth_user_id: String(me.id || ""),
           service_type_id: serviceTypeId,
-          enrollment_id: enrollmentId || ""
+          enrollment_id: enrollmentId || "",
+          md_subscription_id: String(pendingRow.id || ""),
         }
       },
       line_items: [
@@ -579,23 +783,62 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
     if (!url) {
       return res.status(500).json({ success: false, error: "Checkout session did not return a URL." });
     }
-    return res.json({ success: true, url });
+    await attachCheckoutSessionToMdSubscription(pendingRow.id, checkoutSession.id);
+    return res.json({ success: true, url, md_subscription_id: pendingRow.id });
   } catch (error) {
     return next(error);
   }
 });
 
-/** Placeholder: cancel flow can extend to Stripe + DB when subscription ids are stored. */
+functionsRouter.post("/finalizeMdBoardCoverage", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ success: false, error: "Missing bearer token." });
+    const me = await getMeFromAccessToken(token);
+    const serviceTypeId = String(req.body?.service_type_id || "").trim();
+    if (!serviceTypeId) {
+      return res.status(400).json({ success: false, error: "service_type_id is required." });
+    }
+    const result = await finalizeMdBoardCoverage({
+      providerId: me.id,
+      providerEmail: me.email,
+      providerName: me.full_name,
+      serviceTypeId,
+      serviceTypeName: String(req.body?.service_type_name || "").trim(),
+      enrollmentId: req.body?.enrollment_id != null ? String(req.body.enrollment_id).trim() : null,
+      signatureData: req.body?.signature_data != null ? String(req.body.signature_data) : null,
+      signedByName: me.full_name,
+    });
+    if (!result.ok) {
+      return res.status(400).json({ success: false, error: result.error || "Activation failed." });
+    }
+    return res.json({ success: true, ...result });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 functionsRouter.post("/cancelMDSubscription", async (req, res, next) => {
   try {
     const token = getBearerToken(req);
     if (!token) return res.status(401).json({ success: false, error: "Missing bearer token." });
-    await getMeFromAccessToken(token);
+    const me = await getMeFromAccessToken(token);
     const subscriptionId = String(req.body?.subscription_id || "").trim();
     if (!subscriptionId) {
       return res.status(400).json({ success: false, error: "subscription_id is required." });
     }
-    return res.json({ success: true });
+    const result = await cancelMdSubscriptionForProvider({
+      mdSubscriptionId: subscriptionId,
+      providerId: me.id,
+      reason: String(req.body?.reason || "").trim() || null,
+      notes: String(req.body?.notes || "").trim() || null,
+      cancelledByName: String(req.body?.confirmation_name || me.full_name || "").trim() || null,
+      cancelImmediately: Boolean(req.body?.cancel_immediately),
+    });
+    if (!result.ok) {
+      return res.status(400).json({ success: false, error: result.error || "Cancel failed." });
+    }
+    return res.json({ success: true, ...result });
   } catch (error) {
     return next(error);
   }
@@ -649,7 +892,7 @@ functionsRouter.post("/pickMedicalDirectorForService", async (req, res, next) =>
 
 /**
  * Provider-only: after MD coverage agreement + subscription, run assignment engine (service match →
- * optional state filter → round-robin), create pending relationship + coverage request, notify MD.
+ * optional state filter → round-robin), create active relationship + coverage request, notify MD and provider.
  */
 functionsRouter.post("/submitMdBoardCoverageAssignment", async (req, res, next) => {
   try {
@@ -1599,7 +1842,7 @@ functionsRouter.post("/sendModelGFE", async (req, res, next) => {
         error: "No Qualiphy exam ID found for this course. Add qualiphy_exam_ids on the course's linked service type."
       });
     }
-    let dob = String(date_of_birth || "").slice(0, 10);
+    let dob = toDateOnly(date_of_birth);
     const hasDobColumn = await hasPreOrderColumn("date_of_birth");
     if (!dob && hasDobColumn && pre_order_id) {
       const { rows: preRows } = await query(
@@ -1609,7 +1852,7 @@ functionsRouter.post("/sendModelGFE", async (req, res, next) => {
          limit 1`,
         [pre_order_id]
       );
-      dob = String(preRows?.[0]?.date_of_birth || "").slice(0, 10);
+      dob = toDateOnly(preRows?.[0]?.date_of_birth);
     }
     if (!dob && hasDobColumn) {
       const { rows: fallbackDobRows } = await query(
@@ -1623,7 +1866,7 @@ functionsRouter.post("/sendModelGFE", async (req, res, next) => {
          limit 1`,
         [customer_email, course_id || null]
       );
-      dob = String(fallbackDobRows?.[0]?.date_of_birth || "").slice(0, 10);
+      dob = toDateOnly(fallbackDobRows?.[0]?.date_of_birth);
     }
     if (!dob || !/^\d{4}-\d{2}-\d{2}$/.test(dob)) {
       return res.status(400).json({
@@ -1645,7 +1888,7 @@ functionsRouter.post("/sendModelGFE", async (req, res, next) => {
     if (!firstName || !lastName) {
       return res.status(400).json({ error: "Customer first and last name are required to generate GFE invite." });
     }
-    const qualiphyWebhookUrl = String(process.env.QUALIPHY_WEBHOOK_URL || "").trim();
+    const qualiphyWebhookUrl = resolveQualiphyWebhookUrl();
     const invitePayloadBody = {
       api_key: qualiphyApiKey,
       exams: [Number(qualiphyExamId)],
@@ -1885,6 +2128,423 @@ functionsRouter.post("/promoteFromWaitlist", async (req, res, next) => {
       // best effort: promotion should still succeed even if email delivery fails
     }
     return res.json({ success: true, booking });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+functionsRouter.post("/validateBookingScope", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ error: "Missing bearer token." });
+    await getMeFromAccessToken(token);
+    const body = req.body || {};
+    const result = await validateBookingScope({
+      providerId: body.provider_id,
+      service: body.service,
+      referral_code: body.referral_code,
+    });
+    return res.json(result);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+functionsRouter.post("/sendQualiphyGFE", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ error: "Missing bearer token." });
+    const me = await getMeFromAccessToken(token);
+    const appointmentId = String(req.body?.appointment_id || "").trim();
+    if (!appointmentId) return res.status(400).json({ error: "appointment_id is required." });
+
+    const { rows: apptRows } = await query(
+      `select a.*, coalesce(st.requires_gfe, false) as requires_gfe, st.qualiphy_exam_ids
+         from public.appointments a
+         left join public.service_type st on st.id::text = a.service_type_id::text
+        where a.id = $1
+        limit 1`,
+      [appointmentId]
+    );
+    const appt = apptRows[0];
+    if (!appt) return res.status(404).json({ error: "Appointment not found." });
+    if (String(appt.provider_id || "") !== String(me.id || "") && !["admin", "super_admin", "owner"].includes(String(me.role || "").toLowerCase())) {
+      return res.status(403).json({ error: "Forbidden." });
+    }
+    if (!appt.requires_gfe) {
+      return res.status(400).json({ error: "This service does not require a Good Faith Exam." });
+    }
+
+    const qualiphyApiKey = process.env.QUALIPHY_API_KEY || "";
+    if (!qualiphyApiKey) {
+      return res.status(500).json({ error: "QUALIPHY_API_KEY is not configured." });
+    }
+    const qualiphyExamId = await resolveQualiphyExamIdForServiceType(appt.service_type_id)
+      || normalizeExamIds(appt.qualiphy_exam_ids)[0]
+      || null;
+    if (!qualiphyExamId) {
+      return res.status(400).json({
+        error: "No Qualiphy exam ID configured for this service. Add qualiphy_exam_ids on the service type.",
+      });
+    }
+
+    const patientEmail = String(appt.patient_email || "").trim();
+    if (!patientEmail) return res.status(400).json({ error: "Patient email is required to send GFE." });
+
+    const patientIdRaw = String(appt.patient_id || "").trim();
+    const patientEmailLower = String(appt.patient_email || "").trim().toLowerCase();
+    const { rows: patientUserRows } = await query(
+      `select id
+         from public.users
+        where ($1::text <> '' and auth_user_id::text = $1)
+           or ($2::text <> '' and lower(email) = $2)
+        order by updated_at desc nulls last
+        limit 1`,
+      [patientIdRaw, patientEmailLower]
+    );
+    const patientAppUserId = String(patientUserRows?.[0]?.id || "").trim();
+    const { rows: patientProfileRows } = await query(
+      `select phone, date_of_birth, state
+         from public.patient_profiles
+        where user_id::text = $1
+           or ($2::text <> '' and user_id::text = $2)
+        order by updated_at desc nulls last
+        limit 1`,
+      [patientIdRaw, patientAppUserId]
+    );
+    const { rows: providerUserRows } = await query(
+      `select id from public.users where auth_user_id::text = $1 limit 1`,
+      [appt.provider_id]
+    );
+    const providerAppUserId = String(providerUserRows?.[0]?.id || "").trim();
+    const { rows: providerProfileRows } = await query(
+      `select state, metadata
+         from public.provider_profiles
+        where user_id::text = $1
+           or ($2::text <> '' and user_id::text = $2)
+        order by updated_at desc nulls last
+        limit 1`,
+      [String(appt.provider_id || ""), providerAppUserId]
+    );
+    const patientProfile = patientProfileRows[0] || {};
+    const providerProfile = providerProfileRows[0] || {};
+    const tele_state = String(providerProfile.state || "TX").trim().slice(0, 2).toUpperCase() || "TX";
+    let dob = toDateOnly(patientProfile.date_of_birth);
+    let foundLegacyProviderProfile = false;
+    if (!dob || !/^\d{4}-\d{2}-\d{2}$/.test(dob)) {
+      const { rows: legacyDobRows } = await query(
+        `select dob
+           from public.provider_profiles
+          where user_id::text = $1
+             or ($2::text <> '' and user_id::text = $2)
+          order by updated_at desc nulls last
+          limit 1`,
+        [patientIdRaw, patientAppUserId]
+      );
+      foundLegacyProviderProfile = Boolean(legacyDobRows[0]);
+      const legacyDob = toDateOnly(legacyDobRows?.[0]?.dob);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(legacyDob)) {
+        dob = legacyDob;
+      }
+    }
+    if (!dob || !/^\d{4}-\d{2}-\d{2}$/.test(dob)) {
+      return res.status(400).json({
+        error:
+          "Patient date of birth is required to send GFE. Ask the patient to complete their profile and save it again.",
+        debug: {
+          patient_id_on_appointment: patientIdRaw || null,
+          patient_email_on_appointment: patientEmailLower || null,
+          resolved_app_user_id: patientAppUserId || null,
+          found_patient_profile: Boolean(patientProfileRows[0]),
+          found_legacy_provider_profile: foundLegacyProviderProfile,
+        },
+      });
+    }
+    const digitsPhone = String(patientProfile.phone || "").replace(/\D/g, "");
+    if (digitsPhone.length < 10) {
+      return res.status(400).json({ error: "Patient phone number is required to send GFE." });
+    }
+    const normalizedPhone = digitsPhone.length === 10 ? `+1${digitsPhone}` : `+${digitsPhone}`;
+    const { firstName, lastName } = splitNameParts(appt.patient_name || "Patient");
+    const qualiphyClinicId = process.env.QUALIPHY_CLINIC_ID || "";
+    const qualiphyWebhookUrl = resolveQualiphyWebhookUrl();
+    const invitePayloadBody = {
+      api_key: qualiphyApiKey,
+      exams: [Number(qualiphyExamId)],
+      first_name: firstName,
+      last_name: lastName,
+      email: patientEmail,
+      dob,
+      phone_number: normalizedPhone,
+      tele_state,
+      additional_data: JSON.stringify({ source: "novi_appointment", appointment_id: appointmentId }),
+    };
+    if (qualiphyWebhookUrl) invitePayloadBody.webhook_url = qualiphyWebhookUrl;
+    if (qualiphyClinicId) invitePayloadBody.clinic_id = qualiphyClinicId;
+
+    const sendInvite = async (payload) => {
+      const response = await fetch(QUALIPHY_API_URL, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${qualiphyApiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const responsePayload = await response.json().catch(() => ({}));
+      return { response, responsePayload };
+    };
+
+    let inviteRes;
+    let invitePayload;
+    try {
+      ({ response: inviteRes, responsePayload: invitePayload } = await sendInvite(invitePayloadBody));
+    } catch {
+      return res.status(502).json({
+        error: "Could not connect to Qualiphy right now. Please try again in a minute.",
+      });
+    }
+    let upstreamHttpCode = Number(invitePayload?.http_code || 0);
+    let upstreamFailed = !inviteRes.ok || (Number.isFinite(upstreamHttpCode) && upstreamHttpCode >= 400);
+    const upstreamErrorText = String(
+      invitePayload?.error_message || invitePayload?.message || invitePayload?.error || ""
+    ).toLowerCase();
+    const shouldRetryWithoutClinic =
+      Boolean(invitePayloadBody.clinic_id) &&
+      (upstreamFailed || (upstreamErrorText.includes("clinic") && upstreamErrorText.includes("not found")));
+    if (shouldRetryWithoutClinic) {
+      const fallbackPayload = { ...invitePayloadBody };
+      delete fallbackPayload.clinic_id;
+      try {
+        ({ response: inviteRes, responsePayload: invitePayload } = await sendInvite(fallbackPayload));
+        upstreamHttpCode = Number(invitePayload?.http_code || 0);
+        upstreamFailed = !inviteRes.ok || (Number.isFinite(upstreamHttpCode) && upstreamHttpCode >= 400);
+      } catch {
+        return res.status(502).json({
+          error: "Could not connect to Qualiphy right now. Please try again in a minute.",
+        });
+      }
+    }
+    if (upstreamFailed) {
+      const upstreamError = invitePayload?.error_message || invitePayload?.message || invitePayload?.error || "Qualiphy invite request failed.";
+      return res.status(502).json({ error: upstreamError });
+    }
+    const meetingUrl = String(
+      invitePayload?.meeting_url ||
+      invitePayload?.url ||
+      invitePayload?.exam_invite_url ||
+      invitePayload?.data?.meeting_url ||
+      ""
+    ).trim();
+    if (!meetingUrl) {
+      return res.status(502).json({ error: "Qualiphy did not return a GFE link." });
+    }
+
+    await query(
+      `update public.appointments
+          set gfe_status = 'pending',
+              gfe_meeting_url = $2,
+              gfe_exam_url = $2,
+              gfe_initiated_at = coalesce(gfe_initiated_at, now()),
+              gfe_sent_at = now(),
+              updated_at = now()
+        where id = $1`,
+      [appointmentId, meetingUrl]
+    );
+    await query(
+      `update public.treatment_records
+          set gfe_status = 'pending', gfe_exam_url = $2, updated_at = now()
+        where appointment_id = $1`,
+      [appointmentId, meetingUrl]
+    ).catch(() => {});
+
+    const serviceLabel = String(appt.service || "").trim() || "your appointment";
+    if (appt.patient_id || patientEmail) {
+      await insertAppNotification({
+        userId: appt.patient_id,
+        userEmail: patientEmail,
+        type: "gfe_invite",
+        message: `Complete your Good Faith Exam for ${serviceLabel} before your visit. Qualiphy sent a secure exam link to your email.`,
+        linkPage: meetingUrl,
+      });
+    }
+
+    try {
+      await sendAppointmentGfeInviteEmail({
+        to: patientEmail,
+        patientName: appt.patient_name,
+        providerName: appt.provider_name,
+        serviceLabel,
+        appointmentDate: appt.appointment_date,
+        appointmentTime: appt.appointment_time,
+        meetingUrl,
+      });
+    } catch (emailErr) {
+      // eslint-disable-next-line no-console
+      console.warn("[sendQualiphyGFE] patient GFE invite email failed:", emailErr?.message || emailErr);
+    }
+
+    return res.json({ success: true, meeting_url: meetingUrl, gfe_status: "pending" });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+functionsRouter.post("/qualiphyWebhook", async (req, res, next) => {
+  try {
+    const payload = req.body || {};
+    const appointmentId = extractAppointmentIdFromQualiphyPayload(payload);
+    if (!appointmentId) {
+      return res.json({ success: true, ignored: true, reason: "No appointment_id in webhook payload." });
+    }
+
+    const normalizedStatus = normalizeQualiphyStatus(payload);
+    if (!normalizedStatus) {
+      return res.json({ success: true, ignored: true, reason: "Unsupported or missing status." });
+    }
+
+    const { rows: apptRows } = await query(
+      `select id, patient_id, patient_email, patient_name, provider_id, provider_name, provider_email, service, gfe_status
+         from public.appointments where id = $1 limit 1`,
+      [appointmentId]
+    );
+    const appt = apptRows[0];
+    if (!appt) {
+      return res.status(404).json({ error: "Appointment not found." });
+    }
+
+    const meetingUrl = extractQualiphyMeetingUrl(payload);
+    const providerName = extractGfeProviderName(payload);
+    const questionsAnswers = extractGfeQuestionsAnswers(payload);
+    const setParts = ["gfe_status = $2", "updated_at = now()"];
+    const args = [appointmentId, normalizedStatus];
+
+    if (normalizedStatus === "approved") {
+      setParts.push("gfe_completed_at = now()");
+      if (meetingUrl) {
+        args.push(meetingUrl);
+        setParts.push(`gfe_exam_url = $${args.length}`);
+      }
+    } else if (meetingUrl) {
+      args.push(meetingUrl);
+      setParts.push(`gfe_meeting_url = $${args.length}`);
+      setParts.push(`gfe_exam_url = $${args.length}`);
+    }
+
+    if (providerName) {
+      args.push(providerName);
+      setParts.push(`gfe_provider_name = $${args.length}`);
+    }
+    if (questionsAnswers.length) {
+      args.push(JSON.stringify(questionsAnswers));
+      setParts.push(`gfe_questions_answers = $${args.length}::jsonb`);
+    }
+
+    await query(
+      `update public.appointments set ${setParts.join(", ")} where id = $1`,
+      args
+    );
+
+    const trSetParts = ["gfe_status = $2", "updated_at = now()"];
+    const trArgs = [appointmentId, normalizedStatus];
+    if (providerName) {
+      trArgs.push(providerName);
+      trSetParts.push(`gfe_provider_name = $${trArgs.length}`);
+    }
+    if (questionsAnswers.length) {
+      trArgs.push(JSON.stringify(questionsAnswers));
+      trSetParts.push(`gfe_questions_answers = $${trArgs.length}::jsonb`);
+    }
+    if (meetingUrl) {
+      trArgs.push(meetingUrl);
+      trSetParts.push(`gfe_exam_url = $${trArgs.length}`);
+    }
+    await query(
+      `update public.treatment_records set ${trSetParts.join(", ")} where appointment_id = $1`,
+      trArgs
+    ).catch(() => {});
+
+    const serviceLabel = String(appt.service || "").trim() || "appointment";
+    const priorStatus = String(appt.gfe_status || "").toLowerCase();
+    if (normalizedStatus === "approved" && priorStatus !== "approved") {
+      await insertAppNotification({
+        userId: appt.patient_id,
+        userEmail: appt.patient_email,
+        type: "gfe_completed",
+        message: `Your Good Faith Exam for ${serviceLabel} was approved. You're cleared for treatment.`,
+        linkPage: "PatientAppointments",
+      });
+      await insertAppNotification({
+        userId: appt.provider_id,
+        userEmail: appt.provider_email,
+        type: "gfe_completed",
+        message: `GFE approved for ${appt.patient_name || "patient"} — ${serviceLabel}.`,
+        linkPage: "ProviderPractice?tab=appointments",
+      });
+      const patientEmailApproved = String(appt.patient_email || "").trim();
+      if (patientEmailApproved) {
+        try {
+          await sendAppointmentGfeApprovedPatientEmail({
+            to: patientEmailApproved,
+            patientName: appt.patient_name,
+            providerName: appt.provider_name,
+            serviceLabel,
+            examUrl: meetingUrl || null,
+            reviewerName: providerName || null,
+          });
+        } catch (emailErr) {
+          // eslint-disable-next-line no-console
+          console.warn("[qualiphyWebhook] patient GFE approved email failed:", emailErr?.message || emailErr);
+        }
+      }
+    } else if (normalizedStatus === "deferred" && priorStatus !== "deferred") {
+      await insertAppNotification({
+        userId: appt.provider_id,
+        userEmail: appt.provider_email,
+        type: "gfe_deferred",
+        message: `GFE deferred for ${appt.patient_name || "patient"} — ${serviceLabel}. Review before treating.`,
+        linkPage: "ProviderPractice?tab=appointments",
+      });
+    }
+
+    return res.json({
+      success: true,
+      appointment_id: appointmentId,
+      gfe_status: normalizedStatus,
+      meeting_url: meetingUrl || null,
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+functionsRouter.post("/adverseReactionEscalation", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ error: "Missing bearer token." });
+    const me = await getMeFromAccessToken(token);
+    const recordId = String(req.body?.treatment_record_id || "").trim();
+    if (!recordId) return res.status(400).json({ error: "treatment_record_id is required." });
+
+    const { rows } = await query(`select * from public.treatment_records where id = $1 limit 1`, [recordId]);
+    const record = rows[0];
+    if (!record) return res.status(404).json({ error: "Treatment record not found." });
+    if (String(record.provider_id || "") !== String(me.id || "")) {
+      return res.status(403).json({ error: "Forbidden." });
+    }
+
+    const msg = `Adverse reaction reported for ${record.service} (${record.patient_name}). Provider: ${record.provider_name || me.full_name}. Review immediately.`;
+    const { rows: mdRels } = await query(
+      `select medical_director_id, medical_director_email
+         from public.medical_director_relationship
+        where provider_id = $1 and lower(status) = 'active'`,
+      [record.provider_id]
+    );
+    for (const rel of mdRels) {
+      await query(
+        `insert into public.notifications (user_id, user_email, type, message, link_page)
+         values ($1, $2, 'general', $3, 'MDTreatmentRecords')`,
+        [rel.medical_director_id, rel.medical_director_email, msg]
+      ).catch(() => {});
+    }
+    return res.json({ success: true, escalated: true });
   } catch (error) {
     return next(error);
   }

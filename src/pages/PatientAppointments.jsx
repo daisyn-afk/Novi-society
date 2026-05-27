@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { Card, CardContent } from "@/components/ui/card";
@@ -10,6 +10,7 @@ import { Calendar, Clock, User, MessageSquare, FileText, DollarSign, Star, Image
 import { format } from "date-fns";
 import MessageThread from "@/components/messaging/MessageThread";
 import ConsentFormDialog from "@/components/appointments/ConsentFormDialog";
+import { subscribeAppointmentsRefresh } from "@/lib/appointmentSync";
 
 const statusColor = {
   requested: "bg-yellow-100 text-yellow-700",
@@ -35,7 +36,15 @@ export default function PatientAppointments() {
       const me = await base44.auth.me();
       return base44.entities.Appointment.filter({ patient_id: me.id }, "-appointment_date");
     },
+    staleTime: 0,
+    refetchOnWindowFocus: true,
   });
+
+  useEffect(() => {
+    return subscribeAppointmentsRefresh(() => {
+      void qc.refetchQueries({ queryKey: ["patient-appointments"] });
+    });
+  }, [qc]);
 
   const { data: records = [] } = useQuery({
     queryKey: ["my-treatment-records"],
@@ -82,16 +91,14 @@ export default function PatientAppointments() {
         patient_name: me.full_name,
         provider_id: reviewDialog.provider_id,
         appointment_id: reviewDialog.id,
-        ...reviewForm,
-        is_verified: true,
-      });
-      await base44.entities.Appointment.update(reviewDialog.id, {
-        review_requested_at: new Date().toISOString(),
+        rating: reviewForm.rating,
+        comment: reviewForm.comment,
       });
     },
     onSuccess: () => {
       qc.invalidateQueries(["my-reviews"]);
       qc.invalidateQueries(["patient-appointments"]);
+      qc.invalidateQueries({ queryKey: ["marketplace-catalog"] });
       setReviewDialog(null);
       setReviewForm({ rating: 5, comment: "" });
     },

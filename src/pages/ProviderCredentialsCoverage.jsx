@@ -26,13 +26,17 @@ import { format } from "date-fns";
 import { getSessionWindowForDate, isNowWithinSessionRedeemWindow } from "@/lib/classCodeWindow";
 import { CLASS_TIME_ZONE } from "@/lib/classCodeWindow";
 import { downloadCertificateDocument, hasCertificateDocument, openCertificateDocument } from "@/lib/certificateDocument";
+import {
+  MD_FIRST_SERVICE_MONTHLY_FEE as FIRST_SERVICE_PRICE,
+  MD_ADDON_SERVICE_MONTHLY_FEE as ADDON_SERVICE_PRICE,
+  MD_MAX_COVERED_SERVICES as MAX_SERVICES,
+  MD_MAX_MONTHLY_CAP as MAX_MONTHLY_CAP,
+  monthlyFeeForNewMdService,
+} from "@/lib/mdMembershipPricing";
+
 const LICENSE_TYPES = ["RN", "NP", "PA", "MD", "DO", "esthetician", "other"];
 const CERT_TYPES = ["RN", "NP", "PA", "MD", "DO", "esthetician", "other"];
 const ACTIVATION_STEPS = ["Verify Training", "Select Service", "Sign & Activate"];
-const FIRST_SERVICE_PRICE = 279;
-const ADDON_SERVICE_PRICE = 129;
-const MAX_SERVICES = 5;
-const MAX_MONTHLY_CAP = 795;
 
 function toDateOnly(value) {
   const raw = String(value || "").trim();
@@ -342,43 +346,21 @@ export default function ProviderCredentialsCoverage() {
     enabled: !!me,
   });
 
-  /** After Stripe success (or immediate $0 checkout): ensure one active MDSubscription per service, then assignment engine (pending MD approval). */
-  async function finalizeActiveMdCoverageAndAssignMd({ stId, enrollId, nowIso, signatureData }) {
+  /** After Stripe success or $0 signup: server activates subscription + MD assignment (idempotent). */
+  async function finalizeActiveMdCoverageAndAssignMd({ stId, enrollId, signatureData }) {
     if (!me?.id || !stId) return;
     const serviceTypeName = serviceTypes.find((s) => s.id === stId)?.name;
-    let existingSubs = [];
-    try {
-      existingSubs = await base44.entities.MDSubscription.filter({ provider_id: me.id, service_type_id: stId });
-    } catch {
-      existingSubs = [];
-    }
-    const hasActiveForService = (existingSubs || []).some(
-      (s) => String(s?.status || "").toLowerCase() === "active"
-    );
-    if (!hasActiveForService) {
-      await base44.entities.MDSubscription.create({
-        provider_id: me.id,
-        provider_email: me.email,
-        provider_name: me.full_name,
-        service_type_id: stId,
-        service_type_name: serviceTypeName,
-        status: "active",
-        signed_at: nowIso,
-        signed_by_name: me.full_name,
-        activated_at: nowIso,
-        enrollment_id: enrollId || null,
-        ...(signatureData ? { signature_data: signatureData } : {}),
-      });
-    }
-    qc.invalidateQueries({ queryKey: ["my-md-subscriptions"] });
-    const res = await base44.functions.invoke("submitMdBoardCoverageAssignment", {
+    const res = await base44.functions.invoke("finalizeMdBoardCoverage", {
       service_type_id: stId,
       service_type_name: serviceTypeName || "",
+      enrollment_id: enrollId || null,
+      signature_data: signatureData || null,
     });
     const data = res?.data;
-    if (!data?.ok) {
-      throw new Error(data?.error || "Unable to assign a Board Medical Director for this service.");
+    if (!data?.success) {
+      throw new Error(data?.error || "Unable to activate MD coverage.");
     }
+    qc.invalidateQueries({ queryKey: ["my-md-subscriptions"] });
     qc.invalidateQueries({ queryKey: ["my-md-relationships"] });
   }
 
@@ -413,8 +395,7 @@ export default function ProviderCredentialsCoverage() {
     const enrollId = params.get("enrollment_id");
     if (mdStatus === "success" && stId) {
       setStripeHandled(true);
-      const now = new Date().toISOString();
-      finalizeActiveMdCoverageAndAssignMd({ stId, enrollId: enrollId || null, nowIso: now, signatureData: null })
+      finalizeActiveMdCoverageAndAssignMd({ stId, enrollId: enrollId || null, signatureData: null })
         .then(() => navigate(createPageUrl("ProviderLaunchPad")))
         .catch((err) => {
           console.error("[md-coverage] finalize after Stripe failed:", err);
@@ -434,10 +415,12 @@ export default function ProviderCredentialsCoverage() {
   const activeCerts = myCerts.filter(c => c.status === "active");
   const pendingCerts = myCerts.filter(c => c.status === "pending");
   const otherCerts = myCerts.filter(c => c.status !== "active" && c.status !== "pending");
-  const activeSubscriptions = mySubscriptions.filter(s => s.status === "active");
+  const activeSubscriptions = mySubscriptions.filter((s) => {
+    const st = String(s?.status || "").toLowerCase();
+    return st === "active" || st === "suspended";
+  });
   const alreadyActiveServices = activeSubscriptions.map(s => s.service_type_id);
   const activeRelationships = relationships.filter(r => r.status === "active");
-  const pendingRelationships = relationships.filter(r => r.status === "pending");
   const verifiedLicenses = licenses.filter(l => l.status === "verified");
   const pendingLicenses = licenses.filter(l => l.status === "pending_review");
   const courseMap = Object.fromEntries(courses.map(c => [c.id, c]));
@@ -938,14 +921,8 @@ export default function ProviderCredentialsCoverage() {
         return;
       }
       if (res.data?.success) {
-        const now = new Date().toISOString();
-        await finalizeActiveMdCoverageAndAssignMd({
-          stId: selectedServiceTypeId,
-          enrollId: verifiedSession?.enrollment_id || null,
-          nowIso: now,
-          signatureData,
-        });
         qc.invalidateQueries({ queryKey: ["my-md-subscriptions"] });
+        qc.invalidateQueries({ queryKey: ["my-md-relationships"] });
         setActivateDialog(false);
         resetActivation();
         navigate(createPageUrl("ProviderLaunchPad"));
@@ -1396,14 +1373,6 @@ export default function ProviderCredentialsCoverage() {
                     </div>
                   </div>
                 ))
-              ) : pendingRelationships.length > 0 ? (
-                <div className="flex items-center gap-3 px-4 py-3 rounded-xl" style={{ background: "rgba(250,111,48,0.1)", border: "1px solid rgba(250,111,48,0.2)" }}>
-                  <Clock className="w-5 h-5 flex-shrink-0" style={{ color: "#FA6F30" }} />
-                  <div>
-                    <p className="font-semibold text-sm" style={{ color: "#1e2535" }}>MD Assignment Pending</p>
-                    <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.55)" }}>NOVI is assigning a Board Medical Director to your account. This typically takes 1–2 business days.</p>
-                  </div>
-                </div>
               ) : (
                 <div className="text-center py-6">
                   <div className="w-12 h-12 rounded-xl flex items-center justify-center mx-auto mb-3" style={{ background: "rgba(255,255,255,0.08)" }}>
@@ -1442,12 +1411,17 @@ export default function ProviderCredentialsCoverage() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           <p className="font-bold" style={{ color: "#1e2535" }}>{sub.service_type_name}</p>
-                          <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ background: "rgba(200,230,60,0.2)", color: "#C8E63C" }}>Active</span>
+                          <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{
+                            background: String(sub.status).toLowerCase() === "suspended" ? "rgba(250,111,48,0.2)" : "rgba(200,230,60,0.2)",
+                            color: String(sub.status).toLowerCase() === "suspended" ? "#FA6F30" : "#C8E63C",
+                          }}>
+                            {String(sub.status).toLowerCase() === "suspended" ? "Payment issue" : "Active"}
+                          </span>
                         </div>
                         <p className="text-xs mt-0.5 capitalize" style={{ color: "rgba(30,37,53,0.5)" }}>{st?.category?.replace("_", " ")}</p>
                       </div>
                       <div className="text-right mr-3">
-                        <p className="font-bold" style={{ color: "#1e2535" }}>${idx === 0 ? FIRST_SERVICE_PRICE : ADDON_SERVICE_PRICE}<span className="text-xs font-normal" style={{ color: "rgba(30,37,53,0.4)" }}>/mo</span></p>
+                        <p className="font-bold" style={{ color: "#1e2535" }}>${Number(sub.service_type_monthly_fee ?? (idx === 0 ? FIRST_SERVICE_PRICE : ADDON_SERVICE_PRICE))}<span className="text-xs font-normal" style={{ color: "rgba(30,37,53,0.4)" }}>/mo</span></p>
                         {activeSubscriptions.length >= MAX_SERVICES && idx === MAX_SERVICES - 1 && <p className="text-xs font-semibold" style={{ color: "#FA6F30" }}>All services covered</p>}
                         {sub.activated_at && <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.4)" }}>Since {format(new Date(sub.activated_at), "MMM d, yyyy")}</p>}
                       </div>
@@ -1477,7 +1451,7 @@ export default function ProviderCredentialsCoverage() {
                           {/* ── Billing Details ── */}
                           {(() => {
                             const activatedDate = sub.activated_at ? new Date(sub.activated_at) : null;
-                            const monthlyAmount = idx === 0 ? FIRST_SERVICE_PRICE : ADDON_SERVICE_PRICE;
+                            const monthlyAmount = Number(sub.service_type_monthly_fee ?? (idx === 0 ? FIRST_SERVICE_PRICE : ADDON_SERVICE_PRICE));
                             const capNote = activeSubscriptions.length >= MAX_SERVICES ? " (capped — all services included)" : "";
                             const today = new Date();
                             // Next billing = 1st of next month
@@ -1504,8 +1478,34 @@ export default function ProviderCredentialsCoverage() {
                                   {/* Monthly rate */}
                                   <div className="flex items-center justify-between">
                                     <span className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>Monthly rate</span>
-                                    <span className="text-xs font-bold" style={{ color: "#1e2535" }}>${monthlyAmount}.00/mo</span>
+                                    <span className="text-xs font-bold" style={{ color: "#1e2535" }}>${monthlyAmount}/mo</span>
                                   </div>
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>Billing status</span>
+                                    <span className="text-xs font-semibold capitalize" style={{ color: "#1e2535" }}>{sub.billing_status || "active"}</span>
+                                  </div>
+                                  {sub.current_period_end && (
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>Current period ends</span>
+                                      <span className="text-xs font-semibold" style={{ color: "#1e2535" }}>{format(new Date(sub.current_period_end), "MMM d, yyyy")}</span>
+                                    </div>
+                                  )}
+                                  {sub.last_payment_failure_message && (
+                                    <div className="mt-1 rounded-lg px-3 py-2.5" style={{ background: "rgba(250,111,48,0.1)", border: "1px solid rgba(250,111,48,0.25)" }}>
+                                      <p className="text-xs font-bold" style={{ color: "#FA6F30" }}>Last payment failed</p>
+                                      {sub.last_payment_failure_code && (
+                                        <p className="text-xs mt-0.5 font-mono" style={{ color: "rgba(30,37,53,0.5)" }}>{sub.last_payment_failure_code}</p>
+                                      )}
+                                      <p className="text-xs mt-1" style={{ color: "rgba(30,37,53,0.7)" }}>{sub.last_payment_failure_message}</p>
+                                    </div>
+                                  )}
+                                  {sub.cancel_at_period_end && (
+                                    <div className="mt-1 rounded-lg px-3 py-2.5" style={{ background: "rgba(218,106,99,0.08)", border: "1px solid rgba(218,106,99,0.2)" }}>
+                                      <p className="text-xs font-bold" style={{ color: "#DA6A63" }}>Cancellation scheduled</p>
+                                      {sub.cancellation_reason && <p className="text-xs mt-1" style={{ color: "rgba(30,37,53,0.7)" }}>Reason: {sub.cancellation_reason}</p>}
+                                      {sub.cancellation_notes && <p className="text-xs mt-1" style={{ color: "rgba(30,37,53,0.6)" }}>{sub.cancellation_notes}</p>}
+                                    </div>
+                                  )}
                                   {/* Billing cycle */}
                                   <div className="flex items-center justify-between">
                                     <span className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>Billing cycle</span>
@@ -2207,7 +2207,7 @@ export default function ProviderCredentialsCoverage() {
                   <li>We start your recurring monthly MD Board coverage (Stripe may open for payment when applicable).</li>
                   <li>When checkout completes, your coverage subscription is set to active and your signature is stored.</li>
                   <li>NOVI assigns exactly one Board Medical Director for this service using supported-service matching and sequential round-robin. You do not pick a doctor.</li>
-                  <li>That doctor receives a notification and must approve before supervision is active. You will see pending status until then.</li>
+                  <li>NOVI assigns a Board Medical Director and supervision becomes <strong>active automatically</strong>. You and your MD receive a confirmation notification.</li>
                 </ol>
               </div>
               {(activateMutation.isError || activateMutation.error) && (
