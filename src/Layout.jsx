@@ -22,7 +22,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { normalizeRole } from "@/lib/routeAccessPolicy";
+import { hasStaffModulePermission, normalizeRole } from "@/lib/routeAccessPolicy";
 import ProviderNextStepBar from "@/components/launchpad/ProviderNextStepBar";
 import { useLaunchRoadmapStats } from "@/components/launchpad/useLaunchRoadmapStats";
 
@@ -132,10 +132,12 @@ export default function Layout({ children, currentPageName }) {
       )
     : (navByRole[navRole] || []);
 
+  const isProviderUserReady = role === "provider" && Boolean(user?.id || user?.email);
+
   // Sidebar unread message badge — shared query key ["msg-threads"] with messaging pages.
   // Polling at 5s keeps the badge live without hammering the API.
   const isMessagingRole = role === "provider" || role === "medical_director";
-  const showProviderNextStepBar = role === "provider" && isProviderUserReady;
+  const showProviderNextStepBar = isProviderUserReady;
   const { stats: launchRoadmapStats, isLoading: launchRoadmapLoading } = useLaunchRoadmapStats({
     enabled: showProviderNextStepBar,
   });
