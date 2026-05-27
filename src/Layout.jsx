@@ -10,7 +10,7 @@ import {
   Menu, X, LogOut, User, Stethoscope, Sparkles, Clock, AlertTriangle, ShoppingBag, Mail, Rocket, TicketPercent, MessageSquare
 } from "lucide-react";
 import { useProviderAccess } from "@/components/useProviderAccess";
-import { providerOnboardingApi } from "@/api/providerOnboardingApi";
+import { useProviderDashboardState } from "@/hooks/useProviderDashboardState";
 import { mdMessagesApi } from "@/api/mdMessagesApi";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import NotificationBell from "@/components/NotificationBell";
@@ -97,23 +97,11 @@ export default function Layout({ children, currentPageName }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { status: providerAccessStatus } = useProviderAccess();
+  const providerDashboardState = useProviderDashboardState();
 
   const { data: user, isSuccess } = useQuery({
     queryKey: ["me"],
     queryFn: () => base44.auth.me(),
-    retry: false,
-  });
-
-  const { data: providerBasicOnboarding } = useQuery({
-    queryKey: ["provider-basic-onboarding"],
-    queryFn: async () => {
-      try {
-        return await providerOnboardingApi.getMe();
-      } catch {
-        return null;
-      }
-    },
-    enabled: isSuccess && normalizeRole(user?.role || "") === "provider",
     retry: false,
   });
 
@@ -321,7 +309,9 @@ export default function Layout({ children, currentPageName }) {
         {/* Role pill */}
         <div className="relative z-10 px-5 pt-4 pb-2">
           <span className="novi-role-pill">{roleLabel}</span>
-          {providerBasicOnboarding?.has_completed_basic === false && (
+          {role === "provider" &&
+            !providerDashboardState.isLoading &&
+            !providerDashboardState.hasCompletedBasic && (
             <div className="mt-2">
               <span
                 className="text-[8px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-full inline-block"

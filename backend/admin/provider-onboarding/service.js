@@ -134,6 +134,40 @@ function validateAdult(dobValue) {
   }
 }
 
+async function inferLegacyBasicOnboardingComplete(authUserId) {
+  if (!authUserId) return false;
+
+  const { rows: licenseRows } = await query(
+    `select 1
+     from public.licenses
+     where provider_id = $1
+       and status = 'verified'
+     limit 1`,
+    [authUserId]
+  );
+  if (licenseRows[0]) return true;
+
+  const { rows: certRows } = await query(
+    `select 1
+     from public.certifications
+     where provider_id = $1
+       and status = 'active'
+     limit 1`,
+    [authUserId]
+  );
+  if (certRows[0]) return true;
+
+  const { rows: mdSubRows } = await query(
+    `select 1
+     from public.md_subscriptions
+     where provider_id = $1
+       and status = 'active'
+     limit 1`,
+    [authUserId]
+  );
+  return Boolean(mdSubRows[0]);
+}
+
 export async function getProviderBasicOnboardingForMe(accessToken) {
   if (!accessToken) {
     const err = new Error("Missing bearer token.");
@@ -154,8 +188,12 @@ export async function getProviderBasicOnboardingForMe(accessToken) {
      limit 1`,
     [me.id]
   );
+  const hasFormRecord = Boolean(rows[0]);
+  const hasLegacyActivation = hasFormRecord
+    ? false
+    : await inferLegacyBasicOnboardingComplete(me.id);
   return {
-    has_completed_basic: Boolean(rows[0]),
+    has_completed_basic: hasFormRecord || hasLegacyActivation,
     record: rows[0] || null
   };
 }
