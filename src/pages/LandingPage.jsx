@@ -7,7 +7,7 @@ import NoviOfferingsPortal from "@/components/landing/NoviOfferingsPortal";
 import { DEFAULT_COURSE_IMAGE_URL } from "@/lib/courseDisplay";
 
 // Brand palette from the Novi moodboard
-const NOVI_LOGO_SRC = "/novi-email-logo.png";
+const NOVI_LOGO_SRC = "/novi-logo-neon-green.png";
 
 const BRAND = {
   periwinkle: "#DBE4D8",   // soft blue-grey
