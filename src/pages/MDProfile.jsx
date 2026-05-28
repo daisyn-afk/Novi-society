@@ -19,6 +19,7 @@ import {
   Layers,
 } from "lucide-react";
 import MDServiceOfferingsSection from "@/components/md/MDServiceOfferingsSection";
+import { formatUsPhoneInput, usPhoneValidationError } from "@/lib/phoneValidation";
 
 const US_STATES = [
   "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
@@ -48,11 +49,17 @@ export default function MDProfile() {
     queryKey: ["md-profile-me"],
     queryFn: () => adminApiRequest("/admin/md-profile/me", { method: "GET" }),
   });
+  const { data: serviceOfferings } = useQuery({
+    queryKey: ["md-service-offerings-me"],
+    queryFn: () => adminApiRequest("/admin/md-service-offerings/me", { method: "GET" }),
+  });
 
   const [form, setForm] = useState({});
   const [licensedStates, setLicensedStates] = useState([]);
   const [nationwide, setNationwide] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [errors, setErrors] = useState({});
+  const [submitAttempted, setSubmitAttempted] = useState(false);
 
   useEffect(() => {
     if (!profile) return;
@@ -84,8 +91,16 @@ export default function MDProfile() {
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["md-profile-me"] });
+      setErrors({});
+      setSubmitAttempted(false);
     },
   });
+
+  useEffect(() => {
+    if (!save.isSuccess) return undefined;
+    const timer = setTimeout(() => save.reset(), 3000);
+    return () => clearTimeout(timer);
+  }, [save.isSuccess, save]);
 
   const handleAvatarUpload = async (e) => {
     const file = e.target.files?.[0];
@@ -109,6 +124,64 @@ export default function MDProfile() {
     });
   }
 
+  useEffect(() => {
+    if (!submitAttempted) return;
+    setErrors(validateForm(form));
+  }, [licensedStates, nationwide, serviceOfferings, submitAttempted]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const requiredFieldKeys = new Set([
+    "phone",
+    "city",
+    "state",
+    "specialty",
+    "npi",
+    "medical_license_number",
+  ]);
+
+  const validateForm = (data) => {
+    const nextErrors = {};
+    const requiredMessage = "This field is required";
+
+    if (!data.phone?.trim()) nextErrors.phone = requiredMessage;
+    else {
+      const phoneError = usPhoneValidationError(data.phone, { required: true });
+      if (phoneError) nextErrors.phone = phoneError;
+    }
+
+    if (!data.city?.trim()) nextErrors.city = requiredMessage;
+    if (!data.state?.trim()) nextErrors.state = requiredMessage;
+    if (!data.specialty?.trim()) nextErrors.specialty = requiredMessage;
+    if (!data.npi?.trim()) nextErrors.npi = requiredMessage;
+    if (!data.medical_license_number?.trim()) nextErrors.medical_license_number = requiredMessage;
+
+    if (!nationwide && licensedStates.length === 0) {
+      nextErrors.licensed_states = "Select at least one state or enable Nationwide.";
+    }
+
+    if (!serviceOfferings?.service_type_ids?.length) {
+      nextErrors.service_type_ids = "Select at least one supervised service and save it.";
+    }
+
+    return nextErrors;
+  };
+
+  const handleFieldChange = (key, value) => {
+    const normalizedValue = key === "phone" ? formatUsPhoneInput(value) : value;
+    const nextForm = { ...form, [key]: normalizedValue };
+    setForm(nextForm);
+    if (submitAttempted) {
+      setErrors(validateForm(nextForm));
+    }
+  };
+
+  const handleSave = () => {
+    setSubmitAttempted(true);
+    const validationErrors = validateForm(form);
+    setErrors(validationErrors);
+    if (Object.keys(validationErrors).length > 0) return;
+    save.mutate();
+  };
+
   const initials =
     profile?.full_name
       ?.split(" ")
@@ -122,7 +195,7 @@ export default function MDProfile() {
       title: "Contact",
       icon: Phone,
       fields: [
-        { label: "Phone", key: "phone", type: "tel", placeholder: "+1 (555) 000-0000" },
+        { label: "Phone", key: "phone", type: "tel", placeholder: "(555) 123-4567" },
         { label: "City", key: "city", placeholder: "Austin" },
         { label: "State", key: "state", placeholder: "TX" },
       ],
@@ -159,14 +232,14 @@ export default function MDProfile() {
 
   if (isLoading) {
     return (
-      <div className="max-w-2xl py-12 text-center text-sm text-slate-500">
+      <div className="max-w-2xl mx-auto py-12 text-center text-sm text-slate-500">
         Loading profile…
       </div>
     );
   }
 
   return (
-    <div className="max-w-2xl space-y-6">
+    <div className="max-w-2xl mx-auto space-y-6">
       <div>
         <p className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: "rgba(218,106,99,0.9)" }}>
           Medical Director
@@ -223,11 +296,12 @@ export default function MDProfile() {
               <div key={f.key}>
                 <Label className="text-xs font-semibold mb-1.5 block" style={labelStyle}>
                   {f.label}
+                  {requiredFieldKeys.has(f.key) ? " *" : ""}
                 </Label>
                 {f.type === "textarea" ? (
                   <Textarea
                     value={form[f.key] || ""}
-                    onChange={(e) => setForm({ ...form, [f.key]: e.target.value })}
+                    onChange={(e) => handleFieldChange(f.key, e.target.value)}
                     placeholder={f.placeholder}
                     rows={3}
                     className="bg-white border-slate-200 text-slate-900"
@@ -236,10 +310,13 @@ export default function MDProfile() {
                   <Input
                     type={f.type || "text"}
                     value={form[f.key] || ""}
-                    onChange={(e) => setForm({ ...form, [f.key]: e.target.value })}
+                    onChange={(e) => handleFieldChange(f.key, e.target.value)}
                     placeholder={f.placeholder}
                     className="bg-white border-slate-200 text-slate-900"
                   />
+                )}
+                {errors[f.key] && (
+                  <p className="text-xs text-red-600 mt-1">{errors[f.key]}</p>
                 )}
               </div>
             ))}
@@ -250,7 +327,7 @@ export default function MDProfile() {
       <div className="overflow-hidden" style={glassCard}>
         <div className="px-6 py-4 flex items-center gap-2" style={sectionBorder}>
           <MapPin className="w-4 h-4 text-slate-500" />
-          <p className="font-bold text-sm text-slate-900">Supervision coverage by state</p>
+          <p className="font-bold text-sm text-slate-900">Supervision coverage by state *</p>
         </div>
         <div className="p-6 space-y-4">
           <p className="text-xs text-slate-500" style={{ lineHeight: 1.6 }}>
@@ -279,6 +356,9 @@ export default function MDProfile() {
               ))}
             </div>
           )}
+          {errors.licensed_states && (
+            <p className="text-xs text-red-600">{errors.licensed_states}</p>
+          )}
         </div>
       </div>
 
@@ -286,7 +366,7 @@ export default function MDProfile() {
         <div className="px-6 py-4 flex items-center gap-2" style={sectionBorder}>
           <Layers className="w-4 h-4 text-slate-500" />
           <div>
-            <p className="font-bold text-sm text-slate-900">Services I supervise</p>
+            <p className="font-bold text-sm text-slate-900">Services I supervise *</p>
             <p className="text-xs mt-0.5 text-slate-500">
               Providers are auto-assigned to you only for services you select here.
             </p>
@@ -294,13 +374,16 @@ export default function MDProfile() {
         </div>
         <div className="p-6">
           <MDServiceOfferingsSection />
+          {errors.service_type_ids && (
+            <p className="text-xs text-red-600 mt-3">{errors.service_type_ids}</p>
+          )}
         </div>
       </div>
 
       <Button
         className="w-full h-12 font-bold text-base rounded-2xl"
         style={{ background: "#FA6F30", color: "#fff" }}
-        onClick={() => save.mutate()}
+        onClick={handleSave}
         disabled={save.isPending}
       >
         {save.isPending ? "Saving…" : (
