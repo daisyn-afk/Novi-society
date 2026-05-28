@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Save, Camera, CheckCircle, Globe, Instagram, XCircle } from "lucide-react";
-import { isValidUsPhone, usPhoneValidationError } from "@/lib/phoneValidation";
+import { isValidUsPhone, usPhoneValidationError, formatUsPhoneInput } from "@/lib/phoneValidation";
 
 export default function ProviderProfile() {
   const { status: accessStatus } = useProviderAccess();
@@ -22,6 +22,8 @@ export default function ProviderProfile() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { data: me, refetch } = useQuery({ queryKey: ["me"], queryFn: () => base44.auth.me() });
   const [form, setForm] = useState({});
+  const [errors, setErrors] = useState({});
+  const [submitAttempted, setSubmitAttempted] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [banner, setBanner] = useState(null); // { type: "success" | "error", message: string }
 
@@ -62,30 +64,42 @@ export default function ProviderProfile() {
     setSearchParams(searchParams, { replace: true });
   }, [searchParams, setSearchParams, queryClient]);
 
-  const validateForm = () => {
-    const phoneErr = usPhoneValidationError(form.phone, { required: true });
-    if (phoneErr) return phoneErr;
+  const validateForm = (data) => {
+    const nextErrors = {};
+    const requiredMessage = "This field is required";
 
-    if (form.website_url) {
+    if (!data.city?.trim()) nextErrors.city = requiredMessage;
+    if (!data.state?.trim()) nextErrors.state = requiredMessage;
+    if (!data.specialty?.trim()) nextErrors.specialty = requiredMessage;
+
+    const phoneErr = usPhoneValidationError(data.phone, { required: true });
+    if (phoneErr) nextErrors.phone = phoneErr;
+
+    if (data.website_url) {
       try {
-        const u = new URL(form.website_url);
+        const u = new URL(data.website_url);
         if (!["http:", "https:"].includes(u.protocol)) throw new Error("bad_protocol");
       } catch {
-        return "Website URL must start with http:// or https://";
+        nextErrors.website_url = "Website URL must start with http:// or https://";
       }
     }
-    return null;
+    return nextErrors;
   };
 
   const save = useMutation({
     mutationFn: async () => {
-      const err = validateForm();
-      if (err) throw new Error(err);
+      const validationErrors = validateForm(form);
+      if (Object.keys(validationErrors).length > 0) {
+        setErrors(validationErrors);
+        throw new Error("Please correct the highlighted fields.");
+      }
       return base44.auth.updateMe(form);
     },
     onSuccess: (updatedMe) => {
       queryClient.setQueryData(["me"], updatedMe);
       refetch();
+      setErrors({});
+      setSubmitAttempted(false);
       showBanner("success", "Profile updated successfully.");
       setTimeout(() => save.reset(), 1250);
     },
@@ -111,6 +125,23 @@ export default function ProviderProfile() {
     } finally {
       setUploading(false);
     }
+  };
+
+  const handleFieldChange = (key, value) => {
+    const normalizedValue = key === "phone" ? formatUsPhoneInput(value) : value;
+    const nextForm = { ...form, [key]: normalizedValue };
+    setForm(nextForm);
+    if (submitAttempted) {
+      setErrors(validateForm(nextForm));
+    }
+  };
+
+  const handleSave = () => {
+    setSubmitAttempted(true);
+    const validationErrors = validateForm(form);
+    setErrors(validationErrors);
+    if (Object.keys(validationErrors).length > 0) return;
+    save.mutate();
   };
 
   const profileContent = (
@@ -177,12 +208,14 @@ export default function ProviderProfile() {
           <div className="grid gap-4">
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label className={labelClassName}>City</Label>
-                <Input className={inputClassName} value={form.city || ""} onChange={e => setForm({ ...form, city: e.target.value })} placeholder="Austin" />
+                <Label className={labelClassName}>City *</Label>
+                <Input className={inputClassName} value={form.city || ""} onChange={e => handleFieldChange("city", e.target.value)} placeholder="Austin" />
+                {errors.city && <p className="text-xs mt-1 text-red-600">{errors.city}</p>}
               </div>
               <div>
-                <Label className={labelClassName}>State</Label>
-                <Input className={inputClassName} value={form.state || ""} onChange={e => setForm({ ...form, state: e.target.value })} placeholder="TX" />
+                <Label className={labelClassName}>State *</Label>
+                <Input className={inputClassName} value={form.state || ""} onChange={e => handleFieldChange("state", e.target.value)} placeholder="TX" />
+                {errors.state && <p className="text-xs mt-1 text-red-600">{errors.state}</p>}
               </div>
             </div>
 
@@ -192,22 +225,23 @@ export default function ProviderProfile() {
                 type="tel"
                 className={inputClassName}
                 value={form.phone || ""}
-                onChange={e => setForm({ ...form, phone: e.target.value })}
+                onChange={e => handleFieldChange("phone", e.target.value)}
                 placeholder="(555) 123-4567"
                 style={
-                  form.phone && !isValidUsPhone(form.phone)
+                  errors.phone || (form.phone && !isValidUsPhone(form.phone))
                     ? { borderColor: "#f87171" }
                     : undefined
                 }
               />
-              {form.phone && !isValidUsPhone(form.phone) && (
-                <p className="text-xs mt-1 text-red-600">Enter a valid US phone number (10 digits).</p>
+              {errors.phone && (
+                <p className="text-xs mt-1 text-red-600">{errors.phone}</p>
               )}
             </div>
 
             <div>
-              <Label className={labelClassName}>Specialty</Label>
-              <Input className={inputClassName} value={form.specialty || ""} onChange={e => setForm({ ...form, specialty: e.target.value })} placeholder="e.g. Botox, Fillers, PRP" />
+              <Label className={labelClassName}>Specialty *</Label>
+              <Input className={inputClassName} value={form.specialty || ""} onChange={e => handleFieldChange("specialty", e.target.value)} placeholder="e.g. Botox, Fillers, PRP" />
+              {errors.specialty && <p className="text-xs mt-1 text-red-600">{errors.specialty}</p>}
             </div>
 
             <div>
@@ -218,7 +252,8 @@ export default function ProviderProfile() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label className={`${labelClassName} flex items-center gap-1`}><Globe className="w-3.5 h-3.5" /> Website</Label>
-                <Input className={inputClassName} value={form.website_url || ""} onChange={e => setForm({ ...form, website_url: e.target.value })} placeholder="https://yoursite.com" />
+                <Input className={inputClassName} value={form.website_url || ""} onChange={e => handleFieldChange("website_url", e.target.value)} placeholder="https://yoursite.com" />
+                {errors.website_url && <p className="text-xs mt-1 text-red-600">{errors.website_url}</p>}
               </div>
               <div>
                 <Label className={`${labelClassName} flex items-center gap-1`}><Instagram className="w-3.5 h-3.5" /> Instagram</Label>
@@ -235,8 +270,8 @@ export default function ProviderProfile() {
               color: "#fff",
               transition: "background 0.3s",
             }}
-            onClick={() => save.mutate()}
-            disabled={save.isPending || uploading || Boolean(usPhoneValidationError(form.phone, { required: true }))}
+            onClick={handleSave}
+            disabled={save.isPending || uploading}
           >
             {save.isPending
               ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2 inline-block" /> Saving...</>

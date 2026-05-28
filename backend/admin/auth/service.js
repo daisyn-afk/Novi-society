@@ -258,11 +258,15 @@ async function getProviderProfileByUserId(userId) {
 let _patientProfilesTableEnsurePromise = null;
 async function ensurePatientProfilesTable() {
   if (patientProfilesTableEnsured) return;
-  // Singleton promise prevents concurrent initializations (race condition)
+  // Singleton promise prevents concurrent initializations within a single
+  // runtime. We also take a DB advisory lock to serialize across serverless
+  // instances sharing the same Postgres.
   if (!_patientProfilesTableEnsurePromise) {
     _patientProfilesTableEnsurePromise = (async () => {
       const client = await pool.connect();
       try {
+        await client.query("begin");
+        await client.query("select pg_advisory_xact_lock(hashtext('ensure_patient_profiles_table_v1'))");
         await client.query(`
           create table if not exists public.patient_profiles (
             id uuid primary key default gen_random_uuid(),
@@ -310,11 +314,22 @@ async function ensurePatientProfilesTable() {
             end if;
           end $$;
         `);
+        await client.query("commit");
         patientProfilesTableEnsured = true;
+      } catch (error) {
+        try {
+          await client.query("rollback");
+        } catch {
+          // no-op: rollback best effort
+        }
+        throw error;
       } finally {
         client.release();
       }
-    })();
+    })().finally(() => {
+      // Allow retries after a failure.
+      _patientProfilesTableEnsurePromise = null;
+    });
   }
   await _patientProfilesTableEnsurePromise;
 }
