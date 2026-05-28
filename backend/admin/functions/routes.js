@@ -37,6 +37,7 @@ import {
   notifyRepOfContactRequest,
 } from "../manufacturers/notifications.js";
 import { buildManufacturerApplicationPayload } from "../manufacturers/providerApplicationContext.js";
+import { validateBookingScope } from "../bookingValidation.js";
 
 export const functionsRouter = Router();
 let certificationColumnsPromise = null;
@@ -390,6 +391,49 @@ async function requireAdminOrStaffModelSignups(req, res, next) {
     return res.status(error?.statusCode || 401).json({ error: error?.message || "Unauthorized." });
   }
 }
+
+functionsRouter.post("/validateBookingScope", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ eligible: false, reason: "Missing bearer token." });
+    await getMeFromAccessToken(token);
+
+    const body = req.body || {};
+    const providerId = String(body.provider_id || body.providerId || "").trim();
+    const service = String(body.service || "").trim();
+    const referralCode = String(body.referral_code || body.referralCode || "").trim();
+    const validation = await validateBookingScope({
+      providerId,
+      service,
+      referral_code: referralCode || undefined,
+    });
+    return res.json(validation);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// Backward-compatible alias used by some older clients.
+functionsRouter.post("/validateScopeEligibility", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ eligible: false, reason: "Missing bearer token." });
+    await getMeFromAccessToken(token);
+
+    const body = req.body || {};
+    const providerId = String(body.provider_id || body.providerId || "").trim();
+    const service = String(body.service || "").trim();
+    const referralCode = String(body.referral_code || body.referralCode || "").trim();
+    const validation = await validateBookingScope({
+      providerId,
+      service,
+      referral_code: referralCode || undefined,
+    });
+    return res.json(validation);
+  } catch (error) {
+    return next(error);
+  }
+});
 
 function parseClassDateTime(dateValue, timeValue, fallbackHour, fallbackMinute) {
   if (!dateValue) return null;
