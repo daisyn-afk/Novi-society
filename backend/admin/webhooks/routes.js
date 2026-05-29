@@ -1,8 +1,9 @@
-import { Router } from "express";
+import express, { Router } from "express";
 import { processCompletedCheckoutSession, verifyStripeWebhook } from "../checkout/service.js";
 import { processModelCheckoutCompletedSession } from "../functions/routes.js";
 import { processMdBoardStripeEvent } from "../mdBillingService.js";
 import { recordStripeWebhookEvent } from "../payments/service.js";
+import { handleQualiphyExamWebhook } from "../qualiphy/webhookHandler.js";
 
 export const webhooksRouter = Router();
 
@@ -31,6 +32,9 @@ const TRACKED_STRIPE_EVENT_TYPES = new Set([
   "customer.subscription.updated",
   "customer.subscription.deleted"
 ]);
+
+// Qualiphy sends JSON; mount parser here because this router is registered before app-level express.json().
+webhooksRouter.post("/qualiphy", express.json({ limit: "1mb" }), handleQualiphyExamWebhook);
 
 webhooksRouter.post("/stripe", async (req, res, next) => {
   try {

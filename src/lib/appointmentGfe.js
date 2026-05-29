@@ -1,9 +1,12 @@
+const ACTIVE_GFE_STATUSES = new Set(["pending", "approved", "deferred", "not_available", "not_sent"]);
+
 /** Effective GFE status for UI when service requires an exam. */
 export function appointmentGfeDisplayStatus(appt) {
-  if (!appt || appt.requires_gfe !== true) return "not_required";
+  if (!appt) return "not_required";
   const status = String(appt.gfe_status || "").trim();
-  if (!status || status === "not_required") return "not_sent";
-  return status;
+  if (ACTIVE_GFE_STATUSES.has(status)) return status || "not_sent";
+  if (appt.requires_gfe !== true) return "not_required";
+  return "not_sent";
 }
 
 /** Invite link (pending) or results URL (approved). */

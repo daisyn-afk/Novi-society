@@ -5,6 +5,8 @@ import { validateBookingScope } from "../bookingValidation.js";
 import {
   sendAppointmentConfirmedPatientEmail,
   sendAppointmentCancelledPatientEmail,
+  sendAppointmentNoShowPatientEmail,
+  notifyPatientAppointmentNoShow,
 } from "../patientAppointmentEmails.js";
 
 export const appointmentsRouter = Router();
@@ -20,12 +22,170 @@ function hasAdminAccess(role) {
   return normalized === "admin" || normalized === "super_admin" || normalized === "owner";
 }
 
+const APPOINTMENTS_SELECT = `select a.*,
+       coalesce(st.name, st_by_name.name) as service_type_name,
+       coalesce(st.requires_gfe, st_by_name.requires_gfe, false) as requires_gfe,
+       pu.email as patient_user_email,
+       pu.full_name as patient_user_name`;
+
+const APPOINTMENTS_FROM = `from public.appointments a
+       left join public.service_type st on st.id::text = a.service_type_id::text
+       left join public.service_type st_by_name on a.service_type_id is null
+         and lower(trim(coalesce(st_by_name.name, ''))) = lower(trim(coalesce(a.service, '')))
+         and coalesce(st_by_name.requires_gfe, false) = true
+       left join public.users pu on pu.auth_user_id::text = a.patient_id or pu.id::text = a.patient_id`;
+
+async function resolvePatientContact(patientId, email, name) {
+  let patientEmail = String(email || "").trim() || null;
+  let patientName = String(name || "").trim() || null;
+  const pid = String(patientId || "").trim();
+  if (pid) {
+    const { rows } = await query(
+      `select auth_user_id, email, full_name from public.users
+        where auth_user_id::text = $1 or id::text = $1
+        limit 1`,
+      [pid]
+    );
+    const user = rows[0];
+    if (user) {
+      // Account email is source of truth for transactional mail (appointment row may be stale).
+      patientEmail = String(user.email || "").trim() || patientEmail;
+      patientName = String(user.full_name || "").trim() || patientName;
+    }
+  }
+  return { patientEmail, patientName };
+}
+
+async function resolvePatientNotifyUserId(patientId) {
+  const pid = String(patientId || "").trim();
+  if (!pid) return null;
+  const { rows } = await query(
+    `select auth_user_id::text as auth_user_id from public.users
+      where auth_user_id::text = $1 or id::text = $1
+      limit 1`,
+    [pid]
+  );
+  return rows[0]?.auth_user_id || pid;
+}
+
+async function runAppointmentPatientNotifications({
+  prevStatus,
+  nextStatus,
+  patientEmail,
+  patientName,
+  patientId,
+  providerName,
+  serviceLabel,
+  appointmentDate,
+  appointmentTime,
+  providerId,
+  cancelReason,
+  wasRequest,
+}) {
+  const outcomes = {
+    confirmed_email: null,
+    cancelled_email: null,
+    no_show_email: null,
+    no_show_notification: null,
+  };
+
+  if (!patientEmail) {
+    // eslint-disable-next-line no-console
+    console.warn("[appointments] skipped patient emails — no patient email", { patientId, nextStatus });
+    return outcomes;
+  }
+
+  const notifyUserId = await resolvePatientNotifyUserId(patientId);
+
+  if (prevStatus !== "confirmed" && nextStatus === "confirmed") {
+    try {
+      await sendAppointmentConfirmedPatientEmail({
+        to: patientEmail,
+        patientName,
+        providerName,
+        serviceLabel,
+        appointmentDate,
+        appointmentTime,
+      });
+      outcomes.confirmed_email = "sent";
+    } catch (err) {
+      outcomes.confirmed_email = "failed";
+      // eslint-disable-next-line no-console
+      console.warn("[appointments] confirmed email failed:", err?.message || err);
+    }
+  }
+
+  if (prevStatus !== "cancelled" && nextStatus === "cancelled") {
+    try {
+      await sendAppointmentCancelledPatientEmail({
+        to: patientEmail,
+        patientName,
+        providerName,
+        serviceLabel,
+        appointmentDate,
+        reason: cancelReason,
+        wasRequest,
+      });
+      outcomes.cancelled_email = "sent";
+    } catch (err) {
+      outcomes.cancelled_email = "failed";
+      // eslint-disable-next-line no-console
+      console.warn("[appointments] cancelled email failed:", err?.message || err);
+    }
+  }
+
+  if (prevStatus !== "no_show" && nextStatus === "no_show") {
+    try {
+      await sendAppointmentNoShowPatientEmail({
+        to: patientEmail,
+        patientName,
+        providerName,
+        serviceLabel,
+        appointmentDate,
+        appointmentTime,
+        providerId,
+      });
+      outcomes.no_show_email = "sent";
+      // eslint-disable-next-line no-console
+      console.log("[appointments] no-show email sent to", patientEmail);
+    } catch (err) {
+      outcomes.no_show_email = "failed";
+      // eslint-disable-next-line no-console
+      console.warn("[appointments] no-show email failed:", err?.message || err);
+    }
+
+    try {
+      const notif = await notifyPatientAppointmentNoShow({
+        patientId: notifyUserId,
+        patientEmail,
+        providerName,
+        serviceLabel,
+        appointmentDate,
+      });
+      outcomes.no_show_notification = notif.sent ? "sent" : "skipped";
+    } catch (err) {
+      outcomes.no_show_notification = "failed";
+      // eslint-disable-next-line no-console
+      console.warn("[appointments] no-show notification failed:", err?.message || err);
+    }
+  }
+
+  return outcomes;
+}
+
 function mapAppointmentRow(row) {
   const serviceTypeName = row.service_type_name != null ? String(row.service_type_name).trim() : "";
   const service = String(row.service || "").trim() || serviceTypeName;
+  const patientEmail =
+    String(row.patient_email || row.patient_user_email || "").trim() || null;
+  const patientName =
+    String(row.patient_name || row.patient_user_name || "").trim() || null;
+  const { patient_user_email: _pe, patient_user_name: _pn, ...rest } = row;
   return {
-    ...row,
+    ...rest,
     id: row.id,
+    patient_email: patientEmail,
+    patient_name: patientName,
     service,
     service_type_name: serviceTypeName || row.service_type_name || null,
     requires_gfe: row.requires_gfe === true,
@@ -87,9 +247,8 @@ appointmentsRouter.get("/", async (req, res, next) => {
     params.push(limit);
     const limitIdx = params.length;
 
-    const sql = `select a.*, st.name as service_type_name, coalesce(st.requires_gfe, false) as requires_gfe
-                   from public.appointments a
-                   left join public.service_type st on st.id::text = a.service_type_id::text
+    const sql = `${APPOINTMENTS_SELECT}
+                   ${APPOINTMENTS_FROM}
                    ${where.length ? `where ${where.join(" and ")}` : ""}
                    order by a.appointment_date desc, a.created_at desc
                    limit $${limitIdx}`;
@@ -140,6 +299,11 @@ appointmentsRouter.post("/", async (req, res, next) => {
     }
 
     const patientId = hasAdminAccess(me.role) && body.patient_id ? String(body.patient_id) : me.id;
+    const { patientEmail, patientName } = await resolvePatientContact(
+      patientId,
+      body.patient_email || me.email,
+      body.patient_name || me.full_name
+    );
     const { rows } = await query(
       `insert into public.appointments (
         patient_id, patient_email, patient_name,
@@ -150,8 +314,8 @@ appointmentsRouter.post("/", async (req, res, next) => {
       returning *`,
       [
         patientId,
-        body.patient_email || me.email || null,
-        body.patient_name || me.full_name || null,
+        patientEmail,
+        patientName,
         providerId,
         body.provider_email || null,
         body.provider_name || null,
@@ -168,9 +332,8 @@ appointmentsRouter.post("/", async (req, res, next) => {
     const createdId = rows[0]?.id;
     if (createdId) {
       const { rows: enriched } = await query(
-        `select a.*, st.name as service_type_name, coalesce(st.requires_gfe, false) as requires_gfe
-           from public.appointments a
-           left join public.service_type st on st.id::text = a.service_type_id::text
+        `${APPOINTMENTS_SELECT}
+           ${APPOINTMENTS_FROM}
           where a.id = $1`,
         [createdId]
       );
@@ -209,9 +372,8 @@ appointmentsRouter.patch("/:id", async (req, res, next) => {
     }
     if (!setParts.length) {
       const { rows: enriched } = await query(
-        `select a.*, st.name as service_type_name, coalesce(st.requires_gfe, false) as requires_gfe
-           from public.appointments a
-           left join public.service_type st on st.id::text = a.service_type_id::text
+        `${APPOINTMENTS_SELECT}
+           ${APPOINTMENTS_FROM}
           where a.id = $1`,
         [id]
       );
@@ -223,9 +385,8 @@ appointmentsRouter.patch("/:id", async (req, res, next) => {
       params
     );
     const { rows: enriched } = await query(
-      `select a.*, st.name as service_type_name, coalesce(st.requires_gfe, false) as requires_gfe
-         from public.appointments a
-         left join public.service_type st on st.id::text = a.service_type_id::text
+      `${APPOINTMENTS_SELECT}
+         ${APPOINTMENTS_FROM}
         where a.id = $1`,
       [id]
     );
@@ -233,40 +394,31 @@ appointmentsRouter.patch("/:id", async (req, res, next) => {
 
     const prevStatus = String(existing.status || "").trim().toLowerCase();
     const nextStatus = String(updated.status || "").trim().toLowerCase();
-    const patientEmail = String(updated.patient_email || existing.patient_email || "").trim();
     const cancelReason =
       updates.cancellation_reason != null ? String(updates.cancellation_reason) : String(existing.cancellation_reason || "");
 
-    if (patientEmail) {
-      try {
-        if (prevStatus !== "confirmed" && nextStatus === "confirmed") {
-          await sendAppointmentConfirmedPatientEmail({
-            to: patientEmail,
-            patientName: updated.patient_name || existing.patient_name,
-            providerName: updated.provider_name || existing.provider_name,
-            serviceLabel: updated.service || existing.service,
-            appointmentDate: updated.appointment_date || existing.appointment_date,
-            appointmentTime: updated.appointment_time || existing.appointment_time,
-          });
-        }
-        if (prevStatus !== "cancelled" && nextStatus === "cancelled") {
-          await sendAppointmentCancelledPatientEmail({
-            to: patientEmail,
-            patientName: updated.patient_name || existing.patient_name,
-            providerName: updated.provider_name || existing.provider_name,
-            serviceLabel: updated.service || existing.service,
-            appointmentDate: updated.appointment_date || existing.appointment_date,
-            reason: cancelReason,
-            wasRequest: prevStatus === "requested",
-          });
-        }
-      } catch (emailErr) {
-        // eslint-disable-next-line no-console
-        console.warn("[appointments] patient transactional email failed:", emailErr?.message || emailErr);
-      }
-    }
+    const { patientEmail, patientName } = await resolvePatientContact(
+      updated.patient_id || existing.patient_id,
+      updated.patient_email || existing.patient_email,
+      updated.patient_name || existing.patient_name
+    );
 
-    return res.json(updated);
+    const patientNotifications = await runAppointmentPatientNotifications({
+      prevStatus,
+      nextStatus,
+      patientEmail,
+      patientName,
+      patientId: updated.patient_id || existing.patient_id,
+      providerName: updated.provider_name || existing.provider_name,
+      serviceLabel: updated.service || existing.service,
+      appointmentDate: updated.appointment_date || existing.appointment_date,
+      appointmentTime: updated.appointment_time || existing.appointment_time,
+      providerId: updated.provider_id || existing.provider_id,
+      cancelReason,
+      wasRequest: prevStatus === "requested",
+    });
+
+    return res.json({ ...updated, patient_notifications: patientNotifications });
   } catch (error) {
     return next(error);
   }
