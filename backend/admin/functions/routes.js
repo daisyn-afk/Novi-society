@@ -38,6 +38,8 @@ import {
 } from "../manufacturers/notifications.js";
 import { buildManufacturerApplicationPayload } from "../manufacturers/providerApplicationContext.js";
 import { validateBookingScope } from "../bookingValidation.js";
+import { sendAppointmentGfeInviteEmail, notifyPatientGfeInvite } from "../patientAppointmentEmails.js";
+import { handleQualiphyExamWebhook, resolveQualiphyWebhookUrl } from "../qualiphy/webhookHandler.js";
 
 export const functionsRouter = Router();
 let certificationColumnsPromise = null;
@@ -50,6 +52,26 @@ const QUALIPHY_API_URL = "https://api.qualiphy.me/api/exam_invite";
 const stripe = stripeSecretKey ? new Stripe(stripeSecretKey) : null;
 let preOrderColumnsPromise = null;
 let coursePromoColumnsPromise = null;
+let appointmentColumnsPromise = null;
+
+async function getAppointmentColumnsSet() {
+  if (!appointmentColumnsPromise) {
+    appointmentColumnsPromise = query(
+      `select column_name
+       from information_schema.columns
+       where table_schema = 'public'
+         and table_name = 'appointments'`
+    )
+      .then((r) => new Set((r.rows || []).map((row) => String(row.column_name || "").toLowerCase())))
+      .catch(() => new Set());
+  }
+  return appointmentColumnsPromise;
+}
+
+async function hasAppointmentColumn(name) {
+  const cols = await getAppointmentColumnsSet();
+  return cols.has(String(name || "").toLowerCase());
+}
 
 async function getPreOrderColumnsSet() {
   if (!preOrderColumnsPromise) {
@@ -102,6 +124,67 @@ function splitNameParts(fullName) {
   const parts = clean.split(/\s+/).filter(Boolean);
   if (parts.length === 1) return { firstName: parts[0], lastName: "Model" };
   return { firstName: parts[0], lastName: parts.slice(1).join(" ") };
+}
+
+/** pg `date` columns often arrive as JS Date objects — never use String(date).slice(0, 10). */
+function normalizeDateOnly(value) {
+  if (value === null || value === undefined) return null;
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    const y = value.getUTCFullYear();
+    const m = String(value.getUTCMonth() + 1).padStart(2, "0");
+    const d = String(value.getUTCDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+  const str = String(value).trim();
+  if (!str) return null;
+  const match = str.match(/^(\d{4}-\d{2}-\d{2})/);
+  return match ? match[1] : null;
+}
+
+async function loadPatientGfeContact(patientId, patientEmail) {
+  const pid = String(patientId || "").trim();
+  const email = String(patientEmail || "").trim().toLowerCase();
+  let dob = null;
+  let phone = null;
+  let state = null;
+
+  if (pid) {
+    const { rows } = await query(
+      `select pp.date_of_birth, pp.phone, pp.state
+         from public.users u
+         left join public.patient_profiles pp on pp.user_id = u.id
+        where u.auth_user_id::text = $1 or u.id::text = $1
+        limit 1`,
+      [pid]
+    );
+    const row = rows[0] || {};
+    dob = normalizeDateOnly(row.date_of_birth);
+    phone = String(row.phone || "").trim() || null;
+    state = String(row.state || "").trim() || null;
+  }
+
+  if ((!dob || !phone) && email) {
+    const hasPreOrderDob = await hasPreOrderColumn("date_of_birth");
+    if (hasPreOrderDob) {
+      const { rows: preRows } = await query(
+        `select date_of_birth, phone
+           from public.pre_orders
+          where lower(customer_email) = $1
+            and date_of_birth is not null
+          order by created_at desc
+          limit 1`,
+        [email]
+      );
+      const pre = preRows[0];
+      if (pre) {
+        if (!dob) dob = normalizeDateOnly(pre.date_of_birth);
+        if (!phone) phone = String(pre.phone || "").trim() || null;
+      }
+    }
+  }
+
+  return { dob, phone, state };
 }
 
 async function resolveQualiphyExamIdForCourse({ courseId, treatmentType }) {
@@ -186,6 +269,158 @@ async function resolveQualiphyExamIdForCourse({ courseId, treatmentType }) {
     if (preferred) return preferred.examIds[0];
   }
   return candidates[0].examIds[0];
+}
+
+async function resolveQualiphyExamIdForAppointment({ serviceTypeId, serviceName, qualiphyExamIds }) {
+  const fromJoin = normalizeExamIds(qualiphyExamIds);
+  if (fromJoin.length > 0) return fromJoin[0];
+  const stId = String(serviceTypeId || "").trim();
+  if (stId) {
+    const { rows } = await query(
+      `select qualiphy_exam_ids from public.service_type where id = $1 limit 1`,
+      [stId]
+    );
+    const ids = normalizeExamIds(rows[0]?.qualiphy_exam_ids);
+    if (ids.length > 0) return ids[0];
+  }
+  const service = String(serviceName || "").trim();
+  if (service) {
+    const { rows } = await query(
+      `select qualiphy_exam_ids
+         from public.service_type
+        where lower(trim(name)) = lower(trim($1))
+          and requires_gfe = true
+        limit 1`,
+      [service]
+    );
+    const ids = normalizeExamIds(rows[0]?.qualiphy_exam_ids);
+    if (ids.length > 0) return ids[0];
+  }
+  return null;
+}
+
+async function resolveTeleStateForAppointment({ appointment, patientState }) {
+  const patientAbbr = extractUsStateAbbr(patientState);
+  if (patientAbbr) return patientAbbr;
+  const rawPatient = String(patientState || "").trim().toUpperCase();
+  if (/^[A-Z]{2}$/.test(rawPatient)) return rawPatient;
+
+  const providerId = String(appointment?.provider_id || "").trim();
+  if (providerId) {
+    const { rows } = await query(
+      `select pp.state
+         from public.users u
+         left join public.provider_profiles pp on pp.user_id = u.id
+        where u.auth_user_id::text = $1 or u.id::text = $1
+        limit 1`,
+      [providerId]
+    );
+    const providerAbbr = extractUsStateAbbr(rows[0]?.state);
+    if (providerAbbr) return providerAbbr;
+  }
+  return null;
+}
+
+function parseQualiphyInviteResponse(invitePayload) {
+  const meetingUrl = String(
+    invitePayload?.meeting_url ||
+    invitePayload?.url ||
+    invitePayload?.exam_invite_url ||
+    invitePayload?.gfe_url ||
+    invitePayload?.data?.meeting_url ||
+    invitePayload?.data?.url ||
+    invitePayload?.data?.exam_invite_url ||
+    ""
+  ).trim();
+  const meetingUuid = String(invitePayload?.meeting_uuid || invitePayload?.data?.meeting_uuid || "").trim();
+  const patientExams = Array.isArray(invitePayload?.patient_exams)
+    ? invitePayload.patient_exams
+    : Array.isArray(invitePayload?.data?.patient_exams)
+      ? invitePayload.data.patient_exams
+      : [];
+  const patientExamId = patientExams[0]?.patient_exam_id != null
+    ? String(patientExams[0].patient_exam_id)
+    : "";
+  return { meetingUrl, meetingUuid, patientExamId };
+}
+
+async function requestQualiphyExamInvite(inviteFields) {
+  const qualiphyApiKey = process.env.QUALIPHY_API_KEY || "";
+  const qualiphyClinicId = process.env.QUALIPHY_CLINIC_ID || "";
+  if (!qualiphyApiKey) {
+    const err = new Error("QUALIPHY_API_KEY is not configured.");
+    err.statusCode = 500;
+    throw err;
+  }
+
+  const qualiphyWebhookUrl = resolveQualiphyWebhookUrl();
+  const invitePayloadBody = {
+    api_key: qualiphyApiKey,
+    ...inviteFields,
+  };
+  if (qualiphyWebhookUrl) {
+    invitePayloadBody.webhook_url = qualiphyWebhookUrl;
+  } else {
+    // eslint-disable-next-line no-console
+    console.warn(
+      "[qualiphy] No webhook URL — exam completion will not update appointments. " +
+        "Set QUALIPHY_WEBHOOK_URL or APP_BASE_URL to a public HTTPS origin."
+    );
+  }
+  if (qualiphyClinicId) invitePayloadBody.clinic_id = qualiphyClinicId;
+
+  const sendInvite = async (payload) => {
+    const response = await fetch(QUALIPHY_API_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${qualiphyApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+    const responsePayload = await response.json().catch(() => ({}));
+    return { response, responsePayload };
+  };
+
+  let { response: inviteRes, responsePayload: invitePayload } = await sendInvite(invitePayloadBody);
+  let upstreamHttpCode = Number(invitePayload?.http_code || 0);
+  let upstreamFailed = !inviteRes.ok || (Number.isFinite(upstreamHttpCode) && upstreamHttpCode >= 400);
+
+  const upstreamErrorTextInitial = String(
+    invitePayload?.error_message || invitePayload?.message || invitePayload?.error || ""
+  ).toLowerCase();
+  const looksLikeClinicNotFound =
+    upstreamErrorTextInitial.includes("clinic") && upstreamErrorTextInitial.includes("not found");
+
+  if (Boolean(invitePayloadBody?.clinic_id) && (upstreamFailed || looksLikeClinicNotFound)) {
+    const fallbackPayload = { ...invitePayloadBody };
+    delete fallbackPayload.clinic_id;
+    ({ response: inviteRes, responsePayload: invitePayload } = await sendInvite(fallbackPayload));
+    upstreamHttpCode = Number(invitePayload?.http_code || 0);
+    upstreamFailed = !inviteRes.ok || (Number.isFinite(upstreamHttpCode) && upstreamHttpCode >= 400);
+  }
+
+  if (upstreamFailed) {
+    const upstreamError =
+      invitePayload?.error_message || invitePayload?.message || invitePayload?.error || "Qualiphy invite request failed.";
+    const err = new Error(upstreamError);
+    err.statusCode = 502;
+    throw err;
+  }
+
+  const { meetingUrl, meetingUuid, patientExamId } = parseQualiphyInviteResponse(invitePayload);
+
+  if (!meetingUrl) {
+    const err = new Error("Qualiphy did not return a GFE link.");
+    err.statusCode = 502;
+    throw err;
+  }
+  if (meetingUrl.includes("/ModelBookingLookup")) {
+    const err = new Error("Invalid GFE link returned. Qualiphy did not return an exam invite URL.");
+    err.statusCode = 502;
+    throw err;
+  }
+  return { meetingUrl, meetingUuid, patientExamId, webhookUrl: qualiphyWebhookUrl || null };
 }
 
 function toCurrencyCents(value) {
@@ -1728,7 +1963,7 @@ functionsRouter.post("/sendModelGFE", requireAdminOrStaffModelSignups, async (re
     if (!firstName || !lastName) {
       return res.status(400).json({ error: "Customer first and last name are required to generate GFE invite." });
     }
-    const qualiphyWebhookUrl = String(process.env.QUALIPHY_WEBHOOK_URL || "").trim();
+    const qualiphyWebhookUrl = resolveQualiphyWebhookUrl();
     const invitePayloadBody = {
       api_key: qualiphyApiKey,
       exams: [Number(qualiphyExamId)],
@@ -1742,6 +1977,9 @@ functionsRouter.post("/sendModelGFE", requireAdminOrStaffModelSignups, async (re
     };
     if (qualiphyWebhookUrl) {
       invitePayloadBody.webhook_url = qualiphyWebhookUrl;
+    } else {
+      // eslint-disable-next-line no-console
+      console.warn("[sendModelGFE] No Qualiphy webhook URL configured; GFE completion will not auto-update.");
     }
     if (qualiphyClinicId) {
       invitePayloadBody.clinic_id = qualiphyClinicId;
@@ -1845,6 +2083,163 @@ functionsRouter.post("/sendModelGFE", requireAdminOrStaffModelSignups, async (re
     }
     return res.json({ success: true, meeting_url: meetingUrl });
   } catch (error) {
+    return next(error);
+  }
+});
+
+/** Qualiphy exam completion callback (set QUALIPHY_WEBHOOK_URL to your public URL + /functions/qualiphyWebhook). */
+functionsRouter.post("/qualiphyWebhook", handleQualiphyExamWebhook);
+
+functionsRouter.post("/sendQualiphyGFE", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ success: false, error: "Missing bearer token." });
+    const me = await getMeFromAccessToken(token);
+    const appointmentId = String(req.body?.appointment_id || "").trim();
+    if (!appointmentId) {
+      return res.status(400).json({ success: false, error: "appointment_id is required." });
+    }
+
+    const { rows: apptRows } = await query(
+      `select a.*,
+              st.name as service_type_name,
+              st.qualiphy_exam_ids,
+              coalesce(st.requires_gfe, false) as requires_gfe,
+              coalesce(nullif(trim(a.patient_email), ''), u.email) as resolved_patient_email,
+              coalesce(nullif(trim(a.patient_name), ''), u.full_name) as resolved_patient_name,
+              pp.phone as patient_phone,
+              pp.state as patient_state,
+              pp.date_of_birth as patient_dob
+         from public.appointments a
+         left join public.service_type st on st.id::text = a.service_type_id::text
+         left join public.users u on u.auth_user_id::text = a.patient_id or u.id::text = a.patient_id
+         left join public.patient_profiles pp on pp.user_id = u.id
+        where a.id = $1
+        limit 1`,
+      [appointmentId]
+    );
+    const appt = apptRows[0];
+    if (!appt) return res.status(404).json({ success: false, error: "Appointment not found." });
+
+    const isOwner = String(appt.provider_id || "") === String(me.id || "");
+    if (!isOwner && !hasAdminAccess(me.role)) {
+      return res.status(403).json({ success: false, error: "Forbidden." });
+    }
+    if (appt.requires_gfe !== true) {
+      return res.status(400).json({ success: false, error: "This service does not require a Good Faith Exam." });
+    }
+
+    const qualiphyExamId = await resolveQualiphyExamIdForAppointment({
+      serviceTypeId: appt.service_type_id,
+      serviceName: appt.service || appt.service_type_name,
+      qualiphyExamIds: appt.qualiphy_exam_ids,
+    });
+    if (!qualiphyExamId) {
+      return res.status(400).json({
+        success: false,
+        error: "No Qualiphy exam ID found for this service. Add qualiphy_exam_ids on the service type in admin.",
+      });
+    }
+
+    const patientEmail = String(appt.resolved_patient_email || "").trim();
+    if (!patientEmail) {
+      return res.status(400).json({ success: false, error: "Patient email is required to send a GFE invite." });
+    }
+
+    const { firstName, lastName } = splitNameParts(appt.resolved_patient_name);
+    if (!firstName || !lastName) {
+      return res.status(400).json({ success: false, error: "Patient name is required to send a GFE invite." });
+    }
+
+    let dob = normalizeDateOnly(appt.patient_dob);
+    let patientPhone = String(appt.patient_phone || "").trim();
+    let patientState = appt.patient_state;
+
+    if (!dob || patientPhone.replace(/\D/g, "").length < 10) {
+      const contact = await loadPatientGfeContact(appt.patient_id, patientEmail);
+      if (!dob) dob = contact.dob;
+      if (!patientPhone && contact.phone) patientPhone = contact.phone;
+      if (!patientState && contact.state) patientState = contact.state;
+    }
+
+    if (!dob) {
+      return res.status(400).json({
+        success: false,
+        error: "Patient date of birth is required. Ask the patient to complete their profile before sending GFE.",
+      });
+    }
+
+    const digitsPhone = String(patientPhone || "").replace(/\D/g, "");
+    if (digitsPhone.length < 10) {
+      return res.status(400).json({
+        success: false,
+        error: "Patient phone number is required. Ask the patient to complete their profile before sending GFE.",
+      });
+    }
+    const normalizedPhone = digitsPhone.length === 10 ? `+1${digitsPhone}` : `+${digitsPhone}`;
+    const tele_state = (await resolveTeleStateForAppointment({ appointment: appt, patientState })) || "TX";
+
+    const invite = await requestQualiphyExamInvite({
+      exams: [Number(qualiphyExamId)],
+      first_name: firstName,
+      last_name: lastName,
+      email: patientEmail,
+      dob,
+      phone_number: normalizedPhone,
+      tele_state,
+      additional_data: JSON.stringify({ source: "novi_appointment", appointment_id: appt.id }),
+    });
+
+    const setParts = [
+      "gfe_status = 'pending'",
+      "gfe_meeting_url = $2",
+      "gfe_exam_url = null",
+      "gfe_sent_at = now()",
+      "gfe_initiated_at = coalesce(gfe_initiated_at, now())",
+      "updated_at = now()",
+    ];
+    const updateParams = [appointmentId, invite.meetingUrl];
+    if (invite.meetingUuid && (await hasAppointmentColumn("qualiphy_meeting_uuid"))) {
+      updateParams.push(invite.meetingUuid);
+      setParts.push(`qualiphy_meeting_uuid = $${updateParams.length}`);
+    }
+    if (invite.patientExamId && (await hasAppointmentColumn("qualiphy_patient_exam_id"))) {
+      updateParams.push(invite.patientExamId);
+      setParts.push(`qualiphy_patient_exam_id = $${updateParams.length}`);
+    }
+    await query(
+      `update public.appointments set ${setParts.join(", ")} where id = $1`,
+      updateParams
+    );
+
+    await sendAppointmentGfeInviteEmail({
+      to: patientEmail,
+      patientName: appt.resolved_patient_name,
+      providerName: appt.provider_name,
+      serviceLabel: appt.service || appt.service_type_name,
+      appointmentDate: appt.appointment_date,
+      appointmentTime: appt.appointment_time,
+      meetingUrl: invite.meetingUrl,
+    });
+
+    const notificationResult = await notifyPatientGfeInvite({
+      patientId: appt.patient_id,
+      patientEmail,
+      providerName: appt.provider_name,
+      serviceLabel: appt.service || appt.service_type_name,
+    });
+
+    return res.json({
+      success: true,
+      meeting_url: invite.meetingUrl,
+      webhook_configured: Boolean(invite.webhookUrl),
+      email_sent: true,
+      notification_sent: notificationResult.sent === true,
+    });
+  } catch (error) {
+    if (error?.statusCode) {
+      return res.status(error.statusCode).json({ success: false, error: error.message });
+    }
     return next(error);
   }
 });

@@ -86,7 +86,7 @@ export default function ProviderAppointments() {
                       <Badge className={statusColor[a.status]}>{a.status}</Badge>
                     </div>
                     <div className="flex gap-3 text-sm text-slate-500 mt-1 flex-wrap">
-                      <span className="flex items-center gap-1"><User className="w-3.5 h-3.5" />{a.patient_name || a.patient_email}</span>
+                      <span className="flex items-center gap-1"><User className="w-3.5 h-3.5" />{a.patient_name || "Patient"}</span>
                       {a.patient_email && <span className="flex items-center gap-1 text-xs">{a.patient_email}</span>}
                       <span className="flex items-center gap-1"><Calendar className="w-3.5 h-3.5" />
                         {a.appointment_date ? format(new Date(a.appointment_date), "MMM d, yyyy") : ""}

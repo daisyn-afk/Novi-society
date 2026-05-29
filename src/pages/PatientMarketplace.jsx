@@ -6,11 +6,11 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogClose, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Search, Star, MapPin, Award, Calendar, DollarSign, MessageSquare, Sparkles, Filter, Gift, Package, Tag, ImageIcon, Info } from "lucide-react";
+import { Search, Star, MapPin, Award, Calendar, DollarSign, MessageSquare, Sparkles, Filter, Gift, Package, Tag, ImageIcon, Info, X } from "lucide-react";
 import MessageThread from "@/components/messaging/MessageThread";
 import { broadcastAppointmentsRefresh } from "@/lib/appointmentSync";
 import { providerReviewAverage } from "@/lib/providerRating";
@@ -501,46 +501,67 @@ Based on my concerns and goals, which service types would be most relevant? Retu
       )}
 
       <Dialog open={!!selectedProvider} onOpenChange={() => setSelectedProvider(null)}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto p-0 gap-0">
+        <DialogContent
+          hideCloseButton
+          className="max-w-3xl w-[calc(100%-1rem)] sm:w-full max-h-[92dvh] h-[92dvh] sm:h-auto sm:max-h-[90vh] flex flex-col p-0 gap-0 overflow-hidden sm:rounded-2xl"
+        >
           {selectedProvider && (
-            <Tabs defaultValue="about" className="w-full">
-              <div className="sticky top-0 z-10 bg-white border-b px-6 pt-6 pb-0">
-                <DialogHeader className="text-left pb-4">
-                  <DialogTitle className="sr-only">{displayName(selectedProvider)}</DialogTitle>
-                </DialogHeader>
-                <TabsList className="grid w-full grid-cols-2">
-                  <TabsTrigger value="about">Profile</TabsTrigger>
-                  <TabsTrigger value="book">Book Appointment</TabsTrigger>
+            <Tabs defaultValue="about" className="flex flex-col flex-1 min-h-0 w-full">
+              <div
+                className="shrink-0 z-20 bg-white border-b px-4 sm:px-6 pb-0"
+                style={{ paddingTop: "max(0.75rem, env(safe-area-inset-top))" }}
+              >
+                <div className="flex items-center justify-between gap-3 pb-3">
+                  <DialogHeader className="text-left p-0 flex-1 min-w-0 space-y-0">
+                    <DialogTitle className="text-base sm:text-lg font-semibold text-slate-900 truncate">
+                      {displayName(selectedProvider)}
+                    </DialogTitle>
+                  </DialogHeader>
+                  <DialogClose asChild>
+                    <button
+                      type="button"
+                      className="flex h-10 w-10 min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-800 shadow-sm transition-colors hover:bg-slate-50 hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                      aria-label="Close"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </DialogClose>
+                </div>
+                <TabsList className="grid w-full grid-cols-2 mb-0">
+                  <TabsTrigger value="about" className="min-h-[44px]">Profile</TabsTrigger>
+                  <TabsTrigger value="book" className="min-h-[44px]">Book Appointment</TabsTrigger>
                 </TabsList>
               </div>
 
-              <TabsContent value="about" className="mt-0 px-6 py-5">
-                <ProviderProfilePanel
-                  provider={selectedProvider}
-                  mdServices={servicesFor(selectedProvider.id)}
-                  certs={certsFor(selectedProvider.id)}
-                  rating={ratingFor(selectedProvider.id).average}
-                  reviewCount={ratingFor(selectedProvider.id).count}
-                  serviceTypes={serviceTypes}
-                  onBook={() => {
-                    openBookDialog(selectedProvider);
-                    setSelectedProvider(null);
-                  }}
-                />
-              </TabsContent>
+              <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+                <TabsContent value="about" className="mt-0 px-4 sm:px-6 py-5 focus-visible:outline-none">
+                  <ProviderProfilePanel
+                    provider={selectedProvider}
+                    mdServices={servicesFor(selectedProvider.id)}
+                    certs={certsFor(selectedProvider.id)}
+                    rating={ratingFor(selectedProvider.id).average}
+                    reviewCount={ratingFor(selectedProvider.id).count}
+                    serviceTypes={serviceTypes}
+                    onBook={() => {
+                      openBookDialog(selectedProvider);
+                      setSelectedProvider(null);
+                    }}
+                  />
+                </TabsContent>
 
-              <TabsContent value="book" className="mt-0 px-6 py-5 space-y-4">
-                <BookingForm
-                  provider={selectedProvider}
-                  bookForm={bookForm}
-                  setBookForm={setBookForm}
-                  services={servicesFor(selectedProvider.id)}
-                  bookingError={bookingError}
-                  bookingLoading={bookingLoading}
-                  onCancel={() => setSelectedProvider(null)}
-                  onSubmit={handleBook}
-                />
-              </TabsContent>
+                <TabsContent value="book" className="mt-0 px-4 sm:px-6 py-5 space-y-4 focus-visible:outline-none">
+                  <BookingForm
+                    provider={selectedProvider}
+                    bookForm={bookForm}
+                    setBookForm={setBookForm}
+                    services={servicesFor(selectedProvider.id)}
+                    bookingError={bookingError}
+                    bookingLoading={bookingLoading}
+                    onCancel={() => setSelectedProvider(null)}
+                    onSubmit={handleBook}
+                  />
+                </TabsContent>
+              </div>
             </Tabs>
           )}
         </DialogContent>
@@ -1078,19 +1099,21 @@ function BookingForm({ provider, bookForm, setBookForm, services, bookingError, 
           </SelectContent>
         </Select>
       </div>
-      <div className="grid grid-cols-2 gap-3">
-        <div>
+      <div className="grid grid-cols-2 gap-4">
+        <div className="min-w-0 space-y-2">
           <Label>Date *</Label>
           <Input
             type="date"
+            className="w-full min-w-0 max-w-full"
             value={bookForm.appointment_date}
             onChange={(e) => setBookForm({ ...bookForm, appointment_date: e.target.value })}
           />
         </div>
-        <div>
+        <div className="min-w-0 space-y-2">
           <Label>Time</Label>
           <Input
             type="time"
+            className="w-full min-w-0 max-w-full"
             value={bookForm.appointment_time}
             onChange={(e) => setBookForm({ ...bookForm, appointment_time: e.target.value })}
           />

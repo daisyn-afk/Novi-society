@@ -73,7 +73,7 @@ function CalApptPill({ appt, onClick }) {
 }
 
 // ── Appointment detail drawer content ────────────────────────────
-function ApptDetail({ appt, treatmentRecords, onConfirm, onCancel, onComplete, onNoShow, onSendGFE, gfeSending, gfeFeedback, onDoc, onClose }) {
+function ApptDetail({ appt, treatmentRecords, onConfirm, onCancel, onComplete, onNoShow, noShowPending, onSendGFE, gfeSending, gfeFeedback, onDoc, onClose }) {
   const sc = STATUS[appt.status] || STATUS.confirmed;
   const hasRecord = treatmentRecords.find(r => r.appointment_id === appt.id);
   const serviceLabel = appointmentServiceLabel(appt);
@@ -243,8 +243,13 @@ function ApptDetail({ appt, treatmentRecords, onConfirm, onCancel, onComplete, o
           </Button>
         </div>
         {appt.status === "confirmed" && (
-          <Button className="w-full gap-1.5" variant="outline" onClick={onNoShow}>
-            No Show
+          <Button
+            className="w-full gap-1.5"
+            variant="outline"
+            onClick={onNoShow}
+            disabled={noShowPending}
+          >
+            {noShowPending ? "Updating…" : "No Show"}
           </Button>
         )}
       </div>
@@ -282,11 +287,6 @@ export default function PracticeAppointmentsTab({ appointments, initialFilter = 
       const me = await base44.auth.me();
       return base44.entities.TreatmentRecord.filter({ provider_id: me.id }, "-created_date");
     },
-  });
-
-  const update = useMutation({
-    mutationFn: ({ id, data }) => base44.entities.Appointment.update(id, data),
-    onSuccess: () => qc.invalidateQueries(["my-appointments"]),
   });
 
   const confirmAppt = useMutation({
@@ -345,17 +345,25 @@ export default function PracticeAppointmentsTab({ appointments, initialFilter = 
               }
             : prev
         );
+        const emailed = data.email_sent !== false;
+        const notified = data.notification_sent !== false;
         setGfeFeedback({
           id: appt.id,
           type: "success",
-          message: "GFE invite sent. The patient will receive a Qualiphy exam link by email. Status shows as GFE Pending until they complete it.",
+          message: emailed
+            ? "GFE invite sent. The patient was emailed the exam link and notified in their NOVI account. Status shows as GFE Pending until they complete it."
+            : "GFE link created. Email could not be delivered — use Resend GFE to try again.",
         });
         void qc.invalidateQueries({ queryKey: ["my-appointments"] });
         void qc.invalidateQueries({ queryKey: ["treatment-records"] });
         void qc.invalidateQueries({ queryKey: ["my-notifications"] });
         toast({
           title: "GFE invite sent",
-          description: "The patient was emailed a Qualiphy exam link.",
+          description: emailed && notified
+            ? "Patient emailed and notified in-app."
+            : emailed
+              ? "Patient emailed with the GFE link."
+              : "GFE created; check email configuration.",
           duration: 6000,
         });
       } else {
@@ -391,8 +399,54 @@ export default function PracticeAppointmentsTab({ appointments, initialFilter = 
       completed_at: new Date().toISOString(),
     }),
     onSuccess: () => {
-      qc.invalidateQueries(["my-appointments"]);
+      qc.invalidateQueries({ queryKey: ["my-appointments"] });
       setDetailOpen(false);
+    },
+  });
+
+  const markNoShow = useMutation({
+    mutationFn: ({ id }) => base44.entities.Appointment.update(id, { status: "no_show" }),
+    onMutate: async ({ id }) => {
+      await qc.cancelQueries({ queryKey: ["my-appointments"] });
+      const previous = qc.getQueryData(["my-appointments"]);
+      qc.setQueryData(["my-appointments"], (old) =>
+        Array.isArray(old)
+          ? old.map((a) => (a.id === id ? { ...a, status: "no_show" } : a))
+          : old
+      );
+      setDetailOpen(false);
+      setSelectedAppt(null);
+      return { previous };
+    },
+    onSuccess: (data) => {
+      const n = data?.patient_notifications || {};
+      const emailed = n.no_show_email === "sent";
+      const notified = n.no_show_notification === "sent";
+      toast({
+        title: "Marked as no-show",
+        description: emailed && notified
+          ? "Patient emailed and notified in-app to book again."
+          : emailed
+            ? "Patient emailed to book another appointment."
+            : notified
+              ? "Patient notified in-app (email could not be sent)."
+              : n.no_show_email === "failed"
+                ? "Status saved, but the no-show email could not be sent. Check RESEND configuration."
+                : "Status saved. Add a patient email on their account to send notifications.",
+      });
+      void qc.invalidateQueries({ queryKey: ["my-notifications"] });
+    },
+    onError: (err, _vars, context) => {
+      if (context?.previous) qc.setQueryData(["my-appointments"], context.previous);
+      const msg = String(err?.message || "Could not update appointment.").replace(/^\[lovable-provider\]\s*\d+\s+/, "");
+      toast({
+        title: "Update failed",
+        description: msg,
+        variant: "destructive",
+      });
+    },
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ["my-appointments"] });
     },
   });
 
@@ -541,10 +595,15 @@ export default function PracticeAppointmentsTab({ appointments, initialFilter = 
                           {/* Patient + service */}
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 flex-wrap">
-                              <p className="font-bold text-sm" style={{ color: "#1e2535" }}>{a.patient_name || a.patient_email}</p>
+                              <p className="font-bold text-sm" style={{ color: "#1e2535" }}>{a.patient_name || a.patient_email || "Patient"}</p>
                               <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full" style={{ background: sc.bg, color: sc.text }}>{sc.label}</span>
                               <GFEStatusBadge status={gfeStatus} examUrl={gfeLink || undefined} />
                             </div>
+                            {a.patient_email && (
+                              <p className="text-xs flex items-center gap-1 mt-0.5 truncate" style={{ color: "rgba(30,37,53,0.5)" }}>
+                                <Mail className="w-3 h-3 flex-shrink-0" />{a.patient_email}
+                              </p>
+                            )}
                             {serviceLabel ? (
                               <p className="text-xs mt-0.5 font-medium" style={{ color: "rgba(30,37,53,0.55)" }}>{serviceLabel}</p>
                             ) : null}
@@ -684,7 +743,8 @@ export default function PracticeAppointmentsTab({ appointments, initialFilter = 
                   }
                 );
               }}
-              onNoShow={() => update.mutate({ id: selectedAppt.id, data: { status: "no_show" } })}
+              onNoShow={() => markNoShow.mutate({ id: selectedAppt.id })}
+              noShowPending={markNoShow.isPending}
               onSendGFE={() => sendGFE(selectedAppt)}
               onDoc={() => {
                 const existing = treatmentRecords.find(r => r.appointment_id === selectedAppt.id);

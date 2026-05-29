@@ -35,12 +35,15 @@ if (!process.env.VERCEL) {
   app.listen(port, host, () => {
     // eslint-disable-next-line no-console
     console.log(`Admin API listening on http://127.0.0.1:${port} (host ${host})`);
-    // Kick once at startup, then keep running hourly.
-    setTimeout(() => {
-      void runModelAutomationTick();
-    }, 15_000);
-    setInterval(() => {
-      void runModelAutomationTick();
-    }, 60 * 60 * 1000);
+    // Optional background jobs (require admin auth on /functions/*). Off by default in local dev.
+    const modelAutomationEnabled = String(process.env.ENABLE_MODEL_AUTOMATION || "").trim() === "1";
+    if (modelAutomationEnabled) {
+      setTimeout(() => {
+        void runModelAutomationTick();
+      }, 15_000);
+      setInterval(() => {
+        void runModelAutomationTick();
+      }, 60 * 60 * 1000);
+    }
   });
 }

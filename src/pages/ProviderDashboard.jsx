@@ -596,7 +596,10 @@ function ProviderActiveDashboard({ hasCompletedBasic = true }) {
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-semibold truncate" style={{ color: "#1e2535" }}>{a.service}</p>
-                      <p className="text-xs truncate" style={{ color: "rgba(30,37,53,0.5)" }}>{a.patient_name || a.patient_email}</p>
+                      <p className="text-xs truncate" style={{ color: "rgba(30,37,53,0.5)" }}>{a.patient_name || a.patient_email || "Patient"}</p>
+                      {a.patient_email && a.patient_name && (
+                        <p className="text-[11px] truncate" style={{ color: "rgba(30,37,53,0.4)" }}>{a.patient_email}</p>
+                      )}
                     </div>
                     {a.status === "requested" && (
                       <span className="text-xs font-bold px-2 py-0.5 rounded-full flex-shrink-0" style={{ background: "rgba(250,111,48,0.15)", color: "#FA6F30" }}>New</span>
