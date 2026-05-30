@@ -102,8 +102,8 @@ export default function AdminManufacturers() {
   });
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="space-y-6 max-w-6xl w-full min-w-0 overflow-x-hidden">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <h2 className="text-2xl font-bold text-slate-900">Manufacturer Marketplace</h2>
           <p className="text-slate-500 text-sm mt-1">
@@ -131,11 +131,11 @@ export default function AdminManufacturers() {
       </div>
 
       <Tabs value={viewTab} onValueChange={setViewTab}>
-        <TabsList className="mb-4">
-          <TabsTrigger value="manufacturers">
+        <TabsList className="mb-4 w-full overflow-x-auto flex justify-start">
+          <TabsTrigger value="manufacturers" className="whitespace-nowrap">
             Manufacturers ({manufacturers.length})
           </TabsTrigger>
-          <TabsTrigger value="applications">
+          <TabsTrigger value="applications" className="whitespace-nowrap">
             Applications
             {pendingApps.length > 0 && (
               <span className="ml-1.5 bg-red-500 text-white text-xs rounded-full px-1.5 py-0.5">
@@ -143,7 +143,9 @@ export default function AdminManufacturers() {
               </span>
             )}
           </TabsTrigger>
-          <TabsTrigger value="inventory">Provider Inventory</TabsTrigger>
+          <TabsTrigger value="inventory" className="whitespace-nowrap">
+            Provider Inventory
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="manufacturers">
@@ -396,8 +398,8 @@ export default function AdminManufacturers() {
 
         <TabsContent value="inventory">
           <div className="space-y-4">
-            <div className="flex items-center gap-3">
-              <div className="relative flex-1 max-w-sm">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3 min-w-0">
+              <div className="relative flex-1 min-w-0 max-w-sm">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                 <input
                   className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none"
@@ -406,7 +408,7 @@ export default function AdminManufacturers() {
                   onChange={(e) => setInventorySearch(e.target.value)}
                 />
               </div>
-              <span className="text-xs text-slate-500">
+              <span className="text-xs text-slate-500 shrink-0">
                 {allInventory.length} order line{allInventory.length !== 1 ? "s" : ""} across all providers
               </span>
             </div>
