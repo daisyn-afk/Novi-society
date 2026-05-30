@@ -1,7 +1,8 @@
 import {
   normalizeScheduledSessionDatesEntries,
   parseSeatCount,
-  toSessionDateKey
+  toSessionDateKey,
+  isDisallowedPastSessionDate,
 } from "../lib/sessionDateSeats.js";
 
 const COURSE_TYPES = ["template", "scheduled"];
@@ -79,6 +80,10 @@ export function validateCourseInput(input, { partial = false, previousSessionDat
       }
       if (avail > max) {
         errors.push("available_seats cannot be greater than max_seats for any session date");
+        break;
+      }
+      if (isDisallowedPastSessionDate(entry, previousSessionDates)) {
+        errors.push("session dates cannot be scheduled in the past");
         break;
       }
     }

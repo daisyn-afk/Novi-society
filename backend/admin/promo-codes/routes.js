@@ -26,6 +26,36 @@ function validatePromoInput(payload) {
     err.statusCode = 400;
     throw err;
   }
+
+  const rawFrom = payload?.valid_from ?? payload?.starts_at ?? null;
+  const rawUntil = payload?.valid_until ?? payload?.ends_at ?? null;
+  const startsAt = rawFrom ? new Date(rawFrom) : null;
+  const endsAt = rawUntil ? new Date(rawUntil) : null;
+
+  if (rawFrom && (!startsAt || Number.isNaN(startsAt.getTime()))) {
+    const err = new Error("Valid from must be a valid date and time.");
+    err.statusCode = 400;
+    throw err;
+  }
+  if (rawUntil && (!endsAt || Number.isNaN(endsAt.getTime()))) {
+    const err = new Error("Valid until must be a valid date and time.");
+    err.statusCode = 400;
+    throw err;
+  }
+  if (startsAt && endsAt && startsAt.getTime() > endsAt.getTime()) {
+    const err = new Error("Valid from must be before or equal to valid until.");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const discountType = String(payload?.discount_type || "").toLowerCase();
+  if (discountType === "percent" || discountType === "percentage") {
+    if (discountValue > 100) {
+      const err = new Error("Percentage discount cannot exceed 100.");
+      err.statusCode = 400;
+      throw err;
+    }
+  }
 }
 
 export const promoCodesRouter = Router();
