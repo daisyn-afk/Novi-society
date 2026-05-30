@@ -37,6 +37,22 @@ function toDatetimeInputValue(value) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+function validatePromoDateFields(form) {
+  const startsAt = form.valid_from ? new Date(form.valid_from) : null;
+  const endsAt = form.valid_until ? new Date(form.valid_until) : null;
+
+  if (form.valid_from && (!startsAt || Number.isNaN(startsAt.getTime()))) {
+    return "Valid from must be a valid date and time.";
+  }
+  if (form.valid_until && (!endsAt || Number.isNaN(endsAt.getTime()))) {
+    return "Valid until must be a valid date and time.";
+  }
+  if (startsAt && endsAt && startsAt.getTime() > endsAt.getTime()) {
+    return "Valid from must be before or equal to valid until.";
+  }
+  return null;
+}
+
 export default function AdminPromoCodes() {
   const qc = useQueryClient();
   const { toast } = useToast();
@@ -61,7 +77,11 @@ export default function AdminPromoCodes() {
       setOpen(false);
       setEditing(null);
       setForm(EMPTY_FORM);
-    }
+      toast({ title: editing ? "Promo code updated" : "Promo code created" });
+    },
+    onError: (err) => {
+      toast({ title: "Save failed", description: err?.message || "Try again.", variant: "destructive" });
+    },
   });
 
   const deleteMutation = useMutation({
@@ -113,6 +133,18 @@ export default function AdminPromoCodes() {
   };
 
   const handleSave = () => {
+    const dateError = validatePromoDateFields(form);
+    if (dateError) {
+      toast({ title: "Invalid dates", description: dateError, variant: "destructive" });
+      return;
+    }
+
+    const discountValue = Number(form.discount_value);
+    if (form.discount_type === "percentage" && discountValue > 100) {
+      toast({ title: "Invalid discount", description: "Percentage discount cannot exceed 100.", variant: "destructive" });
+      return;
+    }
+
     const resolvedAppliesTo = editing
       ? (String(editing.applies_to || "course").toLowerCase() === "model" ? "model" : "course")
       : activeTab;
@@ -265,7 +297,12 @@ export default function AdminPromoCodes() {
               </div>
               <div>
                 <label className="text-xs font-semibold text-slate-600 mb-1 block">Valid until</label>
-                <Input type="datetime-local" value={form.valid_until} onChange={(e) => setForm((f) => ({ ...f, valid_until: e.target.value }))} />
+                <Input
+                  type="datetime-local"
+                  min={form.valid_from || undefined}
+                  value={form.valid_until}
+                  onChange={(e) => setForm((f) => ({ ...f, valid_until: e.target.value }))}
+                />
               </div>
             </div>
 

@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { adminLocationsApi } from "@/api/adminLocationsApi";
-import { normalizeScheduledSessionDatesEntries } from "@/lib/sessionDateSeats";
+import { normalizeScheduledSessionDatesEntries, isDisallowedPastSessionDate, todaySessionDateKey } from "@/lib/sessionDateSeats";
 import { X, Calendar, Plus, ChevronDown, ChevronRight, Check, Loader2 } from "lucide-react";
 
 const EMPTY_DATE_DRAFT = { date: "", start_time: "", end_time: "", location: "", label: "", max_seats: "", available_seats: "" };
@@ -246,6 +246,10 @@ export default function ScheduleCourseForm({
   const addDateToSession = (sessionId) => {
     const newDate = newDatesBySession[sessionId] || EMPTY_DATE_DRAFT;
     if (!newDate.date) return;
+    if (isDisallowedPastSessionDate(newDate, previousSessionDatesForNormalize)) {
+      setSeatErrors("Session dates cannot be scheduled in the past.");
+      return;
+    }
     if (!String(newDate.location || "").trim()) {
       setSeatErrors("Location is required. Select a saved location or add a new one.");
       return;
@@ -335,6 +339,10 @@ export default function ScheduleCourseForm({
     for (const d of dates) {
       if (!d?.date?.trim()) {
         setSeatErrors("Every session date must have a calendar date.");
+        return false;
+      }
+      if (isDisallowedPastSessionDate(d, previousSessionDatesForNormalize)) {
+        setSeatErrors("Session dates cannot be scheduled in the past.");
         return false;
       }
       if (!String(d.location || "").trim()) {
@@ -550,6 +558,7 @@ export default function ScheduleCourseForm({
                           <Label className="text-xs">Date *</Label>
                           <Input
                             type="date"
+                            min={todaySessionDateKey()}
                             value={(newDatesBySession[session.id] || EMPTY_DATE_DRAFT).date}
                             onChange={(e) => updateDateDraft(session.id, { date: e.target.value })}
                           />
