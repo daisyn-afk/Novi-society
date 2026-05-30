@@ -4,6 +4,7 @@ import { base44 } from "@/api/base44Client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { HorizontalScrollAffordance } from "@/components/ui/horizontal-scroll-affordance";
 import {
   Plus, Pencil, Trash2, Building2, ChevronDown, ChevronUp,
   Star, Globe, Mail, Package, Eye, EyeOff, Search,
@@ -12,6 +13,7 @@ import SupplierFormDialog from "@/components/admin/manufacturers/SupplierFormDia
 import {
   CATEGORY_LABELS,
 } from "@/components/admin/manufacturers/constants";
+import { toExternalUrl } from "@/lib/utils";
 
 const PENDING_APPLICATION_STATUSES = new Set([
   "submitted",
@@ -102,8 +104,8 @@ export default function AdminManufacturers() {
   });
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="space-y-6 max-w-6xl w-full min-w-0">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <h2 className="text-2xl font-bold text-slate-900">Manufacturer Marketplace</h2>
           <p className="text-slate-500 text-sm mt-1">
@@ -131,20 +133,24 @@ export default function AdminManufacturers() {
       </div>
 
       <Tabs value={viewTab} onValueChange={setViewTab}>
-        <TabsList className="mb-4">
-          <TabsTrigger value="manufacturers">
-            Manufacturers ({manufacturers.length})
-          </TabsTrigger>
-          <TabsTrigger value="applications">
-            Applications
-            {pendingApps.length > 0 && (
-              <span className="ml-1.5 bg-red-500 text-white text-xs rounded-full px-1.5 py-0.5">
-                {pendingApps.length}
-              </span>
-            )}
-          </TabsTrigger>
-          <TabsTrigger value="inventory">Provider Inventory</TabsTrigger>
-        </TabsList>
+        <HorizontalScrollAffordance className="mb-4">
+          <TabsList className="w-max flex justify-start">
+            <TabsTrigger value="manufacturers" className="whitespace-nowrap">
+              Manufacturers ({manufacturers.length})
+            </TabsTrigger>
+            <TabsTrigger value="applications" className="whitespace-nowrap">
+              Applications
+              {pendingApps.length > 0 && (
+                <span className="ml-1.5 bg-red-500 text-white text-xs rounded-full px-1.5 py-0.5">
+                  {pendingApps.length}
+                </span>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="inventory" className="whitespace-nowrap">
+              Provider Inventory
+            </TabsTrigger>
+          </TabsList>
+        </HorizontalScrollAffordance>
 
         <TabsContent value="manufacturers">
           {isLoading ? (
@@ -304,13 +310,24 @@ export default function AdminManufacturers() {
                           <p className="text-xs text-slate-500">{m.account_rep_email}</p>
                           {m.website_url && (
                             <a
-                              href={m.website_url}
+                              href={toExternalUrl(m.website_url)}
                               target="_blank"
-                              rel="noreferrer"
+                              rel="noopener noreferrer"
                               className="text-xs text-blue-600 hover:underline flex items-center gap-1 mt-1"
                             >
                               <Globe className="w-3 h-3" />
                               {m.website_url}
+                            </a>
+                          )}
+                          {m.jotform_application_url && (
+                            <a
+                              href={toExternalUrl(m.jotform_application_url)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs text-blue-600 hover:underline flex items-center gap-1 mt-1"
+                            >
+                              <Globe className="w-3 h-3" />
+                              JotForm application
                             </a>
                           )}
                         </div>
@@ -396,8 +413,8 @@ export default function AdminManufacturers() {
 
         <TabsContent value="inventory">
           <div className="space-y-4">
-            <div className="flex items-center gap-3">
-              <div className="relative flex-1 max-w-sm">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3 min-w-0">
+              <div className="relative flex-1 min-w-0 max-w-sm">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                 <input
                   className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none"
@@ -406,7 +423,7 @@ export default function AdminManufacturers() {
                   onChange={(e) => setInventorySearch(e.target.value)}
                 />
               </div>
-              <span className="text-xs text-slate-500">
+              <span className="text-xs text-slate-500 shrink-0">
                 {allInventory.length} order line{allInventory.length !== 1 ? "s" : ""} across all providers
               </span>
             </div>

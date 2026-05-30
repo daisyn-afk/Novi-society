@@ -140,6 +140,7 @@ function rowToApi(row) {
 
     account_rep_name: row.account_rep_name ?? "",
     account_rep_email: row.account_rep_email ?? "",
+    jotform_application_url: row.jotform_application_url ?? "",
 
     uses_network_tiers: row.uses_network_tiers === true,
     network_tiers: asJsonbArray(row.network_tiers),
@@ -229,6 +230,7 @@ function normalizeManufacturerPayload(payload = {}) {
 
     account_rep_name: asString(payload.account_rep_name, ""),
     account_rep_email: asString(payload.account_rep_email, "").trim(),
+    jotform_application_url: asTrimmedString(payload.jotform_application_url, ""),
 
     uses_network_tiers: asBoolean(payload.uses_network_tiers, false),
     network_tiers: Array.isArray(payload.network_tiers)
@@ -272,6 +274,7 @@ const MANUFACTURER_COLUMNS = `
   sort_order,
   account_rep_name,
   account_rep_email,
+  jotform_application_url,
   uses_network_tiers,
   network_tiers,
   custom_fields,
@@ -332,7 +335,7 @@ export async function createManufacturer(payload) {
        standalone_pricing_note, standalone_access,
        novi_pricing_note, novi_access,
        training_approved, is_featured, price_tier, sort_order,
-       account_rep_name, account_rep_email,
+       account_rep_name, account_rep_email, jotform_application_url,
        uses_network_tiers, network_tiers,
        custom_fields, required_fields,
        min_order_amount, ships_to_states, is_active
@@ -345,10 +348,10 @@ export async function createManufacturer(payload) {
        $17, $18::jsonb,
        $19, $20::jsonb,
        $21, $22, $23, $24,
-       $25, $26,
-       $27, $28::jsonb,
-       $29::jsonb, $30::jsonb,
-       $31, $32, $33
+       $25, $26, $27,
+       $28, $29::jsonb,
+       $30::jsonb, $31::jsonb,
+       $32, $33, $34
      )
      returning ${MANUFACTURER_COLUMNS}`,
     [
@@ -378,6 +381,7 @@ export async function createManufacturer(payload) {
       data.sort_order,
       data.account_rep_name,
       data.account_rep_email,
+      data.jotform_application_url,
       data.uses_network_tiers,
       JSON.stringify(data.network_tiers),
       JSON.stringify(data.custom_fields),
@@ -423,13 +427,14 @@ export async function updateManufacturer(id, payload) {
          sort_order = $25,
          account_rep_name = $26,
          account_rep_email = $27,
-         uses_network_tiers = $28,
-         network_tiers = $29::jsonb,
-         custom_fields = $30::jsonb,
-         required_fields = $31::jsonb,
-         min_order_amount = $32,
-         ships_to_states = $33,
-         is_active = $34,
+         jotform_application_url = $28,
+         uses_network_tiers = $29,
+         network_tiers = $30::jsonb,
+         custom_fields = $31::jsonb,
+         required_fields = $32::jsonb,
+         min_order_amount = $33,
+         ships_to_states = $34,
+         is_active = $35,
          updated_at = now()
      where id = $1
      returning ${MANUFACTURER_COLUMNS}`,
@@ -461,6 +466,7 @@ export async function updateManufacturer(id, payload) {
       data.sort_order,
       data.account_rep_name,
       data.account_rep_email,
+      data.jotform_application_url,
       data.uses_network_tiers,
       JSON.stringify(data.network_tiers),
       JSON.stringify(data.custom_fields),

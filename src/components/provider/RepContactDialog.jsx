@@ -209,7 +209,7 @@ export default function RepContactDialog({
   const [body, setBody] = useState("");
   const [replyBody, setReplyBody] = useState("");
   const [startingNewThread, setStartingNewThread] = useState(false);
-  const [historyCollapsed, setHistoryCollapsed] = useState(false);
+  const [historyCollapsed, setHistoryCollapsed] = useState(true);
   const wasOpenRef = useRef(false);
 
   const resetComposeFields = () => {
@@ -289,8 +289,8 @@ export default function RepContactDialog({
 
   return (
     <Dialog open={open} onOpenChange={(v) => close(v ? open : false)}>
-      <DialogContent className="max-w-4xl max-h-[92vh] flex flex-col p-0 gap-0 overflow-hidden sm:rounded-2xl shadow-2xl">
-        <DialogHeader className="px-5 pt-5 pb-4 shrink-0 border-b border-slate-100/80 bg-gradient-to-b from-white to-slate-50/80">
+      <DialogContent className="w-[calc(100vw-1rem)] max-w-4xl max-h-[min(92dvh,100dvh)] sm:max-h-[92vh] h-[min(92dvh,100dvh)] sm:h-auto flex flex-col p-0 gap-0 overflow-hidden rounded-xl sm:rounded-2xl shadow-2xl">
+        <DialogHeader className="px-4 sm:px-5 pt-4 sm:pt-5 pb-3 sm:pb-4 shrink-0 border-b border-slate-100/80 bg-gradient-to-b from-white to-slate-50/80">
           <RepDialogHeader
             repName={repName}
             repEmail={repEmail}
@@ -314,7 +314,7 @@ export default function RepContactDialog({
         </DialogHeader>
 
         <div
-          className={`flex-1 min-h-0 px-5 py-4 bg-[#f6f8fb] ${
+          className={`flex-1 min-h-0 px-4 sm:px-5 py-3 sm:py-4 bg-[#f6f8fb] ${
             showThread && !showCompose
               ? "flex flex-col overflow-hidden"
               : "overflow-y-auto"
@@ -355,8 +355,9 @@ export default function RepContactDialog({
             }
           />
         ) : (
-          <div className="flex flex-1 min-h-0 gap-2 overflow-hidden">
+          <div className="flex flex-1 min-h-0 gap-2 overflow-hidden min-w-0">
             <ThreadHistorySidebar
+              className="max-sm:hidden"
               threads={displayThreads}
               activeThreadId={threadId}
               collapsed={historyCollapsed}
@@ -380,6 +381,17 @@ export default function RepContactDialog({
                 providerEmail={me?.email || status?.google_email || ""}
                 messages={messages}
                 threadId={threadId}
+                threads={displayThreads}
+                threadsLoading={
+                  threadPointerQuery.isLoading || threadPointerQuery.isFetching
+                }
+                selectingThread={selectThreadMutation.isPending}
+                onSelectThread={(id) => {
+                  if (!id || id === threadId) return;
+                  setReplyBody("");
+                  setActiveThreadId(id);
+                  selectThreadMutation.mutate(id);
+                }}
                 loading={threadMessagesQuery.isLoading}
                 replyBody={replyBody}
                 onReplyBody={setReplyBody}
@@ -425,7 +437,7 @@ function RepDialogHeader({
       : `Contact ${repName || `${mfrName} Rep`}`;
 
   return (
-    <div className="flex items-start gap-3 pr-8">
+    <div className="flex items-start gap-3 pr-10 sm:pr-8">
       <div
         className="w-11 h-11 rounded-full flex items-center justify-center shrink-0 text-sm font-bold shadow-sm"
         style={{
@@ -448,12 +460,21 @@ function RepDialogHeader({
         </DialogTitle>
         {repEmail ? (
           <p
-            className="text-xs mt-1 truncate"
+            className="text-xs mt-1 line-clamp-2 sm:truncate"
             style={{ color: "rgba(30,37,53,0.55)" }}
-            title={repEmail}
+            title={
+              startingNewThread
+                ? `${repEmail} · separate email thread in Gmail`
+                : repEmail
+            }
           >
             {repEmail}
-            {startingNewThread ? " · separate email thread in Gmail" : ""}
+            {startingNewThread ? (
+              <span className="hidden sm:inline">
+                {" "}
+                · separate email thread in Gmail
+              </span>
+            ) : null}
           </p>
         ) : null}
       </div>
@@ -631,15 +652,15 @@ function FirstMessageCompose({
         }}
       >
         <div
-          className="flex items-center gap-2 px-4 py-3 border-b"
+          className="flex items-start sm:items-center gap-2 px-3 sm:px-4 py-3 border-b"
           style={{ borderColor: "rgba(30,37,53,0.08)" }}
         >
-          <Reply className="w-4 h-4 shrink-0" style={{ color: "rgba(30,37,53,0.45)" }} />
-          <div className="flex-1 min-w-0 text-sm" style={{ color: "#1e2535" }}>
+          <Reply className="w-4 h-4 shrink-0 mt-0.5 sm:mt-0" style={{ color: "rgba(30,37,53,0.45)" }} />
+          <div className="flex-1 min-w-0 text-sm break-words" style={{ color: "#1e2535" }}>
             <span className="text-slate-500 mr-1">To</span>
             <span className="font-medium">{repName || "Account Rep"}</span>
             <span
-              className="ml-1 underline decoration-[#FDE68A] decoration-2 underline-offset-2"
+              className="block sm:inline sm:ml-1 mt-0.5 sm:mt-0 underline decoration-[#FDE68A] decoration-2 underline-offset-2 break-all sm:break-normal"
               style={{ color: "rgba(30,37,53,0.75)" }}
             >
               ({repEmail})
@@ -661,12 +682,11 @@ function FirstMessageCompose({
         <textarea
           value={body ?? ""}
           onChange={(e) => onBody(e.target.value)}
-          rows={12}
+          rows={10}
           placeholder="Write your message…"
-          className="w-full px-4 py-3 text-sm outline-none resize-none leading-relaxed"
+          className="w-full px-3 sm:px-4 py-3 text-sm outline-none resize-none leading-relaxed min-h-[140px] sm:min-h-[200px]"
           style={{
             color: "#1e2535",
-            minHeight: 200,
             lineHeight: 1.65,
           }}
         />
@@ -678,13 +698,21 @@ function FirstMessageCompose({
         </p>
       ) : null}
 
-      <div className="flex gap-2">
+      <div className="flex flex-col-reverse sm:flex-row gap-2">
         {onBackToThread ? (
-          <Button variant="outline" className="flex-1" onClick={onBackToThread}>
+          <Button
+            variant="outline"
+            className="w-full sm:flex-1 h-11"
+            onClick={onBackToThread}
+          >
             Back to thread
           </Button>
         ) : (
-          <Button variant="outline" className="flex-1" onClick={onClose}>
+          <Button
+            variant="outline"
+            className="w-full sm:flex-1 h-11"
+            onClick={onClose}
+          >
             Cancel
           </Button>
         )}
@@ -713,6 +741,7 @@ function ThreadHistorySidebar({
   selecting,
   onSelect,
   onNewThread,
+  className = "",
 }) {
   const newThreadBtn = (
     <Button
@@ -734,7 +763,7 @@ function ThreadHistorySidebar({
     <aside
       className={`shrink-0 flex flex-col min-h-0 self-stretch rounded-xl overflow-hidden transition-[width] duration-200 ${
         collapsed ? "w-11" : "w-[200px] sm:w-[220px]"
-      }`}
+      } ${className}`}
       style={{
         background: "#fff",
         border: "1px solid rgba(30,37,53,0.1)",
@@ -858,28 +887,21 @@ function ThreadHistorySidebar({
 
 function GmailSendButton({ label, disabled, color, onClick, fullWidth = true }) {
   return (
-    <div
-      className={`${fullWidth ? "flex-1" : ""} flex rounded-full overflow-hidden shadow-md min-w-[120px]`}
-      style={{ opacity: disabled ? 0.55 : 1 }}
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className={`inline-flex items-center justify-center gap-2 rounded-full px-5 py-2.5 h-11 text-sm font-bold text-white shadow-md transition hover:brightness-105 disabled:pointer-events-none whitespace-nowrap ${
+        fullWidth ? "w-full sm:flex-1 sm:min-w-0" : "shrink-0"
+      }`}
+      style={{
+        background: color || "#2D6B7F",
+        opacity: disabled ? 0.55 : 1,
+      }}
     >
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={onClick}
-        className="flex-1 flex items-center justify-center gap-2 px-5 py-2.5 text-sm font-bold text-white transition hover:brightness-105 disabled:pointer-events-none"
-        style={{ background: color || "#2D6B7F" }}
-      >
-        <Send className="w-4 h-4" />
-        {label}
-      </button>
-      <span
-        className="flex items-center px-2 border-l border-white/25"
-        style={{ background: color || "#2D6B7F", color: "#fff" }}
-        aria-hidden
-      >
-        <ChevronDown className="w-4 h-4 opacity-80" />
-      </span>
-    </div>
+      <Send className="w-4 h-4 shrink-0" />
+      <span>{label}</span>
+    </button>
   );
 }
 
@@ -889,6 +911,10 @@ function ThreadView({
   providerEmail,
   messages,
   threadId,
+  threads = [],
+  threadsLoading = false,
+  selectingThread = false,
+  onSelectThread,
   loading,
   replyBody,
   onReplyBody,
@@ -910,39 +936,78 @@ function ThreadView({
     el.scrollTop = el.scrollHeight;
   }, [messages.length, loading]);
 
+  const showMobileThreadPicker = threads.length > 1;
+
   return (
-    <div className="grid flex-1 min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden">
-      <div
-        className="rounded-xl px-4 py-3 mb-2 flex items-center justify-between gap-2 min-h-0"
-        style={{
-          background: "#fff",
-          border: "1px solid rgba(30,37,53,0.1)",
-          boxShadow: "0 1px 3px rgba(30,37,53,0.06)",
-        }}
-      >
-        <div className="min-w-0">
-          <p className="text-sm font-semibold truncate" style={{ color: "#1e2535" }}>
-            {subject}
-          </p>
-          <p className="text-xs mt-0.5 truncate" style={{ color: "rgba(30,37,53,0.55)" }}>
-            {repName} · {repEmail}
-          </p>
-        </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={onNewThread}
-          className="gap-1 h-8 text-xs font-semibold shrink-0 sm:hidden"
-          style={{ borderColor: "rgba(45,107,127,0.35)", color: "#2D6B7F" }}
+    <div className="grid flex-1 min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden min-w-0">
+      <div className="shrink-0 space-y-2 mb-2 min-w-0">
+        <div
+          className="rounded-xl px-3 sm:px-4 py-2.5 sm:py-3 flex items-center justify-between gap-2 min-w-0"
+          style={{
+            background: "#fff",
+            border: "1px solid rgba(30,37,53,0.1)",
+            boxShadow: "0 1px 3px rgba(30,37,53,0.06)",
+          }}
         >
-          <MessageSquarePlus className="w-3.5 h-3.5" />
-          New
-        </Button>
+          <div className="min-w-0 flex-1">
+            <p
+              className="text-sm font-semibold truncate"
+              style={{ color: "#1e2535" }}
+            >
+              {subject}
+            </p>
+            <p
+              className="text-xs mt-0.5 truncate"
+              style={{ color: "rgba(30,37,53,0.55)" }}
+            >
+              {repName} · {repEmail}
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onNewThread}
+            className="gap-1 h-8 text-xs font-semibold shrink-0 sm:hidden"
+            style={{ borderColor: "rgba(45,107,127,0.35)", color: "#2D6B7F" }}
+          >
+            <MessageSquarePlus className="w-3.5 h-3.5" />
+            New
+          </Button>
+        </div>
+
+        {showMobileThreadPicker ? (
+          <div className="sm:hidden relative">
+            <label className="sr-only">Switch thread</label>
+            <select
+              value={threadId || ""}
+              disabled={selectingThread || threadsLoading}
+              onChange={(e) => onSelectThread?.(e.target.value)}
+              className="w-full appearance-none rounded-xl border px-3 py-2.5 pr-9 text-xs font-semibold truncate outline-none focus:ring-2 focus:ring-[#7B8EC8]/40"
+              style={{
+                color: "#1e2535",
+                borderColor: "rgba(30,37,53,0.12)",
+                background: "#fff",
+              }}
+            >
+              {threads.map((t) => (
+                <option key={t.thread_id} value={t.thread_id}>
+                  {t.subject || "(no subject)"}
+                  {t.message_count > 1 ? ` (${t.message_count})` : ""}
+                </option>
+              ))}
+            </select>
+            <ChevronDown
+              className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4"
+              style={{ color: "rgba(30,37,53,0.45)" }}
+              aria-hidden
+            />
+          </div>
+        ) : null}
       </div>
 
       <div
         ref={chatRef}
-        className="min-h-0 overflow-y-auto rounded-2xl px-3 py-4 space-y-4 overscroll-contain"
+        className="min-h-0 overflow-y-auto rounded-2xl px-2 sm:px-3 py-3 sm:py-4 space-y-4 overscroll-contain min-w-0"
         style={{
           background: "linear-gradient(180deg, #eef1f6 0%, #e8ecf4 100%)",
           border: "1px solid rgba(30,37,53,0.06)",
@@ -985,25 +1050,30 @@ function ThreadView({
           }}
         >
           <div
-            className="flex items-center gap-2 px-4 py-2 border-b text-sm"
+            className="flex items-start sm:items-center gap-2 px-3 sm:px-4 py-2 border-b text-sm min-w-0"
             style={{ borderColor: "rgba(30,37,53,0.08)", color: "#1e2535" }}
           >
-            <Reply className="w-4 h-4 shrink-0" style={{ color: "rgba(30,37,53,0.45)" }} />
-            <span className="text-slate-500">Reply to</span>
-            <span className="font-medium truncate">{repName}</span>
-            <span
-              className="truncate underline decoration-[#FDE68A] decoration-2 underline-offset-2 text-xs sm:text-sm"
-              style={{ color: "rgba(30,37,53,0.65)" }}
-            >
-              ({repEmail})
-            </span>
+            <Reply
+              className="w-4 h-4 shrink-0 mt-0.5 sm:mt-0"
+              style={{ color: "rgba(30,37,53,0.45)" }}
+            />
+            <div className="min-w-0 flex-1 break-words">
+              <span className="text-slate-500">Reply to </span>
+              <span className="font-medium">{repName}</span>
+              <span
+                className="block sm:inline sm:ml-1 mt-0.5 sm:mt-0 underline decoration-[#FDE68A] decoration-2 underline-offset-2 break-all sm:break-normal text-xs sm:text-sm"
+                style={{ color: "rgba(30,37,53,0.65)" }}
+              >
+                ({repEmail})
+              </span>
+            </div>
           </div>
           <textarea
             value={replyBody}
             onChange={(e) => onReplyBody(e.target.value)}
             rows={3}
             placeholder="Write your reply…"
-            className="w-full px-4 py-3 text-sm outline-none resize-none"
+            className="w-full px-3 sm:px-4 py-3 text-sm outline-none resize-none min-w-0"
             style={{
               color: "#1e2535",
               lineHeight: 1.6,
@@ -1018,30 +1088,59 @@ function ThreadView({
             }}
           />
           <div
-            className="flex items-center justify-between gap-2 px-3 py-1 border-t"
+            className="border-t"
             style={{
               borderColor: "rgba(30,37,53,0.08)",
               background: "rgba(246,248,251,0.95)",
             }}
           >
-            <p className="text-[10px] pl-1 leading-tight" style={{ color: "rgba(30,37,53,0.45)" }}>
-              Ctrl+Enter to send
-              <span className="hidden sm:inline">
-                {" "}
-                · attachments open in Gmail
-              </span>
-            </p>
-            <div className="flex items-center gap-2 shrink-0">
-              <Button variant="ghost" size="sm" onClick={onClose} className="h-6 text-xs">
-                Close
-              </Button>
+            <div className="flex flex-col gap-2 px-3 py-2.5 sm:hidden">
               <GmailSendButton
                 label={sending ? "Sending…" : "Send"}
                 disabled={sending || !replyBody.trim()}
                 color="#2D6B7F"
                 onClick={onSendReply}
-                fullWidth={false}
+                fullWidth
               />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onClose}
+                className="w-full h-10 text-xs font-semibold"
+              >
+                Close
+              </Button>
+              <p
+                className="text-[10px] leading-tight text-center"
+                style={{ color: "rgba(30,37,53,0.45)" }}
+              >
+                Ctrl+Enter to send
+              </p>
+            </div>
+            <div className="hidden sm:flex items-center justify-between gap-2 px-3 py-2">
+              <p
+                className="text-[10px] leading-tight"
+                style={{ color: "rgba(30,37,53,0.45)" }}
+              >
+                Ctrl+Enter to send · attachments open in Gmail
+              </p>
+              <div className="flex items-center gap-2 shrink-0">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={onClose}
+                  className="h-9 text-xs"
+                >
+                  Close
+                </Button>
+                <GmailSendButton
+                  label={sending ? "Sending…" : "Send"}
+                  disabled={sending || !replyBody.trim()}
+                  color="#2D6B7F"
+                  onClick={onSendReply}
+                  fullWidth={false}
+                />
+              </div>
             </div>
           </div>
         </div>
@@ -1062,7 +1161,11 @@ function MessageBubble({ message, threadId, providerEmail, repName }) {
   const senderLabel = isMine ? "You" : repName || "Rep";
 
   return (
-    <div className={`flex gap-2 ${isMine ? "flex-row-reverse" : "flex-row"}`}>
+    <div
+      className={`flex gap-2 w-full min-w-0 ${
+        isMine ? "flex-row-reverse" : "flex-row"
+      }`}
+    >
       {!isMine ? (
         <div
           className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 text-[10px] font-bold mt-1"
@@ -1076,7 +1179,7 @@ function MessageBubble({ message, threadId, providerEmail, repName }) {
         </div>
       ) : null}
       <div
-        className="max-w-[85%] rounded-2xl px-4 py-3 shadow-sm"
+        className="min-w-0 max-w-[calc(100%-2.5rem)] sm:max-w-[85%] rounded-2xl px-3 sm:px-4 py-3 shadow-sm overflow-hidden"
         style={
           isMine
             ? {
@@ -1109,7 +1212,7 @@ function MessageBubble({ message, threadId, providerEmail, repName }) {
         </div>
 
         <p
-          className="text-sm whitespace-pre-wrap break-words leading-relaxed"
+          className="text-sm whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed"
           style={{ opacity: body ? 1 : 0.6 }}
         >
           {body || "(No message text)"}

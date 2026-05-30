@@ -2575,7 +2575,12 @@ functionsRouter.post("/sendRepContactEmail", async (req, res, next) => {
 
     Promise.resolve(
       notifyRepOfContactRequest({
-        orderRequest,
+        orderRequest: {
+          ...orderRequest,
+          order_items: orderRequest.order_items?.length
+            ? orderRequest.order_items
+            : (body.order_items || []),
+        },
         manufacturer,
         providerEmail: me?.email || orderRequest.provider_email,
         providerPhone: me?.phone || "",

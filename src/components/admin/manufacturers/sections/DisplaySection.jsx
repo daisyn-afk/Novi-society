@@ -99,6 +99,23 @@ export default function DisplaySection({ form, update, onUploadFile, uploadingKe
       </div>
 
       <div>
+        <FieldLabel className="mb-1">JotForm Application Link</FieldLabel>
+        <div className="relative">
+          <Globe className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+          <Input
+            className="pl-8"
+            value={form.jotform_application_url}
+            onChange={(e) => update({ jotform_application_url: e.target.value })}
+            placeholder="https://form.jotform.com/..."
+          />
+        </div>
+        <p className="text-xs text-slate-500 mt-1">
+          Optional. When set, providers are sent to this external form instead of the built-in NOVI
+          application flow.
+        </p>
+      </div>
+
+      <div>
         <FieldLabel className="mb-1">Short Description</FieldLabel>
         <textarea
           className="w-full border border-slate-200 rounded-lg p-3 text-sm text-slate-700 min-h-[80px] resize-y focus:outline-none focus:ring-1 focus:ring-slate-400"

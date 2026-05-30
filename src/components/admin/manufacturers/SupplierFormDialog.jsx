@@ -111,6 +111,7 @@ function mergeSupplier(initial) {
         required: true,
       })),
     required_fields: initial?.required_fields ?? [],
+    jotform_application_url: src.jotform_application_url ?? "",
   };
 }
 
@@ -134,7 +135,9 @@ export default function SupplierFormDialog({
 
   useEffect(() => {
     if (!open) return;
-    setForm(mergeSupplier(initial));
+    const next = mergeSupplier(initial);
+    setForm(next);
+    formRef.current = next;
     setOpenSection("display");
   }, [formSeed]);
 
@@ -185,6 +188,7 @@ export default function SupplierFormDialog({
     ...source,
     logo_url: String(source.logo_url || "").trim(),
     cover_image_url: String(source.cover_image_url || "").trim(),
+    jotform_application_url: String(source.jotform_application_url || "").trim(),
     required_fields: (source.custom_fields || [])
       .filter((f) => f.required)
       .map((f) => f.label),
@@ -192,7 +196,12 @@ export default function SupplierFormDialog({
 
   const handleSubmit = () => {
     if (uploadsInFlight) return;
-    onSubmit(buildPayload(formRef.current));
+    setForm((currentForm) => {
+      const payload = buildPayload(currentForm);
+      formRef.current = currentForm;
+      onSubmit(payload);
+      return currentForm;
+    });
   };
 
   return (
