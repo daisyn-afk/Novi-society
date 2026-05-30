@@ -75,6 +75,7 @@ export const EMPTY_SUPPLIER = {
 
   account_rep_name: "",
   account_rep_email: "",
+  jotform_application_url: "",
 
   uses_network_tiers: false,
   network_tiers: [],

@@ -319,6 +319,17 @@ export default function AdminManufacturers() {
                               {m.website_url}
                             </a>
                           )}
+                          {m.jotform_application_url && (
+                            <a
+                              href={toExternalUrl(m.jotform_application_url)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs text-blue-600 hover:underline flex items-center gap-1 mt-1"
+                            >
+                              <Globe className="w-3 h-3" />
+                              JotForm application
+                            </a>
+                          )}
                         </div>
                       </div>
                     )}

@@ -2,7 +2,8 @@ import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input"; 
+import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { HorizontalScrollAffordance } from "@/components/ui/horizontal-scroll-affordance";
 import ProviderSalesLock from "@/components/ProviderSalesLock";
@@ -171,7 +172,73 @@ function getSavedRepContact(savedRep) {
   };
 }
 
-function ActivateAccessCTA({ onClick, disabled = false, loading = false, variant = "light", className = "" }) {
+function hasJotformApplicationUrl(mfr) {
+  return Boolean(String(mfr?.jotform_application_url || "").trim());
+}
+
+function JotformApplicationLink({ mfr, compact = false }) {
+  const rawUrl = String(mfr?.jotform_application_url || "").trim();
+  const href = toExternalUrl(rawUrl);
+  if (!rawUrl) return null;
+
+  if (compact) {
+    return (
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-flex items-center gap-1.5 text-xs hover:underline break-all"
+        style={{ color: "#7B8EC8" }}
+      >
+        <Globe className="w-3.5 h-3.5 shrink-0" />
+        {rawUrl}
+        <ExternalLink className="w-3 h-3 shrink-0" />
+      </a>
+    );
+  }
+
+  return (
+    <div
+      className="rounded-xl px-4 py-3 space-y-3"
+      style={{ background: "rgba(123,142,200,0.08)", border: "1px solid rgba(123,142,200,0.2)" }}
+    >
+      <div>
+        <p
+          className="text-xs font-black uppercase tracking-widest mb-1.5"
+          style={{ color: "rgba(30,37,53,0.35)", letterSpacing: "0.12em" }}
+        >
+          Supplier Application Form
+        </p>
+        <p className="text-sm leading-relaxed" style={{ color: "rgba(30,37,53,0.7)" }}>
+          Complete the {mfr.name} application form before activating your account.
+        </p>
+      </div>
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-flex items-center justify-center gap-2 w-full h-10 rounded-full text-sm font-bold transition-opacity hover:opacity-90"
+        style={{ background: "#1e2535", color: "#C8E63C" }}
+      >
+        Open Application Form
+        <ExternalLink className="w-4 h-4 shrink-0" />
+      </a>
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-flex items-center gap-1.5 text-xs hover:underline break-all"
+        style={{ color: "#7B8EC8" }}
+      >
+        <Globe className="w-3.5 h-3.5 shrink-0" />
+        {rawUrl}
+        <ExternalLink className="w-3 h-3 shrink-0" />
+      </a>
+    </div>
+  );
+}
+
+function ActivateAccessCTA({ onClick, disabled = false, loading = false, variant = "light", className = "", label = "Activate Access — It's Free" }) {
   const trustColor = variant === "dark" ? "rgba(255,255,255,0.45)" : "rgba(30,37,53,0.45)";
 
   return (
@@ -189,7 +256,7 @@ function ActivateAccessCTA({ onClick, disabled = false, loading = false, variant
         }}
       >
         <Zap className="w-4 h-4 shrink-0" fill="#1e2535" style={{ color: "#1e2535" }} />
-        {loading ? "Activating..." : "Activate Access — It's Free"}
+        {loading ? "Activating..." : label}
       </button>
       <div className="flex items-center justify-center flex-wrap gap-x-5 gap-y-1.5 mt-3">
         {ACTIVATE_ACCESS_TRUST_ITEMS.map((item) => (
@@ -1343,6 +1410,7 @@ export default function ProviderMarketplace() {
   const [formData, setFormData] = useState({});
   const [submitted, setSubmitted] = useState(false);
   const [lastApplication, setLastApplication] = useState(null);
+  const [jotformFormConfirmed, setJotformFormConfirmed] = useState(false);
   const [myAccountsSubview, setMyAccountsSubview] = useState("accounts");
   const qc = useQueryClient();
 
@@ -1444,9 +1512,11 @@ export default function ProviderMarketplace() {
     setSelectedManufacturer(mfr);
     setViewMode("detail");
     setSubmitted(false);
+    setJotformFormConfirmed(false);
   };
 
   const openApply = () => {
+    setJotformFormConfirmed(false);
     setFormData({
       license_type: verifiedLicense.license_type || "",
       license_number: verifiedLicense.license_number || "",
@@ -1470,6 +1540,15 @@ export default function ProviderMarketplace() {
     });
     setViewMode("apply");
   };
+
+  const canActivateSupplier = jotformFormConfirmed;
+
+  const activateManufacturer = useMemo(() => {
+    if (!selectedManufacturer) return null;
+    return manufacturers.find((m) => m.id === selectedManufacturer.id) || selectedManufacturer;
+  }, [manufacturers, selectedManufacturer]);
+
+  const activateHasJotform = hasJotformApplicationUrl(activateManufacturer);
 
   const searchMatched = manufacturers.filter((m) => {
     if (!search) return true;
@@ -1709,9 +1788,15 @@ export default function ProviderMarketplace() {
                             Activate {selectedManufacturer.name}
                           </h3>
                           <p className="text-xs mt-1" style={{ color: "rgba(30,37,53,0.5)" }}>
-                            Your credentials will be forwarded automatically
+                            {activateHasJotform
+                              ? "Complete the supplier application form, then confirm below"
+                              : "Your credentials will be forwarded automatically"}
                           </p>
                         </div>
+
+                        {activateHasJotform ? (
+                          <JotformApplicationLink mfr={activateManufacturer} />
+                        ) : null}
 
                         <div className="rounded-xl px-4 py-3 space-y-2.5" style={{ background: "rgba(30,37,53,0.02)", border: "1px solid rgba(30,37,53,0.08)" }}>
                           <p className="text-xs font-black uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.35)", letterSpacing: "0.12em" }}>
@@ -1761,11 +1846,25 @@ export default function ProviderMarketplace() {
                           </div>
                         </div>
 
+                        <label className="flex items-start gap-2.5 cursor-pointer rounded-xl px-4 py-3" style={{ background: "rgba(30,37,53,0.02)", border: "1px solid rgba(30,37,53,0.08)" }}>
+                          <Checkbox
+                            id="activation-form-confirmed"
+                            checked={jotformFormConfirmed}
+                            onCheckedChange={(checked) => setJotformFormConfirmed(checked === true)}
+                            className="mt-0.5"
+                          />
+                          <span className="text-sm leading-relaxed" style={{ color: "rgba(30,37,53,0.75)" }}>
+                            {activateHasJotform
+                              ? `I have completed the ${activateManufacturer?.name} application form`
+                              : "I confirm the information above and authorize NOVI to forward my credentials to this supplier"}
+                          </span>
+                        </label>
+
                         <div className="flex gap-2 pt-1">
-                          <Button variant="outline" className="flex-1 h-11" onClick={() => setViewMode("detail")}>Cancel</Button>
+                          <Button variant="outline" className="flex-1 h-11" onClick={() => { setJotformFormConfirmed(false); setViewMode("detail"); }}>Cancel</Button>
                           <button
                             type="button"
-                            className="flex-1 h-11 flex items-center justify-center gap-2 font-bold text-sm transition-opacity hover:opacity-90 disabled:opacity-60"
+                            className="flex-1 h-11 flex items-center justify-center gap-2 font-bold text-sm transition-opacity hover:opacity-90 disabled:opacity-60 disabled:cursor-not-allowed"
                             style={{
                               background: "#C8E63C",
                               color: "#1e2535",
@@ -1773,7 +1872,8 @@ export default function ProviderMarketplace() {
                               boxShadow: "0 4px 16px rgba(200, 230, 60, 0.35)",
                             }}
                             onClick={() => submitMutation.mutate()}
-                            disabled={submitMutation.isPending}
+                            disabled={submitMutation.isPending || !canActivateSupplier}
+                            title={!canActivateSupplier ? (activateHasJotform ? "Complete the application form and confirm above" : "Confirm above to continue") : undefined}
                           >
                             <Zap className="w-4 h-4 shrink-0" fill="#1e2535" style={{ color: "#1e2535" }} />
                             {submitMutation.isPending ? "Activating..." : "Activate Access — It's Free"}
