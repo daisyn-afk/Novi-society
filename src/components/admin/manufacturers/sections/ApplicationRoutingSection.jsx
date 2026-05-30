@@ -1,5 +1,5 @@
 import { Input } from "@/components/ui/input";
-import { Zap, Globe } from "lucide-react";
+import { Zap } from "lucide-react";
 import FieldLabel from "../shared/FieldLabel";
 import InfoBanner from "../shared/InfoBanner";
 
@@ -32,23 +32,6 @@ export default function ApplicationRoutingSection({ form, update }) {
             placeholder="rep@supplier.com"
           />
         </div>
-      </div>
-
-      <div>
-        <FieldLabel className="mb-1">JotForm Application Link</FieldLabel>
-        <div className="relative">
-          <Globe className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
-          <Input
-            className="pl-8"
-            value={form.jotform_application_url}
-            onChange={(e) => update({ jotform_application_url: e.target.value })}
-            placeholder="https://form.jotform.com/..."
-          />
-        </div>
-        <p className="text-xs text-slate-500 mt-1">
-          Optional. When set, providers are sent to this external form instead of the built-in NOVI
-          application flow.
-        </p>
       </div>
     </>
   );
