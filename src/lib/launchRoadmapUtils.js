@@ -142,8 +142,9 @@ export function mergeLaunchRoadmapPhases(dbPhases = [], staticPhases = getStatic
 
   const merged = dbPhases.map((dbPhase) => {
     const staticPhase = staticById[dbPhase.id];
-    const interactiveSteps = (staticPhase?.steps || []).filter((s) => s.embedded_tool);
-    const steps = [...(dbPhase.steps || []), ...interactiveSteps].sort(
+    const dbStepIds = new Set((dbPhase.steps || []).map((s) => s.id));
+    const missingStaticSteps = (staticPhase?.steps || []).filter((s) => !dbStepIds.has(s.id));
+    const steps = [...(dbPhase.steps || []), ...missingStaticSteps].sort(
       (a, b) => (a.priority || 0) - (b.priority || 0)
     );
     return {
