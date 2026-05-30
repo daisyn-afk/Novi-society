@@ -200,9 +200,6 @@ export default function ProviderCredentialsCoverage() {
   const [cancelStep, setCancelStep] = useState(0); // 0=form, 1=confirm, 2=done
   const [cancelLoading, setCancelLoading] = useState(false);
   const [dismissedApprovedAlertIds, setDismissedApprovedAlertIds] = useState([]);
-  const [expandedServiceCard, setExpandedServiceCard] = useState(null);
-  const [pricingOpen, setPricingOpen] = useState(false);
-  const [activateError, setActivateError] = useState("");
   const canvasRef = useRef(null);
   const isDrawing = useRef(false);
   const qc = useQueryClient();
@@ -427,7 +424,6 @@ export default function ProviderCredentialsCoverage() {
   const activeSubscriptions = mySubscriptions.filter((s) => s.status === "active");
   const alreadyActiveServices = activeSubscriptions.map(s => s.service_type_id);
   const activeRelationships = relationships.filter(r => r.status === "active");
-  const pendingRelationships = relationships.filter(r => r.status === "pending");
   const verifiedLicenses = licenses.filter(l => l.status === "verified");
   const pendingLicenses = licenses.filter(l => l.status === "pending_review");
   const courseMap = Object.fromEntries(courses.map(c => [c.id, c]));
@@ -919,7 +915,6 @@ export default function ProviderCredentialsCoverage() {
   });
   const activateMutation = useMutation({
     mutationFn: async () => {
-      setActivateError("");
       const canvas = canvasRef.current;
       if (!canvas) throw new Error("Signature pad is not ready. Close the dialog and try again.");
       const signatureData = canvas.toDataURL("image/png");
@@ -934,17 +929,9 @@ export default function ProviderCredentialsCoverage() {
         window.location.href = res.data.url;
         return;
       }
-      if (res.data?.success || res.data?.ok) {
-        if (!res.data?.assignment && !res.data?.already_active) {
-          await finalizeActiveMdCoverageAndAssignMd({
-            stId: selectedServiceTypeId,
-            enrollId: verifiedSession?.enrollment_id || null,
-            signatureData,
-          });
-        } else {
-          qc.invalidateQueries({ queryKey: ["my-md-subscriptions"] });
-          qc.invalidateQueries({ queryKey: ["my-md-relationships"] });
-        }
+      if (res.data?.success) {
+        qc.invalidateQueries({ queryKey: ["my-md-subscriptions"] });
+        qc.invalidateQueries({ queryKey: ["my-md-relationships"] });
         setActivateDialog(false);
         resetActivation();
         navigate(createPageUrl("ProviderLaunchPad"));
@@ -952,7 +939,6 @@ export default function ProviderCredentialsCoverage() {
       }
       throw new Error(res.data?.error || "Unable to activate MD coverage.");
     },
-    onError: (err) => setActivateError(err?.message || "Something went wrong. Please try again."),
   });
 
   const openCancelDialog = (sub) => {
@@ -1031,21 +1017,19 @@ export default function ProviderCredentialsCoverage() {
     <div className="max-w-5xl space-y-6">
 
       {/* Header */}
-      <div className="flex items-start justify-between gap-6 flex-wrap">
-        <div style={{ borderLeft: "2px solid #DA6A63", paddingLeft: 16 }}>
-          <p className="text-[10px] font-black uppercase tracking-widest mb-1.5" style={{ color: "#DA6A63", letterSpacing: "0.18em" }}>My Credentials & Coverage</p>
-          <h1 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 28, color: "#1e2535", lineHeight: 1.1, fontStyle: "italic", fontWeight: 400 }}>
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: "#DA6A63" }}>My Credentials & Coverage</p>
+          <h1 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 30, color: "#1e2535", lineHeight: 1.15 }}>
             Practice with Full Protection
           </h1>
-          <p className="mt-1.5 text-sm" style={{ color: "rgba(30,37,53,0.5)", maxWidth: 440, lineHeight: 1.6 }}>
-            Licenses, certifications, and NOVI Board coverage — everything needed to practice legally.
+          <p className="mt-1 text-sm" style={{ color: "rgba(30,37,53,0.6)", maxWidth: 480 }}>
+            Manage your licenses, certifications, and NOVI Board of Medical Directors coverage — everything needed to practice legally and confidently.
           </p>
         </div>
-        <button onClick={() => { setActivateDialog(true); resetActivation(); }}
-          className="flex items-center gap-2 text-sm font-bold transition-all hover:opacity-75 flex-shrink-0"
-          style={{ color: "#FA6F30" }}>
+        <Button onClick={() => { setActivateDialog(true); resetActivation(); }} className="font-bold gap-2 flex-shrink-0" style={{ background: "#FA6F30", color: "#fff", borderRadius: 12 }}>
           <Zap className="w-4 h-4" /> Apply for MD Coverage
-        </button>
+        </Button>
       </div>
 
       {/* Alerts */}
@@ -1070,166 +1054,197 @@ export default function ProviderCredentialsCoverage() {
         </div>
       ))}
 
-      {/* Stats Row — editorial inline */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 rounded-2xl overflow-hidden" style={{ background: "rgba(255,255,255,0.65)", border: "1px solid rgba(30,37,53,0.07)" }}>
+      {/* Stats Row */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
-          { label: "Licenses", value: licenses.length, sub: `${verifiedLicenses.length} verified`, tab: "credentials" },
-          { label: "Certifications", value: activeCerts.length, sub: `${pendingCerts.length} under review`, tab: "credentials" },
-          { label: "MD Coverage", value: activeSubscriptions.length, sub: "services active", tab: "coverage" },
-          { label: "Assigned MD", value: activeRelationships.length > 0 ? "✓" : "—", sub: activeRelationships[0]?.medical_director_name || "Not yet assigned", tab: "coverage" },
-        ].map(({ label, value, sub, tab }, i) => (
-          <button key={label} onClick={() => setActiveTab(tab)}
-            className="text-left px-4 py-4 transition-all hover:bg-white/50 min-w-0"
-            style={{ borderLeft: i % 2 === 0 ? "none" : "1px solid rgba(30,37,53,0.07)", borderTop: i >= 2 ? "1px solid rgba(30,37,53,0.07)" : "none" }}>
-            <p style={{ fontFamily: "'DM Serif Display', serif", fontSize: 22, color: "#1e2535", lineHeight: 1, fontWeight: 400 }}>{value}</p>
-            <p className="text-xs font-semibold mt-1" style={{ color: "#1e2535" }}>{label}</p>
-            <p className="text-[10px] mt-0.5 truncate" style={{ color: "rgba(30,37,53,0.4)" }}>{sub}</p>
+          { label: "Licenses", value: licenses.length, sub: `${verifiedLicenses.length} verified`, icon: FileText, color: "#7B8EC8", tab: "licenses" },
+          { label: "Certifications", value: activeCerts.length, sub: `${pendingCerts.length} under review`, icon: Award, color: "#FA6F30", tab: "certifications" },
+          { label: "MD Coverage", value: activeSubscriptions.length, sub: `services active`, icon: Shield, color: "#C8E63C", tab: "coverage" },
+          { label: "Assigned MD", value: activeRelationships.length > 0 ? "✓" : "—", sub: activeRelationships[0]?.medical_director_name || "Not yet assigned", icon: Users, color: "#DA6A63", tab: "coverage" },
+        ].map(({ label, value, sub, icon: Icon, color, tab }) => (
+          <button key={label} onClick={() => setActiveTab(tab)} className="text-left rounded-2xl px-4 py-4 transition-all hover:scale-[1.02]" style={{ background: "rgba(255,255,255,0.3)", backdropFilter: "blur(30px)", WebkitBackdropFilter: "blur(30px)", boxShadow: "0 8px 32px rgba(31,38,135,0.15)", border: activeTab === tab ? `2px solid ${color}` : "1px solid rgba(255,255,255,0.4)" }}>
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center mb-2" style={{ background: `${color}22` }}>
+              <Icon className="w-4 h-4" style={{ color }} />
+            </div>
+            <p style={{ fontSize: 26, fontWeight: 700, color: "#1e2535", lineHeight: 1 }}>{value}</p>
+            <p className="text-xs font-semibold mt-0.5" style={{ color: "#1e2535" }}>{label}</p>
+            <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.5)" }}>{sub}</p>
           </button>
         ))}
       </div>
 
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <div className="flex gap-0 overflow-x-auto" style={{ borderBottom: "1px solid rgba(30,37,53,0.1)", scrollbarWidth: "none" }}>
-          {[
-            { value: "overview", label: "Overview" },
-            { value: "credentials", label: "Credentials" },
-            { value: "coverage", label: "MD Coverage" },
-            { value: "documents", label: "Documents" },
-          ].map(({ value, label }) => (
-            <button key={value} onClick={() => setActiveTab(value)}
-              className="px-4 pb-3 pt-1 text-sm font-semibold transition-all flex-shrink-0"
-              style={{ color: activeTab === value ? "#1e2535" : "rgba(30,37,53,0.38)", borderBottom: activeTab === value ? "2px solid #FA6F30" : "2px solid transparent", marginBottom: -1 }}>
-              {label}
-            </button>
-          ))}
+        <div className="overflow-x-auto -mx-4 px-4 scrollbar-hide">
+          <TabsList className="flex w-max min-w-full h-auto p-1 gap-0.5" style={{ background: "rgba(255,255,255,0.6)", backdropFilter: "blur(12px)", borderRadius: 14, border: "1px solid rgba(255,255,255,0.8)" }}>
+            {[
+              { value: "overview",       label: "Overview",       short: "Overview" },
+              { value: "licenses",       label: "Licenses",       short: "Licenses" },
+              { value: "certifications", label: "Certifications", short: "Certs" },
+              { value: "coverage",       label: "MD Coverage",    short: "Coverage" },
+              { value: "documents",      label: "Documents",      short: "Docs" },
+            ].map(t => (
+              <TabsTrigger key={t.value} value={t.value} className="rounded-xl font-semibold transition-all whitespace-nowrap px-3 py-1.5 text-xs sm:text-sm" style={{ color: activeTab === t.value ? "#FA6F30" : "rgba(30,37,53,0.55)" }}>
+                <span className="sm:hidden">{t.short}</span>
+                <span className="hidden sm:inline">{t.label}</span>
+              </TabsTrigger>
+            ))}
+          </TabsList>
         </div>
 
         {/* ── OVERVIEW TAB ── */}
         <TabsContent value="overview" className="pt-5 space-y-5">
+          {/* What is MD Board Coverage */}
           <GlassCard>
-            <div className="px-6 pt-6 pb-2">
-              <p className="text-[10px] font-black uppercase tracking-widest mb-2" style={{ color: "rgba(30,37,53,0.35)", letterSpacing: "0.18em" }}>How NOVI Coverage Works</p>
-              <h3 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 22, color: "#1e2535", fontStyle: "italic", fontWeight: 400, lineHeight: 1.2 }}>The NOVI Board of Medical Directors</h3>
+            {/* Gradient texture header */}
+            <div className="relative overflow-hidden" style={{ height: 160, borderRadius: "16px 16px 0 0", background: "linear-gradient(135deg, #2D6B7F 0%, #7B8EC8 45%, #C8E63C 100%)" }}>
+              <div style={{ position: "absolute", inset: 0, backgroundImage: "radial-gradient(ellipse at 20% 50%, rgba(200,230,60,0.25) 0%, transparent 60%), radial-gradient(ellipse at 80% 20%, rgba(45,107,127,0.4) 0%, transparent 55%), radial-gradient(ellipse at 60% 80%, rgba(218,106,99,0.2) 0%, transparent 50%)" }} />
+              <div className="absolute bottom-4 left-6">
+                <p className="text-xs font-bold uppercase tracking-widest mb-0.5" style={{ color: "rgba(200,230,60,0.95)", letterSpacing: "0.18em" }}>How NOVI Coverage Works</p>
+                <h3 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 20, color: "#fff", fontStyle: "italic", fontWeight: 400 }}>The NOVI Board of Medical Directors</h3>
+              </div>
             </div>
             <div className="px-6 py-5 space-y-4">
-              <p className="text-sm leading-relaxed" style={{ color: "rgba(30,37,53,0.65)", borderLeft: "2px solid rgba(30,37,53,0.1)", paddingLeft: 14 }}>
+              <p className="text-sm leading-relaxed" style={{ color: "rgba(30,37,53,0.75)" }}>
                 NOVI maintains a Board of Medical Directors — licensed physicians who provide clinical oversight and legal supervision for all providers.
               </p>
-              <div className="divide-y" style={{ borderTop: "1px solid rgba(30,37,53,0.06)", borderBottom: "1px solid rgba(30,37,53,0.06)" }}>
+              <div className="grid sm:grid-cols-2 gap-3">
                 {[
-                  { title: "You don't find an MD", desc: "NOVI assigns a Board MD to you automatically upon approval" },
-                  { title: "Signed Protocols", desc: "Your assigned MD signs your service agreements and clinical scope docs" },
-                  { title: "Legal Compliance", desc: "Full medical directorship coverage as required by your state" },
-                  { title: "Per-Service Coverage", desc: "Each service you offer requires its own MD coverage membership" },
-                ].map(({ title, desc }, i) => (
-                  <div key={i} className="flex items-baseline gap-4 py-3">
-                    <p className="text-sm font-semibold flex-shrink-0 w-44" style={{ color: "#1e2535" }}>{title}</p>
-                    <p className="text-xs" style={{ color: "rgba(30,37,53,0.55)", lineHeight: 1.6 }}>{desc}</p>
+                  { icon: Shield, title: "You don't find an MD", desc: "NOVI assigns a Board MD to you automatically upon approval" },
+                  { icon: FileText, title: "Signed Protocols", desc: "Your assigned MD signs your service agreements and clinical scope docs" },
+                  { icon: ShieldCheck, title: "Legal Compliance", desc: "Full medical directorship coverage as required by your state" },
+                  { icon: CheckCircle2, title: "Per-Service Coverage", desc: "Each service you offer requires its own MD coverage membership" },
+                ].map(({ icon: Icon, title, desc }, i) => (
+                  <div key={i} className="flex gap-3 px-4 py-3 rounded-xl" style={{ background: "rgba(30,37,53,0.04)", border: "1px solid rgba(30,37,53,0.06)" }}>
+                    <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: "rgba(250,111,48,0.12)" }}>
+                      <Icon className="w-4.5 h-4.5" style={{ color: "#FA6F30", width: 18, height: 18 }} />
+                    </div>
+                    <div>
+                      <p className="font-semibold text-sm" style={{ color: "#1e2535" }}>{title}</p>
+                      <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.6)" }}>{desc}</p>
+                    </div>
                   </div>
                 ))}
               </div>
             </div>
           </GlassCard>
 
-          <GlassCard>
-            <button className="w-full px-6 py-5 flex items-center justify-between text-left" onClick={() => setPricingOpen(v => !v)} style={{ borderBottom: pricingOpen ? "1px solid rgba(30,37,53,0.08)" : "none" }}>
-              <div>
-                <p className="text-[10px] font-black uppercase tracking-widest mb-1.5" style={{ color: "rgba(30,37,53,0.35)", letterSpacing: "0.18em" }}>Pricing</p>
-                <h3 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 20, color: "#1e2535", fontStyle: "italic", fontWeight: 400 }}>MD Coverage Membership</h3>
-              </div>
-              <div className="flex items-center gap-2 flex-shrink-0">
-                <span className="text-sm" style={{ color: "rgba(30,37,53,0.35)" }}>from $279/mo</span>
-                {pricingOpen ? <ChevronUp className="w-4 h-4" style={{ color: "rgba(30,37,53,0.3)" }} /> : <ChevronDown className="w-4 h-4" style={{ color: "rgba(30,37,53,0.3)" }} />}
-              </div>
-            </button>
-            {pricingOpen && (
-              <div className="px-6 py-5">
-                <div className="grid sm:grid-cols-2 gap-4 mb-5">
-                  <div className="rounded-2xl p-5 relative overflow-hidden" style={{ background: "linear-gradient(135deg, rgba(250,111,48,0.25) 0%, rgba(218,106,99,0.2) 100%)", border: "1px solid rgba(250,111,48,0.4)" }}>
-                    <p className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: "#FA6F30" }}>Base Service (Injectables)</p>
-                    <p style={{ fontFamily: "'DM Serif Display', serif", fontSize: 38, color: "#1e2535", lineHeight: 1 }}>${FIRST_SERVICE_PRICE}</p>
-                    <p className="text-sm mt-1" style={{ color: "rgba(30,37,53,0.6)" }}>per month · required</p>
-                    <div className="mt-4 space-y-1.5">
-                      {["Board MD assigned to you", "Signed protocol documents", "Clinical scope coverage", "State compliance included"].map(f => (
-                        <div key={f} className="flex items-center gap-2">
-                          <CheckCircle className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#FA6F30" }} />
-                          <span className="text-xs" style={{ color: "rgba(30,37,53,0.8)" }}>{f}</span>
+          {/* Pricing */}
+          {(() => {
+            const [pricingOpen, setPricingOpen] = useState(false);
+            return (
+              <GlassCard>
+                <button className="w-full px-6 py-5 flex items-center justify-between text-left" onClick={() => setPricingOpen(v => !v)} style={{ borderBottom: pricingOpen ? "1px solid rgba(30,37,53,0.08)" : "none" }}>
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: "#4a6b10" }}>Pricing</p>
+                    <h3 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 20, color: "#1e2535" }}>MD Coverage Membership</h3>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <span className="text-sm font-semibold" style={{ color: "rgba(30,37,53,0.4)" }}>from $279/mo</span>
+                    {pricingOpen ? <ChevronUp className="w-5 h-5" style={{ color: "rgba(30,37,53,0.4)" }} /> : <ChevronDown className="w-5 h-5" style={{ color: "rgba(30,37,53,0.4)" }} />}
+                  </div>
+                </button>
+                {pricingOpen && (
+                  <div className="px-6 py-5">
+                    <div className="grid sm:grid-cols-2 gap-4 mb-5">
+                      {/* First service */}
+                      <div className="rounded-2xl p-5 relative overflow-hidden" style={{ background: "linear-gradient(135deg, rgba(250,111,48,0.25) 0%, rgba(218,106,99,0.2) 100%)", border: "1px solid rgba(250,111,48,0.4)" }}>
+                        <p className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: "#FA6F30" }}>Base Service (Injectables)</p>
+                        <p style={{ fontFamily: "'DM Serif Display', serif", fontSize: 38, color: "#1e2535", lineHeight: 1 }}>${FIRST_SERVICE_PRICE}</p>
+                        <p className="text-sm mt-1" style={{ color: "rgba(30,37,53,0.6)" }}>per month · required</p>
+                        <div className="mt-4 space-y-1.5">
+                          {["Board MD assigned to you", "Signed protocol documents", "Clinical scope coverage", "State compliance included"].map(f => (
+                            <div key={f} className="flex items-center gap-2">
+                              <CheckCircle className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#FA6F30" }} />
+                              <span className="text-xs" style={{ color: "rgba(30,37,53,0.8)" }}>{f}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      {/* Each additional */}
+                      <div className="rounded-2xl p-5" style={{ background: "rgba(30,37,53,0.04)", border: "1px solid rgba(30,37,53,0.08)" }}>
+                        <p className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: "rgba(30,37,53,0.5)" }}>Each Additional Service</p>
+                        <p style={{ fontFamily: "'DM Serif Display', serif", fontSize: 38, color: "#1e2535", lineHeight: 1 }}>${ADDON_SERVICE_PRICE}</p>
+                        <p className="text-sm mt-1" style={{ color: "rgba(30,37,53,0.6)" }}>per month, per service</p>
+                        <div className="mt-4 space-y-1.5">
+                          {["Microneedling, laser, etc.", "Same Board MD covers all", "Capped at 5 services max"].map(f => (
+                            <div key={f} className="flex items-center gap-2">
+                              <CheckCircle className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "rgba(30,37,53,0.4)" }} />
+                              <span className="text-xs" style={{ color: "rgba(30,37,53,0.7)" }}>{f}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Pricing breakdown table */}
+                    <div className="rounded-xl overflow-hidden mb-4" style={{ border: "1px solid rgba(30,37,53,0.1)" }}>
+                      <div className="px-4 py-2.5 flex items-center justify-between text-xs font-bold uppercase tracking-widest" style={{ background: "rgba(30,37,53,0.06)", color: "rgba(30,37,53,0.5)" }}>
+                        <span>Services</span><span>Monthly Total</span>
+                      </div>
+                      {[
+                        { label: "1 Service (Injectables only)", total: 279 },
+                        { label: "2 Services", total: 408 },
+                        { label: "3 Services", total: 537 },
+                        { label: "4 Services", total: 666 },
+                        { label: "5 Services (Maximum — all services covered)", total: 795 },
+                      ].map(({ label, total }, i) => (
+                        <div key={i} className="px-4 py-2.5 flex items-center justify-between text-sm" style={{ background: i % 2 === 0 ? "rgba(255,255,255,0.7)" : "rgba(30,37,53,0.02)", borderTop: "1px solid rgba(30,37,53,0.06)" }}>
+                          <span style={{ color: "rgba(30,37,53,0.75)" }}>{label}</span>
+                          <span className="font-bold" style={{ color: total === 795 ? "#FA6F30" : "#1e2535" }}>${total}/mo{total === 795 ? " 🔒 cap" : ""}</span>
                         </div>
                       ))}
                     </div>
-                  </div>
-                  <div className="rounded-2xl p-5" style={{ background: "rgba(30,37,53,0.04)", border: "1px solid rgba(30,37,53,0.08)" }}>
-                    <p className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: "rgba(30,37,53,0.5)" }}>Each Additional Service</p>
-                    <p style={{ fontFamily: "'DM Serif Display', serif", fontSize: 38, color: "#1e2535", lineHeight: 1 }}>${ADDON_SERVICE_PRICE}</p>
-                    <p className="text-sm mt-1" style={{ color: "rgba(30,37,53,0.6)" }}>per month, per service</p>
-                    <div className="mt-4 space-y-1.5">
-                      {["Microneedling, laser, etc.", "Same Board MD covers all", "Capped at 5 services max"].map(f => (
-                        <div key={f} className="flex items-center gap-2">
-                          <CheckCircle className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "rgba(30,37,53,0.4)" }} />
-                          <span className="text-xs" style={{ color: "rgba(30,37,53,0.7)" }}>{f}</span>
+
+                    {/* Service cap notice */}
+                    <div className="rounded-xl px-4 py-3 mb-4 flex items-start gap-3" style={{ background: "rgba(200,230,60,0.1)", border: "1px solid rgba(200,230,60,0.3)" }}>
+                      <CheckCircle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: "#5a7a20" }} />
+                      <p className="text-xs leading-relaxed" style={{ color: "rgba(30,37,53,0.7)" }}>
+                        <strong>5-Service Cap:</strong> Once you reach 5 services, you're fully covered for all services within your scope at <strong>$795/mo</strong> — no additional fees ever.
+                      </p>
+                    </div>
+
+                    {/* Current bill if active */}
+                    {activeSubscriptions.length > 0 && (
+                      <div className="rounded-xl px-4 py-3 flex items-center justify-between" style={{ background: "rgba(200,230,60,0.12)", border: "1px solid rgba(200,230,60,0.3)" }}>
+                        <div>
+                          <p className="text-sm font-bold text-white">Your Current Monthly</p>
+                          <p className="text-xs" style={{ color: "rgba(255,255,255,0.55)" }}>{activeSubscriptions.length} service{activeSubscriptions.length > 1 ? "s" : ""} covered{activeSubscriptions.length >= MAX_SERVICES ? " · Fully capped" : ""}</p>
                         </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-                <div className="rounded-xl overflow-hidden mb-4" style={{ border: "1px solid rgba(30,37,53,0.1)" }}>
-                  <div className="px-4 py-2.5 flex items-center justify-between text-xs font-bold uppercase tracking-widest" style={{ background: "rgba(30,37,53,0.06)", color: "rgba(30,37,53,0.5)" }}>
-                    <span>Services</span><span>Monthly Total</span>
-                  </div>
-                  {[
-                    { label: "1 Service (Injectables only)", total: 279 },
-                    { label: "2 Services", total: 408 },
-                    { label: "3 Services", total: 537 },
-                    { label: "4 Services", total: 666 },
-                    { label: "5 Services (Maximum — all services covered)", total: 795 },
-                  ].map(({ label, total }, i) => (
-                    <div key={i} className="px-4 py-2.5 flex items-center justify-between text-sm" style={{ background: i % 2 === 0 ? "rgba(255,255,255,0.7)" : "rgba(30,37,53,0.02)", borderTop: "1px solid rgba(30,37,53,0.06)" }}>
-                      <span style={{ color: "rgba(30,37,53,0.75)" }}>{label}</span>
-                      <span className="font-bold" style={{ color: total === 795 ? "#FA6F30" : "#1e2535" }}>${total}/mo{total === 795 ? " 🔒 cap" : ""}</span>
-                    </div>
-                  ))}
-                </div>
-                <div className="rounded-xl px-4 py-3 mb-4 flex items-start gap-3" style={{ background: "rgba(200,230,60,0.1)", border: "1px solid rgba(200,230,60,0.3)" }}>
-                  <CheckCircle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: "#5a7a20" }} />
-                  <p className="text-xs leading-relaxed" style={{ color: "rgba(30,37,53,0.7)" }}>
-                    <strong>5-Service Cap:</strong> Once you reach 5 services, you're fully covered for all services within your scope at <strong>$795/mo</strong> — no additional fees ever.
-                  </p>
-                </div>
-                {activeSubscriptions.length > 0 && (
-                  <div className="rounded-xl px-4 py-3 flex items-center justify-between" style={{ background: "rgba(200,230,60,0.12)", border: "1px solid rgba(200,230,60,0.3)" }}>
-                    <div>
-                      <p className="text-sm font-bold" style={{ color: "#1e2535" }}>Your Current Monthly</p>
-                      <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.45)" }}>{activeSubscriptions.length} service{activeSubscriptions.length > 1 ? "s" : ""} covered{activeSubscriptions.length >= MAX_SERVICES ? " · Fully capped" : ""}</p>
-                    </div>
-                    <p style={{ fontFamily: "'DM Serif Display', serif", fontSize: 26, color: "#4a6b10" }}>
-                      ${calcMonthlyTotal(activeSubscriptions.length)}/mo
-                    </p>
+                        <p style={{ fontFamily: "'DM Serif Display', serif", fontSize: 26, color: "#C8E63C" }}>
+                          ${calcMonthlyTotal(activeSubscriptions.length)}/mo
+                        </p>
+                      </div>
+                    )}
                   </div>
                 )}
-              </div>
-            )}
-          </GlassCard>
+              </GlassCard>
+            );
+          })()}
 
+          {/* Eligibility Requirements */}
           <GlassCard>
-            <div className="px-6 pt-6 pb-2">
-              <p className="text-[10px] font-black uppercase tracking-widest mb-2" style={{ color: "rgba(30,37,53,0.35)", letterSpacing: "0.18em" }}>Requirements</p>
-              <h3 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 22, color: "#1e2535", fontStyle: "italic", fontWeight: 400, lineHeight: 1.2 }}>How to Qualify for Coverage</h3>
+            <div className="relative overflow-hidden" style={{ height: 140, borderRadius: "16px 16px 0 0", background: "linear-gradient(135deg, #1e2535 0%, #7B8EC8 50%, #DA6A63 100%)" }}>
+              <div style={{ position: "absolute", inset: 0, backgroundImage: "radial-gradient(ellipse at 75% 30%, rgba(200,230,60,0.2) 0%, transparent 55%), radial-gradient(ellipse at 25% 70%, rgba(123,142,200,0.35) 0%, transparent 50%), radial-gradient(ellipse at 90% 80%, rgba(218,106,99,0.25) 0%, transparent 45%)" }} />
+              <div className="absolute bottom-4 left-6">
+                <p className="text-xs font-bold uppercase tracking-widest mb-0.5" style={{ color: "rgba(200,230,60,0.95)", letterSpacing: "0.18em" }}>Requirements</p>
+                <h3 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 20, color: "#fff", fontStyle: "italic", fontWeight: 400 }}>How to Qualify for Coverage</h3>
+              </div>
             </div>
-            <div className="px-6 py-5 grid sm:grid-cols-2 gap-3">
+            <div className="px-6 py-5 grid sm:grid-cols-2 gap-4">
               {[
-                { step: "1", title: "Upload Your License", desc: "Submit your professional license (RN, NP, PA, MD, etc.) for verification by our admin team.", done: licenses.length > 0, page: "credentials" },
-                { step: "2", title: "Get License Verified", desc: "NOVI verifies your credentials. This typically takes 1–2 business days.", done: verifiedLicenses.length > 0, page: "credentials" },
-                { step: "3", title: "Complete Training or Submit Cert", desc: "Attend a NOVI course and enter your class code, or submit an existing certification for review.", done: activeCerts.length > 0, page: "credentials" },
+                { step: "1", title: "Upload Your License", desc: "Submit your professional license (RN, NP, PA, MD, etc.) for verification by our admin team.", done: licenses.length > 0, page: "licenses" },
+                { step: "2", title: "Get License Verified", desc: "NOVI verifies your credentials. This typically takes 1–2 business days.", done: verifiedLicenses.length > 0, page: "licenses" },
+                { step: "3", title: "Complete Training or Submit Cert", desc: "Attend a NOVI course and enter your class code, or submit an existing certification for review.", done: activeCerts.length > 0, page: "certifications" },
                 { step: "4", title: "Apply & Sign Agreement", desc: "Apply for coverage on a per-service basis. Sign the MD Board agreement and activate your membership.", done: activeSubscriptions.length > 0, page: "coverage" },
               ].map(({ step: s, title, desc, done, page }) => (
-                <button key={s} onClick={() => setActiveTab(page)}
-                  className="text-left flex gap-3 px-4 py-4 rounded-xl transition-all hover:scale-[1.01]"
-                  style={{ borderLeft: done ? "2px solid rgba(200,230,60,0.6)" : "2px solid rgba(30,37,53,0.12)", background: done ? "rgba(200,230,60,0.06)" : "rgba(30,37,53,0.02)", border: `1px solid ${done ? "rgba(200,230,60,0.2)" : "rgba(30,37,53,0.07)"}`, borderLeftWidth: 2, borderLeftColor: done ? "rgba(200,230,60,0.5)" : "rgba(30,37,53,0.15)" }}>
-                  <div className="text-xs font-black mt-0.5 flex-shrink-0" style={{ color: done ? "#4a6b10" : "rgba(30,37,53,0.25)", fontFamily: "'DM Serif Display', serif", fontSize: 16, fontStyle: "italic" }}>{done ? "✓" : s}</div>
+                <button key={s} onClick={() => setActiveTab(page)} className="text-left flex gap-3 px-4 py-4 rounded-xl transition-all hover:scale-[1.01]" style={{ background: done ? "rgba(200,230,60,0.1)" : "rgba(30,37,53,0.03)", border: `1px solid ${done ? "rgba(200,230,60,0.35)" : "rgba(30,37,53,0.08)"}` }}>
+                  <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 text-xs font-bold" style={{ background: done ? "#C8E63C" : "rgba(30,37,53,0.1)", color: done ? "#1a2540" : "rgba(30,37,53,0.4)" }}>
+                    {done ? <CheckCircle className="w-4 h-4" style={{ color: "#1a2540" }} /> : s}
+                  </div>
                   <div>
                     <p className="font-semibold text-sm" style={{ color: "#1e2535" }}>{title}</p>
-                    <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.5)", lineHeight: 1.55 }}>{desc}</p>
+                    <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.6)" }}>{desc}</p>
                   </div>
                 </button>
               ))}
@@ -1237,51 +1252,47 @@ export default function ProviderCredentialsCoverage() {
           </GlassCard>
         </TabsContent>
 
-        {/* ── CREDENTIALS TAB (Licenses + Certifications) ── */}
-        <TabsContent value="credentials" className="pt-5 space-y-4">
-          {/* Licenses */}
-          <div className="flex items-baseline justify-between mb-4">
-            <div style={{ borderLeft: "2px solid rgba(30,37,53,0.15)", paddingLeft: 12 }}>
-              <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.35)", letterSpacing: "0.18em" }}>Your Licenses</p>
-            </div>
-            <button onClick={() => setLicenseOpen(true)}
-              className="text-xs font-bold transition-all hover:opacity-70"
-              style={{ color: "#FA6F30" }}>+ Add License</button>
+        {/* ── LICENSES TAB ── */}
+        <TabsContent value="licenses" className="pt-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <SectionLabel>Your Licenses</SectionLabel>
+            <Button size="sm" onClick={() => setLicenseOpen(true)} style={{ background: "#FA6F30", color: "#fff", borderRadius: 10 }} className="gap-1.5 h-8 text-xs font-bold">
+              <Plus className="w-3.5 h-3.5" /> Add License
+            </Button>
           </div>
           {loadingLicenses ? (
-            <div className="space-y-2">{[1,2].map(i => <div key={i} className="h-14 animate-pulse rounded-xl" style={{ background: "rgba(255,255,255,0.5)" }} />)}</div>
+            <div className="space-y-2">{[1, 2].map(i => <div key={i} className="h-16 rounded-xl animate-pulse" style={{ background: "rgba(255,255,255,0.08)" }} />)}</div>
           ) : licenses.length === 0 ? (
-            <div className="py-10 text-center rounded-2xl" style={{ background: "rgba(255,255,255,0.5)", border: "1px dashed rgba(30,37,53,0.12)" }}>
-              <p className="text-sm font-semibold" style={{ color: "#1e2535" }}>No licenses uploaded yet</p>
-              <p className="text-xs mt-1 mb-4" style={{ color: "rgba(30,37,53,0.4)" }}>Upload your professional license to begin the verification process.</p>
-              <button onClick={() => setLicenseOpen(true)} className="text-xs font-bold" style={{ color: "#FA6F30" }}>+ Upload License</button>
-            </div>
+            <GlassCard className="py-16 text-center">
+              <FileText className="w-10 h-10 mx-auto mb-3" style={{ color: "rgba(30,37,53,0.2)" }} />
+              <p className="font-semibold" style={{ color: "#1e2535" }}>No licenses uploaded yet</p>
+              <p className="text-sm mt-1 mb-5" style={{ color: "rgba(30,37,53,0.5)" }}>Upload your professional license to begin the verification process.</p>
+              <Button onClick={() => setLicenseOpen(true)} style={{ background: "#FA6F30", color: "#fff" }} className="gap-2">
+                <Plus className="w-4 h-4" /> Upload License
+              </Button>
+            </GlassCard>
           ) : (
-            <div className="rounded-2xl overflow-hidden" style={{ background: "rgba(255,255,255,0.72)", border: "1px solid rgba(30,37,53,0.07)" }}>
-              {licenses.map((l, i) => {
+            <div className="space-y-2">
+              {licenses.map(l => {
                 const isExpiredOrRejected = l.status === "expired" || l.status === "rejected";
-                const statusStyles = {
-                  verified: { color: "#4a6b10", label: "verified" },
-                  pending_review: { color: "#FA6F30", label: "pending" },
-                  rejected: { color: "#DA6A63", label: "rejected" },
-                  expired: { color: "rgba(30,37,53,0.4)", label: "expired" },
-                };
-                const st = statusStyles[l.status] || statusStyles.pending_review;
+                const cfgKey = statusColorLicense[l.status] || "bg-slate-100 text-slate-500";
                 return (
-                  <div key={l.id} className="flex items-center gap-4 px-5 py-4"
-                    style={{ borderLeft: isExpiredOrRejected ? "2px solid #DA6A63" : l.status === "verified" ? "2px solid rgba(200,230,60,0.5)" : "2px solid rgba(250,111,48,0.35)", borderBottom: i < licenses.length - 1 ? "1px solid rgba(30,37,53,0.06)" : "none" }}>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-baseline gap-3">
-                        <p className="font-semibold text-sm" style={{ color: "#1e2535", fontFamily: "'DM Serif Display', serif", fontStyle: "italic" }}>{l.license_type} — {l.license_number}</p>
-                        <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: st.color }}>{st.label}</span>
-                      </div>
-                      <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.4)" }}>{l.issuing_state}{l.expiration_date ? ` · Expires ${format(new Date(l.expiration_date), "MMM d, yyyy")}` : ""}</p>
-                      {l.rejection_reason && <p className="text-xs mt-0.5" style={{ color: "#DA6A63" }}>Rejected: {l.rejection_reason}</p>}
+                  <div key={l.id} className="flex items-center gap-4 px-5 py-4 rounded-xl" style={{ background: "rgba(255,255,255,0.7)", border: `1px solid ${isExpiredOrRejected ? "rgba(218,106,99,0.3)" : "rgba(30,37,53,0.08)"}` }}>
+                    <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: "rgba(123,142,200,0.15)" }}>
+                      <FileText className="w-5 h-5" style={{ color: "#7B8EC8" }} />
                     </div>
-                    <div className="flex items-center gap-3 flex-shrink-0">
-                      {l.document_url && <a href={l.document_url} target="_blank" rel="noreferrer" className="text-xs font-semibold hover:underline" style={{ color: "rgba(30,37,53,0.4)" }}>View</a>}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="font-semibold" style={{ color: "#1e2535" }}>{l.license_type} — {l.license_number}</p>
+                        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${cfgKey}`}>{l.status?.replace("_", " ")}</span>
+                      </div>
+                      <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.5)" }}>{l.issuing_state}{l.expiration_date ? ` · Expires ${format(new Date(l.expiration_date), "MMM d, yyyy")}` : ""}</p>
+                      {l.rejection_reason && <p className="text-xs text-red-400 mt-1">Rejected: {l.rejection_reason}</p>}
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {l.document_url && <a href={l.document_url} target="_blank" rel="noreferrer" className="text-xs font-medium hover:underline" style={{ color: "#7B8EC8" }}>View</a>}
                       {isExpiredOrRejected && (
-                        <button className="text-xs font-bold" style={{ color: "#FA6F30" }}
+                        <button className="text-xs font-bold px-3 py-1.5 rounded-lg" style={{ background: "#FA6F30", color: "#fff" }}
                           onClick={() => { setLicenseForm({ license_type: l.license_type, issuing_state: l.issuing_state }); setLicenseOpen(true); }}>
                           {l.status === "expired" ? "Renew" : "Resubmit"}
                         </button>
@@ -1290,110 +1301,150 @@ export default function ProviderCredentialsCoverage() {
                   </div>
                 );
               })}
-              <button onClick={() => setLicenseOpen(true)} className="w-full py-3 text-xs font-semibold text-center transition-all hover:bg-white/60"
-                style={{ color: "rgba(30,37,53,0.4)", borderTop: "1px dashed rgba(30,37,53,0.1)" }}>
-                + Add Another License
-              </button>
             </div>
           )}
-
-          {/* Certifications */}
-          <div className="space-y-4">
-            <div className="flex items-baseline justify-between mb-4">
-              <div style={{ borderLeft: "2px solid rgba(30,37,53,0.15)", paddingLeft: 12 }}>
-                <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.35)", letterSpacing: "0.18em" }}>Your Certifications</p>
-              </div>
-              <button onClick={() => { setCertSubmitOpen(true); resetExtCertForm(); }}
-                className="text-xs font-bold transition-all hover:opacity-70"
-                style={{ color: "#FA6F30" }}>+ Submit External Cert</button>
-            </div>
-            {/* cert list rendered inline */}
-            {myCerts.length === 0 ? (
-              <div className="py-10 text-center rounded-2xl" style={{ background: "rgba(255,255,255,0.5)", border: "1px dashed rgba(30,37,53,0.12)" }}>
-                <p className="text-sm font-semibold" style={{ color: "#1e2535" }}>No certifications yet</p>
-                <p className="text-xs mt-1 mb-4" style={{ color: "rgba(30,37,53,0.4)" }}>Complete a NOVI course, or submit an existing cert for review.</p>
-              </div>
-            ) : (
-              <div className="rounded-2xl overflow-hidden" style={{ background: "rgba(255,255,255,0.72)", border: "1px solid rgba(30,37,53,0.07)" }}>
-                {[...activeCerts, ...pendingCerts, ...otherCerts].map((c, i, arr) => {
-                  const cfg = {
-                    active: { color: "#4a6b10", label: "active", accent: "rgba(200,230,60,0.5)" },
-                    pending: { color: "#FA6F30", label: "under review", accent: "rgba(250,111,48,0.35)" },
-                    expired: { color: "rgba(30,37,53,0.35)", label: "expired", accent: "rgba(30,37,53,0.15)" },
-                    revoked: { color: "#DA6A63", label: "revoked", accent: "#DA6A63" },
-                  }[c.status] || { color: "#FA6F30", label: c.status, accent: "rgba(250,111,48,0.35)" };
-                  return (
-                    <div key={c.id} className="flex items-center gap-4 px-5 py-4"
-                      style={{ borderLeft: `2px solid ${cfg.accent}`, borderBottom: i < arr.length - 1 ? "1px solid rgba(30,37,53,0.06)" : "none", opacity: c.status === "expired" || c.status === "revoked" ? 0.55 : 1 }}>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-baseline gap-3">
-                          <p className="font-semibold text-sm" style={{ color: "#1e2535", fontFamily: "'DM Serif Display', serif", fontStyle: "italic" }}>{c.certification_name}</p>
-                          <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: cfg.color }}>{cfg.label}</span>
-                        </div>
-                        {c.service_type_name && <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.5)" }}>{c.service_type_name}</p>}
-                        {c.issued_by && <p className="text-xs" style={{ color: "rgba(30,37,53,0.35)" }}>Issued by {c.issued_by}</p>}
-                      </div>
-                      {c.certificate_url && (
-                        <a href={c.certificate_url} target="_blank" rel="noreferrer" className="text-xs font-semibold hover:underline flex-shrink-0" style={{ color: "rgba(30,37,53,0.4)" }}>View</a>
-                      )}
-                    </div>
-                  );
-                })}
-                <button onClick={() => { setCertSubmitOpen(true); resetExtCertForm(); }} className="w-full py-3 text-xs font-semibold text-center transition-all hover:bg-white/60"
-                  style={{ color: "rgba(30,37,53,0.4)", borderTop: "1px dashed rgba(30,37,53,0.1)" }}>
-                  + Submit Another External Cert
-                </button>
-              </div>
-            )}
-          </div>
         </TabsContent>
 
-        <TabsContent value="coverage" className="pt-6 space-y-6">
+        {/* ── CERTIFICATIONS TAB ── */}
+        <TabsContent value="certifications" className="pt-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <SectionLabel>Your Certifications</SectionLabel>
+            <Button size="sm" onClick={() => { setCertSubmitOpen(true); resetExtCertForm(); }} style={{ background: "#FA6F30", color: "#fff", borderRadius: 10 }} className="gap-1.5 h-8 text-xs font-bold">
+              <Plus className="w-3.5 h-3.5" /> Submit External Cert
+            </Button>
+          </div>
 
-          {/* MD Assignment — editorial strip */}
-          {activeRelationships.length > 0 ? (
-            <div className="flex items-baseline gap-4 px-5 py-3 rounded-xl" style={{ borderLeft: "2px solid rgba(200,230,60,0.5)", background: "rgba(255,255,255,0.55)" }}>
-              <p className="text-sm font-semibold" style={{ color: "#1e2535" }}>Board MD</p>
-              <p className="text-sm" style={{ color: "#4a6b10", fontFamily: "'DM Serif Display', serif", fontStyle: "italic" }}>{activeRelationships[0].medical_director_name}</p>
-              <p className="text-xs ml-auto flex-shrink-0" style={{ color: "rgba(30,37,53,0.4)" }}>supervising {activeSubscriptions.length} service{activeSubscriptions.length !== 1 ? "s" : ""}</p>
-            </div>
-          ) : pendingRelationships.length > 0 ? (
-            <div className="flex items-baseline gap-3 px-5 py-3 rounded-xl" style={{ borderLeft: "2px solid rgba(250,111,48,0.4)", background: "rgba(255,255,255,0.55)" }}>
-              <p className="text-sm" style={{ color: "rgba(30,37,53,0.6)" }}>MD assignment in progress — typically 1–2 business days.</p>
-            </div>
-          ) : null}
-
-          {/* ── Active Services ── */}
-          {activeSubscriptions.length > 0 ? (
-            <div className="space-y-3">
-              <div className="flex items-baseline justify-between mb-4">
-                <div style={{ borderLeft: "2px solid rgba(30,37,53,0.15)", paddingLeft: 12 }}>
-                  <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.35)", letterSpacing: "0.18em" }}>Active MD Coverage</p>
-                  <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.45)" }}>Monthly total: <strong style={{ color: "#1e2535" }}>${calcMonthlyTotal(activeSubscriptions.length)}/mo</strong>{activeSubscriptions.length >= MAX_SERVICES ? " (capped)" : ""}</p>
-                </div>
-                {!isAtCap && (
-                  <button onClick={() => { setActivateDialog(true); resetActivation(); }}
-                    className="text-xs font-bold transition-all hover:opacity-70" style={{ color: "#FA6F30" }}>+ Add Service</button>
-                )}
+          {myCerts.length === 0 ? (
+            <GlassCard className="py-16 text-center">
+              <Sparkles className="w-10 h-10 mx-auto mb-3" style={{ color: "rgba(30,37,53,0.2)" }} />
+              <p className="font-semibold" style={{ color: "#1e2535" }}>No certifications yet</p>
+              <p className="text-sm mt-1 mb-5" style={{ color: "rgba(30,37,53,0.5)" }}>Complete a NOVI course to earn a certification, or submit an existing cert for review.</p>
+              <div className="flex flex-col sm:flex-row gap-2 justify-center">
+                <Link to={createPageUrl("ProviderEnrollments")}>
+                  <Button style={{ background: "rgba(30,37,53,0.08)", color: "#1e2535", border: "1px solid rgba(30,37,53,0.15)" }} className="gap-2">
+                    <BookOpen className="w-4 h-4" /> Browse NOVI Courses
+                  </Button>
+                </Link>
+                <Button style={{ background: "#FA6F30", color: "#fff" }} className="gap-2" onClick={() => { setCertSubmitOpen(true); resetExtCertForm(); }}>
+                  <Award className="w-4 h-4" /> Submit External Cert
+                </Button>
               </div>
+            </GlassCard>
+          ) : (
+            <div className="space-y-4">
+              {activeCerts.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-bold uppercase tracking-wider" style={{ color: "#C8E63C" }}>Active</p>
+                  {activeCerts.map(c => <CertRow key={c.id} cert={c} />)}
+                </div>
+              )}
+              {pendingCerts.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-bold uppercase tracking-wider" style={{ color: "#FA6F30" }}>Under Review</p>
+                  {pendingCerts.map(c => <CertRow key={c.id} cert={c} />)}
+                </div>
+              )}
+              {otherCerts.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-bold uppercase tracking-wider" style={{ color: "rgba(255,255,255,0.35)" }}>Other</p>
+                  {otherCerts.map(c => <CertRow key={c.id} cert={c} muted />)}
+                </div>
+              )}
+            </div>
+          )}
+        </TabsContent>
+
+        {/* ── MD COVERAGE TAB ── */}
+        <TabsContent value="coverage" className="pt-5 space-y-5">
+
+          {/* Assigned MD Board */}
+          <GlassCard>
+            <div className="px-5 py-4 border-b flex items-center gap-2" style={{ borderColor: "rgba(30,37,53,0.08)" }}>
+              <Users className="w-4 h-4" style={{ color: "#DA6A63" }} />
+              <p className="font-bold text-sm" style={{ color: "#1e2535" }}>Your Assigned Medical Director</p>
+            </div>
+            <div className="px-5 py-5">
+              {activeRelationships.length > 0 ? (
+                activeRelationships.map(rel => (
+                  <div key={rel.id} className="flex items-start gap-4">
+                    <div className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: "rgba(218,106,99,0.2)" }}>
+                      <Users className="w-6 h-6" style={{ color: "#DA6A63" }} />
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="font-bold" style={{ color: "#1e2535" }}>{rel.medical_director_name}</p>
+                        <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: "rgba(200,230,60,0.2)", color: "#C8E63C", border: "1px solid rgba(200,230,60,0.3)" }}>Active</span>
+                      </div>
+                      <p className="text-sm mt-0.5" style={{ color: "rgba(30,37,53,0.5)" }}>{rel.medical_director_email}</p>
+                      <p className="text-xs mt-1" style={{ color: "rgba(30,37,53,0.4)" }}>Assigned by NOVI Board · supervising {activeSubscriptions.length} service{activeSubscriptions.length > 1 ? "s" : ""}</p>
+                      {rel.supervision_notes && (
+                        <div className="mt-3 px-3 py-2 rounded-lg text-xs" style={{ background: "rgba(30,37,53,0.05)", color: "rgba(30,37,53,0.65)" }}>
+                          {rel.supervision_notes}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="text-center py-6">
+                  <div className="w-12 h-12 rounded-xl flex items-center justify-center mx-auto mb-3" style={{ background: "rgba(255,255,255,0.08)" }}>
+                    <Users className="w-6 h-6" style={{ color: "rgba(255,255,255,0.3)" }} />
+                  </div>
+                  <p className="font-semibold text-sm" style={{ color: "#1e2535" }}>No MD Assigned Yet</p>
+                  <p className="text-xs mt-1 mb-4" style={{ color: "rgba(30,37,53,0.5)", maxWidth: 320, margin: "8px auto 16px" }}>
+                    When you apply for MD Coverage, NOVI will assign a Board Medical Director to supervise your practice. You don't select them — we match you.
+                  </p>
+                  <Button onClick={() => { setActivateDialog(true); resetActivation(); }} style={{ background: "#FA6F30", color: "#fff" }} className="gap-2">
+                    <Zap className="w-4 h-4" /> Apply for Coverage
+                  </Button>
+                </div>
+              )}
+            </div>
+          </GlassCard>
+
+          {/* Active Service Coverage */}
+          {activeSubscriptions.length > 0 && (
+          <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <SectionLabel>Active Service Coverage</SectionLabel>
+            <Button size="sm" onClick={() => { setActivateDialog(true); resetActivation(); }} style={{ background: "#FA6F30", color: "#fff", borderRadius: 10 }} className="gap-1.5 h-8 text-xs font-semibold">
+              <Plus className="w-3.5 h-3.5" /> Add Service
+            </Button>
+          </div>
               {activeSubscriptions.map((sub, idx) => {
                 const st = serviceTypes.find(s => s.id === sub.service_type_id);
                 const isExp = expandedService === sub.id;
                 return (
                   <GlassCard key={sub.id}>
-                    <button className="w-full flex items-center gap-4 px-5 py-4 text-left transition-all" onClick={() => setExpandedService(isExp ? null : sub.id)}
-                      style={{ borderLeft: "2px solid rgba(200,230,60,0.5)" }}>
+                    <button className="w-full flex items-center gap-4 px-5 py-4 text-left hover:brightness-110 transition-all" onClick={() => setExpandedService(isExp ? null : sub.id)}>
+                      <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: "rgba(200,230,60,0.15)" }}>
+                        <CheckCircle2 className="w-5 h-5" style={{ color: "#C8E63C" }} />
+                      </div>
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-baseline gap-3">
-                          <p className="font-semibold text-sm" style={{ color: "#1e2535", fontFamily: "'DM Serif Display', serif", fontStyle: "italic" }}>{sub.service_type_name}</p>
-                          <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: String(sub.status).toLowerCase() === "suspended" ? "#FA6F30" : "#4a6b10" }}>{String(sub.status).toLowerCase() === "suspended" ? "Payment issue" : "Active"}</span>
+                        <div className="flex items-center gap-2">
+                          <p className="font-bold" style={{ color: "#1e2535" }}>{sub.service_type_name}</p>
+                          <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{
+                            background: String(sub.status).toLowerCase() === "suspended" ? "rgba(250,111,48,0.2)" : "rgba(200,230,60,0.2)",
+                            color: String(sub.status).toLowerCase() === "suspended" ? "#FA6F30" : "#C8E63C",
+                          }}>
+                            {String(sub.status).toLowerCase() === "suspended" ? "Payment issue" : "Active"}
+                          </span>
                         </div>
-                        <p className="text-xs mt-0.5 capitalize" style={{ color: "rgba(30,37,53,0.4)" }}>{st?.category?.replace("_", " ")}{sub.activated_at ? ` · Since ${format(new Date(sub.activated_at), "MMM d, yyyy")}` : ""}</p>
+                        <p className="text-xs mt-0.5 capitalize" style={{ color: "rgba(30,37,53,0.5)" }}>{st?.category?.replace("_", " ")}</p>
                       </div>
-                      <div className="flex items-center gap-3 flex-shrink-0">
-                        <p className="text-sm font-bold" style={{ color: "#1e2535" }}>${Number(sub.service_type_monthly_fee ?? (idx === 0 ? FIRST_SERVICE_PRICE : ADDON_SERVICE_PRICE))}<span className="text-xs font-normal" style={{ color: "rgba(30,37,53,0.35)" }}>/mo</span></p>
-                        {isExp ? <ChevronUp className="w-3.5 h-3.5" style={{ color: "rgba(30,37,53,0.3)" }} /> : <ChevronDown className="w-3.5 h-3.5" style={{ color: "rgba(30,37,53,0.3)" }} />}
+                      <div className="text-right mr-3">
+                        <p className="font-bold" style={{ color: "#1e2535" }}>${Number(sub.service_type_monthly_fee ?? (idx === 0 ? FIRST_SERVICE_PRICE : ADDON_SERVICE_PRICE))}<span className="text-xs font-normal" style={{ color: "rgba(30,37,53,0.4)" }}>/mo</span></p>
+                        {activeSubscriptions.length >= MAX_SERVICES && idx === MAX_SERVICES - 1 && <p className="text-xs font-semibold" style={{ color: "#FA6F30" }}>All services covered</p>}
+                        {sub.activated_at && <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.4)" }}>Since {format(new Date(sub.activated_at), "MMM d, yyyy")}</p>}
                       </div>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); openCancelDialog(sub); }}
+                        className="flex-shrink-0 flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg transition-all hover:opacity-80"
+                        style={{ background: "rgba(218,106,99,0.12)", color: "#DA6A63", border: "1px solid rgba(218,106,99,0.25)" }}
+                      >
+                        <XCircle className="w-3.5 h-3.5" /> Cancel
+                      </button>
+                      {isExp ? <ChevronUp className="w-4 h-4 flex-shrink-0" style={{ color: "rgba(255,255,255,0.4)" }} /> : <ChevronDown className="w-4 h-4 flex-shrink-0" style={{ color: "rgba(255,255,255,0.4)" }} />}
                     </button>
                     {isExp && st && (() => {
                       const currentTierNum = sub.coverage_tier || 1;
@@ -1401,77 +1452,185 @@ export default function ProviderCredentialsCoverage() {
                       const hasTiers = tiers.length > 0;
                       const currentTierDef = tiers.find(t => t.tier_number === currentTierNum);
                       const nextTierDef = tiers.find(t => t.tier_number === currentTierNum + 1);
+                      // Effective scope: use tier def if tiers exist, else fall back to service type top-level
                       const effectiveAreas = hasTiers ? (currentTierDef?.allowed_areas || []) : (st.allowed_areas || []);
                       const effectiveUnits = hasTiers ? currentTierDef?.max_units_per_session : st.max_units_per_session;
+                      const effectiveRules = hasTiers ? (currentTierDef?.scope_rules || []) : (st.scope_rules || []);
                       const effectiveDocs = hasTiers ? (currentTierDef?.protocol_document_urls || []) : (st.protocol_document_urls || []);
-                      const activatedDate = sub.activated_at ? new Date(sub.activated_at) : null;
-                      const monthlyAmount = Number(sub.service_type_monthly_fee ?? (idx === 0 ? FIRST_SERVICE_PRICE : ADDON_SERVICE_PRICE));
-                      const today = new Date();
-                      const nextBilling = new Date(today.getFullYear(), today.getMonth() + 1, 1);
                       return (
-                        <div className="border-t" style={{ borderColor: "rgba(30,37,53,0.08)" }}>
-                          {/* Billing row — compact single line */}
-                          <div className="px-5 py-3 flex items-center justify-between flex-wrap gap-2" style={{ background: "rgba(123,142,200,0.05)", borderBottom: "1px solid rgba(30,37,53,0.06)" }}>
-                            <div className="flex items-center gap-4 text-xs" style={{ color: "rgba(30,37,53,0.55)" }}>
-                              <span><strong style={{ color: "#1e2535" }}>${monthlyAmount}/mo</strong> · billed 1st</span>
-                              {activatedDate && <span>Active since {format(activatedDate, "MMM d, yyyy")}</span>}
-                              <span>Next: {format(nextBilling, "MMM 1, yyyy")}</span>
+                        <div className="px-5 pb-5 space-y-3 border-t" style={{ borderColor: "rgba(30,37,53,0.08)", paddingTop: 16 }}>
+
+                          {/* ── Billing Details ── */}
+                          {(() => {
+                            const activatedDate = sub.activated_at ? new Date(sub.activated_at) : null;
+                            const monthlyAmount = Number(sub.service_type_monthly_fee ?? (idx === 0 ? FIRST_SERVICE_PRICE : ADDON_SERVICE_PRICE));
+                            const capNote = activeSubscriptions.length >= MAX_SERVICES ? " (capped — all services included)" : "";
+                            const today = new Date();
+                            // Next billing = 1st of next month
+                            const nextBilling = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+                            // Proration: if activated_at is not the 1st, calculate prorated amount for first month
+                            let proratedAmount = null;
+                            let proratedNote = null;
+                            if (activatedDate) {
+                              const dayOfMonth = activatedDate.getDate();
+                              const daysInMonth = new Date(activatedDate.getFullYear(), activatedDate.getMonth() + 1, 0).getDate();
+                              if (dayOfMonth !== 1) {
+                                const daysRemaining = daysInMonth - dayOfMonth + 1;
+                                proratedAmount = ((monthlyAmount / daysInMonth) * daysRemaining).toFixed(2);
+                                proratedNote = `${daysRemaining} of ${daysInMonth} days in ${format(activatedDate, "MMMM")}`;
+                              }
+                            }
+                            return (
+                              <div className="rounded-xl overflow-hidden" style={{ background: "rgba(123,142,200,0.08)", border: "1px solid rgba(123,142,200,0.2)" }}>
+                                <div className="flex items-center gap-2 px-4 py-2.5" style={{ borderBottom: "1px solid rgba(123,142,200,0.15)" }}>
+                                  <CreditCard className="w-3.5 h-3.5" style={{ color: "#7B8EC8" }} />
+                                  <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "#7B8EC8" }}>Billing Details</p>
+                                </div>
+                                <div className="px-4 py-3 space-y-2.5">
+                                  {/* Monthly rate */}
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>Monthly rate</span>
+                                    <span className="text-xs font-bold" style={{ color: "#1e2535" }}>${monthlyAmount}/mo</span>
+                                  </div>
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>Billing status</span>
+                                    <span className="text-xs font-semibold capitalize" style={{ color: "#1e2535" }}>{sub.billing_status || "active"}</span>
+                                  </div>
+                                  {sub.current_period_end && (
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>Current period ends</span>
+                                      <span className="text-xs font-semibold" style={{ color: "#1e2535" }}>{format(new Date(sub.current_period_end), "MMM d, yyyy")}</span>
+                                    </div>
+                                  )}
+                                  {sub.last_payment_failure_message && (
+                                    <div className="mt-1 rounded-lg px-3 py-2.5" style={{ background: "rgba(250,111,48,0.1)", border: "1px solid rgba(250,111,48,0.25)" }}>
+                                      <p className="text-xs font-bold" style={{ color: "#FA6F30" }}>Last payment failed</p>
+                                      {sub.last_payment_failure_code && (
+                                        <p className="text-xs mt-0.5 font-mono" style={{ color: "rgba(30,37,53,0.5)" }}>{sub.last_payment_failure_code}</p>
+                                      )}
+                                      <p className="text-xs mt-1" style={{ color: "rgba(30,37,53,0.7)" }}>{sub.last_payment_failure_message}</p>
+                                    </div>
+                                  )}
+                                  {sub.cancel_at_period_end && (
+                                    <div className="mt-1 rounded-lg px-3 py-2.5" style={{ background: "rgba(218,106,99,0.08)", border: "1px solid rgba(218,106,99,0.2)" }}>
+                                      <p className="text-xs font-bold" style={{ color: "#DA6A63" }}>Cancellation scheduled</p>
+                                      {sub.cancellation_reason && <p className="text-xs mt-1" style={{ color: "rgba(30,37,53,0.7)" }}>Reason: {sub.cancellation_reason}</p>}
+                                      {sub.cancellation_notes && <p className="text-xs mt-1" style={{ color: "rgba(30,37,53,0.6)" }}>{sub.cancellation_notes}</p>}
+                                    </div>
+                                  )}
+                                  {/* Billing cycle */}
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>Billing cycle</span>
+                                    <span className="text-xs font-semibold" style={{ color: "#1e2535" }}>1st of each month</span>
+                                  </div>
+                                  {/* Next billing date */}
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>Next billing date</span>
+                                    <span className="text-xs font-semibold" style={{ color: "#1e2535" }}>{format(nextBilling, "MMMM 1, yyyy")}</span>
+                                  </div>
+                                  {/* Coverage start */}
+                                  {activatedDate && (
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>Coverage started</span>
+                                      <span className="text-xs font-semibold" style={{ color: "#1e2535" }}>{format(activatedDate, "MMMM d, yyyy")}</span>
+                                    </div>
+                                  )}
+                                  {/* Proration note */}
+                                  {proratedAmount && (
+                                    <div className="mt-1 pt-2 rounded-lg px-3 py-2.5" style={{ background: "rgba(250,111,48,0.08)", border: "1px solid rgba(250,111,48,0.2)", borderTop: "none", marginLeft: -4, marginRight: -4 }}>
+                                      <div className="flex items-start gap-2">
+                                        <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" style={{ color: "#FA6F30" }} />
+                                        <div>
+                                          <p className="text-xs font-bold" style={{ color: "#FA6F30" }}>First month prorated</p>
+                                          <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.65)" }}>
+                                            Your coverage started mid-month ({proratedNote}), so your first charge was <strong>${proratedAmount}</strong>. All subsequent billing is ${monthlyAmount}.00 on the 1st.
+                                          </p>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )}
+                                  {/* No proration note if started on the 1st */}
+                                  {activatedDate && activatedDate.getDate() === 1 && (
+                                    <div className="flex items-center gap-1.5 pt-0.5">
+                                      <RefreshCw className="w-3 h-3" style={{ color: "rgba(30,37,53,0.35)" }} />
+                                      <p className="text-xs" style={{ color: "rgba(30,37,53,0.45)" }}>Started on the 1st — no proration applied</p>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })()}
+
+                          {/* Tier indicator */}
+                          {hasTiers && (
+                            <div className="rounded-xl p-3 flex items-center gap-3" style={{ background: "rgba(200,230,60,0.12)", border: "1px solid rgba(200,230,60,0.3)" }}>
+                              <div className="w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm flex-shrink-0" style={{ background: "#C8E63C", color: "#1a2540" }}>
+                                {currentTierNum}
+                              </div>
+                              <div className="flex-1">
+                                <p className="font-bold text-sm" style={{ color: "#1e2535" }}>
+                                  {currentTierDef?.tier_name || `Tier ${currentTierNum}`}
+                                </p>
+                                {currentTierDef?.description && <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.6)" }}>{currentTierDef.description}</p>}
+                              </div>
+                              <span className="text-xs font-bold px-2 py-1 rounded-full" style={{ background: "rgba(200,230,60,0.2)", color: "#4a6b10" }}>Current</span>
                             </div>
-                            <button onClick={e => { e.stopPropagation(); openCancelDialog(sub); }} className="text-xs font-semibold hover:opacity-70" style={{ color: "#DA6A63" }}>Cancel</button>
-                          </div>
+                          )}
 
-                          <div className="px-5 py-4 space-y-3">
-                            {/* Current tier */}
-                            {hasTiers && currentTierDef && (
-                              <div className="flex items-center gap-3">
-                                <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0" style={{ background: "#C8E63C", color: "#1a2540" }}>{currentTierNum}</div>
-                                <div>
-                                  <p className="text-sm font-bold" style={{ color: "#1e2535" }}>{currentTierDef.tier_name}</p>
-                                  {currentTierDef.description && <p className="text-xs" style={{ color: "rgba(30,37,53,0.5)" }}>{currentTierDef.description}</p>}
-                                </div>
+                          {/* Allowed Areas */}
+                          {effectiveAreas.length > 0 && (
+                            <div>
+                              <p className="text-xs font-semibold uppercase tracking-wider mb-2 flex items-center gap-1" style={{ color: "rgba(30,37,53,0.5)" }}><MapPin className="w-3 h-3" /> Allowed Areas</p>
+                              <div className="flex flex-wrap gap-1.5">
+                                {effectiveAreas.map((a, i) => <span key={i} className="text-xs px-2.5 py-1 rounded-full capitalize" style={{ background: "rgba(30,37,53,0.07)", color: "rgba(30,37,53,0.7)", border: "1px solid rgba(30,37,53,0.1)" }}>{a}</span>)}
                               </div>
-                            )}
+                            </div>
+                          )}
+                          {effectiveUnits && (
+                            <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm" style={{ background: "rgba(123,142,200,0.1)", color: "rgba(30,37,53,0.8)" }}>
+                              <Zap className="w-4 h-4 flex-shrink-0" style={{ color: "#7B8EC8" }} />
+                              Max {effectiveUnits} units per session
+                            </div>
+                          )}
+                          {effectiveRules.length > 0 && effectiveRules.map((r, i) => (
+                            <div key={i} className="px-3 py-2 rounded-lg text-xs" style={{ background: "rgba(30,37,53,0.04)", color: "rgba(30,37,53,0.7)" }}>
+                              <span className="font-bold">{r.rule_name}: </span>{r.rule_value} {r.unit}
+                            </div>
+                          ))}
+                          {effectiveDocs.length > 0 && (
+                            <div className="flex flex-wrap gap-2">
+                              {effectiveDocs.map((doc, i) => (
+                                <a key={i} href={doc.url} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs" style={{ background: "rgba(123,142,200,0.15)", color: "#7B8EC8", border: "1px solid rgba(123,142,200,0.25)" }}>
+                                  <FileText className="w-3 h-3" /> {doc.name}
+                                </a>
+                              ))}
+                            </div>
+                          )}
+                          {st.protocol_notes && !hasTiers && (
+                            <div className="px-3 py-2 rounded-lg text-xs" style={{ background: "rgba(250,180,50,0.1)", color: "rgba(140,100,0,0.9)", border: "1px solid rgba(250,180,50,0.25)" }}>
+                              <span className="font-bold">Protocol Note: </span>{st.protocol_notes}
+                            </div>
+                          )}
 
-                            {/* Allowed areas */}
-                            {effectiveAreas.length > 0 && (
-                              <div>
-                                <p className="text-[10px] font-bold uppercase tracking-widest mb-1.5" style={{ color: "rgba(30,37,53,0.4)" }}>Allowed Areas</p>
-                                <div className="flex flex-wrap gap-1.5">
-                                  {effectiveAreas.map((a, i) => <span key={i} className="text-xs px-2.5 py-1 rounded-full capitalize" style={{ background: "rgba(30,37,53,0.07)", color: "rgba(30,37,53,0.7)", border: "1px solid rgba(30,37,53,0.1)" }}>{a}</span>)}
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Max units */}
-                            {effectiveUnits && (
-                              <p className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>
-                                <span className="font-semibold" style={{ color: "#1e2535" }}>Max {effectiveUnits} units</span> per session
+                          {/* Next tier unlock preview */}
+                          {hasTiers && nextTierDef && (
+                            <div className="rounded-xl p-4 space-y-2" style={{ background: "rgba(30,37,53,0.04)", border: "1px dashed rgba(30,37,53,0.15)" }}>
+                              <p className="text-xs font-bold uppercase tracking-wider flex items-center gap-1.5" style={{ color: "rgba(30,37,53,0.5)" }}>
+                                <Sparkles className="w-3.5 h-3.5" /> Unlock Next: {nextTierDef.tier_name || `Tier ${nextTierDef.tier_number}`}
                               </p>
-                            )}
-
-                            {/* Protocol docs */}
-                            {effectiveDocs.length > 0 && (
-                              <div className="flex flex-wrap gap-2">
-                                {effectiveDocs.map((doc, i) => (
-                                  <a key={i} href={doc.url} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs" style={{ background: "rgba(123,142,200,0.12)", color: "#7B8EC8", border: "1px solid rgba(123,142,200,0.2)" }}>
-                                    <FileText className="w-3 h-3" /> {doc.name}
-                                  </a>
-                                ))}
-                              </div>
-                            )}
-
-                            {/* Unlock next tier */}
-                            {hasTiers && nextTierDef && (
-                              <div className="flex items-start gap-2.5 px-3 py-2.5 rounded-xl" style={{ background: "rgba(250,111,48,0.06)", border: "1px solid rgba(250,111,48,0.18)" }}>
-                                <Sparkles className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" style={{ color: "#FA6F30" }} />
-                                <div>
-                                  <p className="text-xs font-bold" style={{ color: "#1e2535" }}>Next: {nextTierDef.tier_name || `Tier ${nextTierDef.tier_number}`}</p>
-                                  {nextTierDef.description && <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.55)" }}>{nextTierDef.description}</p>}
-                                  <p className="text-xs mt-1 font-semibold" style={{ color: "#FA6F30" }}>Complete a NOVI course to unlock</p>
+                              {nextTierDef.description && <p className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>{nextTierDef.description}</p>}
+                              {nextTierDef.allowed_areas?.length > 0 && (
+                                <div className="flex flex-wrap gap-1">
+                                  {nextTierDef.allowed_areas.filter(a => !effectiveAreas.includes(a)).map((a, i) => (
+                                    <span key={i} className="text-xs px-2 py-0.5 rounded-full" style={{ background: "rgba(200,230,60,0.15)", color: "#5a7a20", border: "1px dashed rgba(200,230,60,0.4)" }}>+ {a}</span>
+                                  ))}
                                 </div>
-                              </div>
-                            )}
-                          </div>
+                              )}
+                              <p className="text-xs font-semibold" style={{ color: "#FA6F30" }}>
+                                Complete the required NOVI course to unlock this tier — same membership fee.
+                              </p>
+                            </div>
+                          )}
                         </div>
                       );
                     })()}
@@ -1479,173 +1638,102 @@ export default function ProviderCredentialsCoverage() {
                 );
               })}
             </div>
-          ) : (
-            /* No active coverage — CTA */
-            <GlassCard className="py-12 text-center">
-              <div className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4" style={{ background: "rgba(250,111,48,0.1)" }}>
-                <Shield className="w-7 h-7" style={{ color: "#FA6F30" }} />
-              </div>
-              <p className="font-bold text-lg" style={{ color: "#1e2535", fontFamily: "'DM Serif Display', serif" }}>No MD Coverage Yet</p>
-              <p className="text-sm mt-2 mb-5" style={{ color: "rgba(30,37,53,0.55)", maxWidth: 340, margin: "8px auto 20px" }}>
-                Apply for NOVI Board of Medical Directors coverage to legally practice. We'll assign you a Board MD — you don't need to find one yourself.
-              </p>
-              <Button onClick={() => { setActivateDialog(true); resetActivation(); }} style={{ background: "#FA6F30", color: "#fff" }} className="gap-2 font-bold">
-                <Zap className="w-4 h-4" /> Apply for Coverage
-              </Button>
-            </GlassCard>
           )}
 
-          {/* ── Add More Services (only non-active services) ── */}
-          {serviceTypes.filter(s => !alreadyActiveServices.includes(s.id)).length > 0 && (
-            <div className="space-y-3">
-              <SectionLabel>{activeSubscriptions.length === 0 ? "Available Coverage Plans" : "Add More Services"}</SectionLabel>
-              {serviceTypes.filter(s => !alreadyActiveServices.includes(s.id)).map(service => {
-                const isEligible = unlockedServiceTypeIds.has(service.id);
-                const tiers = service.coverage_tiers || [];
-                const hasTiers = tiers.length > 0;
-                const isExpanded = expandedServiceCard === service.id;
-                const price = activeSubscriptions.length === 0 ? FIRST_SERVICE_PRICE : ADDON_SERVICE_PRICE;
-                return (
-                  <GlassCard key={service.id}>
-                    <div className="px-5 py-4 flex items-start gap-4">
-                      {/* Left: icon */}
-                      <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5" style={{ background: isEligible ? "rgba(200,230,60,0.12)" : "rgba(123,142,200,0.1)" }}>
-                        <Shield className="w-5 h-5" style={{ color: isEligible ? "#5a7a20" : "#7B8EC8" }} />
-                      </div>
-                      {/* Middle: info */}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap mb-0.5">
-                          <h4 className="font-bold text-base" style={{ color: "#1e2535" }}>{service.name}</h4>
-                        </div>
-                        <p className="text-xs capitalize mb-2" style={{ color: "rgba(30,37,53,0.5)" }}>
-                          {service.category?.replace("_", " ")}{hasTiers ? ` · ${tiers.length} treatment tiers` : ""}
-                        </p>
-                        {/* Status + CTA */}
-                        {isEligible ? (
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-xs font-semibold px-2.5 py-1 rounded-full" style={{ background: "rgba(200,230,60,0.15)", color: "#5a7a20", border: "1px solid rgba(200,230,60,0.35)" }}>✓ Training Complete — Ready to Apply</span>
-                            <Button size="sm" className="font-bold gap-1.5 h-8" style={{ background: "#FA6F30", color: "#fff" }}
-                              onClick={() => { setSelectedServiceTypeId(service.id); setActivateDialog(true); resetActivation(); }}>
-                              <Zap className="w-3.5 h-3.5" /> Apply for Coverage
-                            </Button>
-                          </div>
-                        ) : (
-                          <div className="space-y-2">
-                            <p className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>To apply for this service, you need to complete training first:</p>
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <Button size="sm" className="h-8 text-xs font-semibold gap-1.5" style={{ background: "#2d3d66", color: "#fff" }} onClick={() => navigate(createPageUrl("ProviderEnrollments"))}>
-                                <BookOpen className="w-3.5 h-3.5" /> Browse NOVI Courses
-                              </Button>
-                              <span className="text-xs" style={{ color: "rgba(30,37,53,0.4)" }}>or</span>
-                              <button className="text-xs font-semibold underline" style={{ color: "#7B8EC8" }} onClick={() => { setCertSubmitOpen(true); resetExtCertForm(); }}>
-                                Submit existing certification
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                      {/* Right: price */}
-                      <div className="text-right flex-shrink-0">
-                        <p className="text-xl font-bold" style={{ color: "#1e2535" }}>${price}<span className="text-xs font-normal" style={{ color: "rgba(30,37,53,0.4)" }}>/mo</span></p>
-                        {activeSubscriptions.length > 0 && <p className="text-xs font-semibold" style={{ color: "#5a7a20" }}>add-on</p>}
-                      </div>
-                    </div>
-                    {/* Tier preview toggle */}
-                    {hasTiers && (
-                      <div style={{ borderTop: "1px solid rgba(30,37,53,0.07)" }}>
-                        <button
-                          onClick={() => setExpandedServiceCard(isExpanded ? null : service.id)}
-                          className="w-full px-5 py-2.5 flex items-center justify-between text-xs font-semibold"
-                          style={{ color: "rgba(30,37,53,0.5)" }}
-                        >
-                          <span>{tiers.length} Treatment Tiers Included</span>
-                          {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                        </button>
-                        {isExpanded && (
-                          <div className="px-5 pb-4 space-y-2">
-                            {tiers.sort((a,b) => a.tier_number - b.tier_number).map(tier => {
-                              const linkedCourseNames = (tier.linked_course_ids || []).map(cid => courseMap[cid]?.title).filter(Boolean);
-                              const tierCertEarned = linkedCourseNames.length === 0 || completedEnrollments.some(e => (tier.linked_course_ids || []).includes(e.course_id));
-                              return (
-                                <div key={tier.tier_number} className="flex items-start gap-3 rounded-xl px-3 py-2.5" style={{ background: "rgba(30,37,53,0.03)", border: "1px solid rgba(30,37,53,0.07)" }}>
-                                  <div className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5" style={{ background: "rgba(30,37,53,0.08)", color: "rgba(30,37,53,0.4)" }}>{tier.tier_number}</div>
-                                  <div className="flex-1 min-w-0">
-                                    <p className="font-semibold text-sm" style={{ color: "#1e2535" }}>{tier.tier_name}</p>
-                                    {tier.description && <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.5)" }}>{tier.description}</p>}
-                                    {tier.allowed_areas?.length > 0 && <p className="text-xs mt-0.5 font-medium" style={{ color: "#2D6B7F" }}>{tier.allowed_areas.join(", ")}</p>}
-                                    {linkedCourseNames.length > 0 && (
-                                      <p className="text-xs mt-1 flex items-center gap-1" style={{ color: tierCertEarned ? "#4a6b10" : "#FA6F30" }}>
-                                        {tierCertEarned ? <CheckCircle className="w-3 h-3 flex-shrink-0" /> : <Award className="w-3 h-3 flex-shrink-0" />}
-                                        {tierCertEarned ? "Cert earned" : `Requires cert: ${linkedCourseNames.join(", ")}`}
-                                      </p>
-                                    )}
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </GlassCard>
-                );
-              })}
-            </div>
+          {/* No coverage CTA */}
+          {activeSubscriptions.length === 0 && (
+            <GlassCard>
+              <div className="px-6 py-10 text-center">
+                <div className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4" style={{ background: "rgba(250,111,48,0.15)" }}>
+                  <Shield className="w-7 h-7" style={{ color: "#FA6F30" }} />
+                </div>
+                <p className="text-xs font-bold uppercase tracking-widest mb-2" style={{ color: "#FA6F30" }}>No Active Coverage</p>
+                <h3 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 22, color: "#1e2535", marginBottom: 8 }}>Get Covered by the NOVI Board</h3>
+                <p className="text-sm mb-6" style={{ color: "rgba(30,37,53,0.6)", maxWidth: 380, margin: "0 auto 24px" }}>
+                  Apply for MD Board coverage for each service you offer. NOVI assigns a Board MD to supervise your practice — no searching, no negotiating.
+                </p>
+                <Button onClick={() => { setActivateDialog(true); resetActivation(); }} style={{ background: "#FA6F30", color: "#fff" }} className="font-bold gap-2">
+                  <Zap className="w-4 h-4" /> Apply for MD Coverage — starts at ${FIRST_SERVICE_PRICE}/mo
+                </Button>
+                <p className="mt-3 text-xs" style={{ color: "rgba(30,37,53,0.4)" }}>+${ADDON_SERVICE_PRICE}/mo per additional service · capped at ${MAX_MONTHLY_CAP}/mo (5 services)</p>
+              </div>
+            </GlassCard>
           )}
         </TabsContent>
 
-        {/* ── DOCUMENTS TAB ── */}
-        <TabsContent value="documents" className="pt-6 space-y-6">
+        {/* ── DOCUMENTS & CONTRACTS TAB ── */}
+        <TabsContent value="documents" className="pt-5 space-y-5">
 
-          {/* MD Board Agreements */}
+          {/* MD Agreement Contracts */}
           <GlassCard>
-            <div className="px-6 pt-5 pb-3" style={{ borderBottom: "1px solid rgba(30,37,53,0.06)" }}>
-              <div style={{ borderLeft: "2px solid rgba(30,37,53,0.15)", paddingLeft: 12 }}>
-                <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.35)", letterSpacing: "0.18em" }}>MD Board Agreements</p>
-              </div>
+            <div className="px-6 py-5 border-b flex items-center gap-2" style={{ borderColor: "rgba(30,37,53,0.08)" }}>
+              <FileText className="w-4 h-4" style={{ color: "#FA6F30" }} />
+              <p className="font-bold text-sm" style={{ color: "#1e2535" }}>MD Board Agreements</p>
             </div>
             <div className="px-6 py-5">
               {activeSubscriptions.length === 0 ? (
-                <div className="text-center py-6">
-                  <p className="text-sm font-semibold" style={{ color: "#1e2535" }}>No active MD agreements</p>
-                  <p className="text-xs mt-1 mb-3" style={{ color: "rgba(30,37,53,0.4)" }}>Once you activate MD coverage, your signed agreements will appear here.</p>
-                  <button onClick={() => { setActivateDialog(true); resetActivation(); }} className="text-xs font-bold" style={{ color: "#FA6F30" }}>Apply for Coverage</button>
+                <div className="text-center py-8">
+                  <FileText className="w-10 h-10 mx-auto mb-3" style={{ color: "rgba(30,37,53,0.2)" }} />
+                  <p className="font-semibold text-sm" style={{ color: "#1e2535" }}>No active MD agreements</p>
+                  <p className="text-xs mt-1 mb-4" style={{ color: "rgba(30,37,53,0.5)" }}>Once you activate MD coverage, your signed agreements will appear here.</p>
+                  <Button size="sm" onClick={() => { setActivateDialog(true); resetActivation(); }} style={{ background: "#FA6F30", color: "#fff" }} className="gap-2">
+                    <Zap className="w-3.5 h-3.5" /> Apply for Coverage
+                  </Button>
                 </div>
               ) : (
-                <div className="divide-y" style={{ borderTop: "1px solid rgba(30,37,53,0.06)", borderBottom: "1px solid rgba(30,37,53,0.06)" }}>
+                <div className="space-y-3">
                   {activeSubscriptions.map((sub) => {
                     const st = serviceTypes.find(s => s.id === sub.service_type_id);
                     return (
-                      <div key={sub.id} className="py-3" style={{ borderLeft: "2px solid rgba(200,230,60,0.4)", paddingLeft: 14, marginLeft: -14 }}>
-                        <div className="flex items-baseline justify-between">
-                          <p className="text-sm font-semibold" style={{ color: "#1e2535", fontFamily: "'DM Serif Display', serif", fontStyle: "italic" }}>{sub.service_type_name}</p>
-                          <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: "#4a6b10" }}>Active</span>
+                      <div key={sub.id} className="rounded-xl overflow-hidden" style={{ border: "1px solid rgba(30,37,53,0.08)" }}>
+                        <div className="px-4 py-3 flex items-center gap-3" style={{ background: "rgba(30,37,53,0.03)" }}>
+                          <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: "rgba(200,230,60,0.15)" }}>
+                            <Shield className="w-4 h-4" style={{ color: "#4a6b10" }} />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-bold text-sm" style={{ color: "#1e2535" }}>{sub.service_type_name}</p>
+                            <p className="text-xs" style={{ color: "rgba(30,37,53,0.5)" }}>
+                              Signed {sub.signed_at ? format(new Date(sub.signed_at), "MMMM d, yyyy") : "—"} · MD: {activeRelationships[0]?.medical_director_name || "NOVI Board"}
+                            </p>
+                          </div>
+                          <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ background: "rgba(200,230,60,0.15)", color: "#4a6b10" }}>Active</span>
                         </div>
-                        <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.4)" }}>Signed {sub.signed_at ? format(new Date(sub.signed_at), "MMMM d, yyyy") : "—"} · MD: {activeRelationships[0]?.medical_director_name || "NOVI Board"}</p>
-                        {st?.md_agreement_text && (
-                          <p className="text-xs mt-2 leading-relaxed" style={{ color: "rgba(30,37,53,0.55)", borderLeft: "1px solid rgba(30,37,53,0.1)", paddingLeft: 10 }}>{st.md_agreement_text}</p>
-                        )}
-                        {(() => {
-                          const tiers = st?.coverage_tiers || [];
-                          const tierNum = sub.coverage_tier || 1;
-                          const tierDef = tiers.find(t => t.tier_number === tierNum);
-                          const docs = tiers.length > 0 ? (tierDef?.protocol_document_urls || []) : (st?.protocol_document_urls || []);
-                          return docs.length > 0 ? (
-                            <div className="mt-2 flex flex-wrap gap-2">
-                              {docs.map((doc, i) => (
-                                <a key={i} href={doc.url} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs font-semibold hover:underline" style={{ color: "#7B8EC8" }}>
-                                  <FileText className="w-3 h-3" /> {doc.name}
-                                </a>
-                              ))}
+                        <div className="px-4 py-3 space-y-2">
+                          {/* MD Agreement text preview */}
+                          {st?.md_agreement_text && (
+                            <div className="rounded-lg px-3 py-2 text-xs leading-relaxed" style={{ background: "rgba(30,37,53,0.03)", color: "rgba(30,37,53,0.65)", border: "1px solid rgba(30,37,53,0.06)", maxHeight: 72, overflow: "hidden" }}>
+                              {st.md_agreement_text}
                             </div>
-                          ) : null;
-                        })()}
-                        {sub.signed_by_name && (
-                          <p className="text-xs mt-2 flex items-center gap-1" style={{ color: "rgba(30,37,53,0.4)" }}>
-                            <CheckCircle2 className="w-3 h-3" style={{ color: "#4a6b10" }} />
-                            Signed by <strong className="ml-1">{sub.signed_by_name}</strong>
-                          </p>
-                        )}
+                          )}
+                          {/* Protocol docs */}
+                          {(() => {
+                            const tiers = st?.coverage_tiers || [];
+                            const tierNum = sub.coverage_tier || 1;
+                            const tierDef = tiers.find(t => t.tier_number === tierNum);
+                            const docs = tiers.length > 0 ? (tierDef?.protocol_document_urls || []) : (st?.protocol_document_urls || []);
+                            return docs.length > 0 ? (
+                              <div>
+                                <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: "rgba(30,37,53,0.45)" }}>Protocol Documents</p>
+                                <div className="flex flex-wrap gap-2">
+                                  {docs.map((doc, i) => (
+                                    <a key={i} href={doc.url} target="_blank" rel="noreferrer"
+                                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all hover:brightness-95"
+                                      style={{ background: "rgba(123,142,200,0.12)", color: "#7B8EC8", border: "1px solid rgba(123,142,200,0.25)" }}>
+                                      <FileText className="w-3 h-3" /> {doc.name}
+                                    </a>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null;
+                          })()}
+                          {/* Signed by */}
+                          {sub.signed_by_name && (
+                            <div className="flex items-center gap-2 text-xs" style={{ color: "rgba(30,37,53,0.5)" }}>
+                              <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#C8E63C" }} />
+                              Signed by <strong className="ml-1">{sub.signed_by_name}</strong>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     );
                   })}
@@ -1656,33 +1744,54 @@ export default function ProviderCredentialsCoverage() {
 
           {/* Certification Documents */}
           <GlassCard>
-            <div className="px-6 pt-5 pb-3" style={{ borderBottom: "1px solid rgba(30,37,53,0.06)" }}>
-              <div style={{ borderLeft: "2px solid rgba(30,37,53,0.15)", paddingLeft: 12 }}>
-                <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.35)", letterSpacing: "0.18em" }}>Certification Documents</p>
-              </div>
+            <div className="px-6 py-5 border-b flex items-center gap-2" style={{ borderColor: "rgba(30,37,53,0.08)" }}>
+              <Award className="w-4 h-4" style={{ color: "#FA6F30" }} />
+              <p className="font-bold text-sm" style={{ color: "#1e2535" }}>Certification Documents</p>
             </div>
             <div className="px-6 py-5">
               {activeCerts.length === 0 ? (
                 <div className="text-center py-6">
+                  <Award className="w-8 h-8 mx-auto mb-2" style={{ color: "rgba(30,37,53,0.2)" }} />
                   <p className="text-sm font-semibold" style={{ color: "#1e2535" }}>No certification documents yet</p>
                 </div>
               ) : (
-                <div className="divide-y" style={{ borderTop: "1px solid rgba(30,37,53,0.06)", borderBottom: "1px solid rgba(30,37,53,0.06)" }}>
-                  {activeCerts.map(c => {
+                <div className="space-y-2">
+                  {activeCerts.map((c) => {
                     const canViewCertificate = hasCertificateDocument(c);
                     return (
-                    <div key={c.id} className="py-3 flex items-baseline justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold" style={{ color: "#1e2535", fontFamily: "'DM Serif Display', serif", fontStyle: "italic" }}>{c.certification_name}</p>
-                        <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.4)" }}>{c.service_type_name && `${c.service_type_name} · `}{c.issued_by && `Issued by ${c.issued_by}`}{c.issued_at && ` · ${format(new Date(c.issued_at), "MMM d, yyyy")}`}</p>
+                    <div key={c.id} className="flex items-center gap-3 px-4 py-3 rounded-xl" style={{ background: "rgba(255,255,255,0.7)", border: "1px solid rgba(30,37,53,0.08)" }}>
+                      <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: "rgba(200,230,60,0.15)" }}>
+                        <Award className="w-4 h-4" style={{ color: "#4a6b10" }} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-sm truncate" style={{ color: "#1e2535" }}>{c.certification_name}</p>
+                        <p className="text-xs" style={{ color: "rgba(30,37,53,0.5)" }}>
+                          {c.service_type_name && `${c.service_type_name} · `}
+                          {c.issued_by && `Issued by ${c.issued_by}`}
+                          {c.issued_at && ` · ${format(new Date(c.issued_at), "MMM d, yyyy")}`}
+                        </p>
                       </div>
                       {canViewCertificate ? (
                         <div className="flex items-center gap-2 flex-shrink-0">
-                          <button type="button" onClick={() => openCertificateDocument(c)} className="text-xs font-semibold hover:underline" style={{ color: "rgba(30,37,53,0.4)" }}>View</button>
-                          <button type="button" onClick={() => downloadCertificateDocument(c, `${c.certification_name || "certificate"}.pdf`)} className="text-xs font-semibold hover:underline" style={{ color: "rgba(30,37,53,0.4)" }}>PDF</button>
+                          <button
+                            type="button"
+                            onClick={() => openCertificateDocument(c)}
+                            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-all hover:brightness-95"
+                            style={{ background: "rgba(123,142,200,0.12)", color: "#7B8EC8", border: "1px solid rgba(123,142,200,0.25)" }}
+                          >
+                            <ExternalLink className="w-3 h-3" /> View
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => downloadCertificateDocument(c, `${c.certification_name || "certificate"}.pdf`)}
+                            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-all hover:brightness-95"
+                            style={{ background: "rgba(123,142,200,0.12)", color: "#7B8EC8", border: "1px solid rgba(123,142,200,0.25)" }}
+                          >
+                            <Download className="w-3 h-3" /> PDF
+                          </button>
                         </div>
                       ) : (
-                        <span className="text-xs flex-shrink-0" style={{ color: "rgba(30,37,53,0.25)" }}>No file</span>
+                        <span className="text-xs" style={{ color: "rgba(30,37,53,0.35)" }}>No file</span>
                       )}
                     </div>
                     );
@@ -1694,10 +1803,9 @@ export default function ProviderCredentialsCoverage() {
 
           {/* License Documents */}
           <GlassCard>
-            <div className="px-6 pt-5 pb-3" style={{ borderBottom: "1px solid rgba(30,37,53,0.06)" }}>
-              <div style={{ borderLeft: "2px solid rgba(30,37,53,0.15)", paddingLeft: 12 }}>
-                <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.35)", letterSpacing: "0.18em" }}>License Documents</p>
-              </div>
+            <div className="px-6 py-5 border-b flex items-center gap-2" style={{ borderColor: "rgba(30,37,53,0.08)" }}>
+              <FileText className="w-4 h-4" style={{ color: "#7B8EC8" }} />
+              <p className="font-bold text-sm" style={{ color: "#1e2535" }}>License Documents</p>
             </div>
             <div className="px-6 py-5">
               {licenses.filter(l => l.document_url).length === 0 ? (
@@ -2125,9 +2233,9 @@ export default function ProviderCredentialsCoverage() {
                   <li>NOVI assigns a Board Medical Director and supervision becomes <strong>active automatically</strong>. You and your MD receive a confirmation notification.</li>
                 </ol>
               </div>
-              {(activateError || activateMutation.isError || activateMutation.error) && (
+              {(activateMutation.isError || activateMutation.error) && (
                 <p className="text-xs text-red-600 whitespace-pre-wrap">
-                  {activateError || activateMutation.error?.message || "Could not start checkout. Check your connection or try again."}
+                  {activateMutation.error?.message || "Could not start checkout. Check your connection or try again."}
                 </p>
               )}
               <Button

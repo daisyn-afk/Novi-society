@@ -3,6 +3,12 @@ import { query } from "../db.js";
 import { getMeFromAccessToken } from "../auth/service.js";
 import { validateBookingScope } from "../bookingValidation.js";
 import {
+  createAppointmentDepositCheckout,
+  requestAppointmentDeposit,
+  resolveProviderBookingDeposit,
+  syncAppointmentDepositPayment,
+} from "./paymentService.js";
+import {
   sendAppointmentConfirmedPatientEmail,
   sendAppointmentCancelledPatientEmail,
   sendAppointmentNoShowPatientEmail,
@@ -207,6 +213,12 @@ const PATCH_ALLOWED = [
   "gfe_exam_url",
   "gfe_initiated_at",
   "treatment_record_id",
+  "deposit_amount",
+  "total_amount",
+  "amount_paid",
+  "payment_status",
+  "consent_signed",
+  "duration_minutes",
 ];
 
 appointmentsRouter.get("/", async (req, res, next) => {
@@ -364,6 +376,34 @@ appointmentsRouter.patch("/:id", async (req, res, next) => {
     const updates = req.body || {};
     const setParts = [];
     const params = [id];
+
+    const nextStatusRaw = Object.prototype.hasOwnProperty.call(updates, "status")
+      ? String(updates.status || "").trim().toLowerCase()
+      : null;
+    const prevStatusRaw = String(existing.status || "").trim().toLowerCase();
+    const isProviderOwner =
+      existing.provider_id === me.id && !hasAdminAccess(me.role);
+    if (
+      isProviderOwner &&
+      prevStatusRaw === "requested" &&
+      nextStatusRaw === "confirmed"
+    ) {
+      return res.status(400).json({
+        error:
+          "Use Confirm & Request Payment so the patient pays their deposit before the appointment is confirmed.",
+      });
+    }
+    if (
+      nextStatusRaw === "awaiting_payment" &&
+      prevStatusRaw !== "awaiting_payment" &&
+      !Object.prototype.hasOwnProperty.call(updates, "deposit_amount") &&
+      !(Number(existing.deposit_amount) > 0)
+    ) {
+      updates.deposit_amount = await resolveProviderBookingDeposit(existing.provider_id, {
+        totalAmount: existing.total_amount,
+      });
+    }
+
     for (const key of PATCH_ALLOWED) {
       if (Object.prototype.hasOwnProperty.call(updates, key)) {
         params.push(updates[key]);
@@ -420,6 +460,88 @@ appointmentsRouter.patch("/:id", async (req, res, next) => {
 
     return res.json({ ...updated, patient_notifications: patientNotifications });
   } catch (error) {
+    return next(error);
+  }
+});
+
+/** Patient pays appointment deposit via Stripe Checkout. */
+appointmentsRouter.post("/:id/deposit-checkout", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    const appointmentId = String(req.params.id || "").trim();
+    const body = req.body || {};
+    const clientTimestamp =
+      req.get("x-novi-client-timestamp") || body.client_timestamp || null;
+    const trackingSourceOrigin = req.get("origin") || req.get("referer") || null;
+    const trackingRequestIp = (() => {
+      const forwarded = req.get("x-forwarded-for");
+      if (forwarded) return String(forwarded).split(",")[0].trim();
+      return req.ip || req.socket?.remoteAddress || null;
+    })();
+
+    const result = await createAppointmentDepositCheckout({
+      token,
+      appointmentId,
+      body,
+      tracking: {
+        clientTimestamp,
+        sourceOrigin: trackingSourceOrigin,
+        requestIp: trackingRequestIp,
+        userAgent: req.get("user-agent") || null,
+      },
+    });
+    return res.json(result);
+  } catch (error) {
+    if (error?.statusCode) {
+      return res.status(error.statusCode).json({ error: error.message, sessionUrl: null });
+    }
+    return next(error);
+  }
+});
+
+/** Patient: sync deposit after Stripe redirect (when webhook is delayed). */
+appointmentsRouter.post("/:id/sync-deposit-payment", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    const appointmentId = String(req.params.id || "").trim();
+    const stripeSessionId = String(req.body?.stripe_session_id || "").trim() || null;
+    const updated = await syncAppointmentDepositPayment({
+      token,
+      appointmentId,
+      stripeSessionId,
+    });
+    const { rows: enriched } = await query(
+      `${APPOINTMENTS_SELECT}
+         ${APPOINTMENTS_FROM}
+        where a.id = $1`,
+      [appointmentId]
+    );
+    return res.json(mapAppointmentRow(enriched[0] || updated));
+  } catch (error) {
+    if (error?.statusCode) {
+      return res.status(error.statusCode).json({ error: error.message });
+    }
+    return next(error);
+  }
+});
+
+/** Provider confirms request and asks patient to pay deposit. */
+appointmentsRouter.post("/:id/request-deposit", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    const appointmentId = String(req.params.id || "").trim();
+    const updated = await requestAppointmentDeposit({ token, appointmentId });
+    const { rows: enriched } = await query(
+      `${APPOINTMENTS_SELECT}
+         ${APPOINTMENTS_FROM}
+        where a.id = $1`,
+      [appointmentId]
+    );
+    return res.json(mapAppointmentRow(enriched[0] || updated));
+  } catch (error) {
+    if (error?.statusCode) {
+      return res.status(error.statusCode).json({ error: error.message });
+    }
     return next(error);
   }
 });

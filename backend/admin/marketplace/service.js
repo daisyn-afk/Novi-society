@@ -17,6 +17,20 @@ function acceptsNewPatients(metadata) {
   return true;
 }
 
+function computeMarketplaceDeposit(metadata) {
+  const fixed = Number(metadataValue(metadata, "booking_deposit"));
+  if (Number.isFinite(fixed) && fixed > 0) return fixed;
+  const percent = Number(metadataValue(metadata, "deposit_percent"));
+  const base =
+    Number(metadataValue(metadata, "starting_price")) > 0
+      ? Number(metadataValue(metadata, "starting_price"))
+      : Number(metadataValue(metadata, "consultation_fee"));
+  if (Number.isFinite(percent) && percent > 0 && Number.isFinite(base) && base > 0) {
+    return Math.round(((base * percent) / 100) * 100) / 100;
+  }
+  return metadataValue(metadata, "booking_deposit");
+}
+
 function mapProviderRow(row) {
   const metadata = parseMetadata(row.metadata);
   return {
@@ -34,7 +48,7 @@ function mapProviderRow(row) {
     city: row.city || metadataValue(metadata, "city"),
     state: row.state || metadataValue(metadata, "state"),
     consultation_fee: metadataValue(metadata, "consultation_fee"),
-    booking_deposit: metadataValue(metadata, "booking_deposit"),
+    booking_deposit: computeMarketplaceDeposit(metadata),
     deposit_percent: metadataValue(metadata, "deposit_percent"),
     cancellation_hours: metadataValue(metadata, "cancellation_hours"),
     years_experience: metadataValue(metadata, "years_experience"),

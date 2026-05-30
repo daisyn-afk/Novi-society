@@ -84,8 +84,16 @@ export function decryptToken(value) {
   const ct = Buffer.from(ctB64, "base64");
   const tag = Buffer.from(tagB64, "base64");
 
-  const decipher = crypto.createDecipheriv(ALGORITHM, loadKey(), iv);
-  decipher.setAuthTag(tag);
-  const pt = Buffer.concat([decipher.update(ct), decipher.final()]);
-  return pt.toString("utf8");
+  try {
+    const decipher = crypto.createDecipheriv(ALGORITHM, loadKey(), iv);
+    decipher.setAuthTag(tag);
+    const pt = Buffer.concat([decipher.update(ct), decipher.final()]);
+    return pt.toString("utf8");
+  } catch (error) {
+    // Wrong key, corrupted ciphertext, or post-rotation stale row — unusable token.
+    // Callers treat empty string as disconnected; provider can re-authorize Google.
+    // eslint-disable-next-line no-console
+    console.warn("[tokenCrypto] decrypt failed:", error?.message || error);
+    return "";
+  }
 }

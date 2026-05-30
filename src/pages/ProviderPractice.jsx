@@ -95,14 +95,18 @@ function ControlCard({ icon: Icon, iconColor, title, meta, status, statusColor, 
 function PanelModal({ open, onClose, title, children }) {
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onClose(); }}>
-      <DialogContent className="w-full max-w-4xl overflow-y-auto"
-        style={{ maxHeight: "95dvh", margin: "0 auto", borderRadius: "16px" }}>
-        <DialogHeader>
+      <DialogContent
+        className="w-full max-w-4xl !flex !flex-col gap-0 overflow-hidden p-0 sm:rounded-2xl"
+        style={{ maxHeight: "min(95dvh, 900px)", height: "min(95dvh, 900px)" }}
+      >
+        <DialogHeader className="flex-shrink-0 px-6 pt-6 pb-3 border-b border-slate-100">
           <DialogTitle style={{ fontFamily: "'DM Serif Display', serif", color: "#1e2535", fontSize: 20 }}>
             {title}
           </DialogTitle>
         </DialogHeader>
-        <div className="pt-2">{children}</div>
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain px-6 py-4">
+          {children}
+        </div>
       </DialogContent>
     </Dialog>
   );
@@ -131,13 +135,20 @@ export default function ProviderPractice() {
       return base44.entities.Appointment.filter({ provider_id: user.id }, "-appointment_date");
     },
     staleTime: 0,
-    refetchInterval: 2_000,
+    refetchInterval: (query) => {
+      const rows = query.state.data;
+      if (!Array.isArray(rows)) return 2000;
+      const hasPending =
+        rows.some((a) => String(a.status || "").toLowerCase() === "requested") ||
+        rows.some((a) => String(a.status || "").toLowerCase() === "awaiting_payment");
+      return hasPending ? 800 : 2000;
+    },
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: true,
   });
 
   const refetchAppointments = useCallback(() => {
-    void qc.refetchQueries({ queryKey: ["my-appointments"] });
+    void qc.refetchQueries({ queryKey: ["my-appointments"], type: "active" });
     void qc.invalidateQueries({ queryKey: ["my-notifications"] });
   }, [qc]);
 

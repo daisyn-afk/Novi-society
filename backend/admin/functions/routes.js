@@ -6,6 +6,11 @@ import { notifyAdminsOfPendingCourseCertIssuance } from "../certificationNotific
 import { withCourseEmailShell } from "../courseEmailShell.js";
 import { listEligibleMedicalDirectorsForService } from "../mdEligibleDirectors.js";
 import { submitMdBoardCoverageAssignment } from "../mdAssignmentService.js";
+import {
+  attachCheckoutSessionToMdSubscription,
+  createPendingMdSubscriptionForCheckout,
+  finalizeMdBoardCoverage,
+} from "../mdBillingService.js";
 import Stripe from "stripe";
 import {
   recordCheckoutInitiated,
@@ -40,6 +45,12 @@ import { buildManufacturerApplicationPayload } from "../manufacturers/providerAp
 import { validateBookingScope } from "../bookingValidation.js";
 import { sendAppointmentGfeInviteEmail, notifyPatientGfeInvite } from "../patientAppointmentEmails.js";
 import { handleQualiphyExamWebhook, resolveQualiphyWebhookUrl } from "../qualiphy/webhookHandler.js";
+import {
+  createAppointmentDepositCheckout,
+  processAppointmentCheckoutCompletedSession,
+} from "../appointments/paymentService.js";
+
+export { processAppointmentCheckoutCompletedSession };
 
 export const functionsRouter = Router();
 let certificationColumnsPromise = null;
@@ -837,8 +848,27 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
       return res.status(400).json({ success: false, error: "service_type_id is required." });
     }
 
+    const signatureData = body.signature_data != null ? String(body.signature_data) : null;
+
+    if (String(me.role || "").trim().toLowerCase() !== "provider") {
+      return res.status(403).json({ success: false, error: "Only providers can activate MD coverage." });
+    }
+
     if (amountCents <= 0) {
-      return res.json({ success: true });
+      const result = await finalizeMdBoardCoverage({
+        providerId: me.id,
+        providerEmail: me.email,
+        providerName: me.full_name,
+        serviceTypeId,
+        serviceTypeName,
+        enrollmentId: enrollmentId || null,
+        signatureData,
+        signedByName: me.full_name,
+      });
+      if (!result.ok) {
+        return res.status(400).json({ success: false, error: result.error || "Unable to activate MD coverage." });
+      }
+      return res.json({ success: true, ...result });
     }
 
     if (!stripe) {
@@ -847,6 +877,17 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
         error: "Stripe is not configured. Set STRIPE_SECRET_KEY or use $0 activation."
       });
     }
+
+    const pending = await createPendingMdSubscriptionForCheckout({
+      providerId: me.id,
+      providerEmail: me.email,
+      providerName: me.full_name,
+      serviceTypeId,
+      serviceTypeName,
+      enrollmentId: enrollmentId || null,
+      signatureData,
+      signedByName: me.full_name,
+    });
 
     const base = String(appBaseUrl || "http://localhost:5173").replace(/\/$/, "");
     const successParams = new URLSearchParams({
@@ -865,6 +906,7 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
       cancel_url: cancelUrl,
       metadata: {
         checkout_type: "md_board_coverage",
+        md_subscription_id: String(pending.id || ""),
         provider_auth_user_id: String(me.id || ""),
         service_type_id: serviceTypeId,
         enrollment_id: enrollmentId || ""
@@ -872,6 +914,7 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
       subscription_data: {
         metadata: {
           checkout_type: "md_board_coverage",
+          md_subscription_id: String(pending.id || ""),
           provider_auth_user_id: String(me.id || ""),
           service_type_id: serviceTypeId,
           enrollment_id: enrollmentId || ""
@@ -892,6 +935,8 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
         }
       ]
     });
+
+    await attachCheckoutSessionToMdSubscription(pending.id, checkoutSession.id);
 
     const url = checkoutSession?.url;
     if (!url) {
@@ -960,6 +1005,41 @@ functionsRouter.post("/pickMedicalDirectorForService", async (req, res, next) =>
       eligible_count: n,
       service_type_id: serviceTypeId,
     });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+/**
+ * Provider-only: activate MD subscription + run assignment (Stripe return backup or paid webhook gap).
+ */
+functionsRouter.post("/finalizeMdBoardCoverage", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ success: false, error: "Missing bearer token." });
+    const me = await getMeFromAccessToken(token);
+    if (String(me.role || "").trim().toLowerCase() !== "provider") {
+      return res.status(403).json({ success: false, error: "Only providers can finalize MD coverage." });
+    }
+    const body = req.body || {};
+    const serviceTypeId = String(body.service_type_id || "").trim();
+    if (!serviceTypeId) {
+      return res.status(400).json({ success: false, error: "service_type_id is required." });
+    }
+    const result = await finalizeMdBoardCoverage({
+      providerId: me.id,
+      providerEmail: me.email,
+      providerName: me.full_name,
+      serviceTypeId,
+      serviceTypeName: String(body.service_type_name || "").trim(),
+      enrollmentId: body.enrollment_id != null ? String(body.enrollment_id).trim() : null,
+      signatureData: body.signature_data != null ? String(body.signature_data) : null,
+      signedByName: me.full_name,
+    });
+    if (!result.ok) {
+      return res.status(400).json({ success: false, error: result.error || "Unable to activate MD coverage." });
+    }
+    return res.json({ success: true, ...result });
   } catch (error) {
     return next(error);
   }
@@ -2083,6 +2163,36 @@ functionsRouter.post("/sendModelGFE", requireAdminOrStaffModelSignups, async (re
     }
     return res.json({ success: true, meeting_url: meetingUrl });
   } catch (error) {
+    return next(error);
+  }
+});
+
+functionsRouter.post("/createAppointmentPayment", async (req, res, next) => {
+  try {
+    const body = req.body || {};
+    const appointmentId = String(body.appointment_id || "").trim();
+    const clientTimestamp =
+      req.get("x-novi-client-timestamp") || body.client_timestamp || null;
+    const result = await createAppointmentDepositCheckout({
+      token: getBearerToken(req),
+      appointmentId,
+      body,
+      tracking: {
+        clientTimestamp,
+        sourceOrigin: req.get("origin") || req.get("referer") || null,
+        requestIp: (() => {
+          const forwarded = req.get("x-forwarded-for");
+          if (forwarded) return String(forwarded).split(",")[0].trim();
+          return req.ip || req.socket?.remoteAddress || null;
+        })(),
+        userAgent: req.get("user-agent") || null,
+      },
+    });
+    return res.json(result);
+  } catch (error) {
+    if (error?.statusCode) {
+      return res.status(error.statusCode).json({ error: error.message, sessionUrl: null });
+    }
     return next(error);
   }
 });

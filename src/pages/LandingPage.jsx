@@ -622,8 +622,12 @@ export default function LandingPage() {
           </Link>
           <p className="novi-sans" style={{ fontSize: 12, color: "rgba(255,255,255,0.2)", letterSpacing: "0.04em" }}>© 2026 Novi. All rights reserved.</p>
           <div style={{ display: "flex", gap: 28 }}>
-            {["Privacy", "Terms", "Contact"].map(l => (
-              <a key={l} href="#" className="novi-sans" style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", textDecoration: "none", letterSpacing: "0.1em", textTransform: "uppercase" }}>{l}</a>
+            {[
+              { label: "Privacy", to: createPageUrl("PrivacyPolicy") },
+              { label: "Terms", to: createPageUrl("TermsAndConditions") },
+              { label: "Contact", to: createPageUrl("ContactUs") },
+            ].map(({ label, to }) => (
+              <Link key={label} to={to} className="novi-sans" style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", textDecoration: "none", letterSpacing: "0.1em", textTransform: "uppercase" }}>{label}</Link>
             ))}
           </div>
         </div>

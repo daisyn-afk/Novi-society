@@ -1,6 +1,14 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { base44 } from "@/api/base44Client";
+import { appointmentsApi } from "@/api/appointmentsApi";
+
+function sortByAppointmentDate(rows) {
+  return [...(rows || [])].sort((a, b) => {
+    const av = a.appointment_date || "";
+    const bv = b.appointment_date || "";
+    return av < bv ? 1 : av > bv ? -1 : 0;
+  });
+}
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,6 +27,7 @@ const statusColor = {
   completed: "bg-green-100 text-green-700",
   cancelled: "bg-red-100 text-red-700",
   no_show: "bg-slate-100 text-slate-600",
+  awaiting_payment: "bg-purple-100 text-purple-700",
 };
 
 export default function ProviderAppointments() {
@@ -30,12 +39,18 @@ export default function ProviderAppointments() {
 
   const { data: appointments = [], isLoading } = useQuery({
     queryKey: ["my-appointments"],
-    queryFn: async () => {
-      const me = await base44.auth.me();
-      return base44.entities.Appointment.filter({ provider_id: me.id }, "-appointment_date");
-    },
+    queryFn: async () => sortByAppointmentDate(await appointmentsApi.listMine()),
     staleTime: 0,
-    refetchInterval: 2_000,
+    refetchInterval: (query) => {
+      const rows = query.state.data;
+      if (!Array.isArray(rows)) return 2000;
+      return rows.some((a) => {
+        const st = String(a.status || "").toLowerCase();
+        return st === "requested" || st === "awaiting_payment";
+      })
+        ? 800
+        : 2000;
+    },
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: true,
   });
@@ -47,12 +62,17 @@ export default function ProviderAppointments() {
   }, [qc]);
 
   const update = useMutation({
-    mutationFn: ({ id, data }) => base44.entities.Appointment.update(id, data),
+    mutationFn: ({ id, data }) => appointmentsApi.update(id, data),
+    onSuccess: () => qc.invalidateQueries(["my-appointments"]),
+  });
+
+  const requestDeposit = useMutation({
+    mutationFn: (id) => appointmentsApi.requestDeposit(id),
     onSuccess: () => qc.invalidateQueries(["my-appointments"]),
   });
 
   const saveNotes = useMutation({
-    mutationFn: ({ id }) => base44.entities.Appointment.update(id, { notes: notesText }),
+    mutationFn: ({ id }) => appointmentsApi.update(id, { notes: notesText }),
     onSuccess: () => {
       qc.invalidateQueries(["my-appointments"]);
       setNotesDialog({ open: false, appointment: null });
@@ -110,35 +130,24 @@ export default function ProviderAppointments() {
                     </Button>
                     {a.status === "requested" && (
                       <>
-                        <Button size="sm" style={{ background: "#FA6F30", color: "#fff" }}
-                          onClick={async () => {
-                            await update.mutateAsync({ id: a.id, data: { status: "awaiting_payment", confirmed_at: new Date().toISOString() } });
-                            // Notify patient
-                            await base44.entities.Notification.create({
-                              user_id: a.patient_id,
-                              user_email: a.patient_email,
-                              type: 'general',
-                              message: `Your appointment with ${a.provider_name} has been confirmed! Please complete payment.`,
-                              link_page: 'PatientAppointments'
-                            });
-                          }}>
-                          Confirm & Request Payment
+                        <Button size="sm" className="h-auto min-h-9 py-2 whitespace-normal text-center leading-snug" style={{ background: "#FA6F30", color: "#fff" }}
+                          onClick={() => requestDeposit.mutate(a.id)}
+                          disabled={requestDeposit.isPending}>
+                          Confirm &amp; Request Payment
                         </Button>
                         <Button size="sm" variant="outline" className="text-red-500"
-                          onClick={async () => {
-                            await update.mutateAsync({ id: a.id, data: { status: "cancelled", cancellation_reason: "Declined by provider" } });
-                            // Notify patient
-                            await base44.entities.Notification.create({
-                              user_id: a.patient_id,
-                              user_email: a.patient_email,
-                              type: 'general',
-                              message: `Your appointment request for ${a.service} was declined. Please try another provider or time.`,
-                              link_page: 'PatientAppointments'
-                            });
-                          }}>
+                          onClick={() => update.mutate({
+                            id: a.id,
+                            data: { status: "cancelled", cancellation_reason: "Declined by provider" },
+                          })}>
                           Decline
                         </Button>
                       </>
+                    )}
+                    {a.status === "awaiting_payment" && (
+                      <Badge variant="outline" className="text-purple-700 border-purple-300 text-xs">
+                        Awaiting patient deposit{a.deposit_amount ? ` ($${a.deposit_amount})` : ""}
+                      </Badge>
                     )}
                     {a.status === "confirmed" && (
                       <>

@@ -911,6 +911,7 @@ export function createLovableProviderClient() {
           "createModelCheckout",
           "createCheckoutSession",
           "createCourseCheckout",
+          "createAppointmentPayment",
         ]);
         const isPaymentFn = PAYMENT_FUNCTIONS.has(functionName);
         const clientTimestamp = isPaymentFn ? new Date().toISOString() : null;
