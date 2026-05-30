@@ -689,12 +689,20 @@ function ProviderProfilePanel({ provider, mdServices, certs, rating, reviewCount
               <p className="text-sm leading-relaxed">
                 <span className="text-slate-500">Consultation </span>
                 <strong className="text-slate-900 font-semibold">${provider.consultation_fee}</strong>
-                {provider.booking_deposit != null && provider.booking_deposit !== "" && (
+                {provider.deposit_percent != null && provider.deposit_percent !== "" ? (
+                  <span className="text-slate-500">
+                    {" "}
+                    · Deposit <strong style={{ color: "#7B8EC8" }}>{provider.deposit_percent}%</strong>
+                    {provider.booking_deposit != null && provider.booking_deposit !== "" && (
+                      <span> (≈ ${provider.booking_deposit})</span>
+                    )}
+                  </span>
+                ) : provider.booking_deposit != null && provider.booking_deposit !== "" ? (
                   <span className="text-slate-500">
                     {" "}
                     · Deposit <strong style={{ color: "#7B8EC8" }}>${provider.booking_deposit}</strong>
                   </span>
-                )}
+                ) : null}
               </p>
             )}
           </div>

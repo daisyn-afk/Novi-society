@@ -178,7 +178,7 @@ const AuthenticatedApp = () => {
               <MainPage />
             </LayoutWrapper>
           ) : (
-            <Navigate to="/NoviLanding" replace />
+            <Navigate to="/LandingPage" replace />
           )
         }
       />

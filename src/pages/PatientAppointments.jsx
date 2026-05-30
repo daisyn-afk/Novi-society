@@ -1,6 +1,17 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { base44 } from "@/api/base44Client";
+import { appointmentsApi } from "@/api/appointmentsApi";
+import { sessionApi } from "@/api/sessionApi";
+import { reviewsApi } from "@/api/reviewsApi";
+import { treatmentRecordsApi } from "@/api/treatmentRecordsApi";
+
+function sortByAppointmentDate(rows) {
+  return [...(rows || [])].sort((a, b) => {
+    const av = a.appointment_date || "";
+    const bv = b.appointment_date || "";
+    return av < bv ? 1 : av > bv ? -1 : 0;
+  });
+}
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,7 +21,8 @@ import { Calendar, Clock, User, MessageSquare, FileText, DollarSign, Star, Image
 import { format } from "date-fns";
 import MessageThread from "@/components/messaging/MessageThread";
 import ConsentFormDialog from "@/components/appointments/ConsentFormDialog";
-import { subscribeAppointmentsRefresh } from "@/lib/appointmentSync";
+import { subscribeAppointmentsRefresh, broadcastAppointmentsRefresh } from "@/lib/appointmentSync";
+import { redirectToStripeCheckout } from "@/lib/redirectToStripeCheckout";
 
 const statusColor = {
   requested: "bg-yellow-100 text-yellow-700",
@@ -22,6 +34,15 @@ const statusColor = {
   awaiting_consent: "bg-orange-100 text-orange-700",
 };
 
+function patchAppointmentInCache(qc, queryKey, appointmentId, patch) {
+  qc.setQueryData(queryKey, (old) => {
+    if (!Array.isArray(old)) return old;
+    return sortByAppointmentDate(
+      old.map((a) => (a.id === appointmentId ? { ...a, ...patch } : a))
+    );
+  });
+}
+
 export default function PatientAppointments() {
   const qc = useQueryClient();
   const [msgDialog, setMsgDialog] = useState(null);
@@ -29,15 +50,18 @@ export default function PatientAppointments() {
   const [reviewDialog, setReviewDialog] = useState(null);
   const [reviewForm, setReviewForm] = useState({ rating: 5, comment: "" });
   const [recordDialog, setRecordDialog] = useState(null);
+  const [paymentNotice, setPaymentNotice] = useState(null);
 
   const { data: appointments = [], isLoading } = useQuery({
     queryKey: ["patient-appointments"],
-    queryFn: async () => {
-      const me = await base44.auth.me();
-      return base44.entities.Appointment.filter({ patient_id: me.id }, "-appointment_date");
-    },
+    queryFn: async () => sortByAppointmentDate(await appointmentsApi.listMine()),
     staleTime: 0,
     refetchOnWindowFocus: true,
+    refetchInterval: (query) => {
+      const rows = query.state.data;
+      if (!Array.isArray(rows)) return false;
+      return rows.some((a) => String(a.status || "").toLowerCase() === "awaiting_payment") ? 1500 : false;
+    },
   });
 
   useEffect(() => {
@@ -46,47 +70,82 @@ export default function PatientAppointments() {
     });
   }, [qc]);
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const payment = params.get("payment");
+    if (!payment) return;
+
+    const appointmentId = params.get("appointment_id");
+
+    const finish = async () => {
+      if (payment === "success" && appointmentId) {
+        try {
+          const updated = await appointmentsApi.syncDepositPayment(appointmentId);
+          patchAppointmentInCache(qc, ["patient-appointments"], appointmentId, {
+            ...updated,
+            status: "confirmed",
+            payment_status: "paid",
+          });
+          broadcastAppointmentsRefresh();
+          setPaymentNotice({ type: "success", message: "Deposit received. Your appointment is confirmed." });
+        } catch (err) {
+          console.warn("[appointments] deposit sync after redirect:", err?.message || err);
+          setPaymentNotice({
+            type: "success",
+            message: "Payment received — refreshing appointment status…",
+          });
+          void qc.refetchQueries({ queryKey: ["patient-appointments"] });
+        }
+      } else if (payment === "cancelled") {
+        setPaymentNotice({ type: "cancelled", message: "Payment was cancelled. You can try again when ready." });
+      }
+
+      params.delete("payment");
+      params.delete("appointment_id");
+      const nextSearch = params.toString();
+      const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ""}`;
+      window.history.replaceState({}, "", nextUrl);
+    };
+
+    void finish();
+  }, [qc]);
+
   const { data: records = [] } = useQuery({
     queryKey: ["my-treatment-records"],
-    queryFn: async () => {
-      const me = await base44.auth.me();
-      return base44.entities.TreatmentRecord.filter({ patient_id: me.id }, "-treatment_date");
-    },
+    queryFn: () => treatmentRecordsApi.listMine(),
   });
 
   const { data: reviews = [] } = useQuery({
     queryKey: ["my-reviews"],
-    queryFn: async () => {
-      const me = await base44.auth.me();
-      return base44.entities.Review.filter({ patient_id: me.id });
-    },
+    queryFn: () => reviewsApi.listMine(),
   });
 
   const cancel = useMutation({
-    mutationFn: (id) => base44.entities.Appointment.update(id, { status: "cancelled", cancellation_reason: "Cancelled by patient" }),
+    mutationFn: (id) =>
+      appointmentsApi.update(id, { status: "cancelled", cancellation_reason: "Cancelled by patient" }),
     onSuccess: () => qc.invalidateQueries(["patient-appointments"]),
   });
 
   const payDeposit = useMutation({
     mutationFn: async (appointmentId) => {
-      try {
-        const res = await base44.functions.invoke("createAppointmentPayment", { appointment_id: appointmentId });
-        if (res.data?.sessionUrl) {
-          window.location.href = res.data.sessionUrl;
-        } else if (res.data?.error) {
-          alert(`Payment unavailable: ${res.data.error}`);
-        }
-      } catch (error) {
-        alert('Payment system temporarily unavailable. Please contact the provider directly.');
-        console.error('Payment error:', error);
+      const result = await appointmentsApi.createDepositCheckout(appointmentId);
+      const checkoutUrl = result?.sessionUrl || result?.checkout_url;
+      if (checkoutUrl) {
+        redirectToStripeCheckout(checkoutUrl);
+        return;
       }
+      throw new Error(result?.error || "Payment system did not return a checkout URL.");
+    },
+    onError: (error) => {
+      alert(error?.message || "Payment system temporarily unavailable. Please contact the provider directly.");
+      console.error("Payment error:", error);
     },
   });
 
   const submitReview = useMutation({
     mutationFn: async () => {
-      const me = await base44.auth.me();
-      await base44.entities.Review.create({
+      const me = await sessionApi.getMe();
+      await reviewsApi.create({
         patient_id: me.id,
         patient_name: me.full_name,
         provider_id: reviewDialog.provider_id,
@@ -116,6 +175,19 @@ export default function PatientAppointments() {
         <h2 className="text-2xl font-bold text-slate-900">My Appointments</h2>
         <p className="text-slate-500 text-sm mt-1">{upcoming.length} upcoming</p>
       </div>
+
+      {paymentNotice && (
+        <div
+          className="rounded-xl px-4 py-3 text-sm"
+          style={
+            paymentNotice.type === "success"
+              ? { background: "rgba(74,222,128,0.12)", border: "1px solid rgba(74,222,128,0.35)", color: "#166534" }
+              : { background: "rgba(254,226,226,0.85)", border: "1px solid rgba(220,38,38,0.35)", color: "#991b1b" }
+          }
+        >
+          {paymentNotice.message}
+        </div>
+      )}
 
       <Tabs defaultValue="upcoming">
         <TabsList>
@@ -154,8 +226,8 @@ export default function PatientAppointments() {
 
                     <div className="flex gap-2 flex-wrap">
                       {a.status === "awaiting_payment" && (
-                        <Button size="sm" style={{ background: "#7B8EC8", color: "#fff" }} onClick={() => payDeposit.mutate(a.id)} className="gap-1">
-                          <DollarSign className="w-3.5 h-3.5" /> Pay Deposit
+                        <Button size="sm" style={{ background: "#7B8EC8", color: "#fff" }} onClick={() => payDeposit.mutate(a.id)} disabled={payDeposit.isPending} className="gap-1">
+                          <DollarSign className="w-3.5 h-3.5" /> {payDeposit.isPending ? "Redirecting…" : `Pay Deposit${a.deposit_amount ? ` ($${a.deposit_amount})` : ""}`}
                         </Button>
                       )}
                       {a.status === "awaiting_consent" && (

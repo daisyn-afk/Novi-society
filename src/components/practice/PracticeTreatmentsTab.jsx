@@ -51,7 +51,7 @@ const INJECTABLE_SPLITS = [
 
 function TagInput({ values = [], onChange, placeholder, suggestions = [] }) {
   const [input, setInput] = useState("");
-  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [focused, setFocused] = useState(false);
 
   const add = (val) => {
     const trimmed = val.trim();
@@ -59,45 +59,77 @@ function TagInput({ values = [], onChange, placeholder, suggestions = [] }) {
       onChange([...values, trimmed]);
     }
     setInput("");
-    setShowSuggestions(false);
   };
 
   const remove = (i) => onChange(values.filter((_, idx) => idx !== i));
 
-  const filtered = suggestions.filter(s => !values.includes(s) && s.toLowerCase().includes(input.toLowerCase()));
+  const filtered = suggestions.filter(
+    (s) => !values.includes(s) && s.toLowerCase().includes(input.toLowerCase())
+  );
+  const showPicker = focused && filtered.length > 0;
 
   return (
-    <div>
-      <div className="flex flex-wrap gap-1.5 mb-2">
-        {values.map((v, i) => (
-          <span key={i} className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-full font-medium"
-            style={{ background: "rgba(123,142,200,0.15)", color: "#4a5f9a", border: "1px solid rgba(123,142,200,0.25)" }}>
-            {v}
-            <button onClick={() => remove(i)} className="hover:opacity-60"><X className="w-2.5 h-2.5" /></button>
-          </span>
-        ))}
-      </div>
-      <div className="relative">
-        <input
-          value={input}
-          onChange={e => { setInput(e.target.value); setShowSuggestions(true); }}
-          onFocus={() => setShowSuggestions(true)}
-          onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
-          onKeyDown={e => { if (e.key === "Enter" && input) { e.preventDefault(); add(input); } }}
-          placeholder={placeholder}
-          className="w-full px-3 py-1.5 rounded-lg text-sm outline-none"
-          style={GLASS_INPUT}
-        />
-        {showSuggestions && filtered.length > 0 && (
-          <div className="absolute top-full left-0 right-0 z-20 mt-1 rounded-xl overflow-hidden shadow-lg" style={{ background: "rgba(255,255,255,0.97)", border: "1px solid rgba(30,37,53,0.1)" }}>
-            {filtered.slice(0, 6).map(s => (
-              <button key={s} onMouseDown={() => add(s)} className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 transition-colors" style={{ color: "#1e2535" }}>
-                <Plus className="inline w-3 h-3 mr-1.5 opacity-50" />{s}
+    <div className="space-y-2">
+      {values.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {values.map((v, i) => (
+            <span
+              key={v}
+              className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-full font-medium"
+              style={{
+                background: "rgba(123,142,200,0.15)",
+                color: "#4a5f9a",
+                border: "1px solid rgba(123,142,200,0.25)",
+              }}
+            >
+              {v}
+              <button type="button" onClick={() => remove(i)} className="hover:opacity-60">
+                <X className="w-2.5 h-2.5" />
               </button>
-            ))}
-          </div>
-        )}
-      </div>
+            </span>
+          ))}
+        </div>
+      )}
+      <input
+        value={input}
+        onChange={(e) => setInput(e.target.value)}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setTimeout(() => setFocused(false), 200)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && input.trim()) {
+            e.preventDefault();
+            add(input);
+          }
+        }}
+        placeholder={placeholder}
+        className="w-full px-3 py-1.5 rounded-lg text-sm outline-none"
+        style={GLASS_INPUT}
+      />
+      {showPicker && (
+        <div className="flex flex-wrap gap-1.5 pt-0.5">
+          {filtered.map((s) => (
+            <button
+              type="button"
+              key={s}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => add(s)}
+              className="text-xs px-2.5 py-1.5 rounded-full font-medium transition-colors hover:opacity-80"
+              style={{
+                background: "rgba(255,255,255,0.9)",
+                color: "#1e2535",
+                border: "1px solid rgba(123,142,200,0.35)",
+              }}
+            >
+              + {s}
+            </button>
+          ))}
+        </div>
+      )}
+      {focused && filtered.length === 0 && input.trim() && (
+        <p className="text-[11px]" style={{ color: "rgba(30,37,53,0.45)" }}>
+          Press Enter to add &ldquo;{input.trim()}&rdquo;
+        </p>
+      )}
     </div>
   );
 }
@@ -110,7 +142,7 @@ function SubServiceCard({ sub, data, onChange }) {
   const update = (field, val) => onChange({ ...data, [field]: val });
 
   return (
-    <div className="rounded-2xl overflow-hidden" style={{ ...GLASS, border: isLive ? "1.5px solid rgba(200,230,60,0.45)" : "1px solid rgba(255,255,255,0.75)" }}>
+    <div className="rounded-2xl" style={{ ...GLASS, border: isLive ? "1.5px solid rgba(200,230,60,0.45)" : "1px solid rgba(255,255,255,0.75)" }}>
       {/* Header */}
       <div className="flex items-center justify-between px-5 py-3.5" style={{ borderBottom: "1px solid rgba(30,37,53,0.06)", background: "rgba(255,255,255,0.3)" }}>
         <div className="flex items-center gap-2.5">
@@ -279,7 +311,7 @@ function StandardServiceCard({ st, data, onChange }) {
   const update = (field, val) => onChange({ ...data, [field]: val });
 
   return (
-    <div className="rounded-2xl overflow-hidden" style={{ ...GLASS, border: isLive ? "1.5px solid rgba(200,230,60,0.45)" : "1px solid rgba(255,255,255,0.75)" }}>
+    <div className="rounded-2xl" style={{ ...GLASS, border: isLive ? "1.5px solid rgba(200,230,60,0.45)" : "1px solid rgba(255,255,255,0.75)" }}>
       <div className="flex items-center justify-between px-5 py-3.5" style={{ borderBottom: "1px solid rgba(30,37,53,0.06)", background: "rgba(255,255,255,0.3)" }}>
         <div className="flex items-center gap-2.5 flex-wrap">
           <p className="font-bold text-sm" style={{ color: "#1e2535" }}>{st.name}</p>

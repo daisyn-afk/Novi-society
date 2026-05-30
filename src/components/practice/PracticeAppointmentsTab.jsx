@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
+import { appointmentsApi } from "@/api/appointmentsApi";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -211,13 +212,26 @@ function ApptDetail({ appt, treatmentRecords, onConfirm, onCancel, onComplete, o
           </div>
         )}
         {appt.status === "requested" && (
-          <div className="grid grid-cols-2 gap-2">
-            <Button className="w-full gap-1.5" style={{ background: "#FA6F30", color: "#fff" }} onClick={onConfirm}>
-              <CheckCircle className="w-4 h-4" />Confirm
+          <div className="flex flex-col gap-2">
+            <Button
+              className="w-full gap-1.5 h-auto min-h-10 py-2.5 whitespace-normal text-center leading-snug"
+              style={{ background: "#FA6F30", color: "#fff" }}
+              onClick={onConfirm}
+            >
+              <CheckCircle className="w-4 h-4 flex-shrink-0" />
+              Confirm &amp; Request Payment
             </Button>
             <Button className="w-full gap-1.5" variant="outline" onClick={onCancel}>
               <X className="w-4 h-4" />Decline
             </Button>
+          </div>
+        )}
+        {appt.status === "awaiting_payment" && (
+          <div
+            className="px-3 py-2.5 rounded-xl text-xs font-semibold text-center"
+            style={{ background: "rgba(200,230,60,0.15)", border: "1px solid rgba(200,230,60,0.35)", color: "#4a6b10" }}
+          >
+            Awaiting patient deposit{appt.deposit_amount ? ` ($${appt.deposit_amount})` : ""}
           </div>
         )}
         {appt.status === "confirmed" && (
@@ -231,7 +245,7 @@ function ApptDetail({ appt, treatmentRecords, onConfirm, onCancel, onComplete, o
           </div>
         )}
         <div className="grid grid-cols-2 gap-2">
-          {(["requested", "confirmed"].includes(appt.status)) && appt.requires_gfe === true && (
+          {(["requested", "awaiting_payment", "confirmed"].includes(appt.status)) && appt.requires_gfe === true && (
             <Button className="w-full gap-1.5" style={{ background: "rgba(123,142,200,0.12)", color: "#7B8EC8", border: "1px solid rgba(123,142,200,0.3)" }}
               onClick={onSendGFE} disabled={gfeSending || gfeStatus === "approved"}>
               <ShieldCheck className="w-4 h-4" />{gfeSending ? "Sending…" : gfeStatus === "pending" ? "Resend GFE" : "Send GFE"}
@@ -290,28 +304,27 @@ export default function PracticeAppointmentsTab({ appointments, initialFilter = 
   });
 
   const confirmAppt = useMutation({
-    mutationFn: async ({ id, appt }) => {
-      await base44.entities.Appointment.update(id, {
-        status: "confirmed",
-        confirmed_at: new Date().toISOString(),
-        ...(confirmTime ? { appointment_time: confirmTime } : {}),
-      });
-      if (appt?.patient_id) {
-        await base44.entities.Notification.create({
-          user_id: appt.patient_id,
-          user_email: appt.patient_email,
-          type: "general",
-          message: `Your appointment for ${appointmentServiceLabel(appt)} on ${formatAppointmentDate(appt.appointment_date)} has been confirmed.`,
-          link_page: "PatientAppointments",
-        }).catch(() => {});
+    mutationFn: async ({ id }) => {
+      if (confirmTime) {
+        await appointmentsApi.update(id, { appointment_time: confirmTime });
       }
+      await appointmentsApi.requestDeposit(id);
     },
     onSuccess: () => {
-      qc.invalidateQueries(["my-appointments"]);
+      qc.invalidateQueries({ queryKey: ["my-appointments"] });
       setConfirmDialog({ open: false, appt: null });
       setConfirmTime("");
       setDetailOpen(false);
       setFilter("upcoming");
+      toast({
+        title: "Payment requested",
+        description: "The patient was notified to pay their deposit.",
+        duration: 6000,
+      });
+    },
+    onError: (err) => {
+      const msg = String(err?.message || "Could not request deposit payment.").replace(/^\[lovable-provider\]\s*\d+\s+/, "");
+      toast({ title: "Could not confirm", description: msg, variant: "destructive", duration: 8000 });
     },
   });
 
@@ -483,7 +496,7 @@ export default function PracticeAppointmentsTab({ appointments, initialFilter = 
   };
 
   const tabs = [
-    { key: "upcoming", label: "Upcoming", count: appointments.filter(a => ["confirmed","requested"].includes(a.status)).length },
+    { key: "upcoming", label: "Upcoming", count: appointments.filter(a => ["confirmed","requested","awaiting_payment","awaiting_consent"].includes(a.status)).length },
     { key: "today", label: "Today", count: todayAppts.length },
     { key: "requests", label: "Requests", count: pendingReqs.length },
     { key: "completed", label: "Completed", count: null },
@@ -760,9 +773,12 @@ export default function PracticeAppointmentsTab({ appointments, initialFilter = 
       {/* ── Confirm dialog ── */}
       <Dialog open={confirmDialog.open} onOpenChange={v => setConfirmDialog(d => ({ ...d, open: v }))}>
         <DialogContent className="max-w-sm">
-          <DialogHeader><DialogTitle style={{ fontFamily: "'DM Serif Display', serif" }}>Confirm Appointment</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle style={{ fontFamily: "'DM Serif Display', serif" }}>Confirm & Request Payment</DialogTitle></DialogHeader>
           <div className="space-y-3 pt-1">
             <p className="text-sm" style={{ color: "rgba(30,37,53,0.6)" }}>{appointmentServiceLabel(confirmDialog.appt)} · {confirmDialog.appt?.patient_name} · {formatAppointmentDate(confirmDialog.appt?.appointment_date)}</p>
+            <p className="text-xs rounded-xl px-3 py-2" style={{ background: "rgba(250,111,48,0.08)", color: "rgba(30,37,53,0.65)" }}>
+              The patient will receive a notification to pay their booking deposit before the appointment is fully confirmed.
+            </p>
             <div>
               <label className="text-xs font-semibold mb-1.5 block" style={{ color: "rgba(30,37,53,0.55)" }}>Set appointment time (optional)</label>
               <input type="time" className="w-full border rounded-xl px-3 py-2.5 text-sm outline-none" value={confirmTime} onChange={e => setConfirmTime(e.target.value)}
@@ -771,8 +787,8 @@ export default function PracticeAppointmentsTab({ appointments, initialFilter = 
             <div className="flex gap-2">
               <Button variant="outline" className="flex-1" onClick={() => setConfirmDialog({ open: false, appt: null })}>Back</Button>
               <Button className="flex-1 gap-1.5" style={{ background: "#FA6F30", color: "#fff" }}
-                onClick={() => confirmAppt.mutate({ id: confirmDialog.appt?.id, appt: confirmDialog.appt })} disabled={confirmAppt.isPending}>
-                <CheckCircle className="w-4 h-4" />Confirm
+                onClick={() => confirmAppt.mutate({ id: confirmDialog.appt?.id })} disabled={confirmAppt.isPending}>
+                <CheckCircle className="w-4 h-4" />{confirmAppt.isPending ? "Sending…" : "Send Payment Link"}
               </Button>
             </div>
           </div>
