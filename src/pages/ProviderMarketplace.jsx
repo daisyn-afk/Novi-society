@@ -25,6 +25,7 @@ import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { format } from "date-fns";
 import { buildSupplierUsageStats, buildMonthlyTreatmentCounts, buildRecentTreatmentLines, formatTreatmentCountLabel } from "@/lib/supplierUsage";
+import { toExternalUrl } from "@/lib/utils";
 
 const CATEGORY_LABELS = {
   injectables: "Injectables",
@@ -1056,9 +1057,9 @@ function ApprovedSupplierDetailView({
 
           {mfr.website_url && (
             <a
-              href={mfr.website_url}
+              href={toExternalUrl(mfr.website_url)}
               target="_blank"
-              rel="noreferrer"
+              rel="noopener noreferrer"
               className="inline-flex items-center gap-1.5 text-xs font-semibold hover:underline"
               style={{ color: "#7B8EC8" }}
             >
@@ -1167,8 +1168,13 @@ function SupplierDetailView({ mfr, onBack, onApply, application, me, treatmentRe
             ))}
           </div>
           {mfr.website_url && (
-            <a href={mfr.website_url} target="_blank" rel="noreferrer"
-              className="inline-flex items-center gap-1.5 text-xs mt-3 hover:underline" style={{ color: "#7B8EC8" }}>
+            <a
+              href={toExternalUrl(mfr.website_url)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 text-xs mt-3 hover:underline"
+              style={{ color: "#7B8EC8" }}
+            >
               <Globe className="w-3.5 h-3.5" /> {mfr.website_url} <ExternalLink className="w-3 h-3" />
             </a>
           )}

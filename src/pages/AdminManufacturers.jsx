@@ -13,6 +13,7 @@ import SupplierFormDialog from "@/components/admin/manufacturers/SupplierFormDia
 import {
   CATEGORY_LABELS,
 } from "@/components/admin/manufacturers/constants";
+import { toExternalUrl } from "@/lib/utils";
 
 const PENDING_APPLICATION_STATUSES = new Set([
   "submitted",
@@ -309,9 +310,9 @@ export default function AdminManufacturers() {
                           <p className="text-xs text-slate-500">{m.account_rep_email}</p>
                           {m.website_url && (
                             <a
-                              href={m.website_url}
+                              href={toExternalUrl(m.website_url)}
                               target="_blank"
-                              rel="noreferrer"
+                              rel="noopener noreferrer"
                               className="text-xs text-blue-600 hover:underline flex items-center gap-1 mt-1"
                             >
                               <Globe className="w-3 h-3" />
