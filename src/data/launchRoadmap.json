@@ -170,6 +170,12 @@
           "navigate_params": "?tab=profile"
         },
         {
+          "id": "stripe_connected",
+          "label": "Is Stripe Connected",
+          "desc": "Required to collect patient deposits and card payments. Connect your Stripe account so NOVI can process bookings.",
+          "priority": 255
+        },
+        {
           "id": "roi_calculator",
           "label": "ROI Calculator",
           "desc": "Service pricing engine. Plug in product cost, time, and overhead to know what to charge.",
