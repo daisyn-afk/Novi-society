@@ -7,7 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { HorizontalScrollAffordance } from "@/components/ui/horizontal-scroll-affordance";
 import ProviderSalesLock from "@/components/ProviderSalesLock";
 import { useProviderAccess } from "@/components/useProviderAccess";
-import RepContactDialog from "@/components/provider/RepContactDialog";
+import { openRepMailto } from "@/lib/repMailto";
 import ScheduleCallDialog from "@/components/provider/ScheduleCallDialog";
 import UpcomingRepCalls from "@/components/provider/UpcomingRepCalls";
 import RepInfoModal from "@/components/provider/RepInfoModal";
@@ -465,7 +465,6 @@ function GlassCard({ children, className = "", style = {}, onClick }) {
 }
 
 function ApprovedAccountHub({ mfr, me, className = "", layout = "default", applicationId = null }) {
-  const [contactOpen, setContactOpen] = useState(false);
   const [orderOpen, setOrderOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [repModalOpen, setRepModalOpen] = useState(false);
@@ -511,7 +510,14 @@ function ApprovedAccountHub({ mfr, me, className = "", layout = "default", appli
       icon: Mail,
       color: "#2D6B7F",
       bg: "rgba(45,107,127,0.1)",
-      onClick: () => setContactOpen(true),
+      onClick: () =>
+        openRepMailto({
+          repEmail: rep.rep_email,
+          providerEmail: me?.email,
+          mfrName: mfr?.name,
+          me,
+          onMissingRepEmail: () => setRepModalOpen(true),
+        }),
     },
   ];
 
@@ -578,13 +584,6 @@ function ApprovedAccountHub({ mfr, me, className = "", layout = "default", appli
           </p>
         )}
       </div>
-      <RepContactDialog
-        open={contactOpen}
-        onClose={() => setContactOpen(false)}
-        manufacturer={mfr}
-        me={me}
-        savedRep={savedRep}
-      />
       <ScheduleCallDialog
         open={scheduleOpen}
         onClose={() => setScheduleOpen(false)}
@@ -612,12 +611,12 @@ function ApprovedAccountHub({ mfr, me, className = "", layout = "default", appli
 }
 
 function MyAccountCard({ app, mfr, me, savedRep }) {
-  const [contactOpen, setContactOpen] = useState(false);
   const [orderOpen, setOrderOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [repModalOpen, setRepModalOpen] = useState(false);
 
   const repContact = getSavedRepContact(savedRep);
+  const rep = resolveRepDisplay(savedRep, mfr);
   const activityDate = app.approved_at || app.submitted_at;
   const displayDate = activityDate ? format(new Date(activityDate), "MMM d") : "—";
 
@@ -684,7 +683,15 @@ function MyAccountCard({ app, mfr, me, savedRep }) {
             </button>
             <button
               type="button"
-              onClick={() => setContactOpen(true)}
+              onClick={() =>
+                openRepMailto({
+                  repEmail: rep.rep_email,
+                  providerEmail: me?.email,
+                  mfrName: mfr?.name,
+                  me,
+                  onMissingRepEmail: () => setRepModalOpen(true),
+                })
+              }
               className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg transition-opacity hover:opacity-85"
               style={actionBtnStyle("#2D6B7F")}
             >
@@ -754,13 +761,6 @@ function MyAccountCard({ app, mfr, me, savedRep }) {
 
       {mfr && (
         <>
-          <RepContactDialog
-            open={contactOpen}
-            onClose={() => setContactOpen(false)}
-            manufacturer={mfr}
-            me={me}
-            savedRep={savedRep}
-          />
           <ScheduleCallDialog
             open={scheduleOpen}
             onClose={() => setScheduleOpen(false)}
