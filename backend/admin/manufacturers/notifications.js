@@ -228,13 +228,190 @@ function buildSummaryBullets({ application, manufacturer }) {
   return lines;
 }
 
-function buildEmailHtml({ greetingName, title, intro, summaryLines, ctaLabel, ctaUrl }) {
+function normalizeOrderItemsForEmail(orderItems) {
+  if (Array.isArray(orderItems)) return orderItems;
+  if (typeof orderItems === "string") {
+    try {
+      const parsed = JSON.parse(orderItems);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function buildOrderItemsHighlightHtml(orderItems = []) {
+  const items = normalizeOrderItemsForEmail(orderItems);
+  if (!items.length) return "";
+
+  const itemRows = items
+    .map((item, index) => {
+      const qty = item.quantity ?? "—";
+      const unit = escapeHtml(item.unit || "units");
+      const name = escapeHtml(item.product_name || "Product");
+      const notes = item.notes
+        ? `<p style="margin:6px 0 0;font-size:12px;color:#5a6a4a;line-height:1.5;font-style:italic">${escapeHtml(item.notes)}</p>`
+        : "";
+      const rowBorder =
+        index < items.length - 1
+          ? "border-bottom:1px solid #C8E63C;"
+          : "";
+
+      return `
+      <tr>
+        <td bgcolor="#F7FBE8" style="padding:14px 16px;${rowBorder}background-color:#F7FBE8;">
+          <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+            <tr>
+              <td width="28" valign="top" style="padding-right:10px;font-size:13px;font-weight:700;color:#4a6b10;vertical-align:top;">
+                ${index + 1}.
+              </td>
+              <td valign="top" style="vertical-align:top;">
+                <p style="margin:0;font-size:15px;font-weight:700;color:#1e2535;line-height:1.4">${name}</p>
+                ${notes}
+              </td>
+              <td valign="top" align="right" style="vertical-align:top;text-align:right;white-space:nowrap;padding-left:16px;">
+                <table cellpadding="0" cellspacing="0" role="presentation" align="right">
+                  <tr>
+                    <td bgcolor="#1e2535" style="background-color:#1e2535;border-radius:999px;padding:6px 14px;font-size:12px;font-weight:700;color:#C8E63C;line-height:1.2;">
+                      ${escapeHtml(String(qty))} ${unit}
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>`;
+    })
+    .join("");
+
+  return `
+    <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin:24px 0 8px;border:2px solid #C8E63C;border-collapse:collapse;background-color:#F4F9E0;">
+      <tr>
+        <td bgcolor="#C8E63C" style="padding:12px 16px;background-color:#C8E63C;border-bottom:2px solid #A8C830;">
+          <p style="margin:0;font-size:12px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#1e2535;font-family:'DM Sans',Helvetica,Arial,sans-serif">
+            &#128230; Order Items
+          </p>
+        </td>
+      </tr>
+      ${itemRows}
+    </table>`;
+}
+
+function buildProviderDetailsHtml(lines = []) {
+  const rows = lines
+    .map((line) => {
+      const colonIdx = line.indexOf(":");
+      if (colonIdx === -1) {
+        return `<tr><td colspan="2" style="padding:4px 0;font-size:14px;color:#374151;line-height:1.6">${escapeHtml(line)}</td></tr>`;
+      }
+      const label = line.slice(0, colonIdx).trim();
+      const value = line.slice(colonIdx + 1).trim();
+      const isEmail = label.toLowerCase().includes("email") && value.includes("@");
+      const valueHtml = isEmail
+        ? `<a href="mailto:${escapeHtml(value)}" style="color:#2D6B7F;text-decoration:none;font-weight:600">${escapeHtml(value)}</a>`
+        : `<span style="color:#1e2535;font-weight:600">${escapeHtml(value)}</span>`;
+      return `
+      <tr>
+        <td style="padding:5px 12px 5px 0;font-size:13px;color:#6B7280;vertical-align:top;white-space:nowrap;width:1%;">${escapeHtml(label)}</td>
+        <td style="padding:5px 0;font-size:14px;vertical-align:top;line-height:1.5;">${valueHtml}</td>
+      </tr>`;
+    })
+    .join("");
+
+  if (!rows) return "";
+
+  return `
+    <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin:0 0 4px;border:1px solid #E5E7EB;border-collapse:collapse;background-color:#FAFAFA;">
+      <tr>
+        <td bgcolor="#F3F4F6" style="padding:10px 16px;background-color:#F3F4F6;border-bottom:1px solid #E5E7EB;">
+          <p style="margin:0;font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#6B7280;font-family:'DM Sans',Helvetica,Arial,sans-serif">
+            Provider Details
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:12px 16px;">
+          <table width="100%" cellpadding="0" cellspacing="0" role="presentation">${rows}</table>
+        </td>
+      </tr>
+    </table>`;
+}
+
+function buildOrderRequestEmailHtml({
+  greetingName,
+  title,
+  intro,
+  providerLines = [],
+  orderItems = [],
+  message = "",
+}) {
+  const safeGreeting = escapeHtml(greetingName || "Hi there");
+  const safeTitle = escapeHtml(title);
+  const safeIntro = escapeHtml(intro);
+  const providerBlock = buildProviderDetailsHtml(providerLines);
+  const orderBlock = buildOrderItemsHighlightHtml(orderItems);
+  const messageBlock = buildMessageHighlightHtml(message);
+
+  return `
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+<body style="margin:0;padding:0;background:#f5f3ef;font-family:'DM Sans',Helvetica,Arial,sans-serif">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f3ef;padding:40px 0">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
+        <tr><td style="background:linear-gradient(135deg,#2D6B7F 0%,#7B8EC8 55%,#C8E63C 100%);padding:36px 40px;text-align:center;border-radius:16px 16px 0 0">
+          <img src="${escapeHtml(noviEmailLogoUrl)}" alt="NOVI Society" style="width:160px;height:auto" />
+        </td></tr>
+        <tr><td style="background:#fff;padding:40px;border-radius:0 0 16px 16px">
+          <p style="margin:0 0 18px;font-size:16px;color:#374151">${safeGreeting},</p>
+          <p style="margin:0 0 14px;font-size:18px;color:#1e2535;font-weight:700">${safeTitle}</p>
+          <p style="margin:0 0 20px;font-size:15px;color:#374151;line-height:1.6">${safeIntro}</p>
+          ${providerBlock}
+          ${orderBlock}
+          ${messageBlock}
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+}
+
+function buildMessageHighlightHtml(message = "") {
+  const trimmed = String(message || "").trim();
+  if (!trimmed) return "";
+  return `
+    <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin:20px 0;border:1px solid #E5E7EB;border-collapse:separate;border-spacing:0;background-color:#F9FAFB;">
+      <tr>
+        <td style="padding:12px 14px;font-family:'DM Sans',Helvetica,Arial,sans-serif">
+          <p style="margin:0 0 6px;font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#6B7280">Message</p>
+          <p style="margin:0;font-size:14px;color:#374151;line-height:1.6">${escapeHtml(trimmed)}</p>
+        </td>
+      </tr>
+    </table>`;
+}
+
+function buildEmailHtml({
+  greetingName,
+  title,
+  intro,
+  summaryLines,
+  ctaLabel,
+  ctaUrl,
+  orderItems,
+  message,
+}) {
   const safeGreeting = escapeHtml(greetingName || "Hi there");
   const safeTitle = escapeHtml(title);
   const safeIntro = escapeHtml(intro);
   const bullets = summaryLines
     .map((line) => `<li style="margin:0 0 8px">${escapeHtml(line)}</li>`)
     .join("");
+  const orderBlock = buildOrderItemsHighlightHtml(orderItems || []);
+  const messageBlock = buildMessageHighlightHtml(message);
   const ctaBlock = ctaUrl
     ? `<p style="margin:24px 0 0"><a href="${escapeHtml(ctaUrl)}" style="display:inline-block;background:#1e2535;color:#C8E63C;padding:12px 22px;border-radius:10px;font-weight:700;text-decoration:none">${escapeHtml(ctaLabel || "Open NOVI")}</a></p>`
     : "";
@@ -254,6 +431,8 @@ function buildEmailHtml({ greetingName, title, intro, summaryLines, ctaLabel, ct
           <p style="margin:0 0 14px;font-size:18px;color:#1e2535;font-weight:700">${safeTitle}</p>
           <p style="margin:0 0 18px;font-size:15px;color:#374151;line-height:1.6">${safeIntro}</p>
           <ul style="margin:0;padding-left:20px;color:#374151;font-size:14px;line-height:1.7">${bullets}</ul>
+          ${orderBlock}
+          ${messageBlock}
           ${ctaBlock}
         </td></tr>
       </table>
@@ -328,15 +507,6 @@ export async function notifyRepOfManufacturerApplication({
   });
 }
 
-function buildOrderItemLines(orderItems = []) {
-  return orderItems.map((item) => {
-    const qty = item.quantity ?? "—";
-    const unit = item.unit || "units";
-    const notes = item.notes ? ` (${item.notes})` : "";
-    return `${item.product_name}: ${qty} ${unit}${notes}`;
-  });
-}
-
 export async function notifyRepOfContactRequest({
   orderRequest,
   manufacturer,
@@ -373,10 +543,6 @@ export async function notifyRepOfContactRequest({
     ? [
         ...basicProviderLines,
         "Request type: Product order",
-        ...(buildOrderItemLines(orderRequest?.order_items || []).length
-          ? ["Order items:"]
-          : []),
-        ...buildOrderItemLines(orderRequest?.order_items || []),
       ]
     : [
         ...basicProviderLines,
@@ -387,33 +553,63 @@ export async function notifyRepOfContactRequest({
     ? `${providerName} submitted a product order request through NOVI. Basic contact details and order lines are below — reply directly to confirm pricing and fulfillment.`
     : `${providerName} sent a message through the NOVI supplier marketplace. Reply directly to follow up.`;
 
-  const messageBlock = orderRequest?.message
-    ? [`Message: ${orderRequest.message}`]
+  const orderItems = isOrder
+    ? normalizeOrderItemsForEmail(
+        orderRequest?.order_items?.length
+          ? orderRequest.order_items
+          : orderRequest?.orderItems
+      )
     : [];
+  const providerMessage = orderRequest?.message || "";
+  const messageSummary = !isOrder && providerMessage
+    ? [`Message: ${providerMessage}`]
+    : [];
+
+  const orderEmailHtml = isOrder
+    ? buildOrderRequestEmailHtml({
+        greetingName: repGreetingName ? `Hi ${repGreetingName}` : "Hi there",
+        title: subject,
+        intro,
+        providerLines: summary,
+        orderItems,
+        message: providerMessage,
+      })
+    : null;
 
   const repSent = await sendResendEmail({
     to: repEmail,
     subject,
-    html: buildEmailHtml({
+    html: orderEmailHtml || buildEmailHtml({
       greetingName: repGreetingName ? `Hi ${repGreetingName}` : "Hi there",
       title: subject,
       intro,
-      summaryLines: [...summary, ...messageBlock],
+      summaryLines: [...summary, ...messageSummary],
     }),
   });
 
   let providerSent = false;
   const copyEmail = String(providerEmail || orderRequest?.provider_email || "").trim();
   if (copyEmail) {
+    const providerCopyHtml = isOrder
+      ? buildOrderRequestEmailHtml({
+          greetingName: providerName ? `Hi ${providerName}` : "Hi there",
+          title: "Your request was sent",
+          intro: `A copy of your order request to ${mfrName} is below. Their rep team typically responds within 3–5 business days.`,
+          providerLines: summary,
+          orderItems,
+          message: providerMessage,
+        })
+      : buildEmailHtml({
+          greetingName: providerName ? `Hi ${providerName}` : "Hi there",
+          title: "Your request was sent",
+          intro: `A copy of your message to ${mfrName} is below. Their rep team typically responds within 3–5 business days.`,
+          summaryLines: [...summary, ...messageSummary],
+        });
+
     providerSent = await sendResendEmail({
       to: copyEmail,
       subject: `[Copy] ${subject}`,
-      html: buildEmailHtml({
-        greetingName: providerName ? `Hi ${providerName}` : "Hi there",
-        title: "Your request was sent",
-        intro: `A copy of your ${isOrder ? "order request" : "message"} to ${mfrName} is below. Their rep team typically responds within 3–5 business days.`,
-        summaryLines: [...summary, ...messageBlock],
-      }),
+      html: providerCopyHtml,
     });
   }
 
