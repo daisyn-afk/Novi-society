@@ -4,6 +4,7 @@ import { base44 } from "@/api/base44Client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { HorizontalScrollAffordance } from "@/components/ui/horizontal-scroll-affordance";
 import {
   Plus, Pencil, Trash2, Building2, ChevronDown, ChevronUp,
   Star, Globe, Mail, Package, Eye, EyeOff, Search,
@@ -102,7 +103,7 @@ export default function AdminManufacturers() {
   });
 
   return (
-    <div className="space-y-6 max-w-6xl w-full min-w-0 overflow-x-hidden">
+    <div className="space-y-6 max-w-6xl w-full min-w-0">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <h2 className="text-2xl font-bold text-slate-900">Manufacturer Marketplace</h2>
@@ -131,22 +132,24 @@ export default function AdminManufacturers() {
       </div>
 
       <Tabs value={viewTab} onValueChange={setViewTab}>
-        <TabsList className="mb-4 w-full overflow-x-auto flex justify-start">
-          <TabsTrigger value="manufacturers" className="whitespace-nowrap">
-            Manufacturers ({manufacturers.length})
-          </TabsTrigger>
-          <TabsTrigger value="applications" className="whitespace-nowrap">
-            Applications
-            {pendingApps.length > 0 && (
-              <span className="ml-1.5 bg-red-500 text-white text-xs rounded-full px-1.5 py-0.5">
-                {pendingApps.length}
-              </span>
-            )}
-          </TabsTrigger>
-          <TabsTrigger value="inventory" className="whitespace-nowrap">
-            Provider Inventory
-          </TabsTrigger>
-        </TabsList>
+        <HorizontalScrollAffordance className="mb-4">
+          <TabsList className="w-max flex justify-start">
+            <TabsTrigger value="manufacturers" className="whitespace-nowrap">
+              Manufacturers ({manufacturers.length})
+            </TabsTrigger>
+            <TabsTrigger value="applications" className="whitespace-nowrap">
+              Applications
+              {pendingApps.length > 0 && (
+                <span className="ml-1.5 bg-red-500 text-white text-xs rounded-full px-1.5 py-0.5">
+                  {pendingApps.length}
+                </span>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="inventory" className="whitespace-nowrap">
+              Provider Inventory
+            </TabsTrigger>
+          </TabsList>
+        </HorizontalScrollAffordance>
 
         <TabsContent value="manufacturers">
           {isLoading ? (

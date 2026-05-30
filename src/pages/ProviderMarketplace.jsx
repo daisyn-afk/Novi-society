@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input"; 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { HorizontalScrollAffordance } from "@/components/ui/horizontal-scroll-affordance";
 import ProviderSalesLock from "@/components/ProviderSalesLock";
 import { useProviderAccess } from "@/components/useProviderAccess";
 import RepContactDialog from "@/components/provider/RepContactDialog";
@@ -36,6 +37,11 @@ const CATEGORY_LABELS = {
   body_contouring: "Body Contouring",
   other: "Other",
 };
+
+const CATEGORY_FILTER_OPTIONS = [
+  { key: "all", label: "All" },
+  ...Object.keys(CATEGORY_LABELS).map((k) => ({ key: k, label: CATEGORY_LABELS[k] })),
+];
 
 const CATEGORY_COLORS = {
   injectables: { bg: "rgba(250,111,48,0.1)", color: "#FA6F30", border: "rgba(250,111,48,0.2)" },
@@ -76,7 +82,7 @@ const CATEGORY_FALLBACK_COVERS = {
   devices: "https://images.unsplash.com/photo-1576671081837-49000212a370?w=900&q=80",
   skincare: "https://images.unsplash.com/photo-1556228453-efd6c1ff04f6?w=900&q=80",
   laser: "https://images.unsplash.com/photo-1612817288484-6f916006741a?w=900&q=80",
-  consumables: "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=900&q=80",
+  consumables: "https://images.unsplash.com/photo-1587854691656-8c329f416be9?w=900&q=80",
   prp: "https://images.unsplash.com/photo-1559757175-0eb30cd8c063?w=900&q=80",
   body_contouring: "https://images.unsplash.com/photo-1600334129128-685c5582fd35?w=900&q=80",
   other: "https://images.unsplash.com/photo-1556228453-efd6c1ff04f6?w=900&q=80",
@@ -85,6 +91,24 @@ const CATEGORY_FALLBACK_COVERS = {
 function isValidMediaUrl(url) {
   const value = String(url || "").trim();
   return /^https?:\/\//i.test(value);
+}
+
+function dedupeManufacturers(list = []) {
+  const seenIds = new Set();
+  const seenNames = new Set();
+  return list.filter((m) => {
+    const id = String(m?.id || "").trim();
+    if (id) {
+      if (seenIds.has(id)) return false;
+      seenIds.add(id);
+      return true;
+    }
+    const nameKey = String(m?.name || "").trim().toLowerCase();
+    if (!nameKey) return true;
+    if (seenNames.has(nameKey)) return false;
+    seenNames.add(nameKey);
+    return true;
+  });
 }
 
 function getSupplierLogoUrl(mfr) {
@@ -174,6 +198,43 @@ function ActivateAccessCTA({ onClick, disabled = false, loading = false, variant
           </span>
         ))}
       </div>
+    </div>
+  );
+}
+
+function CategoryFilterStrip({ value, onChange, resultCount }) {
+  return (
+    <div className="flex items-center gap-2 min-w-0">
+      <HorizontalScrollAffordance className="flex-1" variant="provider">
+        <div className="flex items-center gap-1.5 w-max py-0.5">
+          {CATEGORY_FILTER_OPTIONS.map(({ key, label }) => {
+            const active = value === key;
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => onChange(key)}
+                className="px-3 py-1.5 rounded-full text-xs font-semibold transition-all flex-shrink-0"
+                style={{
+                  background: active ? "#1e2535" : "rgba(255,255,255,0.8)",
+                  color: active ? "#fff" : "rgba(30,37,53,0.6)",
+                  border: active ? "none" : "1px solid rgba(30,37,53,0.1)",
+                  boxShadow: active ? "0 2px 8px rgba(30,37,53,0.2)" : "none",
+                }}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      </HorizontalScrollAffordance>
+
+      <span
+        className="text-xs flex-shrink-0 tabular-nums whitespace-nowrap"
+        style={{ color: "rgba(30,37,53,0.35)" }}
+      >
+        {resultCount}
+      </span>
     </div>
   );
 }
@@ -1281,10 +1342,15 @@ export default function ProviderMarketplace() {
 
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => base44.auth.me() });
 
-  const { data: manufacturers = [], isLoading } = useQuery({
+  const { data: manufacturersRaw = [], isLoading } = useQuery({
     queryKey: ["manufacturers"],
     queryFn: () => base44.entities.Manufacturer.filter({ is_active: true }),
   });
+
+  const manufacturers = useMemo(
+    () => dedupeManufacturers(manufacturersRaw),
+    [manufacturersRaw]
+  );
 
   const { data: licenses = [] } = useQuery({
     queryKey: ["my-licenses"],
@@ -1399,27 +1465,25 @@ export default function ProviderMarketplace() {
     setViewMode("apply");
   };
 
-  const filtered = manufacturers
-    .filter(m => {
-      const matchSearch = !search || m.name.toLowerCase().includes(search.toLowerCase()) || m.description?.toLowerCase().includes(search.toLowerCase());
-      const matchCat = categoryFilter === "all" || m.category === categoryFilter;
-      return matchSearch && matchCat;
-    })
+  const searchMatched = manufacturers.filter((m) => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return (
+      m.name?.toLowerCase().includes(q) ||
+      m.description?.toLowerCase().includes(q)
+    );
+  });
+
+  const filtered = searchMatched
+    .filter((m) => categoryFilter === "all" || m.category === categoryFilter)
     .sort((a, b) => {
       if (a.is_featured && !b.is_featured) return -1;
       if (!a.is_featured && b.is_featured) return 1;
       return (a.sort_order || 0) - (b.sort_order || 0);
     });
 
-  const grouped = filtered.reduce((acc, m) => {
-    if (!acc[m.category]) acc[m.category] = [];
-    acc[m.category].push(m);
-    return acc;
-  }, {});
-
   const existingAppMap = Object.fromEntries(myApplications.map(a => [a.manufacturer_id, a]));
   const savedRepByMfrId = Object.fromEntries(savedReps.map((r) => [r.manufacturer_id, r]));
-  const activeCategories = Object.keys(CATEGORY_LABELS).filter(c => grouped[c]?.length > 0);
 
   const approvedCount = myApplications.filter(a => a.status === "approved").length;
   const pendingCount = myApplications.filter(a => ["submitted", "pending", "under_review", "more_info_needed"].includes(a.status)).length;
@@ -1432,7 +1496,7 @@ export default function ProviderMarketplace() {
     : 0;
 
   const pageContent = (
-    <div className="max-w-5xl space-y-5">
+    <div className="max-w-5xl w-full min-w-0 space-y-5">
       {/* Header */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
@@ -1745,19 +1809,11 @@ export default function ProviderMarketplace() {
                     <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search suppliers..."
                       className="pl-9 h-10 text-sm w-full" style={{ background: "rgba(255,255,255,0.9)", border: "1.5px solid rgba(30,37,53,0.1)", borderRadius: 10 }} />
                   </div>
-                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1" style={{ scrollbarWidth: "none" }}>
-                    {[{ key: "all", label: "All" }, ...Object.keys(CATEGORY_LABELS).map(k => ({ key: k, label: CATEGORY_LABELS[k] }))].map(({ key, label }) => {
-                      const active = categoryFilter === key;
-                      return (
-                        <button key={key} onClick={() => setCategoryFilter(key)}
-                          className="px-3 py-1.5 rounded-full text-xs font-semibold transition-all flex-shrink-0"
-                          style={{ background: active ? "#1e2535" : "rgba(255,255,255,0.8)", color: active ? "#fff" : "rgba(30,37,53,0.6)", border: active ? "none" : "1px solid rgba(30,37,53,0.1)", boxShadow: active ? "0 2px 8px rgba(30,37,53,0.2)" : "none" }}>
-                          {label}
-                        </button>
-                      );
-                    })}
-                    <span className="text-xs ml-auto flex-shrink-0 pr-1" style={{ color: "rgba(30,37,53,0.35)" }}>{filtered.length}</span>
-                  </div>
+                  <CategoryFilterStrip
+                    value={categoryFilter}
+                    onChange={setCategoryFilter}
+                    resultCount={filtered.length}
+                  />
                 </div>
 
                 {/* Photo grid */}
