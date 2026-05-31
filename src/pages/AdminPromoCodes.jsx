@@ -37,18 +37,35 @@ function toDatetimeInputValue(value) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-function validatePromoDateFields(form) {
-  const startsAt = form.valid_from ? new Date(form.valid_from) : null;
-  const endsAt = form.valid_until ? new Date(form.valid_until) : null;
+function nowDatetimeLocalValue() {
+  return toDatetimeInputValue(new Date());
+}
 
-  if (form.valid_from && (!startsAt || Number.isNaN(startsAt.getTime()))) {
+function parseDatetimeLocal(value) {
+  if (!value || typeof value !== "string") return null;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function validatePromoDateFields(form, { isCreate = false } = {}) {
+  const startsAt = form.valid_from ? parseDatetimeLocal(form.valid_from) : null;
+  const endsAt = form.valid_until ? parseDatetimeLocal(form.valid_until) : null;
+  const now = new Date();
+
+  if (form.valid_from && !startsAt) {
     return "Valid from must be a valid date and time.";
   }
-  if (form.valid_until && (!endsAt || Number.isNaN(endsAt.getTime()))) {
+  if (form.valid_until && !endsAt) {
     return "Valid until must be a valid date and time.";
   }
+  if (isCreate && startsAt && startsAt.getTime() < now.getTime()) {
+    return "Valid from cannot be in the past.";
+  }
+  if (isCreate && endsAt && endsAt.getTime() < now.getTime()) {
+    return "Valid until cannot be in the past.";
+  }
   if (startsAt && endsAt && startsAt.getTime() > endsAt.getTime()) {
-    return "Valid from must be before or equal to valid until.";
+    return "Valid until must be the same time or later than valid from.";
   }
   return null;
 }
@@ -61,6 +78,11 @@ export default function AdminPromoCodes() {
   const [activeTab, setActiveTab] = useState("course");
   const [form, setForm] = useState(EMPTY_FORM);
   const [deleteTarget, setDeleteTarget] = useState(null);
+
+  const dateFieldError = useMemo(
+    () => validatePromoDateFields(form, { isCreate: !editing }),
+    [form, editing]
+  );
 
   const { data: promoCodes = [], isLoading } = useQuery({
     queryKey: ["admin-promo-codes"],
@@ -116,6 +138,25 @@ export default function AdminPromoCodes() {
     setOpen(true);
   };
 
+  const updateValidFrom = (value) => {
+    setForm((f) => {
+      const next = { ...f, valid_from: value };
+      if (value && f.valid_until && f.valid_until < value) {
+        next.valid_until = "";
+      }
+      return next;
+    });
+  };
+
+  const updateValidUntil = (value) => {
+    setForm((f) => {
+      if (f.valid_from && value && value < f.valid_from) {
+        return f;
+      }
+      return { ...f, valid_until: value };
+    });
+  };
+
   const openEdit = (promo) => {
     setEditing(promo);
     setForm({
@@ -133,7 +174,7 @@ export default function AdminPromoCodes() {
   };
 
   const handleSave = () => {
-    const dateError = validatePromoDateFields(form);
+    const dateError = validatePromoDateFields(form, { isCreate: !editing });
     if (dateError) {
       toast({ title: "Invalid dates", description: dateError, variant: "destructive" });
       return;
@@ -293,18 +334,30 @@ export default function AdminPromoCodes() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs font-semibold text-slate-600 mb-1 block">Valid from</label>
-                <Input type="datetime-local" value={form.valid_from} onChange={(e) => setForm((f) => ({ ...f, valid_from: e.target.value }))} />
+                <Input
+                  type="datetime-local"
+                  min={!editing ? nowDatetimeLocalValue() : undefined}
+                  value={form.valid_from}
+                  onChange={(e) => updateValidFrom(e.target.value)}
+                />
               </div>
               <div>
                 <label className="text-xs font-semibold text-slate-600 mb-1 block">Valid until</label>
                 <Input
                   type="datetime-local"
-                  min={form.valid_from || undefined}
+                  min={form.valid_from || (!editing ? nowDatetimeLocalValue() : undefined)}
                   value={form.valid_until}
-                  onChange={(e) => setForm((f) => ({ ...f, valid_until: e.target.value }))}
+                  onChange={(e) => updateValidUntil(e.target.value)}
                 />
               </div>
             </div>
+            {dateFieldError ? (
+              <p className="text-xs text-red-600">{dateFieldError}</p>
+            ) : (
+              <p className="text-xs text-slate-500">
+                Valid until must be the same time or later than valid from.
+              </p>
+            )}
 
             <label className="flex items-center gap-2 text-sm text-slate-700">
               <input type="checkbox" checked={form.is_active} onChange={(e) => setForm((f) => ({ ...f, is_active: e.target.checked }))} />
@@ -313,7 +366,11 @@ export default function AdminPromoCodes() {
 
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-              <Button onClick={handleSave} disabled={saveMutation.isPending || !form.code || !form.discount_value} style={{ background: "#C8E63C", color: "#1a2540" }}>
+              <Button
+                onClick={handleSave}
+                disabled={saveMutation.isPending || !form.code || !form.discount_value || Boolean(dateFieldError)}
+                style={{ background: "#C8E63C", color: "#1a2540" }}
+              >
                 {saveMutation.isPending ? "Saving..." : editing ? "Save" : "Create"}
               </Button>
             </div>

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { query } from "../db.js";
 import { getMeFromAccessToken } from "../auth/service.js";
+import { hasAdminAccess, hasAdminOrStaffModuleAccess } from "../auth/helpers.js";
 
 export const reviewsRouter = Router();
 
@@ -10,15 +11,16 @@ function getBearerToken(req) {
   return raw.slice("Bearer ".length).trim() || null;
 }
 
-function hasAdminAccess(role) {
-  const normalized = String(role || "").trim().toLowerCase();
-  return normalized === "admin" || normalized === "super_admin" || normalized === "owner";
+function canModerateReviews(me) {
+  return hasAdminAccess(me?.role) || hasAdminOrStaffModuleAccess(me, "AdminCompliance");
 }
 
 function mapReviewRow(row) {
   return {
     ...row,
     rating: row.rating != null ? Number(row.rating) : null,
+    is_verified: row.is_verified === true,
+    is_flagged: row.is_flagged === true,
     created_date: row.created_at,
     updated_date: row.updated_at,
   };
@@ -37,7 +39,7 @@ reviewsRouter.get("/", async (req, res, next) => {
     const isVerified = req.query.is_verified;
     const role = String(me.role || "").trim().toLowerCase();
 
-    if (hasAdminAccess(me.role)) {
+    if (canModerateReviews(me)) {
       if (providerId) {
         params.push(providerId);
         where.push(`provider_id = $${params.length}`);
@@ -134,8 +136,8 @@ reviewsRouter.post("/", async (req, res, next) => {
     const { rows } = await query(
       `insert into public.reviews (
         provider_id, patient_id, patient_name, appointment_id,
-        rating, comment, is_verified
-      ) values ($1, $2, $3, $4, $5, $6, true)
+        rating, comment
+      ) values ($1, $2, $3, $4, $5, $6)
       returning *`,
       [
         appt.provider_id,
@@ -154,7 +156,7 @@ reviewsRouter.post("/", async (req, res, next) => {
       [
         appt.provider_id,
         appt.provider_email,
-        `New ${rating}-star review from ${body.patient_name || me.full_name || "a patient"} for ${appt.service}.`,
+        `New ${rating}-star review from ${body.patient_name || me.full_name || "a patient"} for ${appt.service} is awaiting admin approval.`,
         "ProviderPractice?tab=performance",
       ]
     ).catch(() => {});
@@ -174,20 +176,84 @@ reviewsRouter.patch("/:id", async (req, res, next) => {
     const { rows: existingRows } = await query(`select * from public.reviews where id = $1 limit 1`, [id]);
     const existing = existingRows[0];
     if (!existing) return res.status(404).json({ error: "Review not found." });
-    if (existing.provider_id !== me.id && !hasAdminAccess(me.role)) {
+
+    const body = req.body || {};
+    const isModerator = canModerateReviews(me);
+    const isProvider = String(existing.provider_id || "") === String(me.id);
+
+    const isModerationUpdate =
+      isModerator &&
+      (body.is_verified !== undefined ||
+        body.is_flagged !== undefined ||
+        body.flag_reason !== undefined);
+
+    if (isModerationUpdate) {
+      const isVerified =
+        body.is_verified !== undefined ? body.is_verified === true : existing.is_verified === true;
+      let isFlagged =
+        body.is_flagged !== undefined ? body.is_flagged === true : existing.is_flagged === true;
+      let flagReason =
+        body.flag_reason !== undefined
+          ? String(body.flag_reason || "").trim() || null
+          : existing.flag_reason;
+
+      if (isVerified && body.is_flagged === false) {
+        isFlagged = false;
+        flagReason = null;
+      }
+      if (body.is_verified === true && body.is_flagged === undefined) {
+        isFlagged = false;
+        flagReason = null;
+      }
+
+      const { rows } = await query(
+        `update public.reviews
+            set is_verified = $2,
+                is_flagged = $3,
+                flag_reason = $4,
+                updated_at = now()
+          where id = $1
+          returning *`,
+        [id, isVerified, isFlagged, flagReason]
+      );
+      return res.json(mapReviewRow(rows[0]));
+    }
+
+    if (isProvider && body.response !== undefined) {
+      const { rows } = await query(
+        `update public.reviews
+            set response = $2,
+                responded_at = coalesce($3, now()),
+                updated_at = now()
+          where id = $1
+          returning *`,
+        [id, body.response ? String(body.response) : null, body.responded_at || null]
+      );
+      return res.json(mapReviewRow(rows[0]));
+    }
+
+    if (!isModerator && !isProvider) {
       return res.status(403).json({ error: "Forbidden." });
     }
-    const body = req.body || {};
-    const { rows } = await query(
-      `update public.reviews
-          set response = coalesce($2, response),
-              responded_at = coalesce($3, responded_at),
-              updated_at = now()
-        where id = $1
-        returning *`,
-      [id, body.response ?? null, body.responded_at ?? new Date().toISOString()]
-    );
-    return res.json(mapReviewRow(rows[0]));
+    return res.status(400).json({ error: "No valid fields to update." });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+reviewsRouter.delete("/:id", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ error: "Missing bearer token." });
+    const me = await getMeFromAccessToken(token);
+    if (!canModerateReviews(me)) {
+      return res.status(403).json({ error: "Forbidden." });
+    }
+
+    const id = String(req.params.id || "").trim();
+    const { rowCount } = await query(`delete from public.reviews where id = $1`, [id]);
+    if (!rowCount) return res.status(404).json({ error: "Review not found." });
+    return res.status(204).send();
   } catch (error) {
     return next(error);
   }

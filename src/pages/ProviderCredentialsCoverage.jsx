@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useLayoutEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import ProviderSalesLock from "@/components/ProviderSalesLock";
 import { useProviderAccess } from "@/components/useProviderAccess";
@@ -17,7 +17,7 @@ import {
   Calendar, KeyRound, Award, Zap, ChevronRight, RotateCcw, Upload,
   BookOpen, Users, FileText, MapPin, ShieldCheck,
   ChevronDown, ChevronUp, Sparkles, ExternalLink, Download, Star, DollarSign, Info, TrendingUp,
-  XCircle, Settings, Trash2, CreditCard, RefreshCw, X
+  XCircle, Settings, Trash2, CreditCard, X
 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Link } from "react-router-dom";
@@ -26,6 +26,13 @@ import { format } from "date-fns";
 import { getSessionWindowForDate, isNowWithinSessionRedeemWindow } from "@/lib/classCodeWindow";
 import { CLASS_TIME_ZONE } from "@/lib/classCodeWindow";
 import { downloadCertificateDocument, hasCertificateDocument, openCertificateDocument } from "@/lib/certificateDocument";
+import {
+  getMdContractUrl,
+  getMdContractDisplayName,
+  getSignedMdContractFileName,
+  filterProtocolDocuments,
+  isUsableDocumentUrl,
+} from "@/lib/serviceTypeDocuments";
 import {
   MD_FIRST_SERVICE_MONTHLY_FEE as FIRST_SERVICE_PRICE,
   MD_ADDON_SERVICE_MONTHLY_FEE as ADDON_SERVICE_PRICE,
@@ -59,6 +66,92 @@ function formatSessionDateLabel(value) {
   const [y, m, d] = dateOnly.split("-").map(Number);
   if (!y || !m || !d) return dateOnly;
   return format(new Date(y, m - 1, d), "MMM d, yyyy");
+}
+
+/** Embed PDF without browser sidebar/toolbar clutter where supported. */
+function mdContractViewerUrl(url) {
+  const base = String(url || "").trim();
+  if (!base) return "";
+  const params = "toolbar=0&navpanes=0&scrollbar=1&view=FitH";
+  return base.includes("#") ? `${base}&${params}` : `${base}#${params}`;
+}
+
+const mdCoveragePendingKey = (serviceTypeId) => `md_coverage_pending:${serviceTypeId}`;
+
+function readMdCoveragePending(serviceTypeId) {
+  try {
+    const raw = sessionStorage.getItem(mdCoveragePendingKey(serviceTypeId));
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeMdCoveragePending(serviceTypeId, payload) {
+  try {
+    sessionStorage.setItem(mdCoveragePendingKey(serviceTypeId), JSON.stringify(payload || {}));
+  } catch { /* ignore */ }
+}
+
+function clearMdCoveragePending(serviceTypeId) {
+  try {
+    sessionStorage.removeItem(mdCoveragePendingKey(serviceTypeId));
+    sessionStorage.removeItem(`md_coverage_signature:${serviceTypeId}`);
+  } catch { /* ignore */ }
+}
+
+function upsertMdSubscriptionInCache(qc, entry) {
+  const stId = String(entry?.service_type_id || "").trim();
+  if (!stId) return;
+  qc.setQueryData(["my-md-subscriptions"], (old = []) => {
+    const rows = Array.isArray(old) ? old : [];
+    const idx = rows.findIndex((s) => String(s.service_type_id) === stId);
+    const merged = {
+      ...(idx >= 0 ? rows[idx] : {}),
+      ...entry,
+      service_type_id: stId,
+      status: entry.status || "active",
+    };
+    const next = idx >= 0 ? [...rows] : [merged, ...rows];
+    if (idx >= 0) next[idx] = merged;
+    return mergeMdSubscriptionsWithPending(next);
+  });
+}
+
+function readAllMdCoveragePending() {
+  const entries = [];
+  try {
+    for (let i = 0; i < sessionStorage.length; i += 1) {
+      const key = sessionStorage.key(i);
+      if (!key?.startsWith("md_coverage_pending:")) continue;
+      const raw = sessionStorage.getItem(key);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw);
+      if (parsed?.service_type_id) entries.push(parsed);
+    }
+  } catch {
+    /* ignore */
+  }
+  return entries;
+}
+
+/** Keep signed PDF + active status visible while Stripe checkout is finishing server-side. */
+function mergeMdSubscriptionsWithPending(rows = []) {
+  const list = Array.isArray(rows) ? [...rows] : [];
+  for (const pending of readAllMdCoveragePending()) {
+    const stId = String(pending.service_type_id || "").trim();
+    if (!stId) continue;
+    const idx = list.findIndex((s) => String(s.service_type_id) === stId);
+    const merged = {
+      ...(idx >= 0 ? list[idx] : {}),
+      ...pending,
+      service_type_id: stId,
+      status: "active",
+    };
+    if (idx >= 0) list[idx] = merged;
+    else list.unshift(merged);
+  }
+  return list;
 }
 
 const statusColorLicense = {
@@ -161,7 +254,16 @@ export default function ProviderCredentialsCoverage() {
   };
 
   const { status: accessStatus } = useProviderAccess();
-  const [activeTab, setActiveTab] = useState("overview");
+  const [activeTab, setActiveTab] = useState(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("tab")) return params.get("tab");
+      if (params.get("md_payment_status") === "success") return "documents";
+    } catch {
+      /* ignore */
+    }
+    return "overview";
+  });
   const [licenseOpen, setLicenseOpen] = useState(false);
   const [licenseForm, setLicenseForm] = useState({ license_type: "RN" });
   const [licenseExpiryError, setLicenseExpiryError] = useState("");
@@ -245,12 +347,14 @@ export default function ProviderCredentialsCoverage() {
   });
   const { data: mySubscriptions = [] } = useQuery({
     queryKey: ["my-md-subscriptions"],
-    queryFn: async () => { const u = await base44.auth.me(); return base44.entities.MDSubscription.filter({ provider_id: u.id }); },
+    queryFn: async () => {
+      const u = await base44.auth.me();
+      const rows = await base44.entities.MDSubscription.filter({ provider_id: u.id });
+      return mergeMdSubscriptionsWithPending(rows);
+    },
     enabled: !!me,
-    initialData: () => readUiCache("my-md-subscriptions", []),
-    staleTime: 120000,
+    staleTime: 60_000,
     refetchOnWindowFocus: true,
-    refetchInterval: 10000,
   });
   const { data: myEnrollments = [], isLoading: loadingMyEnrollments, isFetching: fetchingMyEnrollments } = useQuery({
     queryKey: ["my-enrollments-coverage"],
@@ -332,7 +436,6 @@ export default function ProviderCredentialsCoverage() {
   });
   useEffect(() => { writeUiCache("my-licenses", licenses || []); }, [licenses]);
   useEffect(() => { writeUiCache("my-certs", myCerts || []); }, [myCerts]);
-  useEffect(() => { writeUiCache("my-md-subscriptions", mySubscriptions || []); }, [mySubscriptions]);
   useEffect(() => { writeUiCache("my-enrollments-coverage", myEnrollments || []); }, [myEnrollments]);
   useEffect(() => { writeUiCache("my-sessions-coverage", mySessions || []); }, [mySessions]);
   useEffect(() => {
@@ -357,7 +460,7 @@ export default function ProviderCredentialsCoverage() {
 
   /** After Stripe success or $0 signup: server activates subscription + MD assignment (idempotent). */
   async function finalizeActiveMdCoverageAndAssignMd({ stId, enrollId, signatureData }) {
-    if (!me?.id || !stId) return;
+    if (!me?.id || !stId) return null;
     const serviceTypeName = serviceTypes.find((s) => s.id === stId)?.name;
     const res = await base44.functions.invoke("finalizeMdBoardCoverage", {
       service_type_id: stId,
@@ -369,8 +472,21 @@ export default function ProviderCredentialsCoverage() {
     if (!data?.success && !data?.ok) {
       throw new Error(data?.error || "Unable to activate MD coverage.");
     }
-    qc.invalidateQueries({ queryKey: ["my-md-subscriptions"] });
+    const pending = readMdCoveragePending(stId);
+    upsertMdSubscriptionInCache(qc, {
+      id: data.md_subscription_id || pending?.id,
+      service_type_id: stId,
+      service_type_name: serviceTypeName || pending?.service_type_name,
+      signed_contract_url: data.signed_contract_url || pending?.signed_contract_url || null,
+      signed_by_name: me?.full_name || pending?.signed_by_name,
+      signed_at: pending?.signed_at || new Date().toISOString(),
+      status: "active",
+      md_contract_url: pending?.md_contract_url || null,
+      md_agreement_text: pending?.md_agreement_text || null,
+    });
+    clearMdCoveragePending(stId);
     qc.invalidateQueries({ queryKey: ["my-md-relationships"] });
+    return data;
   }
 
   // Open MD coverage apply flow when arriving from cert-approval notification (?prompt_service=)
@@ -395,7 +511,28 @@ export default function ProviderCredentialsCoverage() {
     }, 150);
   }, [location.search, serviceTypes.length, navigate]);
 
-  // Stripe return
+  // Stripe return: hydrate Documents tab before paint so signed PDF link appears immediately.
+  useLayoutEffect(() => {
+    if (!me?.id) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("md_payment_status") !== "success") return;
+    const stId = params.get("service_type_id");
+    if (!stId) return;
+
+    const pending = readMdCoveragePending(stId);
+    if (pending?.signed_contract_url) {
+      upsertMdSubscriptionInCache(qc, {
+        ...pending,
+        service_type_id: stId,
+        status: "active",
+        signed_by_name: pending.signed_by_name || me?.full_name,
+      });
+      setActiveTab("documents");
+      setActivateDialog(false);
+    }
+  }, [me?.id, me?.full_name, qc]);
+
+  // Stripe return: finalize subscription + MD assignment in background.
   useEffect(() => {
     if (stripeHandled || !me?.id || serviceTypes.length === 0) return;
     const params = new URLSearchParams(window.location.search);
@@ -404,14 +541,27 @@ export default function ProviderCredentialsCoverage() {
     const enrollId = params.get("enrollment_id");
     if (mdStatus === "success" && stId) {
       setStripeHandled(true);
-      finalizeActiveMdCoverageAndAssignMd({ stId, enrollId: enrollId || null, signatureData: null })
-        .then(() => navigate(createPageUrl("ProviderLaunchPad")))
+      let signatureData = null;
+      try {
+        signatureData = sessionStorage.getItem(`md_coverage_signature:${stId}`);
+      } catch { /* ignore */ }
+
+      const pending = readMdCoveragePending(stId);
+      navigate(`${createPageUrl("ProviderCredentialsCoverage")}?tab=documents`, { replace: true });
+
+      finalizeActiveMdCoverageAndAssignMd({ stId, enrollId: enrollId || null, signatureData })
+        .then(async () => {
+          try { window.localStorage.removeItem("pcache:my-md-subscriptions"); } catch { /* ignore */ }
+          qc.invalidateQueries({ queryKey: ["my-md-subscriptions"] });
+        })
         .catch((err) => {
           console.error("[md-coverage] finalize after Stripe failed:", err);
-          navigate(createPageUrl("ProviderLaunchPad"));
+          if (!pending?.signed_contract_url) {
+            navigate(createPageUrl("ProviderLaunchPad"));
+          }
         });
     }
-  }, [me, serviceTypes, stripeHandled, navigate]);
+  }, [me, serviceTypes, stripeHandled, navigate, qc]);
 
   // Keep Novi Class status fresh whenever Apply dialog opens.
   useEffect(() => {
@@ -425,6 +575,7 @@ export default function ProviderCredentialsCoverage() {
   const pendingCerts = myCerts.filter(c => c.status === "pending");
   const otherCerts = myCerts.filter(c => c.status !== "active" && c.status !== "pending");
   const activeSubscriptions = mySubscriptions.filter((s) => s.status === "active");
+
   const alreadyActiveServices = activeSubscriptions.map(s => s.service_type_id);
   const activeRelationships = relationships.filter(r => r.status === "active");
   const pendingRelationships = relationships.filter(r => r.status === "pending");
@@ -471,6 +622,7 @@ export default function ProviderCredentialsCoverage() {
   const unlockedServiceTypeIds = new Set([...earnedServiceTypeIds, ...activeCertServiceTypeIds]);
   const availableServices = serviceTypes.filter((s) => !alreadyActiveServices.includes(s.id) && unlockedServiceTypeIds.has(s.id));
   const selectedService = serviceTypes.find(s => s.id === selectedServiceTypeId);
+  const selectedServiceContractUrl = getMdContractUrl(selectedService);
   const activeServices = serviceTypes.filter(s => alreadyActiveServices.includes(s.id));
   const approvedCertsWithoutCoverage = myCerts.filter(c => c.status === "active" && c.service_type_id && !alreadyActiveServices.includes(c.service_type_id));
   const visibleApprovedCertsWithoutCoverage = approvedCertsWithoutCoverage.filter((c) => !dismissedApprovedAlertIds.includes(c.id));
@@ -931,23 +1083,37 @@ export default function ProviderCredentialsCoverage() {
         signature_data: signatureData,
       });
       if (res.data?.url) {
+        const st = serviceTypes.find((s) => s.id === selectedServiceTypeId);
+        try {
+          sessionStorage.setItem(
+            `md_coverage_signature:${selectedServiceTypeId}`,
+            signatureData
+          );
+          writeMdCoveragePending(selectedServiceTypeId, {
+            id: res.data.md_subscription_id,
+            service_type_id: selectedServiceTypeId,
+            service_type_name: res.data.service_type_name || st?.name,
+            signed_contract_url: res.data.signed_contract_url || null,
+            signed_by_name: me?.full_name,
+            signed_at: new Date().toISOString(),
+            md_contract_url: st?.md_contract_url || null,
+            md_agreement_text: st?.md_agreement_text || null,
+          });
+        } catch { /* ignore */ }
         window.location.href = res.data.url;
         return;
       }
       if (res.data?.success || res.data?.ok) {
-        if (!res.data?.assignment && !res.data?.already_active) {
-          await finalizeActiveMdCoverageAndAssignMd({
-            stId: selectedServiceTypeId,
-            enrollId: verifiedSession?.enrollment_id || null,
-            signatureData,
-          });
-        } else {
-          qc.invalidateQueries({ queryKey: ["my-md-subscriptions"] });
-          qc.invalidateQueries({ queryKey: ["my-md-relationships"] });
-        }
+        await finalizeActiveMdCoverageAndAssignMd({
+          stId: selectedServiceTypeId,
+          enrollId: verifiedSession?.enrollment_id || null,
+          signatureData,
+        });
+        try { window.localStorage.removeItem("pcache:my-md-subscriptions"); } catch { /* ignore */ }
         setActivateDialog(false);
         resetActivation();
-        navigate(createPageUrl("ProviderLaunchPad"));
+        setActiveTab("documents");
+        navigate(`${createPageUrl("ProviderCredentialsCoverage")}?tab=documents`);
         return;
       }
       throw new Error(res.data?.error || "Unable to activate MD coverage.");
@@ -980,23 +1146,47 @@ export default function ProviderCredentialsCoverage() {
     setCancelLoading(false);
   };
 
-  // Canvas drawing
+  // Canvas drawing — scale internal resolution to displayed size so strokes align with cursor
+  const setupSignatureCanvas = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const container = canvas.parentElement;
+    const displayWidth = Math.max(container?.clientWidth || 520, 280);
+    const displayHeight = 120;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(displayWidth * dpr);
+    canvas.height = Math.round(displayHeight * dpr);
+    canvas.style.width = `${displayWidth}px`;
+    canvas.style.height = `${displayHeight}px`;
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.scale(dpr, dpr);
+    ctx.strokeStyle = "#1A1A2E";
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+  };
+
   useEffect(() => {
     if (!activateDialog || step !== 2) return;
-    setTimeout(() => {
-      const canvas = canvasRef.current; if (!canvas) return;
-      const ctx = canvas.getContext("2d");
-      ctx.strokeStyle = "#1A1A2E"; ctx.lineWidth = 2.5; ctx.lineCap = "round"; ctx.lineJoin = "round";
-    }, 100);
-  }, [activateDialog, step]);
+    const t = setTimeout(setupSignatureCanvas, 50);
+    window.addEventListener("resize", setupSignatureCanvas);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener("resize", setupSignatureCanvas);
+    };
+  }, [activateDialog, step, selectedServiceTypeId]);
+
   const getPos = (e, canvas) => {
     const rect = canvas.getBoundingClientRect();
-    return { x: (e.touches ? e.touches[0].clientX : e.clientX) - rect.left, y: (e.touches ? e.touches[0].clientY : e.clientY) - rect.top };
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    return { x: clientX - rect.left, y: clientY - rect.top };
   };
   const startDraw = (e) => { const canvas = canvasRef.current; const ctx = canvas.getContext("2d"); isDrawing.current = true; ctx.beginPath(); const p = getPos(e, canvas); ctx.moveTo(p.x, p.y); e.preventDefault(); };
   const draw = (e) => { if (!isDrawing.current) return; const canvas = canvasRef.current; const ctx = canvas.getContext("2d"); const p = getPos(e, canvas); ctx.lineTo(p.x, p.y); ctx.stroke(); setHasSigned(true); e.preventDefault(); };
   const endDraw = () => { isDrawing.current = false; };
-  const clearSignature = () => { const canvas = canvasRef.current; if (!canvas) return; canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height); setHasSigned(false); };
+  const clearSignature = () => { setupSignatureCanvas(); setHasSigned(false); };
 
   /** Opens apply dialog on Sign & Activate (step 2) for a known service — e.g. approved-cert banner or deep-link parity. */
   const openApplyDialogToSignForService = (serviceTypeId) => {
@@ -1403,7 +1593,9 @@ export default function ProviderCredentialsCoverage() {
                       const nextTierDef = tiers.find(t => t.tier_number === currentTierNum + 1);
                       const effectiveAreas = hasTiers ? (currentTierDef?.allowed_areas || []) : (st.allowed_areas || []);
                       const effectiveUnits = hasTiers ? currentTierDef?.max_units_per_session : st.max_units_per_session;
-                      const effectiveDocs = hasTiers ? (currentTierDef?.protocol_document_urls || []) : (st.protocol_document_urls || []);
+                      const effectiveDocs = filterProtocolDocuments(
+                        hasTiers ? (currentTierDef?.protocol_document_urls || []) : (st.protocol_document_urls || [])
+                      );
                       const activatedDate = sub.activated_at ? new Date(sub.activated_at) : null;
                       const monthlyAmount = Number(sub.service_type_monthly_fee ?? (idx === 0 ? FIRST_SERVICE_PRICE : ADDON_SERVICE_PRICE));
                       const today = new Date();
@@ -1612,40 +1804,97 @@ export default function ProviderCredentialsCoverage() {
                   <button onClick={() => { setActivateDialog(true); resetActivation(); }} className="text-xs font-bold" style={{ color: "#FA6F30" }}>Apply for Coverage</button>
                 </div>
               ) : (
-                <div className="divide-y" style={{ borderTop: "1px solid rgba(30,37,53,0.06)", borderBottom: "1px solid rgba(30,37,53,0.06)" }}>
+                <div className="space-y-3">
                   {activeSubscriptions.map((sub) => {
-                    const st = serviceTypes.find(s => s.id === sub.service_type_id);
+                    const st = serviceTypes.find((s) => String(s.id) === String(sub.service_type_id));
+                    const contractMeta = st || {
+                      name: sub.service_type_name,
+                      md_contract_url: sub.md_contract_url,
+                      md_agreement_text: sub.md_agreement_text,
+                    };
+                    const agreementText = contractMeta.md_agreement_text || sub.md_agreement_text;
+                    const signedPdfUrl = isUsableDocumentUrl(sub.signed_contract_url)
+                      ? sub.signed_contract_url
+                      : null;
+                    const contractLabel = getMdContractDisplayName(contractMeta);
                     return (
-                      <div key={sub.id} className="py-3" style={{ borderLeft: "2px solid rgba(200,230,60,0.4)", paddingLeft: 14, marginLeft: -14 }}>
-                        <div className="flex items-baseline justify-between">
-                          <p className="text-sm font-semibold" style={{ color: "#1e2535", fontFamily: "'DM Serif Display', serif", fontStyle: "italic" }}>{sub.service_type_name}</p>
-                          <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: "#4a6b10" }}>Active</span>
+                      <div key={sub.id} className="rounded-xl overflow-hidden" style={{ border: "1px solid rgba(30,37,53,0.08)" }}>
+                        <div className="px-4 py-3 flex items-center gap-3" style={{ background: "rgba(30,37,53,0.03)" }}>
+                          <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: "rgba(200,230,60,0.15)" }}>
+                            <Shield className="w-4 h-4" style={{ color: "#4a6b10" }} />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-bold text-sm" style={{ color: "#1e2535" }}>{sub.service_type_name}</p>
+                            <p className="text-xs" style={{ color: "rgba(30,37,53,0.5)" }}>
+                              Signed {sub.signed_at ? format(new Date(sub.signed_at), "MMMM d, yyyy") : "—"} · MD: {activeRelationships[0]?.medical_director_name || "NOVI Board"}
+                            </p>
+                          </div>
+                          <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ background: "rgba(200,230,60,0.15)", color: "#4a6b10" }}>Active</span>
                         </div>
-                        <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.4)" }}>Signed {sub.signed_at ? format(new Date(sub.signed_at), "MMMM d, yyyy") : "—"} · MD: {activeRelationships[0]?.medical_director_name || "NOVI Board"}</p>
-                        {st?.md_agreement_text && (
-                          <p className="text-xs mt-2 leading-relaxed" style={{ color: "rgba(30,37,53,0.55)", borderLeft: "1px solid rgba(30,37,53,0.1)", paddingLeft: 10 }}>{st.md_agreement_text}</p>
-                        )}
-                        {(() => {
-                          const tiers = st?.coverage_tiers || [];
-                          const tierNum = sub.coverage_tier || 1;
-                          const tierDef = tiers.find(t => t.tier_number === tierNum);
-                          const docs = tiers.length > 0 ? (tierDef?.protocol_document_urls || []) : (st?.protocol_document_urls || []);
-                          return docs.length > 0 ? (
-                            <div className="mt-2 flex flex-wrap gap-2">
-                              {docs.map((doc, i) => (
-                                <a key={i} href={doc.url} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs font-semibold hover:underline" style={{ color: "#7B8EC8" }}>
-                                  <FileText className="w-3 h-3" /> {doc.name}
-                                </a>
-                              ))}
+                        <div className="px-4 py-3 space-y-2">
+                          {agreementText && (
+                            <div
+                              className="rounded-lg px-3 py-2 text-xs leading-relaxed"
+                              style={{
+                                background: "rgba(30,37,53,0.03)",
+                                color: "rgba(30,37,53,0.65)",
+                                border: "1px solid rgba(30,37,53,0.06)",
+                                maxHeight: 72,
+                                overflow: "hidden",
+                              }}
+                            >
+                              {agreementText}
                             </div>
-                          ) : null;
-                        })()}
-                        {sub.signed_by_name && (
-                          <p className="text-xs mt-2 flex items-center gap-1" style={{ color: "rgba(30,37,53,0.4)" }}>
-                            <CheckCircle2 className="w-3 h-3" style={{ color: "#4a6b10" }} />
-                            Signed by <strong className="ml-1">{sub.signed_by_name}</strong>
-                          </p>
-                        )}
+                          )}
+                          {(signedPdfUrl || getMdContractUrl(contractMeta)) && (
+                            <div>
+                              <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: "rgba(30,37,53,0.45)" }}>
+                                MD Contract
+                              </p>
+                              {signedPdfUrl ? (
+                                <a
+                                  href={signedPdfUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  download={getSignedMdContractFileName(contractMeta, sub.signed_by_name)}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all hover:brightness-95"
+                                  style={{ background: "rgba(123,142,200,0.12)", color: "#7B8EC8", border: "1px solid rgba(123,142,200,0.25)" }}
+                                >
+                                  <FileText className="w-3 h-3" />
+                                  {contractLabel} — signed by {sub.signed_by_name || "you"}
+                                </a>
+                              ) : null}
+                            </div>
+                          )}
+                          {(() => {
+                            const tiers = st?.coverage_tiers || [];
+                            const tierNum = sub.coverage_tier || 1;
+                            const tierDef = tiers.find(t => t.tier_number === tierNum);
+                            const docs = filterProtocolDocuments(
+                              tiers.length > 0 ? (tierDef?.protocol_document_urls || []) : (st?.protocol_document_urls || [])
+                            );
+                            return docs.length > 0 ? (
+                              <div>
+                                <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: "rgba(30,37,53,0.45)" }}>Protocol Documents</p>
+                                <div className="flex flex-wrap gap-2">
+                                  {docs.map((doc, i) => (
+                                    <a key={i} href={doc.url} target="_blank" rel="noreferrer"
+                                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all hover:brightness-95"
+                                      style={{ background: "rgba(123,142,200,0.12)", color: "#7B8EC8", border: "1px solid rgba(123,142,200,0.25)" }}>
+                                      <FileText className="w-3 h-3" /> {doc.name}
+                                    </a>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null;
+                          })()}
+                          {sub.signed_by_name && (
+                            <div className="flex items-center gap-2 text-xs" style={{ color: "rgba(30,37,53,0.5)" }}>
+                              <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#C8E63C" }} />
+                              Signed by <strong className="ml-1">{sub.signed_by_name}</strong>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     );
                   })}
@@ -1806,7 +2055,7 @@ export default function ProviderCredentialsCoverage() {
 
       {/* Apply for Coverage */}
       <Dialog open={activateDialog} onOpenChange={(v) => { if (!v) resetActivation(); setActivateDialog(v); }}>
-        <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className={`${step === 2 ? "max-w-4xl" : "max-w-xl"} max-h-[92vh] overflow-y-auto`}>
           <DialogHeader>
             <DialogTitle style={{ fontFamily: "'DM Serif Display', serif", fontSize: 20 }}>Apply for MD Board Coverage</DialogTitle>
           </DialogHeader>
@@ -2096,18 +2345,62 @@ export default function ProviderCredentialsCoverage() {
                 <div><p className="font-semibold text-slate-900">{selectedService?.name} — MD Board Coverage</p><p className="text-xs text-slate-500 mt-0.5">{alreadyActiveServices.length === 0 ? "First service" : "Add-on service"} · NOVI assigns a Board MD automatically</p></div>
                 <div className="text-right"><p className="text-2xl font-bold text-slate-900">${getMembershipPrice()}</p><p className="text-xs text-slate-400">/month</p></div>
               </div>
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 max-h-40 overflow-y-auto text-sm text-slate-700 leading-relaxed">
-                {selectedService?.md_agreement_text || `By signing below, I acknowledge that I have completed the required NOVI training for ${selectedService?.name}, agree to operate within the approved service scope and clinical protocols, and accept supervision by the NOVI Board of Medical Directors as required by my state's regulations.`}
-              </div>
-              <div>
-                <p className="text-xs font-semibold text-slate-600 mb-2 uppercase tracking-wide">Your Signature</p>
-                <div className="border-2 border-dashed border-slate-300 rounded-xl overflow-hidden bg-white relative">
-                  <canvas ref={canvasRef} width={520} height={120} className="w-full touch-none cursor-crosshair"
-                    onMouseDown={startDraw} onMouseMove={draw} onMouseUp={endDraw} onMouseLeave={endDraw}
-                    onTouchStart={startDraw} onTouchMove={draw} onTouchEnd={endDraw} />
-                  {!hasSigned && <p className="absolute inset-0 flex items-center justify-center text-slate-300 text-sm pointer-events-none">Sign here</p>}
+
+              <div className="rounded-xl border border-slate-200 overflow-hidden bg-white">
+                {selectedServiceContractUrl ? (
+                  <>
+                    <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-xs font-semibold text-slate-700 uppercase tracking-wide">1. Review agreement</p>
+                        <p className="text-xs text-slate-500 mt-0.5">Read the MD Board contract for {selectedService?.name || "this service"}.</p>
+                      </div>
+                      <a
+                        href={selectedServiceContractUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg flex-shrink-0 whitespace-nowrap"
+                        style={{ background: "rgba(123,142,200,0.12)", color: "#5a6fa8", border: "1px solid rgba(123,142,200,0.25)" }}
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" /> Open full PDF
+                      </a>
+                    </div>
+                    <div className="bg-slate-100">
+                      <iframe
+                        src={mdContractViewerUrl(selectedServiceContractUrl)}
+                        title={`${selectedService?.name || "Service"} MD Board Coverage Agreement`}
+                        className="w-full h-[min(42vh,360px)] min-h-[240px] bg-white block"
+                      />
+                    </div>
+                  </>
+                ) : selectedService?.md_agreement_text ? (
+                  <div className="px-4 py-4 bg-slate-50 border-b border-slate-200">
+                    <p className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-2">1. Review agreement</p>
+                    <div
+                      className="rounded-lg px-3 py-2 text-xs leading-relaxed max-h-48 overflow-y-auto"
+                      style={{ background: "rgba(255,255,255,0.9)", color: "rgba(30,37,53,0.75)", border: "1px solid rgba(30,37,53,0.08)" }}
+                    >
+                      {selectedService.md_agreement_text}
+                    </div>
+                  </div>
+                ) : null}
+                <div className="px-4 py-4 border-t border-slate-200 bg-white">
+                  <p className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-1">
+                    {selectedServiceContractUrl || selectedService?.md_agreement_text ? "2. Sign below" : "Sign below"}
+                  </p>
+                  <p className="text-xs text-slate-500 mb-3">
+                    {selectedServiceContractUrl
+                      ? "Your signature is placed on the last page of the MD Contract, directly after the agreement text."
+                      : "Your signature is saved with your MD Board coverage agreement. After activation, the signed agreement appears in Documents."}
+                  </p>
+                  <div className="border-2 border-dashed border-slate-300 rounded-xl overflow-hidden bg-white relative w-full">
+                    <canvas ref={canvasRef} className="block w-full touch-none cursor-crosshair"
+                      style={{ height: 120 }}
+                      onMouseDown={startDraw} onMouseMove={draw} onMouseUp={endDraw} onMouseLeave={endDraw}
+                      onTouchStart={startDraw} onTouchMove={draw} onTouchEnd={endDraw} />
+                    {!hasSigned && <p className="absolute inset-0 flex items-center justify-center text-slate-300 text-sm pointer-events-none">Sign here</p>}
+                  </div>
+                  <Button variant="ghost" size="sm" onClick={clearSignature} className="mt-1 text-slate-400 px-0"><RotateCcw className="w-3.5 h-3.5 mr-1" /> Clear signature</Button>
                 </div>
-                <Button variant="ghost" size="sm" onClick={clearSignature} className="mt-1 text-slate-400"><RotateCcw className="w-3.5 h-3.5 mr-1" /> Clear</Button>
               </div>
               <div className="flex items-center gap-2 text-xs text-slate-500 bg-slate-50 rounded-lg p-3">
                 <CheckCircle className="w-3.5 h-3.5 text-green-500 flex-shrink-0" />
@@ -2120,7 +2413,7 @@ export default function ProviderCredentialsCoverage() {
                 </p>
                 <ol className="text-[11px] text-slate-600 space-y-1 list-decimal list-inside leading-snug">
                   <li>We start your recurring monthly MD Board coverage (Stripe may open for payment when applicable).</li>
-                  <li>When checkout completes, your coverage subscription is set to active and your signature is stored.</li>
+                  <li>When checkout completes, your coverage subscription is set to active and a signed contract PDF is saved to your Documents tab.</li>
                   <li>NOVI assigns exactly one Board Medical Director for this service using supported-service matching and sequential round-robin. You do not pick a doctor.</li>
                   <li>NOVI assigns a Board Medical Director and supervision becomes <strong>active automatically</strong>. You and your MD receive a confirmation notification.</li>
                 </ol>

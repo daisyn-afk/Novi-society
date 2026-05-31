@@ -3,6 +3,8 @@ import { query } from "./db.js";
 import { insertAppNotification } from "./certificationNotifications.js";
 import { monthlyFeeForNewMdService } from "./mdMembershipPricing.js";
 import { submitMdBoardCoverageAssignment } from "./mdAssignmentService.js";
+import { attachSignedContractToSubscription, getServiceTypeContractInfo } from "./mdContractPdfService.js";
+import { getProviderIdAliases } from "./mdSupervisedAccess.js";
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || "";
 export const mdStripe = stripeSecretKey ? new Stripe(stripeSecretKey) : null;
@@ -11,6 +13,107 @@ const CHECKOUT_TYPE = "md_board_coverage";
 
 function s(v) {
   return String(v ?? "").trim();
+}
+
+async function persistMdSubscriptionSignature(row, { signatureData, signedByName, signedAtIso } = {}) {
+  if (!row?.id || !signatureData) return row;
+  const touchIso = signedAtIso || row.signed_at || new Date().toISOString();
+  const { rows } = await query(
+    `update public.md_subscription
+        set signature_data = coalesce(signature_data, $2),
+            signed_at = coalesce(signed_at, $3::timestamptz),
+            signed_by_name = coalesce(nullif($4, ''), signed_by_name),
+            updated_at = now()
+      where id = $1::uuid
+      returning *`,
+    [row.id, signatureData, touchIso, signedByName || row.signed_by_name || null]
+  );
+  return rows[0] || row;
+}
+
+async function maybeStoreSignedContract(subscriptionRow, { signatureData, signedByName, signedAtIso, force = false } = {}) {
+  let row = subscriptionRow;
+  if (signatureData && row?.id && !row.signature_data) {
+    row = await persistMdSubscriptionSignature(row, { signatureData, signedByName, signedAtIso });
+  }
+  const sig = signatureData || row?.signature_data;
+  if (!row?.id || !sig) {
+    return row?.signed_contract_url || null;
+  }
+  if (row.signed_contract_url && !force) {
+    return row.signed_contract_url;
+  }
+  let contractPdfUrl = null;
+  let agreementText = null;
+  try {
+    const contractInfo = await getServiceTypeContractInfo(row.service_type_id);
+    contractPdfUrl = hasUsableContractUrl(contractInfo.md_contract_url)
+      ? contractInfo.md_contract_url
+      : null;
+    agreementText = contractInfo.md_agreement_text || null;
+  } catch {
+    /* continue with standalone agreement PDF */
+  }
+  try {
+    return await attachSignedContractToSubscription(row.id, {
+      providerId: row.provider_id,
+      serviceTypeId: row.service_type_id,
+      serviceTypeName: row.service_type_name,
+      providerName: signedByName || row.signed_by_name || row.provider_name,
+      signedAtIso: signedAtIso || row.signed_at || new Date().toISOString(),
+      signatureDataUrl: sig,
+      contractPdfUrl,
+      agreementText,
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[md-billing] signed contract generation failed:", err?.message || err);
+    return null;
+  }
+}
+
+export async function ensureSignedContractForSubscription(subscriptionRowOrId, overrides = {}) {
+  let row =
+    subscriptionRowOrId && typeof subscriptionRowOrId === "object"
+      ? subscriptionRowOrId
+      : await getMdSubscriptionById(String(subscriptionRowOrId || "").trim());
+  if (!row?.id) return null;
+  if (row.signed_contract_url && !overrides.force) return row.signed_contract_url;
+  const url = await maybeStoreSignedContract(row, {
+    signatureData: overrides.signatureData || row.signature_data,
+    signedByName: overrides.signedByName || row.signed_by_name,
+    signedAtIso: overrides.signedAtIso || row.signed_at,
+    force: Boolean(overrides.force),
+  });
+  if (url) {
+    row = { ...row, signed_contract_url: url };
+  }
+  return url;
+}
+
+function hasUsableContractUrl(value) {
+  const raw = String(value || "").trim();
+  return /^https?:\/\//i.test(raw);
+}
+
+/** Ensure signed PDF URLs exist before returning subscription rows to clients. */
+export async function backfillSignedContractsForRows(rows = []) {
+  const out = [];
+  for (const row of rows || []) {
+    if (!row?.id || row.signed_contract_url || !row.signature_data) {
+      out.push(row);
+      continue;
+    }
+    try {
+      const url = await ensureSignedContractForSubscription(row);
+      out.push(url ? { ...row, signed_contract_url: url } : row);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("[md-billing] backfill signed contract failed:", row.id, err?.message || err);
+      out.push(row);
+    }
+  }
+  return out;
 }
 
 function unixToIso(sec) {
@@ -88,12 +191,14 @@ async function getMdSubscriptionByStripeSubscriptionId(stripeSubscriptionId) {
 }
 
 async function getLatestMdSubscriptionForService(providerId, serviceTypeId) {
+  const { aliases } = await getProviderIdAliases(providerId);
+  const providerIds = aliases?.length ? aliases : [String(providerId || "").trim()].filter(Boolean);
   const { rows } = await query(
     `select * from public.md_subscription
-     where provider_id = $1 and service_type_id = $2
+     where provider_id::text = any($1::text[]) and service_type_id = $2
      order by created_at desc nulls last
      limit 1`,
-    [providerId, serviceTypeId]
+    [providerIds, serviceTypeId]
   );
   return rows[0] || null;
 }
@@ -131,8 +236,44 @@ export async function createPendingMdSubscriptionForCheckout({
 
   const existing = await getLatestMdSubscriptionForService(pid, stId);
   const existingStatus = s(existing?.status).toLowerCase();
-  if (existing && (existingStatus === "active" || existingStatus === "pending")) {
+  if (existing && existingStatus === "active") {
+    if (signatureData) {
+      let row = await persistMdSubscriptionSignature(existing, {
+        signatureData,
+        signedByName: signedByName || providerName,
+        signedAtIso: existing.signed_at,
+      });
+      await maybeStoreSignedContract(row, {
+        signatureData,
+        signedByName: signedByName || row.signed_by_name || providerName,
+        signedAtIso: row.signed_at,
+        force: !row.signed_contract_url,
+      });
+      row = (await getMdSubscriptionById(row.id)) || row;
+      return row;
+    }
     return existing;
+  }
+  if (existing && existingStatus === "pending") {
+    const touchIso = new Date().toISOString();
+    const { rows: updatedRows } = await query(
+      `update public.md_subscription
+          set signature_data = coalesce($2, signature_data),
+              signed_at = coalesce(signed_at, $3::timestamptz),
+              signed_by_name = coalesce($4, signed_by_name),
+              billing_updated_at = now(),
+              updated_at = now()
+        where id = $1::uuid
+        returning *`,
+      [existing.id, signatureData || null, touchIso, signedByName || providerName || null]
+    );
+    const updated = updatedRows[0] || existing;
+    await maybeStoreSignedContract(updated, {
+      signatureData: signatureData || updated.signature_data,
+      signedByName: signedByName || updated.signed_by_name || providerName,
+      signedAtIso: updated.signed_at || touchIso,
+    });
+    return updated;
   }
 
   const fee =
@@ -169,7 +310,13 @@ export async function createPendingMdSubscriptionForCheckout({
       signatureData || null,
     ]
   );
-  return rows[0];
+  const created = rows[0];
+  await maybeStoreSignedContract(created, {
+    signatureData,
+    signedByName: signedByName || providerName,
+    signedAtIso: nowIso,
+  });
+  return created;
 }
 
 export async function attachCheckoutSessionToMdSubscription(mdSubscriptionId, stripeCheckoutSessionId) {
@@ -212,6 +359,7 @@ export async function activateMdSubscriptionFromStripeSession(session) {
   }
 
   if (s(row.status).toLowerCase() === "active" && row.stripe_subscription_id) {
+    const signedContractUrl = await ensureSignedContractForSubscription(row);
     await ensureMdAssignment(
       row.provider_id,
       row.provider_email,
@@ -219,7 +367,12 @@ export async function activateMdSubscriptionFromStripeSession(session) {
       row.service_type_id,
       row.service_type_name
     );
-    return { ok: true, already_active: true, md_subscription_id: row.id };
+    return {
+      ok: true,
+      already_active: true,
+      md_subscription_id: row.id,
+      signed_contract_url: signedContractUrl || row.signed_contract_url || null,
+    };
   }
 
   const stripeSubscriptionId = s(session?.subscription);
@@ -282,6 +435,8 @@ export async function activateMdSubscriptionFromStripeSession(session) {
     row.service_type_name
   );
 
+  const signedContractUrl = await ensureSignedContractForSubscription(row);
+
   await insertAppNotification({
     user_id: row.provider_id,
     user_email: row.provider_email,
@@ -290,7 +445,7 @@ export async function activateMdSubscriptionFromStripeSession(session) {
     link_page: "ProviderCredentialsCoverage",
   });
 
-  return { ok: true, md_subscription_id: row.id };
+  return { ok: true, md_subscription_id: row.id, signed_contract_url: signedContractUrl || row.signed_contract_url || null };
 }
 
 /**
@@ -317,6 +472,13 @@ export async function finalizeMdBoardCoverage({
 
   if (row && status === "pending" && row.stripe_checkout_session_id && mdStripe) {
     try {
+      if (signatureData) {
+        row = await persistMdSubscriptionSignature(row, {
+          signatureData,
+          signedByName: signedByName || providerName,
+          signedAtIso: row.signed_at,
+        });
+      }
       const session = await mdStripe.checkout.sessions.retrieve(row.stripe_checkout_session_id);
       if (session.status === "complete") {
         return activateMdSubscriptionFromStripeSession(session);
@@ -328,8 +490,25 @@ export async function finalizeMdBoardCoverage({
   }
 
   if (row && status === "active") {
+    if (signatureData) {
+      row = await persistMdSubscriptionSignature(row, {
+        signatureData,
+        signedByName: signedByName || providerName,
+        signedAtIso: row.signed_at,
+      });
+    }
+    const signedContractUrl = await ensureSignedContractForSubscription(row, {
+      signatureData: signatureData || row.signature_data,
+      signedByName: signedByName || row.signed_by_name || providerName,
+      signedAtIso: row.signed_at,
+    });
     await ensureMdAssignment(pid, providerEmail, providerName, stId, serviceTypeName);
-    return { ok: true, already_active: true, md_subscription_id: row.id };
+    return {
+      ok: true,
+      already_active: true,
+      md_subscription_id: row.id,
+      signed_contract_url: signedContractUrl || row.signed_contract_url || null,
+    };
   }
 
   const activeOtherCount = (
@@ -377,11 +556,14 @@ export async function finalizeMdBoardCoverage({
               billing_status = 'active',
               service_type_monthly_fee = coalesce(service_type_monthly_fee, $2),
               activated_at = coalesce(activated_at, $3::timestamptz),
+              signature_data = coalesce($4, signature_data),
+              signed_at = coalesce(signed_at, $3::timestamptz),
+              signed_by_name = coalesce($5, signed_by_name),
               billing_updated_at = now(),
               updated_at = now()
         where id = $1::uuid
         returning *`,
-      [row.id, monthlyFee, nowIso]
+      [row.id, monthlyFee, nowIso, signatureData || null, signedByName || providerName || null]
     );
     row = rows[0];
     await logBillingEvent({
@@ -391,12 +573,23 @@ export async function finalizeMdBoardCoverage({
     });
   }
 
+  const signedContractUrl = await ensureSignedContractForSubscription(row, {
+    signatureData: signatureData || row.signature_data,
+    signedByName: signedByName || row.signed_by_name,
+    signedAtIso: row.signed_at || nowIso,
+  });
+
   const assignResult = await ensureMdAssignment(pid, providerEmail, providerName, stId, serviceTypeName);
   if (!assignResult.ok) {
     return { ok: false, error: assignResult.error || "MD assignment failed." };
   }
 
-  return { ok: true, md_subscription_id: row.id, assignment: assignResult };
+  return {
+    ok: true,
+    md_subscription_id: row.id,
+    assignment: assignResult,
+    signed_contract_url: signedContractUrl || row.signed_contract_url || null,
+  };
 }
 
 export async function handleMdInvoicePaid(invoice, stripeEventId = null) {
@@ -592,7 +785,8 @@ export async function handleMdSubscriptionDeleted(subscription, stripeEventId = 
 }
 
 /**
- * Provider-initiated cancel (end of billing period by default).
+ * Stripe-aware cancel (updates Stripe subscription). Not used by compliance checkExpirations
+ * or POST /cancelMDSubscription — those are DB-only; admins cancel Stripe manually.
  */
 export async function cancelMdSubscriptionForProvider({
   mdSubscriptionId,

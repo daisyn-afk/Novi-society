@@ -17,11 +17,8 @@ export default function MDDashboard() {
   });
 
   const { data: complianceLogs = [] } = useQuery({
-    queryKey: ["compliance-logs"],
-    queryFn: async () => {
-      const user = await base44.auth.me();
-      return base44.entities.ComplianceLog.filter({ medical_director_id: user.id }, "-created_date");
-    },
+    queryKey: ["md-compliance-logs"],
+    queryFn: () => base44.entities.ComplianceLog.list("-created_date", 4),
   });
 
   const activeRelationships = relationships.filter(r => r.status === "active");

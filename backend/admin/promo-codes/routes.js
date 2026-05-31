@@ -2,7 +2,7 @@ import { Router } from "express";
 import { requireAdminOrStaffWithModule } from "../auth/helpers.js";
 import { createPromoCode, deletePromoCode, listPromoCodes, updatePromoCode } from "./repository.js";
 
-function validatePromoInput(payload) {
+function validatePromoInput(payload, { isUpdate = false } = {}) {
   const code = String(payload?.code || "").trim();
   if (!code) {
     const err = new Error("Promo code is required.");
@@ -43,9 +43,23 @@ function validatePromoInput(payload) {
     throw err;
   }
   if (startsAt && endsAt && startsAt.getTime() > endsAt.getTime()) {
-    const err = new Error("Valid from must be before or equal to valid until.");
+    const err = new Error("Valid until must be the same time or later than valid from.");
     err.statusCode = 400;
     throw err;
+  }
+
+  const now = Date.now();
+  if (!isUpdate) {
+    if (startsAt && startsAt.getTime() < now) {
+      const err = new Error("Valid from cannot be in the past.");
+      err.statusCode = 400;
+      throw err;
+    }
+    if (endsAt && endsAt.getTime() < now) {
+      const err = new Error("Valid until cannot be in the past.");
+      err.statusCode = 400;
+      throw err;
+    }
   }
 
   const discountType = String(payload?.discount_type || "").toLowerCase();
@@ -81,7 +95,7 @@ promoCodesRouter.post("/", requireAdminOrStaffWithModule("AdminPromoCodes"), asy
 
 promoCodesRouter.put("/:id", requireAdminOrStaffWithModule("AdminPromoCodes"), async (req, res, next) => {
   try {
-    validatePromoInput(req.body || {});
+    validatePromoInput(req.body || {}, { isUpdate: true });
     const updated = await updatePromoCode(req.params.id, req.body || {});
     if (!updated) return res.status(404).json({ error: "Promo code not found." });
     return res.json(updated);

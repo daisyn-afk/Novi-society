@@ -2,5 +2,15 @@
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api" },
     { "source": "/((?!api/).*)", "destination": "/index.html" }
+  ],
+  "crons": [
+    {
+      "path": "/api/functions/checkExpirations",
+      "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/functions/complianceChecks",
+      "schedule": "0 6 * * *"
+    }
   ]
 }

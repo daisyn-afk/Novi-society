@@ -1,4 +1,8 @@
 import { query } from "../db.js";
+import {
+  activeNonExpiredCertSql,
+  verifiedNonExpiredLicenseSql,
+} from "../lib/providerCredentialEligibility.js";
 
 function parseMetadata(raw) {
   if (!raw || typeof raw !== "object") return {};
@@ -78,12 +82,18 @@ export async function listMarketplaceProviders() {
        inner join public.provider_profiles pp on pp.user_id = u.id
        inner join public.licenses l
          on l.provider_id = u.auth_user_id
-        and l.status = 'verified'
+        and ${verifiedNonExpiredLicenseSql("l")}
        inner join public.md_subscription ms
          on ms.provider_id = u.auth_user_id::text
         and lower(ms.status) = 'active'
       where u.role = 'provider'
         and coalesce(u.is_active, true) = true
+        and not exists (
+          select 1
+            from public.medical_director_relationship mdr
+           where mdr.provider_id = u.auth_user_id::text
+             and lower(coalesce(mdr.status, '')) = 'suspended'
+        )
       order by u.full_name nulls last, u.email`
   );
 
@@ -109,7 +119,7 @@ export async function listMarketplaceProviders() {
     `select c.*
        from public.certification c
       where c.provider_id = any($1::text[])
-        and lower(coalesce(c.status, '')) = 'active'
+        and ${activeNonExpiredCertSql("c")}
       order by c.certification_name nulls last`,
     [providerIds]
   ).catch(() => ({ rows: [] }));
