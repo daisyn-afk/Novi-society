@@ -7,6 +7,7 @@ import {
   requestAppointmentDeposit,
   resolveProviderBookingDeposit,
   syncAppointmentDepositPayment,
+  enrichAppointmentDepositFields,
 } from "./paymentService.js";
 import {
   sendAppointmentConfirmedPatientEmail,
@@ -316,7 +317,10 @@ appointmentsRouter.get("/", async (req, res, next) => {
                    order by a.appointment_date desc, a.created_at desc
                    limit $${limitIdx}`;
     const { rows } = await query(sql, params);
-    return res.json((rows || []).map(mapAppointmentRow));
+    const mapped = await Promise.all((rows || []).map(async (row) =>
+      enrichAppointmentDepositFields(mapAppointmentRow(row))
+    ));
+    return res.json(mapped);
   } catch (error) {
     return next(error);
   }
@@ -479,7 +483,7 @@ appointmentsRouter.patch("/:id", async (req, res, next) => {
           where a.id = $1`,
         [id]
       );
-      return res.json(mapAppointmentRow(enriched[0] || existing));
+      return res.json(await enrichAppointmentDepositFields(mapAppointmentRow(enriched[0] || existing)));
     }
 
     const { rows } = await query(
@@ -493,6 +497,7 @@ appointmentsRouter.patch("/:id", async (req, res, next) => {
       [id]
     );
     const updated = mapAppointmentRow(enriched[0] || rows[0]);
+    const updatedForClient = await enrichAppointmentDepositFields(updated);
 
     const prevStatus = String(existing.status || "").trim().toLowerCase();
     const nextStatus = String(updated.status || "").trim().toLowerCase();
@@ -522,18 +527,18 @@ appointmentsRouter.patch("/:id", async (req, res, next) => {
       patientEmail,
       patientName,
       patientId: updated.patient_id || existing.patient_id,
-      providerName: updated.provider_name || existing.provider_name,
-      providerId: updated.provider_id || existing.provider_id,
-      providerEmail: updated.provider_email || existing.provider_email,
-      serviceLabel: updated.service || existing.service,
-      appointmentDate: updated.appointment_date || existing.appointment_date,
-      appointmentTime: updated.appointment_time || existing.appointment_time,
+      providerName: updatedForClient.provider_name || existing.provider_name,
+      providerId: updatedForClient.provider_id || existing.provider_id,
+      providerEmail: updatedForClient.provider_email || existing.provider_email,
+      serviceLabel: updatedForClient.service || existing.service,
+      appointmentDate: updatedForClient.appointment_date || existing.appointment_date,
+      appointmentTime: updatedForClient.appointment_time || existing.appointment_time,
       cancelReason,
       wasRequest: prevStatus === "requested",
       cancelledBy,
     });
 
-    return res.json({ ...updated, patient_notifications: patientNotifications });
+    return res.json({ ...updatedForClient, patient_notifications: patientNotifications });
   } catch (error) {
     return next(error);
   }
@@ -591,7 +596,7 @@ appointmentsRouter.post("/:id/sync-deposit-payment", async (req, res, next) => {
         where a.id = $1`,
       [appointmentId]
     );
-    return res.json(mapAppointmentRow(enriched[0] || updated));
+    return res.json(await enrichAppointmentDepositFields(mapAppointmentRow(enriched[0] || updated)));
   } catch (error) {
     if (error?.statusCode) {
       return res.status(error.statusCode).json({ error: error.message });
@@ -612,7 +617,7 @@ appointmentsRouter.post("/:id/request-deposit", async (req, res, next) => {
         where a.id = $1`,
       [appointmentId]
     );
-    return res.json(mapAppointmentRow(enriched[0] || updated));
+    return res.json(await enrichAppointmentDepositFields(mapAppointmentRow(enriched[0] || updated)));
   } catch (error) {
     if (error?.statusCode) {
       return res.status(error.statusCode).json({ error: error.message });

@@ -78,6 +78,18 @@ export async function resolveAppointmentDeposit(appointment) {
   return resolveProviderBookingDeposit(appointment?.provider_id);
 }
 
+/** Ensure awaiting_payment rows expose the deposit the patient will be charged. */
+export async function enrichAppointmentDepositFields(appointment) {
+  if (!appointment || typeof appointment !== "object") return appointment;
+  const status = String(appointment.status || "").toLowerCase();
+  if (status !== "awaiting_payment") return appointment;
+  const deposit = await resolveAppointmentDeposit(appointment);
+  return {
+    ...appointment,
+    deposit_amount: deposit,
+  };
+}
+
 export async function processAppointmentCheckoutCompletedSession(session) {
   const metadata = session?.metadata || {};
   if (String(metadata.checkout_type || "").toLowerCase() !== "appointment") return;
