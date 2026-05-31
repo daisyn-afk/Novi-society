@@ -44,3 +44,18 @@ export async function listCoursePayments({ limit = DEFAULT_LIMIT } = {}) {
   );
   return rows;
 }
+
+export async function getCourseRevenueStats() {
+  const { rows } = await query(
+    `select
+       coalesce(sum(amount_total), 0)::numeric as total,
+       count(*)::int as count
+     from public.course_payments
+     where status = 'completed'`,
+    []
+  );
+  return {
+    total: Number(rows[0]?.total || 0),
+    count: Number(rows[0]?.count || 0),
+  };
+}
