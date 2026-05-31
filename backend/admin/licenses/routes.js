@@ -5,6 +5,10 @@ import { hasAdminOrStaffModuleAccess, requireAuth } from "../auth/helpers.js";
 import { notifyAdminsOfLicenseSubmission } from "../adminNotifications.js";
 import { getProviderIdAliases } from "../mdSupervisedAccess.js";
 import { sendEmailFromTemplate } from "../emails/renderTemplate.js";
+import {
+  notifyProviderLicenseReinstated,
+  reinstateProviderAfterLicenseVerified,
+} from "./credentialReinstatement.js";
 
 export const licensesRouter = Router();
 licensesRouter.use(requireAuth);
@@ -458,16 +462,44 @@ licensesRouter.patch("/:id", async (req, res, next) => {
         );
         const providerRow = providerResult.rows[0] || {};
         const providerEmail = updated.provider_email || providerRow.email || null;
-        void sendLicenseDecisionEmail({
-          providerEmail,
-          providerFirstName: resolveProviderFirstName({
-            provider_email: providerEmail,
-            provider_first_name: providerRow.first_name,
-            provider_name: providerRow.full_name
-          }),
-          isApproved,
-          rejectionReason: isRejected ? (updated.rejection_reason || requestedRejectionReason) : ""
+        const providerFirstName = resolveProviderFirstName({
+          provider_email: providerEmail,
+          provider_first_name: providerRow.first_name,
+          provider_name: providerRow.full_name,
         });
+
+        if (isRejected) {
+          void sendLicenseDecisionEmail({
+            providerEmail,
+            providerFirstName,
+            isApproved: false,
+            rejectionReason: updated.rejection_reason || requestedRejectionReason,
+          });
+        } else if (isApproved) {
+          const wasExpired = String(existing.status || "").toLowerCase() === "expired";
+          const reinstatement = await reinstateProviderAfterLicenseVerified({
+            providerId: updated.provider_id,
+          });
+          const isReinstatement =
+            wasExpired ||
+            reinstatement.resolved_logs > 0 ||
+            reinstatement.access_restored_count > 0;
+
+          if (isReinstatement) {
+            void notifyProviderLicenseReinstated({
+              providerId: updated.provider_id,
+              providerEmail,
+              providerFirstName,
+            });
+          } else {
+            void sendLicenseDecisionEmail({
+              providerEmail,
+              providerFirstName,
+              isApproved: true,
+              rejectionReason: "",
+            });
+          }
+        }
       }
       return res.json(mapLicenseRow(updated));
     } finally {

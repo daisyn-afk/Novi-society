@@ -827,7 +827,59 @@ export function createLovableProviderClient() {
               body: JSON.stringify(payload || {}),
             }),
           get: createNotImplementedMethod("entities.Review.get"),
-          delete: createNotImplementedMethod("entities.Review.delete"),
+          delete: (id) =>
+            authRequest(`/admin/reviews/${encodeURIComponent(id)}`, { method: "DELETE" }),
+        };
+      }
+      if (name === "Message") {
+        return {
+          list: createNotImplementedMethod("entities.Message.list"),
+          get: createNotImplementedMethod("entities.Message.get"),
+          create: (payload) =>
+            authRequest("/admin/appointment-messages", {
+              method: "POST",
+              body: JSON.stringify({
+                thread_id: payload?.thread_id || payload?.appointment_id,
+                appointment_id: payload?.appointment_id || payload?.thread_id,
+                recipient_id: payload?.recipient_id,
+                recipient_name: payload?.recipient_name,
+                recipient_email: payload?.recipient_email,
+                message: payload?.message,
+                sender_name: payload?.sender_name,
+                sender_role: payload?.sender_role,
+              }),
+            }),
+          update: createNotImplementedMethod("entities.Message.update"),
+          delete: createNotImplementedMethod("entities.Message.delete"),
+          filter: async (filters = {}, _sort = "", _limit = 200) => {
+            const threadId = String(filters?.thread_id || filters?.appointment_id || "").trim();
+            if (!threadId) return [];
+            return authRequest(
+              `/admin/appointment-messages?thread_id=${encodeURIComponent(threadId)}`,
+              { method: "GET" }
+            );
+          },
+        };
+      }
+      if (name === "ComplianceLog") {
+        const fetchComplianceLogs = async (filters = {}, sort = "", limit) => {
+          const qs = buildEntityQuery(filters, limit || 200);
+          const rows = await authRequest(`/admin/compliance-logs${qs}`, { method: "GET" });
+          return sortEntityRows(Array.isArray(rows) ? rows : [], sort);
+        };
+        return {
+          list: (sort, limit) => fetchComplianceLogs({}, sort, limit),
+          filter: fetchComplianceLogs,
+          create: (payload) =>
+            authRequest("/admin/compliance-logs", { method: "POST", body: JSON.stringify(payload || {}) }),
+          update: (id, payload) =>
+            authRequest(`/admin/compliance-logs/${encodeURIComponent(id)}`, {
+              method: "PATCH",
+              body: JSON.stringify(payload || {}),
+            }),
+          get: createNotImplementedMethod("entities.ComplianceLog.get"),
+          delete: (id) =>
+            authRequest(`/admin/compliance-logs/${encodeURIComponent(id)}`, { method: "DELETE" }),
         };
       }
       if (name === "PatientJourney") {

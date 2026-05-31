@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { useNavigate } from "react-router-dom";
 import { createPageUrl } from "@/utils";
-import { Bell, X, Calendar, Award, FileText, Users, CheckCircle, ShieldCheck } from "lucide-react";
+import { Bell, X, Calendar, Award, FileText, Users, CheckCircle, ShieldCheck, MessageSquare } from "lucide-react";
 import { format } from "date-fns";
 
 const NOTIF_ICONS = {
@@ -22,6 +22,7 @@ const NOTIF_ICONS = {
   treatment_record_approved: CheckCircle,
   treatment_record_flagged: FileText,
   treatment_record_changes_requested: FileText,
+  appointment_message: MessageSquare,
 };
 
 const NOTIF_COLORS = {
@@ -40,6 +41,7 @@ const NOTIF_COLORS = {
   treatment_record_approved: "text-green-600 bg-green-50",
   treatment_record_flagged: "text-red-600 bg-red-50",
   treatment_record_changes_requested: "text-orange-600 bg-orange-50",
+  appointment_message: "text-indigo-600 bg-indigo-50",
 };
 
 const NOTIF_ROW_STYLES = {
@@ -58,6 +60,7 @@ const NOTIF_ROW_STYLES = {
   treatment_record_approved: "bg-green-50/80 border-green-200",
   treatment_record_flagged: "bg-red-50/80 border-red-200",
   treatment_record_changes_requested: "bg-orange-50/80 border-orange-200",
+  appointment_message: "bg-indigo-50/80 border-indigo-200",
 };
 
 export default function NotificationBell() {
@@ -193,6 +196,21 @@ export default function NotificationBell() {
       });
     } else if (type.startsWith("treatment_record_")) {
       targetHref = targetHref || createPageUrl("ProviderPractice");
+    } else if (type === "appointment_message") {
+      const link = String(notification?.link_page || "");
+      if (link.includes("ProviderMessaging") || link.includes("patient_queries")) {
+        const threadMatch = link.match(/thread_id=([^&]+)/);
+        targetHref = appendQueryParams(createPageUrl("ProviderMessaging"), {
+          tab: "patient_queries",
+          ...(threadMatch ? { thread_id: decodeURIComponent(threadMatch[1]) } : {}),
+        });
+      } else if (link.includes("ProviderPractice") || link.includes("ProviderAppointments")) {
+        targetHref = appendQueryParams(createPageUrl("ProviderPractice"), { tab: "appointments" });
+      } else if (link.includes("PatientMarketplace")) {
+        targetHref = link.startsWith("/") ? link : `/${link}`;
+      } else {
+        targetHref = targetHref || createPageUrl("PatientAppointments");
+      }
     }
     if (targetHref) {
       setOpen(false);

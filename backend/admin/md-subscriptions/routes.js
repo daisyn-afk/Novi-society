@@ -7,6 +7,7 @@ import {
   mdHasActiveSupervisionOf,
 } from "../mdSupervisedAccess.js";
 import { enrichMdSubscriptionMonthlyFees, monthlyFeeForNewMdService } from "../mdMembershipPricing.js";
+import { ensureSignedContractForSubscription, finalizeMdBoardCoverage } from "../mdBillingService.js";
 
 export const mdSubscriptionsRouter = Router();
 
@@ -19,6 +20,36 @@ function getBearerToken(req) {
 function hasAdminAccess(role) {
   const normalized = String(role || "").trim().toLowerCase();
   return normalized === "admin" || normalized === "super_admin" || normalized === "owner";
+}
+
+async function respondWithSubscriptions(res, rows) {
+  const serviceTypeIds = [
+    ...new Set(
+      (rows || []).map((row) => String(row?.service_type_id || "").trim()).filter(Boolean)
+    ),
+  ];
+  const contractByServiceId = new Map();
+  if (serviceTypeIds.length) {
+    const { rows: serviceTypes } = await query(
+      `select id, name, md_contract_url, md_agreement_text
+         from public.service_type
+        where id::text = any($1::text[])`,
+      [serviceTypeIds]
+    );
+    for (const st of serviceTypes || []) {
+      contractByServiceId.set(String(st.id), st);
+    }
+  }
+  const sanitized = (rows || []).map((row) => {
+    const { signature_data: _sig, ...rest } = row || {};
+    const st = contractByServiceId.get(String(row?.service_type_id || ""));
+    return {
+      ...rest,
+      md_contract_url: st?.md_contract_url || null,
+      md_agreement_text: st?.md_agreement_text || null,
+    };
+  });
+  return res.json(enrichMdSubscriptionMonthlyFees(sanitized));
 }
 
 mdSubscriptionsRouter.get("/", async (req, res, next) => {
@@ -49,7 +80,7 @@ mdSubscriptionsRouter.get("/", async (req, res, next) => {
          limit 500`,
         params
       );
-      return res.json(enrichMdSubscriptionMonthlyFees(rows || []));
+      return respondWithSubscriptions(res, rows);
     }
 
     if (isMedicalDirectorRole(me.role)) {
@@ -72,7 +103,7 @@ mdSubscriptionsRouter.get("/", async (req, res, next) => {
            limit 200`,
           params
         );
-        return res.json(enrichMdSubscriptionMonthlyFees(rows || []));
+        return respondWithSubscriptions(res, rows);
       }
       const { rows: rels } = await query(
         `select provider_id from public.medical_director_relationship
@@ -88,17 +119,58 @@ mdSubscriptionsRouter.get("/", async (req, res, next) => {
          limit 500`,
         [providerIds]
       );
-      return res.json(enrichMdSubscriptionMonthlyFees(rows || []));
+      return respondWithSubscriptions(res, rows);
     }
 
+    const { aliases } = await getProviderIdAliases(me.id);
+    const providerIds = aliases?.length ? aliases : [me.id];
     const { rows } = await query(
       `select * from public.md_subscription
-       where provider_id = $1
+       where provider_id::text = any($1::text[])
        order by created_at desc nulls last
        limit 200`,
-      [me.id]
+      [providerIds]
     );
-    return res.json(enrichMdSubscriptionMonthlyFees(rows || []));
+    return respondWithSubscriptions(res, rows);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+mdSubscriptionsRouter.post("/:id/signed-contract", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ error: "Missing bearer token." });
+    const me = await getMeFromAccessToken(token);
+    const id = String(req.params.id || "").trim();
+    if (!id) return res.status(400).json({ error: "id is required." });
+
+    const { rows: subRows } = await query(
+      `select * from public.md_subscription where id = $1::uuid limit 1`,
+      [id]
+    );
+    const sub = subRows[0];
+    if (!sub) return res.status(404).json({ error: "Subscription not found." });
+
+    const isOwner = String(sub.provider_id || "") === String(me.id);
+    const isMd =
+      isMedicalDirectorRole(me.role) && (await mdHasActiveSupervisionOf(me, sub.provider_id));
+    if (!hasAdminAccess(me.role) && !isOwner && !isMd) {
+      return res.status(403).json({ error: "Forbidden." });
+    }
+
+    const bodySignature = req.body?.signature_data != null ? String(req.body.signature_data) : null;
+    const signedContractUrl = await ensureSignedContractForSubscription(sub, {
+      force: true,
+      signatureData: bodySignature || sub.signature_data,
+      signedByName: sub.signed_by_name,
+      signedAtIso: sub.signed_at,
+    });
+    if (!signedContractUrl) {
+      return res.status(502).json({ error: "Could not generate signed contract PDF." });
+    }
+
+    return res.json({ ok: true, signed_contract_url: signedContractUrl });
   } catch (error) {
     return next(error);
   }

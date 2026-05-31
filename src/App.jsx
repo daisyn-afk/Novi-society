@@ -84,7 +84,7 @@ const RequireRoleRoute = ({ pageKey, children }) => {
 };
 
 const AdminEntryRoute = () => {
-  const { data: user, isLoading } = useQuery({
+  const { data: user, isLoading, isError } = useQuery({
     queryKey: ["me"],
     queryFn: () => base44.auth.me(),
     retry: false,
@@ -96,6 +96,10 @@ const AdminEntryRoute = () => {
         <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin"></div>
       </div>
     );
+  }
+
+  if (isError || !user) {
+    return <Login />;
   }
 
   if (normalizeRole(user?.role) !== "admin") {
@@ -125,6 +129,7 @@ const AuthenticatedApp = () => {
     "/thank-you",
     "/request-information",
     "/login",
+    "/admin",
     "/signup",
     "/set-password",
     "/PrivacyPolicy",

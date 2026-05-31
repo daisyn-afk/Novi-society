@@ -5,6 +5,9 @@ import { appointmentsApi } from "@/api/appointmentsApi";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import MessageThread from "@/components/messaging/MessageThread";
+import MessageUnreadBadge from "@/components/messaging/MessageUnreadBadge";
+import { useAppointmentMessageUnread, unreadCountForThread } from "@/hooks/useAppointmentMessageUnread";
 import {
   Calendar, Clock, User, MessageSquare, CheckCircle, X, FileText,
   ShieldCheck, ChevronLeft, ChevronRight, LayoutList, LayoutGrid,
@@ -74,7 +77,7 @@ function CalApptPill({ appt, onClick }) {
 }
 
 // ── Appointment detail drawer content ────────────────────────────
-function ApptDetail({ appt, treatmentRecords, onConfirm, onCancel, onComplete, onNoShow, noShowPending, onSendGFE, gfeSending, gfeFeedback, onDoc, onClose }) {
+function ApptDetail({ appt, treatmentRecords, onConfirm, onCancel, onComplete, onNoShow, noShowPending, onSendGFE, gfeSending, gfeFeedback, onDoc, onMessage, messageUnreadCount, onClose }) {
   const sc = STATUS[appt.status] || STATUS.confirmed;
   const hasRecord = treatmentRecords.find(r => r.appointment_id === appt.id);
   const serviceLabel = appointmentServiceLabel(appt);
@@ -245,6 +248,15 @@ function ApptDetail({ appt, treatmentRecords, onConfirm, onCancel, onComplete, o
           </div>
         )}
         <div className="grid grid-cols-2 gap-2">
+          <Button
+            className="w-full gap-1.5 relative"
+            variant="outline"
+            onClick={onMessage}
+          >
+            <MessageSquare className="w-4 h-4" />
+            Message Patient
+            <MessageUnreadBadge count={messageUnreadCount} />
+          </Button>
           {(["requested", "awaiting_payment", "confirmed"].includes(appt.status)) && appt.requires_gfe === true && (
             <Button className="w-full gap-1.5" style={{ background: "rgba(123,142,200,0.12)", color: "#7B8EC8", border: "1px solid rgba(123,142,200,0.3)" }}
               onClick={onSendGFE} disabled={gfeSending || gfeStatus === "approved"}>
@@ -272,7 +284,12 @@ function ApptDetail({ appt, treatmentRecords, onConfirm, onCancel, onComplete, o
 }
 
 // ── Main Component ────────────────────────────────────────────────
-export default function PracticeAppointmentsTab({ appointments, initialFilter = "upcoming" }) {
+export default function PracticeAppointmentsTab({
+  appointments,
+  initialFilter = "upcoming",
+  openMessageAppointmentId = null,
+  onOpenMessageHandled,
+}) {
   const qc = useQueryClient();
   const { toast } = useToast();
   const [view, setView] = useState("list"); // "list" | "week"
@@ -290,10 +307,20 @@ export default function PracticeAppointmentsTab({ appointments, initialFilter = 
   const [completePrompt, setCompletePrompt] = useState({ open: false, appt: null });
   const [gfeSending, setGfeSending] = useState({});
   const [gfeFeedback, setGfeFeedback] = useState({ id: null, type: null, message: "" });
+  const [msgDialog, setMsgDialog] = useState(null);
+  const { data: unreadSummary } = useAppointmentMessageUnread();
 
   useEffect(() => {
     if (initialFilter) setFilter(initialFilter);
   }, [initialFilter]);
+
+  useEffect(() => {
+    const openId = String(openMessageAppointmentId || "").trim();
+    if (!openId) return;
+    const appt = (appointments || []).find((a) => String(a.id) === openId);
+    if (appt) setMsgDialog(appt);
+    onOpenMessageHandled?.();
+  }, [openMessageAppointmentId, appointments, onOpenMessageHandled]);
 
   const { data: treatmentRecords = [] } = useQuery({
     queryKey: ["treatment-records"],
@@ -585,6 +612,11 @@ export default function PracticeAppointmentsTab({ appointments, initialFilter = 
                     const serviceLabel = appointmentServiceLabel(a);
                     const gfeStatus = appointmentGfeDisplayStatus(a);
                     const gfeLink = appointmentGfeLink(a);
+                    const messageUnread = unreadCountForThread(unreadSummary, a.id);
+                    const openMessages = (e) => {
+                      e.stopPropagation();
+                      setMsgDialog(a);
+                    };
                     return (
                       <button key={a.id} onClick={() => openDetail(a)}
                         className="w-full text-left rounded-2xl mb-2 transition-all hover:shadow-md overflow-hidden"
@@ -611,6 +643,14 @@ export default function PracticeAppointmentsTab({ appointments, initialFilter = 
                               <p className="font-bold text-sm" style={{ color: "#1e2535" }}>{a.patient_name || a.patient_email || "Patient"}</p>
                               <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full" style={{ background: sc.bg, color: sc.text }}>{sc.label}</span>
                               <GFEStatusBadge status={gfeStatus} examUrl={gfeLink || undefined} />
+                              {messageUnread > 0 && (
+                                <span
+                                  className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+                                  style={{ background: "rgba(250,111,48,0.15)", color: "#FA6F30" }}
+                                >
+                                  New message
+                                </span>
+                              )}
                             </div>
                             {a.patient_email && (
                               <p className="text-xs flex items-center gap-1 mt-0.5 truncate" style={{ color: "rgba(30,37,53,0.5)" }}>
@@ -641,23 +681,61 @@ export default function PracticeAppointmentsTab({ appointments, initialFilter = 
                             </div>
                           )}
 
-                          {/* Quick action for pending */}
-                          {a.status === "requested" && (
-                            <div className="flex gap-1.5 flex-shrink-0" onClick={e => e.stopPropagation()}>
-                              <button onClick={e => { e.stopPropagation(); setConfirmDialog({ open: true, appt: a }); setConfirmTime(""); }}
-                                className="w-8 h-8 rounded-xl flex items-center justify-center transition-all hover:opacity-80"
-                                style={{ background: "rgba(200,230,60,0.2)", color: "#4a6b10", border: "1px solid rgba(200,230,60,0.4)" }}>
-                                <CheckCircle className="w-4 h-4" />
-                              </button>
-                              <button onClick={e => { e.stopPropagation(); setCancelDialog({ open: true, appt: a, isDecline: true }); }}
-                                className="w-8 h-8 rounded-xl flex items-center justify-center transition-all hover:opacity-80"
-                                style={{ background: "rgba(218,106,99,0.12)", color: "#DA6A63", border: "1px solid rgba(218,106,99,0.3)" }}>
-                                <X className="w-4 h-4" />
-                              </button>
-                            </div>
-                          )}
-
-                          <Eye className="w-4 h-4 flex-shrink-0 opacity-20" />
+                          <div className="flex gap-1.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              type="button"
+                              onClick={openMessages}
+                              title="Open messages"
+                              className="w-8 h-8 rounded-xl flex items-center justify-center relative transition-all hover:opacity-80"
+                              style={{
+                                background: messageUnread > 0 ? "rgba(250,111,48,0.12)" : "rgba(30,37,53,0.05)",
+                                color: messageUnread > 0 ? "#FA6F30" : "rgba(30,37,53,0.45)",
+                                border: messageUnread > 0 ? "1px solid rgba(250,111,48,0.35)" : "1px solid rgba(30,37,53,0.1)",
+                              }}
+                            >
+                              <MessageSquare className="w-4 h-4" />
+                              <MessageUnreadBadge count={messageUnread} />
+                            </button>
+                            {a.status === "requested" && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setConfirmDialog({ open: true, appt: a });
+                                    setConfirmTime("");
+                                  }}
+                                  className="w-8 h-8 rounded-xl flex items-center justify-center transition-all hover:opacity-80"
+                                  style={{ background: "rgba(200,230,60,0.2)", color: "#4a6b10", border: "1px solid rgba(200,230,60,0.4)" }}
+                                >
+                                  <CheckCircle className="w-4 h-4" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setCancelDialog({ open: true, appt: a, isDecline: true });
+                                  }}
+                                  className="w-8 h-8 rounded-xl flex items-center justify-center transition-all hover:opacity-80"
+                                  style={{ background: "rgba(218,106,99,0.12)", color: "#DA6A63", border: "1px solid rgba(218,106,99,0.3)" }}
+                                >
+                                  <X className="w-4 h-4" />
+                                </button>
+                              </>
+                            )}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openDetail(a);
+                              }}
+                              title="View details"
+                              className="w-8 h-8 rounded-xl flex items-center justify-center transition-all hover:opacity-80"
+                              style={{ background: "rgba(30,37,53,0.05)", color: "rgba(30,37,53,0.45)", border: "1px solid rgba(30,37,53,0.1)" }}
+                            >
+                              <Eye className="w-4 h-4" />
+                            </button>
+                          </div>
                         </div>
                       </button>
                     );
@@ -764,6 +842,11 @@ export default function PracticeAppointmentsTab({ appointments, initialFilter = 
                 setDocDialog({ open: true, appt: selectedAppt, existing: existing || null });
                 setDetailOpen(false);
               }}
+              onMessage={() => {
+                setMsgDialog(selectedAppt);
+                setDetailOpen(false);
+              }}
+              messageUnreadCount={unreadCountForThread(unreadSummary, selectedAppt?.id)}
             />
             </>
           )}
@@ -836,6 +919,22 @@ export default function PracticeAppointmentsTab({ appointments, initialFilter = 
               Document Now
             </Button>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!msgDialog} onOpenChange={() => setMsgDialog(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Message {msgDialog?.patient_name || "Patient"}</DialogTitle>
+          </DialogHeader>
+          {msgDialog && (
+            <MessageThread
+              appointmentId={msgDialog.id}
+              recipientId={msgDialog.patient_id}
+              recipientName={msgDialog.patient_name}
+              recipientEmail={msgDialog.patient_email}
+            />
+          )}
         </DialogContent>
       </Dialog>
 

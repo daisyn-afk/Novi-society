@@ -329,3 +329,28 @@ export function normalizeScheduledSessionDatesEntries(sessionDates, previousSess
     return { ...entry, max_seats: maxSeats, available_seats: available };
   });
 }
+
+export function todaySessionDateKey() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+export function isSessionDateBeforeToday(dateValue) {
+  const key = toSessionDateKey(dateValue);
+  if (!key) return false;
+  return key < todaySessionDateKey();
+}
+
+export function sessionDateEntryIdentity(entry) {
+  return `${entry?.session_id || ""}|${toSessionDateKey(entry?.date || entry?.session_date) || ""}|${entry?.start_time || ""}|${String(entry?.location || "").trim()}`;
+}
+
+/** True when date is before today and this row is not an unchanged existing session date. */
+export function isDisallowedPastSessionDate(entry, previousSessionDates) {
+  if (!isSessionDateBeforeToday(entry?.date || entry?.session_date)) return false;
+  const prev = new Set((previousSessionDates || []).map(sessionDateEntryIdentity));
+  return !prev.has(sessionDateEntryIdentity(entry));
+}

@@ -14,6 +14,7 @@ import {
   sendAppointmentNoShowPatientEmail,
   notifyPatientAppointmentNoShow,
 } from "../patientAppointmentEmails.js";
+import { migratePreBookingMessagesToAppointment } from "../appointment-messages/migratePreBookingThread.js";
 
 export const appointmentsRouter = Router();
 
@@ -343,6 +344,19 @@ appointmentsRouter.post("/", async (req, res, next) => {
     );
     const createdId = rows[0]?.id;
     if (createdId) {
+      try {
+        await migratePreBookingMessagesToAppointment(query, {
+          providerId,
+          patientId,
+          appointmentId: createdId,
+        });
+      } catch (migrateErr) {
+        console.warn(
+          "[appointments] pre-booking message migration failed:",
+          migrateErr?.message || migrateErr
+        );
+      }
+
       const { rows: enriched } = await query(
         `${APPOINTMENTS_SELECT}
            ${APPOINTMENTS_FROM}

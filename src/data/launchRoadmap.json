@@ -38,8 +38,11 @@
         {
           "id": "bloodborne",
           "label": "Bloodborne Pathogens Training",
-          "desc": "OSHA legal requirement. Complete annual bloodborne pathogens training.",
+          "desc": "OSHA legal requirement. Upload your bloodborne pathogens training certificate.",
           "priority": 40,
+          "autoCheck": "bloodborne",
+          "navigate_to": "ProviderPractice",
+          "navigate_params": "?tab=profile&step=bloodborne",
           "link": "https://www.redcross.org/take-a-class/program-aed/online-only/bloodborne-pathogens-training",
           "linkLabel": "Take Red Cross bloodborne pathogens training →"
         },

@@ -9,6 +9,7 @@ import { submitMdBoardCoverageAssignment } from "../mdAssignmentService.js";
 import {
   attachCheckoutSessionToMdSubscription,
   createPendingMdSubscriptionForCheckout,
+  ensureSignedContractForSubscription,
   finalizeMdBoardCoverage,
 } from "../mdBillingService.js";
 import Stripe from "stripe";
@@ -45,6 +46,10 @@ import { buildManufacturerApplicationPayload } from "../manufacturers/providerAp
 import { validateBookingScope } from "../bookingValidation.js";
 import { sendAppointmentGfeInviteEmail, notifyPatientGfeInvite } from "../patientAppointmentEmails.js";
 import { handleQualiphyExamWebhook, resolveQualiphyWebhookUrl } from "../qualiphy/webhookHandler.js";
+import {
+  runCheckExpirations,
+  runComplianceChecks,
+} from "../compliance-logs/expirationService.js";
 import {
   createAppointmentDepositCheckout,
   processAppointmentCheckoutCompletedSession,
@@ -641,6 +646,30 @@ async function requireAdminOrStaffModelSignups(req, res, next) {
   }
 }
 
+async function requireAdminOrStaffCompliance(req, res, next) {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ error: "Missing bearer token." });
+    const me = await getMeFromAccessToken(token);
+    if (hasAdminAccess(me?.role) || hasStaffModuleAccess(me, "AdminCompliance")) {
+      req.me = me;
+      return next();
+    }
+    return res.status(403).json({ error: "Forbidden." });
+  } catch (error) {
+    return res.status(error?.statusCode || 401).json({ error: error?.message || "Unauthorized." });
+  }
+}
+
+async function requireCronOrAdminCompliance(req, res, next) {
+  const cronSecret = String(process.env.CRON_SECRET || "").trim();
+  if (cronSecret) {
+    const auth = String(req.headers.authorization || "").trim();
+    if (auth === `Bearer ${cronSecret}`) return next();
+  }
+  return requireAdminOrStaffCompliance(req, res, next);
+}
+
 functionsRouter.post("/validateBookingScope", async (req, res, next) => {
   try {
     const token = getBearerToken(req);
@@ -857,6 +886,13 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
       return res.status(403).json({ success: false, error: "Only providers can activate MD coverage." });
     }
 
+    if (!signatureData || !/^data:image\/(png|jpeg|jpg);base64,/i.test(signatureData)) {
+      return res.status(400).json({
+        success: false,
+        error: "Please sign the MD agreement on the signature pad before continuing.",
+      });
+    }
+
     if (amountCents <= 0) {
       const result = await finalizeMdBoardCoverage({
         providerId: me.id,
@@ -892,10 +928,16 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
       signedByName: me.full_name,
     });
 
+    const signedContractUrl = await ensureSignedContractForSubscription(pending, {
+      signatureData,
+      signedByName: me.full_name,
+    });
+
     const base = String(appBaseUrl || "http://localhost:5173").replace(/\/$/, "");
     const successParams = new URLSearchParams({
       md_payment_status: "success",
-      service_type_id: serviceTypeId
+      service_type_id: serviceTypeId,
+      tab: "documents",
     });
     if (enrollmentId) successParams.set("enrollment_id", enrollmentId);
     const successUrl = `${base}/ProviderCredentialsCoverage?${successParams.toString()}`;
@@ -945,23 +987,46 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
     if (!url) {
       return res.status(500).json({ success: false, error: "Checkout session did not return a URL." });
     }
-    return res.json({ success: true, url });
+    return res.json({
+      success: true,
+      url,
+      signed_contract_url: signedContractUrl || pending.signed_contract_url || null,
+      md_subscription_id: pending.id,
+      service_type_id: serviceTypeId,
+      service_type_name: serviceTypeName,
+    });
   } catch (error) {
     return next(error);
   }
 });
 
-/** Placeholder: cancel flow can extend to Stripe + DB when subscription ids are stored. */
+/** Provider cancel: DB + admin email only. Stripe must be cancelled manually in dashboard. */
 functionsRouter.post("/cancelMDSubscription", async (req, res, next) => {
   try {
     const token = getBearerToken(req);
     if (!token) return res.status(401).json({ success: false, error: "Missing bearer token." });
-    await getMeFromAccessToken(token);
+    const me = await getMeFromAccessToken(token);
+    const role = String(me.role || "").toLowerCase();
+    if (role !== "provider" && !hasAdminAccess(me.role)) {
+      return res.status(403).json({ success: false, error: "Forbidden." });
+    }
     const subscriptionId = String(req.body?.subscription_id || "").trim();
     if (!subscriptionId) {
       return res.status(400).json({ success: false, error: "subscription_id is required." });
     }
-    return res.json({ success: true });
+    const { requestProviderMdSubscriptionCancel } = await import(
+      "../mdSubscriptionProviderCancel.js"
+    );
+    const result = await requestProviderMdSubscriptionCancel({
+      subscriptionId,
+      providerId: me.id,
+      reason: req.body?.reason || null,
+      notes: req.body?.notes || null,
+    });
+    if (!result.success) {
+      return res.status(result.error === "Forbidden." ? 403 : 400).json(result);
+    }
+    return res.json(result);
   } catch (error) {
     return next(error);
   }
@@ -2761,3 +2826,26 @@ functionsRouter.post("/scheduleRepCall", async (req, res, next) => {
     return next(error);
   }
 });
+
+async function handleCheckExpirations(_req, res, next) {
+  try {
+    const result = await runCheckExpirations();
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function handleComplianceChecks(_req, res, next) {
+  try {
+    const result = await runComplianceChecks();
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+functionsRouter.post("/checkExpirations", requireCronOrAdminCompliance, handleCheckExpirations);
+functionsRouter.get("/checkExpirations", requireCronOrAdminCompliance, handleCheckExpirations);
+functionsRouter.post("/complianceChecks", requireCronOrAdminCompliance, handleComplianceChecks);
+functionsRouter.get("/complianceChecks", requireCronOrAdminCompliance, handleComplianceChecks);
