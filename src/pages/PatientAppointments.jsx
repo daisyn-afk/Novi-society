@@ -37,6 +37,16 @@ const statusColor = {
   awaiting_consent: "bg-orange-100 text-orange-700",
 };
 
+function formatDepositUsd(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n % 1 === 0 ? String(n) : n.toFixed(2);
+}
+
+function appointmentDepositDisplay(appointment) {
+  return formatDepositUsd(appointment?.deposit_amount);
+}
+
 function patchAppointmentInCache(qc, queryKey, appointmentId, patch) {
   qc.setQueryData(queryKey, (old) => {
     if (!Array.isArray(old)) return old;
@@ -147,6 +157,11 @@ export default function PatientAppointments() {
   const payDeposit = useMutation({
     mutationFn: async (appointmentId) => {
       const result = await appointmentsApi.createDepositCheckout(appointmentId);
+      if (result?.deposit_amount != null) {
+        patchAppointmentInCache(qc, ["patient-appointments"], appointmentId, {
+          deposit_amount: result.deposit_amount,
+        });
+      }
       const checkoutUrl = result?.sessionUrl || result?.checkout_url;
       if (checkoutUrl) {
         redirectToStripeCheckout(checkoutUrl);
@@ -221,7 +236,9 @@ export default function PatientAppointments() {
               <p className="text-slate-400">No upcoming appointments</p>
             </div>
           ) : (
-            upcoming.map(a => (
+            upcoming.map(a => {
+              const depositLabel = appointmentDepositDisplay(a);
+              return (
               <Card key={a.id}>
                 <CardContent className="pt-4 pb-4">
                   <div className="flex flex-col gap-3">
@@ -237,15 +254,22 @@ export default function PatientAppointments() {
                             {a.appointment_date ? format(new Date(a.appointment_date), "MMM d, yyyy") : ""}
                           </span>
                           {a.appointment_time && <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5" />{a.appointment_time}</span>}
-                          {a.deposit_amount && <span className="flex items-center gap-1"><DollarSign className="w-3.5 h-3.5" />${a.deposit_amount} deposit</span>}
+                          {a.status === "awaiting_payment" && depositLabel && (
+                            <span className="flex items-center gap-1"><DollarSign className="w-3.5 h-3.5" />${depositLabel} booking deposit</span>
+                          )}
                         </div>
+                        {a.status === "awaiting_payment" && (
+                          <p className="text-xs text-purple-700 mt-2">
+                            Your provider requires a ${depositLabel || "50"} booking deposit to confirm this visit.
+                          </p>
+                        )}
                       </div>
                     </div>
 
                     <div className="flex gap-2 flex-wrap">
                       {a.status === "awaiting_payment" && (
                         <Button size="sm" style={{ background: "#7B8EC8", color: "#fff" }} onClick={() => payDeposit.mutate(a.id)} disabled={payDeposit.isPending} className="gap-1">
-                          <DollarSign className="w-3.5 h-3.5" /> {payDeposit.isPending ? "Redirecting…" : `Pay Deposit${a.deposit_amount ? ` ($${a.deposit_amount})` : ""}`}
+                          <DollarSign className="w-3.5 h-3.5" /> {payDeposit.isPending ? "Redirecting…" : `Pay $${depositLabel || "50"} Deposit`}
                         </Button>
                       )}
                       {a.status === "awaiting_consent" && (
@@ -266,7 +290,8 @@ export default function PatientAppointments() {
                   </div>
                 </CardContent>
               </Card>
-            ))
+            );
+            })
           )}
         </TabsContent>
 
