@@ -1,16 +1,5 @@
-import { buildCourseStyleEmailHtml } from "./emails/courseStyleEmail.js";
-import { sendResendHtmlEmail } from "./emails/courseStyleEmail.js";
+import { sendEmailFromTemplate } from "./emails/renderTemplate.js";
 import { query } from "./db.js";
-
-const appBaseUrl = String(process.env.APP_BASE_URL || "http://localhost:5173").replace(/\/+$/, "");
-
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
 
 export function fmtAppointmentDateLocal(dateString) {
   if (!dateString) return "";
@@ -30,29 +19,31 @@ export function fmtAppointmentTimeLabel(timeSlot) {
   return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${ampm}`;
 }
 
-function appointmentDetailRows({ serviceLabel, providerName, appointmentDate, appointmentTime }) {
+function buildAppointmentDetailRows({ serviceLabel, providerName, appointmentDate, appointmentTime }) {
   const dateStr = fmtAppointmentDateLocal(appointmentDate);
   const timeStr = fmtAppointmentTimeLabel(appointmentTime);
-  const rows = [
-    ["Service", serviceLabel],
-    ["Provider", providerName],
-    ["Date", dateStr],
-    ["Time", appointmentTime ? timeStr : ""],
-  ].filter(([, value]) => value != null && String(value).trim() !== "");
+  return [
+    { label: "Service", value: serviceLabel || "" },
+    { label: "Provider", value: providerName || "" },
+    { label: "Date", value: dateStr },
+    { label: "Time", value: appointmentTime ? timeStr : "" },
+  ].filter((row) => row.value != null && String(row.value).trim() !== "");
+}
 
-  return rows
-    .map(
-      ([label, value]) => `
-          <tr>
-            <td style="padding:6px 0;color:#6b7280;font-size:14px;width:100px"><strong>${escapeHtml(label)}</strong></td>
-            <td style="padding:6px 0;font-size:14px;color:#111827">${escapeHtml(String(value))}</td>
-          </tr>`
-    )
-    .join("");
+function firstName(name) {
+  return String(name || "there").trim().split(/\s+/)[0] || "there";
+}
+
+function throwSendError(result, fallbackMessage) {
+  const err = new Error(
+    typeof result?.error === "string" && result.error ? result.error : fallbackMessage
+  );
+  err.statusCode = 500;
+  throw err;
 }
 
 /**
- * Good Faith Exam invite — same shell and layout as course confirmation emails.
+ * Good Faith Exam invite — uses the central "appointment_gfe_invite" template.
  */
 export async function sendAppointmentGfeInviteEmail({
   to,
@@ -76,59 +67,29 @@ export async function sendAppointmentGfeInviteEmail({
     throw err;
   }
 
-  const firstName = String(patientName || "there").split(" ")[0];
-  const safeUrl = escapeHtml(link);
-  const detailsHtml = appointmentDetailRows({
-    serviceLabel: serviceLabel || "—",
-    providerName: providerName || "—",
-    appointmentDate,
-    appointmentTime,
-  });
-
-  const bodyHtml = `
-          <p style="margin:0 0 24px;font-size:16px;color:#374151;line-height:1.6">Your provider has requested a <strong>Good Faith Exam (GFE)</strong> before your visit — a quick virtual screening with a licensed medical provider.</p>
-          <div style="background:#f9f8f6;border-radius:12px;padding:24px;margin-bottom:32px;border:1px solid rgba(0,0,0,0.07)">
-            <p style="margin:0 0 12px;font-size:13px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#2D6B7F">Appointment Details</p>
-            <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
-              ${detailsHtml}
-            </table>
-          </div>
-          <div style="text-align:center;margin:0 0 32px;">
-            <a href="${safeUrl}" style="display:inline-block;background:#C8E63C;color:#1a2540;font-weight:700;font-size:15px;padding:14px 32px;border-radius:50px;text-decoration:none;">Complete My GFE</a>
-          </div>
-          <p style="margin:0 0 12px;font-size:15px;font-weight:600;color:#111827">What to Expect</p>
-          <ul style="margin:0 0 32px;padding-left:20px;color:#374151;font-size:15px;line-height:1.9">
-            <li>Brief video visit with a licensed provider</li>
-            <li>Review of your health history</li>
-            <li>Medical clearance for your treatment</li>
-            <li>Usually about 5–10 minutes</li>
-          </ul>
-          <p style="margin:0 0 24px;font-size:15px;color:#374151;line-height:1.6"><strong>Please complete your GFE before your appointment date.</strong> You may also receive a message from our exam partner with the same link.</p>
-          <p style="margin:0;font-size:14px;color:#6b7280;line-height:1.6">Questions? Email us at <a href="mailto:hello@novisociety.com" style="color:#2D6B7F;">hello@novisociety.com</a></p>`;
-
-  const html = buildCourseStyleEmailHtml({
-    greetingName: firstName,
-    bodyHtml,
-    includeSignoff: true,
-  });
-
-  const serviceSuffix = String(serviceLabel || "your visit").replace(/\s+/g, " ").trim().slice(0, 80);
-  const sendResult = await sendResendHtmlEmail({
+  const result = await sendEmailFromTemplate("appointment_gfe_invite", {
     to: recipient,
-    subject: `Complete Your Good Faith Exam — ${serviceSuffix}`,
-    html,
+    first_name: firstName(patientName),
+    service_label: String(serviceLabel || "your visit").trim(),
+    gfe_url: link,
+    details: buildAppointmentDetailRows({
+      serviceLabel: serviceLabel || "—",
+      providerName: providerName || "—",
+      appointmentDate,
+      appointmentTime,
+    }),
+    details_title: "Appointment Details",
+    summary_lines: [
+      "Brief video visit with a licensed provider",
+      "Review of your health history",
+      "Medical clearance for your treatment",
+      "Usually about 5–10 minutes",
+    ],
   });
 
-  if (!sendResult.ok) {
-    const err = new Error(
-      typeof sendResult.error === "string" && sendResult.error
-        ? sendResult.error
-        : "Failed to send GFE invite email. Check RESEND_API_KEY and sender domain."
-    );
-    err.statusCode = 500;
-    throw err;
+  if (!result.ok) {
+    throwSendError(result, "Failed to send GFE invite email. Check RESEND_API_KEY and sender domain.");
   }
-
   return { sent: true };
 }
 
@@ -176,9 +137,6 @@ export async function notifyPatientGfeInvite({
   }
 }
 
-/**
- * Appointment confirmed (course-style shell).
- */
 export async function sendAppointmentConfirmedPatientEmail({
   to,
   patientName,
@@ -188,45 +146,29 @@ export async function sendAppointmentConfirmedPatientEmail({
   appointmentTime,
 }) {
   if (!to) return { skipped: true };
-  const firstName = String(patientName || "there").split(" ")[0];
-  const detailsHtml = appointmentDetailRows({
-    serviceLabel,
-    providerName,
-    appointmentDate,
-    appointmentTime,
-  });
-  const formattedDate = fmtAppointmentDateLocal(appointmentDate);
-
-  const bodyHtml = `
-          <p style="margin:0 0 24px;font-size:16px;color:#374151;line-height:1.6">Your appointment has been confirmed. Here's a summary:</p>
-          <div style="background:#f9f8f6;border-radius:12px;padding:24px;margin-bottom:32px;border:1px solid rgba(0,0,0,0.07)">
-            <p style="margin:0 0 12px;font-size:13px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#2D6B7F">Appointment Details</p>
-            <table width="100%" cellpadding="0" cellspacing="0" role="presentation">${detailsHtml}</table>
-          </div>
-          <p style="margin:0 0 12px;font-size:15px;font-weight:600;color:#111827">Next steps</p>
-          <ul style="margin:0 0 24px;padding-left:20px;color:#374151;font-size:15px;line-height:1.9">
-            <li>Add this visit to your calendar</li>
-            <li>If your service requires a GFE, complete it before your appointment</li>
-            <li>Contact your provider if you need to reschedule</li>
-          </ul>`;
-
-  const html = buildCourseStyleEmailHtml({ greetingName: firstName, bodyHtml });
-  const sendResult = await sendResendHtmlEmail({
+  const result = await sendEmailFromTemplate("appointment_confirmed", {
     to: String(to).trim(),
-    subject: `Your appointment is confirmed — ${formattedDate || "NOVI Society"}`,
-    html,
+    first_name: firstName(patientName),
+    appointment_date_label: fmtAppointmentDateLocal(appointmentDate) || "NOVI Society",
+    details: buildAppointmentDetailRows({
+      serviceLabel,
+      providerName,
+      appointmentDate,
+      appointmentTime,
+    }),
+    details_title: "Appointment Details",
+    summary_lines: [
+      "Add this visit to your calendar",
+      "If your service requires a GFE, complete it before your appointment",
+      "Contact your provider if you need to reschedule",
+    ],
   });
-  if (!sendResult.ok) {
-    const err = new Error(sendResult.error || "Email send failed");
-    err.statusCode = 500;
-    throw err;
+  if (!result.ok) {
+    throwSendError(result, "Email send failed");
   }
   return { sent: true };
 }
 
-/**
- * Appointment cancelled or request declined (patient-facing).
- */
 export async function sendAppointmentCancelledPatientEmail({
   to,
   patientName,
@@ -237,46 +179,26 @@ export async function sendAppointmentCancelledPatientEmail({
   wasRequest,
 }) {
   if (!to) return { skipped: true };
-  const firstName = String(patientName || "there").split(" ")[0];
-  const detailsHtml = appointmentDetailRows({
-    serviceLabel,
-    providerName,
-    appointmentDate,
-    appointmentTime: null,
-  });
-  const lead = wasRequest
-    ? "Your appointment request was not confirmed at this time."
-    : "Your appointment has been cancelled.";
-  const reasonBlock =
-    reason && String(reason).trim()
-      ? `<p style="margin:0 0 16px;font-size:15px;color:#374151;line-height:1.6;"><strong>Note from the practice:</strong> ${escapeHtml(String(reason).trim())}</p>`
-      : "";
-
-  const bodyHtml = `
-          <p style="margin:0 0 24px;font-size:16px;color:#374151;line-height:1.6">${lead}</p>
-          <div style="background:#f9f8f6;border-radius:12px;padding:24px;margin-bottom:24px;border:1px solid rgba(0,0,0,0.07)">
-            <table width="100%" cellpadding="0" cellspacing="0" role="presentation">${detailsHtml}</table>
-          </div>
-          ${reasonBlock}
-          <p style="margin:0;font-size:15px;color:#374151;line-height:1.6">You can book another visit anytime from your NOVI patient account.</p>`;
-
-  const html = buildCourseStyleEmailHtml({ greetingName: firstName, bodyHtml, includeSignoff: false });
-  const sendResult = await sendResendHtmlEmail({
+  const templateKey = wasRequest ? "appointment_request_declined" : "appointment_cancelled";
+  const result = await sendEmailFromTemplate(templateKey, {
     to: String(to).trim(),
-    subject: wasRequest ? "Your appointment request was declined" : "Your appointment was cancelled",
-    html,
+    first_name: firstName(patientName),
+    rejection_reason: reason && String(reason).trim() ? String(reason).trim() : "",
+    rejection_title: "Note from the practice",
+    rejection_tone: "neutral",
+    details: buildAppointmentDetailRows({
+      serviceLabel,
+      providerName,
+      appointmentDate,
+      appointmentTime: null,
+    }),
   });
-  if (!sendResult.ok) {
-    const err = new Error(sendResult.error || "Email send failed");
-    err.statusCode = 500;
-    throw err;
+  if (!result.ok) {
+    throwSendError(result, "Email send failed");
   }
   return { sent: true };
 }
 
-/**
- * Patient marked no-show by provider — course-style shell; prompt to rebook.
- */
 export async function sendAppointmentNoShowPatientEmail({
   to,
   patientName,
@@ -287,55 +209,37 @@ export async function sendAppointmentNoShowPatientEmail({
   providerId,
 }) {
   if (!to) return { skipped: true };
-  const firstName = String(patientName || "there").split(" ")[0];
-  const detailsHtml = appointmentDetailRows({
-    serviceLabel,
-    providerName,
-    appointmentDate,
-    appointmentTime,
-  });
   const formattedDate = fmtAppointmentDateLocal(appointmentDate);
-  const pid = String(providerId || "").trim();
-  const bookUrl = pid
-    ? `${appBaseUrl}/PatientMarketplace?provider=${encodeURIComponent(pid)}`
-    : `${appBaseUrl}/PatientMarketplace`;
-  const safeBookUrl = escapeHtml(bookUrl);
-
-  const bodyHtml = `
-          <p style="margin:0 0 24px;font-size:16px;color:#374151;line-height:1.6">We missed you at your scheduled visit. Our records show you <strong>did not attend</strong> this appointment.</p>
-          <div style="background:#f9f8f6;border-radius:12px;padding:24px;margin-bottom:32px;border:1px solid rgba(0,0,0,0.07)">
-            <p style="margin:0 0 12px;font-size:13px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#2D6B7F">Missed Appointment</p>
-            <table width="100%" cellpadding="0" cellspacing="0" role="presentation">${detailsHtml}</table>
-          </div>
-          <p style="margin:0 0 12px;font-size:15px;font-weight:600;color:#111827">What to do next</p>
-          <ul style="margin:0 0 32px;padding-left:20px;color:#374151;font-size:15px;line-height:1.9">
-            <li>Book a new appointment at a time that works for you</li>
-            <li>If your service requires a GFE, complete it before your new visit</li>
-            <li>Contact your provider if you had an emergency or need help rescheduling</li>
-          </ul>
-          <div style="text-align:center;margin:0 0 32px;">
-            <a href="${safeBookUrl}" style="display:inline-block;background:#C8E63C;color:#1a2540;font-weight:700;font-size:15px;padding:14px 32px;border-radius:50px;text-decoration:none;">Book Another Appointment</a>
-          </div>
-          <p style="margin:0;font-size:14px;color:#6b7280;line-height:1.6">Questions? Email us at <a href="mailto:hello@novisociety.com" style="color:#2D6B7F;">hello@novisociety.com</a></p>`;
-
-  const html = buildCourseStyleEmailHtml({ greetingName: firstName, bodyHtml });
   const dateSuffix = formattedDate ? ` — ${formattedDate}` : "";
-  const sendResult = await sendResendHtmlEmail({
+  const pid = String(providerId || "").trim();
+  const ctaPath = pid
+    ? `/PatientMarketplace?provider=${encodeURIComponent(pid)}`
+    : "/PatientMarketplace";
+
+  const result = await sendEmailFromTemplate("appointment_no_show", {
     to: String(to).trim(),
-    subject: `We missed you at your appointment${dateSuffix}`,
-    html,
+    first_name: firstName(patientName),
+    date_suffix: dateSuffix,
+    cta_url_path: ctaPath,
+    details: buildAppointmentDetailRows({
+      serviceLabel,
+      providerName,
+      appointmentDate,
+      appointmentTime,
+    }),
+    details_title: "Missed Appointment",
+    summary_lines: [
+      "Book a new appointment at a time that works for you",
+      "If your service requires a GFE, complete it before your new visit",
+      "Contact your provider if you had an emergency or need help rescheduling",
+    ],
   });
-  if (!sendResult.ok) {
-    const err = new Error(sendResult.error || "Email send failed");
-    err.statusCode = 500;
-    throw err;
+  if (!result.ok) {
+    throwSendError(result, "Email send failed");
   }
   return { sent: true };
 }
 
-/**
- * In-app notification when appointment is marked no-show.
- */
 export async function notifyPatientAppointmentNoShow({
   patientId,
   patientEmail,
@@ -381,9 +285,6 @@ export async function notifyPatientAppointmentNoShow({
   }
 }
 
-/**
- * GFE completed / approved — course-style shell.
- */
 export async function sendAppointmentGfeApprovedPatientEmail({
   to,
   patientName,
@@ -393,39 +294,23 @@ export async function sendAppointmentGfeApprovedPatientEmail({
   reviewerName,
 }) {
   if (!to) return { skipped: true };
-  const firstName = String(patientName || "there").split(" ")[0];
-  const detailsHtml = appointmentDetailRows({
+  const details = buildAppointmentDetailRows({
     serviceLabel,
     providerName,
     appointmentDate: null,
     appointmentTime: null,
   });
-  const link = examUrl ? escapeHtml(examUrl) : "";
-  const cta = link
-    ? `<div style="text-align:center;margin:0 0 32px;"><a href="${link}" style="display:inline-block;background:#C8E63C;color:#1a2540;font-weight:700;font-size:15px;padding:14px 32px;border-radius:50px;text-decoration:none;">View exam summary</a></div>`
-    : "";
+  details.push({ label: "Reviewed by", value: reviewerName || "Licensed provider" });
 
-  const bodyHtml = `
-          <p style="margin:0 0 24px;font-size:16px;color:#374151;line-height:1.6">Good news — your <strong>Good Faith Exam</strong> for this visit is <strong>approved</strong>. You're cleared to proceed with your provider.</p>
-          <div style="background:#f9f8f6;border-radius:12px;padding:24px;margin-bottom:24px;border:1px solid rgba(0,0,0,0.07)">
-            <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
-              ${detailsHtml}
-              <tr><td style="padding:6px 0;color:#6b7280;font-size:14px"><strong>Reviewed by</strong></td><td style="padding:6px 0;font-size:14px;color:#111827">${escapeHtml(reviewerName || "Licensed provider")}</td></tr>
-            </table>
-          </div>
-          ${cta}`;
-
-  const html = buildCourseStyleEmailHtml({ greetingName: firstName, bodyHtml });
-  const subSuffix = String(serviceLabel || "your visit").replace(/\s+/g, " ").trim().slice(0, 80);
-  const sendResult = await sendResendHtmlEmail({
+  const result = await sendEmailFromTemplate("appointment_gfe_approved", {
     to: String(to).trim(),
-    subject: `Your Good Faith Exam is approved — ${subSuffix}`,
-    html,
+    first_name: firstName(patientName),
+    service_label: String(serviceLabel || "your visit").trim(),
+    exam_url: String(examUrl || "").trim(),
+    details,
   });
-  if (!sendResult.ok) {
-    const err = new Error(sendResult.error || "Email send failed");
-    err.statusCode = 500;
-    throw err;
+  if (!result.ok) {
+    throwSendError(result, "Email send failed");
   }
   return { sent: true };
 }

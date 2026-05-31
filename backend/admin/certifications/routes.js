@@ -8,13 +8,10 @@ import {
   isMedicalDirectorRole,
   mdHasActiveSupervisionOf,
 } from "../mdSupervisedAccess.js";
+import { sendEmailFromTemplate } from "../emails/renderTemplate.js";
 
 export const certificationsRouter = Router();
 certificationsRouter.use(requireAuth);
-const appBaseUrl = process.env.APP_BASE_URL || "http://localhost:5173";
-const resendApiKey = process.env.RESEND_API_KEY || "";
-const resendFromEmail = process.env.RESEND_FROM_EMAIL || "NOVI Society <support@novisociety.com>";
-const noviEmailLogoUrl = process.env.NOVI_EMAIL_LOGO_URL || `${appBaseUrl}/novi-email-logo.png`;
 
 function resolveNameFromUser(user) {
   const full = String(user?.full_name || "").trim();
@@ -190,15 +187,6 @@ async function getCertificationColumns() {
   return certColumnsPromise;
 }
 
-function escapeHtml(rawValue) {
-  return String(rawValue ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
 function resolveProviderFirstName({ providerName, providerEmail }) {
   const fromName = String(providerName || "").trim();
   if (fromName) return fromName.split(/\s+/)[0];
@@ -224,121 +212,6 @@ function resolveCertificationDocumentUrl(cert) {
   return null;
 }
 
-function buildCertificationRejectionEmailHtml({
-  providerFirstName,
-  certificationName,
-  serviceTypeName,
-  rejectionReason
-}) {
-  const safeName = escapeHtml(providerFirstName || "Provider");
-  const safeCertificationName = escapeHtml(certificationName || "certification");
-  const safeServiceTypeName = escapeHtml(serviceTypeName || "this service");
-  const safeRejectionReason = escapeHtml(rejectionReason || "No reason provided.");
-  const base = String(appBaseUrl || "").replace(/\/+$/, "");
-  const reviewUrl = `${base}/login?next=${encodeURIComponent("/ProviderCredentialsCoverage")}`;
-
-  return `
-<!DOCTYPE html>
-<html>
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
-<body style="margin:0;padding:0;background:#f5f3ef;font-family:'DM Sans',Helvetica,Arial,sans-serif">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f3ef;padding:40px 0">
-    <tr><td align="center">
-      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
-        <tr><td style="background:linear-gradient(135deg,#2D6B7F 0%,#7B8EC8 55%,#C8E63C 100%);padding:36px 40px;text-align:center;border-radius:16px 16px 0 0">
-          <img src="${noviEmailLogoUrl}" alt="NOVI Society" style="width:160px;height:auto" />
-        </td></tr>
-        <tr><td style="background:#fff;padding:48px 40px;border-radius:0 0 16px 16px">
-          <p style="margin:0 0 24px;font-size:16px;color:#374151;line-height:1.6">Hi ${safeName},</p>
-          <p style="margin:0 0 20px;font-size:16px;color:#374151;line-height:1.6">Your external certification submission has been reviewed by the NOVI admin team.</p>
-          <p style="margin:0 0 16px;font-size:16px;color:#374151;line-height:1.6"><strong>Status:</strong> <span style="color:#dc2626;font-weight:700">Rejected</span></p>
-          <div style="background:#f9f8f6;border-radius:12px;padding:20px;margin:0 0 24px;border:1px solid rgba(0,0,0,0.07)">
-            <p style="margin:0 0 8px;font-size:14px;color:#6b7280"><strong>Certification</strong></p>
-            <p style="margin:0 0 8px;font-size:15px;color:#111827">${safeCertificationName}</p>
-            <p style="margin:0;font-size:14px;color:#6b7280"><strong>Service</strong>: ${safeServiceTypeName}</p>
-          </div>
-          <div style="background:#fef2f2;border-radius:12px;padding:16px;margin:0 0 24px;border:1px solid #fecaca">
-            <p style="margin:0 0 6px;font-size:13px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#b91c1c">Reason for Rejection</p>
-            <p style="margin:0;font-size:15px;line-height:1.6;color:#b91c1c;font-weight:600">${safeRejectionReason}</p>
-          </div>
-          <p style="margin:0 0 24px;font-size:15px;color:#374151;line-height:1.6">Please review your Credentials & Coverage page and resubmit when ready.</p>
-          <p style="margin:0 0 32px">
-            <a href="${reviewUrl}" style="display:inline-block;background:#2D6B7F;color:#fff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:600;font-size:14px">
-              Review Credentials
-            </a>
-          </p>
-          <div style="border-top:1px solid #e5e7eb;padding-top:28px;margin-top:8px">
-            <p style="margin:0;font-size:15px;color:#374151">Best,<br><strong>The NOVI Society Team</strong></p>
-          </div>
-        </td></tr>
-        <tr><td style="padding:24px 40px;text-align:center">
-          <p style="margin:0;font-size:12px;color:#9ca3af">© ${new Date().getFullYear()} NOVI Society LLC · 8109 Meadow Valley Dr, McKinney, TX 75071</p>
-          <p style="margin:4px 0 0;font-size:12px;color:#9ca3af"><a href="mailto:support@novisociety.com" style="color:#9ca3af">support@novisociety.com</a></p>
-        </td></tr>
-      </table>
-    </td></tr>
-  </table>
-</body>
-</html>`;
-}
-
-function buildCertificationApprovedEmailHtml({
-  providerFirstName,
-  certificationName,
-  serviceTypeName,
-  certificateNumber
-}) {
-  const safeName = escapeHtml(providerFirstName || "Provider");
-  const safeCertificationName = escapeHtml(certificationName || "certification");
-  const safeServiceTypeName = escapeHtml(serviceTypeName || "this service");
-  const safeCertificateNumber = escapeHtml(certificateNumber || "N/A");
-  const base = String(appBaseUrl || "").replace(/\/+$/, "");
-  const coverageUrl = `${base}/login?next=${encodeURIComponent("/ProviderCredentialsCoverage")}`;
-
-  return `
-<!DOCTYPE html>
-<html>
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
-<body style="margin:0;padding:0;background:#f5f3ef;font-family:'DM Sans',Helvetica,Arial,sans-serif">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f3ef;padding:40px 0">
-    <tr><td align="center">
-      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
-        <tr><td style="background:linear-gradient(135deg,#2D6B7F 0%,#7B8EC8 55%,#C8E63C 100%);padding:36px 40px;text-align:center;border-radius:16px 16px 0 0">
-          <img src="${noviEmailLogoUrl}" alt="NOVI Society" style="width:160px;height:auto" />
-        </td></tr>
-        <tr><td style="background:#fff;padding:48px 40px;border-radius:0 0 16px 16px">
-          <p style="margin:0 0 24px;font-size:16px;color:#374151;line-height:1.6">Hi ${safeName},</p>
-          <p style="margin:0 0 20px;font-size:16px;color:#374151;line-height:1.6">Welcome to NOVI Society - we're excited to have you with us.</p>
-          <p style="margin:0 0 24px;font-size:16px;color:#374151;line-height:1.6">Your external certification for <strong>${safeCertificationName}</strong> has been successfully approved.</p>
-          <div style="background:#f9f8f6;border-radius:12px;padding:24px;margin-bottom:32px;border:1px solid rgba(0,0,0,0.07)">
-            <p style="margin:0 0 12px;font-size:13px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#2D6B7F">Certification Details</p>
-            <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
-              <tr><td style="padding:6px 0;color:#6b7280;font-size:14px;width:140px"><strong>Certification</strong></td><td style="padding:6px 0;font-size:14px;color:#111827">${safeCertificationName}</td></tr>
-              <tr><td style="padding:6px 0;color:#6b7280;font-size:14px"><strong>Service</strong></td><td style="padding:6px 0;font-size:14px;color:#111827">${safeServiceTypeName}</td></tr>
-              <tr><td style="padding:6px 0;color:#6b7280;font-size:14px"><strong>Certificate #</strong></td><td style="padding:6px 0;font-size:14px;color:#111827">${safeCertificateNumber}</td></tr>
-            </table>
-          </div>
-          <p style="margin:0 0 16px;font-size:15px;color:#374151;line-height:1.6">You're now ready for the next step. Complete your MD Coverage application for this service to begin offering it on NOVI.</p>
-          <p style="margin:0 0 32px">
-            <a href="${coverageUrl}" style="display:inline-block;background:#2D6B7F;color:#fff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:600;font-size:14px">
-              Apply for MD Coverage
-            </a>
-          </p>
-          <div style="border-top:1px solid #e5e7eb;padding-top:28px;margin-top:8px">
-            <p style="margin:0;font-size:15px;color:#374151">Best,<br><strong>The NOVI Society Team</strong></p>
-          </div>
-        </td></tr>
-        <tr><td style="padding:24px 40px;text-align:center">
-          <p style="margin:0;font-size:12px;color:#9ca3af">© ${new Date().getFullYear()} NOVI Society LLC · 8109 Meadow Valley Dr, McKinney, TX 75071</p>
-          <p style="margin:4px 0 0;font-size:12px;color:#9ca3af"><a href="mailto:support@novisociety.com" style="color:#9ca3af">support@novisociety.com</a></p>
-        </td></tr>
-      </table>
-    </td></tr>
-  </table>
-</body>
-</html>`;
-}
-
 async function sendCertificationRejectedEmail({
   providerEmail,
   providerFirstName,
@@ -347,42 +220,24 @@ async function sendCertificationRejectedEmail({
   rejectionReason
 }) {
   if (!providerEmail) return false;
-  if (!resendApiKey) {
-    // eslint-disable-next-line no-console
-    console.warn("[certifications] rejection email skipped: RESEND_API_KEY missing");
-    return false;
-  }
-  const html = buildCertificationRejectionEmailHtml({
-    providerFirstName,
-    certificationName,
-    serviceTypeName,
-    rejectionReason
+  const result = await sendEmailFromTemplate("certification_rejected", {
+    to: providerEmail,
+    first_name: providerFirstName || "Provider",
+    certification_name: certificationName || "certification",
+    service_name: serviceTypeName || "this service",
+    rejection_reason: rejectionReason || "No reason provided.",
+    rejection_title: "Reason for rejection",
+    details: [
+      { label: "Certification", value: certificationName || "—" },
+      { label: "Service", value: serviceTypeName || "—" },
+    ],
   });
-  try {
-    const result = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${resendApiKey}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        from: resendFromEmail,
-        to: [providerEmail],
-        subject: "Your NOVI Society certification has been rejected",
-        html
-      })
-    });
-    if (!result.ok) {
-      const bodyText = await result.text().catch(() => "");
-      // eslint-disable-next-line no-console
-      console.error("[certifications] rejection email send failed:", result.status, bodyText);
-    }
-    return result.ok;
-  } catch (error) {
+  if (!result.ok) {
     // eslint-disable-next-line no-console
-    console.error("[certifications] rejection email request failed:", error);
+    console.error("[certifications] rejection email send failed:", result.error);
     return false;
   }
+  return true;
 }
 
 async function sendCertificationApprovedEmail({
@@ -393,42 +248,24 @@ async function sendCertificationApprovedEmail({
   certificateNumber
 }) {
   if (!providerEmail) return false;
-  if (!resendApiKey) {
-    // eslint-disable-next-line no-console
-    console.warn("[certifications] approval email skipped: RESEND_API_KEY missing");
-    return false;
-  }
-  const html = buildCertificationApprovedEmailHtml({
-    providerFirstName,
-    certificationName,
-    serviceTypeName,
-    certificateNumber
+  const result = await sendEmailFromTemplate("certification_approved", {
+    to: providerEmail,
+    first_name: providerFirstName || "Provider",
+    certification_name: certificationName || "certification",
+    service_name: serviceTypeName || "this service",
+    certificate_number: certificateNumber || "N/A",
+    details: [
+      { label: "Certification", value: certificationName || "—" },
+      { label: "Service", value: serviceTypeName || "—" },
+      { label: "Certificate #", value: certificateNumber || "N/A" },
+    ],
   });
-  try {
-    const result = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${resendApiKey}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        from: resendFromEmail,
-        to: [providerEmail],
-        subject: "Your NOVI certification has been approved",
-        html
-      })
-    });
-    if (!result.ok) {
-      const bodyText = await result.text().catch(() => "");
-      // eslint-disable-next-line no-console
-      console.error("[certifications] approval email send failed:", result.status, bodyText);
-    }
-    return result.ok;
-  } catch (error) {
+  if (!result.ok) {
     // eslint-disable-next-line no-console
-    console.error("[certifications] approval email request failed:", error);
+    console.error("[certifications] approval email send failed:", result.error);
     return false;
   }
+  return true;
 }
 
 async function resolveNotificationRecipient({ providerId, providerEmail }) {

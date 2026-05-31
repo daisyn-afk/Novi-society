@@ -8,11 +8,7 @@
  */
 
 import { pool } from "./db.js";
-
-const resendApiKey = process.env.RESEND_API_KEY || "";
-const resendFromEmail = process.env.RESEND_FROM_EMAIL || "NOVI Society <support@novisociety.com>";
-const appBaseUrl = process.env.APP_BASE_URL || "http://localhost:5173";
-const noviEmailLogoUrl = process.env.NOVI_EMAIL_LOGO_URL || `${appBaseUrl}/novi-email-logo.png`;
+import { sendEmailFromTemplate } from "./emails/renderTemplate.js";
 
 // ---------------------------------------------------------------------------
 // Notification table introspection (cached per process)
@@ -90,49 +86,6 @@ async function listAdminRecipients() {
 }
 
 // ---------------------------------------------------------------------------
-// Email HTML builder
-// ---------------------------------------------------------------------------
-
-function escapeHtml(rawValue) {
-  return String(rawValue ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function buildAdminSubmissionEmailHtml({ adminName, title, summaryLines = [] }) {
-  const safeName = escapeHtml(adminName || "Admin");
-  const safeTitle = escapeHtml(title || "New provider submission");
-  const lines = summaryLines
-    .map((line) => `<li style="margin:0 0 8px">${escapeHtml(line)}</li>`)
-    .join("");
-  return `
-<!DOCTYPE html>
-<html>
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
-<body style="margin:0;padding:0;background:#f5f3ef;font-family:'DM Sans',Helvetica,Arial,sans-serif">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f3ef;padding:40px 0">
-    <tr><td align="center">
-      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
-        <tr><td style="background:linear-gradient(135deg,#2D6B7F 0%,#7B8EC8 55%,#C8E63C 100%);padding:36px 40px;text-align:center;border-radius:16px 16px 0 0">
-          <img src="${noviEmailLogoUrl}" alt="NOVI Society" style="width:160px;height:auto" />
-        </td></tr>
-        <tr><td style="background:#fff;padding:40px;border-radius:0 0 16px 16px">
-          <p style="margin:0 0 18px;font-size:16px;color:#374151">Hi ${safeName},</p>
-          <p style="margin:0 0 16px;font-size:16px;color:#374151"><strong>${safeTitle}</strong></p>
-          <ul style="margin:0 0 18px;padding-left:20px;color:#374151;font-size:14px;line-height:1.7">${lines}</ul>
-          <p style="margin:0;font-size:14px;color:#374151">Please review it in the admin portal.</p>
-        </td></tr>
-      </table>
-    </td></tr>
-  </table>
-</body>
-</html>`;
-}
-
-// ---------------------------------------------------------------------------
 // Helpers shared by both notify functions
 // ---------------------------------------------------------------------------
 
@@ -162,35 +115,6 @@ async function insertAdminNotification({ adminUserId, adminEmail, type, message,
         err?.message
       );
     });
-}
-
-async function sendAdminEmail({ adminEmail, subject, html }) {
-  if (!resendApiKey) {
-    // eslint-disable-next-line no-console
-    console.warn("[adminNotifications] admin email skipped: RESEND_API_KEY not set");
-    return;
-  }
-  try {
-    const response = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${resendApiKey}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ from: resendFromEmail, to: [adminEmail], subject, html })
-    });
-    if (!response.ok) {
-      const body = await response.text().catch(() => "");
-      // eslint-disable-next-line no-console
-      console.error(
-        `[adminNotifications] Resend rejected email to ${adminEmail}: ${response.status}`,
-        body
-      );
-    }
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error(`[adminNotifications] Resend request failed for ${adminEmail}:`, err?.message);
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -227,18 +151,14 @@ export async function notifyAdminsOfLicenseSubmission({
       )}`
     });
 
-    await sendAdminEmail({
-      adminEmail,
-      subject: "New license submission pending review",
-      html: buildAdminSubmissionEmailHtml({
-        adminName: admin?.first_name || admin?.full_name || "Admin",
-        title: "New license submission pending review",
-        summaryLines: [
-          `Provider: ${providerName || "Unknown Provider"}`,
-          `Email: ${providerEmail || "Not provided"}`,
-          `License: ${licenseType || "N/A"}${licenseNumber ? ` (${licenseNumber})` : ""}`
-        ]
-      })
+    await sendEmailFromTemplate("admin_license_submission", {
+      to: adminEmail,
+      first_name: admin?.first_name || admin?.full_name || "Admin",
+      summary_lines: [
+        `Provider: ${providerName || "Unknown Provider"}`,
+        `Email: ${providerEmail || "Not provided"}`,
+        `License: ${licenseType || "N/A"}${licenseNumber ? ` (${licenseNumber})` : ""}`,
+      ],
     });
   }
 }
@@ -330,19 +250,15 @@ export async function notifyAdminsOfCertificationSubmission({
       )}`
     });
 
-    await sendAdminEmail({
-      adminEmail,
-      subject: "New certification submission pending review",
-      html: buildAdminSubmissionEmailHtml({
-        adminName: admin?.first_name || admin?.full_name || "Admin",
-        title: "New certification submission pending review",
-        summaryLines: [
-          `Provider: ${providerName || "Unknown Provider"}`,
-          `Email: ${providerEmail || "Not provided"}`,
-          `Certification: ${certificationName || "N/A"}`,
-          `Service: ${serviceTypeName || "N/A"}`
-        ]
-      })
+    await sendEmailFromTemplate("admin_certification_submission", {
+      to: adminEmail,
+      first_name: admin?.first_name || admin?.full_name || "Admin",
+      summary_lines: [
+        `Provider: ${providerName || "Unknown Provider"}`,
+        `Email: ${providerEmail || "Not provided"}`,
+        `Certification: ${certificationName || "N/A"}`,
+        `Service: ${serviceTypeName || "N/A"}`,
+      ],
     });
   }
 }

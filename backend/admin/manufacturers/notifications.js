@@ -1,23 +1,8 @@
 import { pool } from "../db.js";
-
-const resendApiKey = process.env.RESEND_API_KEY;
-const resendFromEmail =
-  process.env.RESEND_FROM_EMAIL || "NOVI Society <support@novisociety.com>";
-const appBaseUrl = process.env.APP_BASE_URL || "http://localhost:5173";
-const noviEmailLogoUrl =
-  process.env.NOVI_EMAIL_LOGO_URL || `${appBaseUrl}/novi-email-logo.png`;
+import { sendEmailFromTemplate } from "../emails/renderTemplate.js";
 
 let notificationTablePromise = null;
 let notificationColumnsByTablePromise = null;
-
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
 
 async function getNotificationTableName() {
   if (!notificationTablePromise) {
@@ -106,38 +91,23 @@ async function insertNotificationRow({
     .catch(() => {});
 }
 
-async function sendResendEmail({ to, subject, html }) {
-  if (!resendApiKey) return false;
-  const recipient = String(to || "").trim();
-  if (!recipient || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) return false;
-  try {
-    const response = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${resendApiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        from: resendFromEmail,
-        to: [recipient],
-        subject,
-        html,
-      }),
-    });
-    if (!response.ok) {
-      const body = await response.text().catch(() => "");
-      console.error(
-        "[manufacturer-notifications] email send failed:",
-        response.status,
-        body
-      );
-      return false;
-    }
-    return true;
-  } catch (error) {
-    console.error("[manufacturer-notifications] email request failed:", error);
-    return false;
-  }
+function isValidEmail(value) {
+  const recipient = String(value || "").trim();
+  return Boolean(recipient && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient));
+}
+
+function mapOrderItemsForRegistry(rawOrderItems) {
+  return normalizeOrderItemsForEmail(rawOrderItems)
+    .map((item) => ({
+      product: item?.product_name || item?.product || item?.name || "Item",
+      sku: item?.sku || "",
+      quantity:
+        item?.quantity != null
+          ? `${String(item.quantity)}${item?.unit ? ` ${item.unit}` : ""}`.trim()
+          : "",
+      unit_price: item?.unit_price || item?.price || "",
+    }))
+    .filter((item) => item.product || item.sku || item.quantity || item.unit_price);
 }
 
 const ADDITIONAL_FIELD_LABELS = {
@@ -241,207 +211,6 @@ function normalizeOrderItemsForEmail(orderItems) {
   return [];
 }
 
-function buildOrderItemsHighlightHtml(orderItems = []) {
-  const items = normalizeOrderItemsForEmail(orderItems);
-  if (!items.length) return "";
-
-  const itemRows = items
-    .map((item, index) => {
-      const qty = item.quantity ?? "—";
-      const unit = escapeHtml(item.unit || "units");
-      const name = escapeHtml(item.product_name || "Product");
-      const notes = item.notes
-        ? `<p style="margin:6px 0 0;font-size:12px;color:#5a6a4a;line-height:1.5;font-style:italic">${escapeHtml(item.notes)}</p>`
-        : "";
-      const rowBorder =
-        index < items.length - 1
-          ? "border-bottom:1px solid #C8E63C;"
-          : "";
-
-      return `
-      <tr>
-        <td bgcolor="#F7FBE8" style="padding:14px 16px;${rowBorder}background-color:#F7FBE8;">
-          <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
-            <tr>
-              <td width="28" valign="top" style="padding-right:10px;font-size:13px;font-weight:700;color:#4a6b10;vertical-align:top;">
-                ${index + 1}.
-              </td>
-              <td valign="top" style="vertical-align:top;">
-                <p style="margin:0;font-size:15px;font-weight:700;color:#1e2535;line-height:1.4">${name}</p>
-                ${notes}
-              </td>
-              <td valign="top" align="right" style="vertical-align:top;text-align:right;white-space:nowrap;padding-left:16px;">
-                <table cellpadding="0" cellspacing="0" role="presentation" align="right">
-                  <tr>
-                    <td bgcolor="#1e2535" style="background-color:#1e2535;border-radius:999px;padding:6px 14px;font-size:12px;font-weight:700;color:#C8E63C;line-height:1.2;">
-                      ${escapeHtml(String(qty))} ${unit}
-                    </td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
-          </table>
-        </td>
-      </tr>`;
-    })
-    .join("");
-
-  return `
-    <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin:24px 0 8px;border:2px solid #C8E63C;border-collapse:collapse;background-color:#F4F9E0;">
-      <tr>
-        <td bgcolor="#C8E63C" style="padding:12px 16px;background-color:#C8E63C;border-bottom:2px solid #A8C830;">
-          <p style="margin:0;font-size:12px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#1e2535;font-family:'DM Sans',Helvetica,Arial,sans-serif">
-            &#128230; Order Items
-          </p>
-        </td>
-      </tr>
-      ${itemRows}
-    </table>`;
-}
-
-function buildProviderDetailsHtml(lines = []) {
-  const rows = lines
-    .map((line) => {
-      const colonIdx = line.indexOf(":");
-      if (colonIdx === -1) {
-        return `<tr><td colspan="2" style="padding:4px 0;font-size:14px;color:#374151;line-height:1.6">${escapeHtml(line)}</td></tr>`;
-      }
-      const label = line.slice(0, colonIdx).trim();
-      const value = line.slice(colonIdx + 1).trim();
-      const isEmail = label.toLowerCase().includes("email") && value.includes("@");
-      const valueHtml = isEmail
-        ? `<a href="mailto:${escapeHtml(value)}" style="color:#2D6B7F;text-decoration:none;font-weight:600">${escapeHtml(value)}</a>`
-        : `<span style="color:#1e2535;font-weight:600">${escapeHtml(value)}</span>`;
-      return `
-      <tr>
-        <td style="padding:5px 12px 5px 0;font-size:13px;color:#6B7280;vertical-align:top;white-space:nowrap;width:1%;">${escapeHtml(label)}</td>
-        <td style="padding:5px 0;font-size:14px;vertical-align:top;line-height:1.5;">${valueHtml}</td>
-      </tr>`;
-    })
-    .join("");
-
-  if (!rows) return "";
-
-  return `
-    <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin:0 0 4px;border:1px solid #E5E7EB;border-collapse:collapse;background-color:#FAFAFA;">
-      <tr>
-        <td bgcolor="#F3F4F6" style="padding:10px 16px;background-color:#F3F4F6;border-bottom:1px solid #E5E7EB;">
-          <p style="margin:0;font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#6B7280;font-family:'DM Sans',Helvetica,Arial,sans-serif">
-            Provider Details
-          </p>
-        </td>
-      </tr>
-      <tr>
-        <td style="padding:12px 16px;">
-          <table width="100%" cellpadding="0" cellspacing="0" role="presentation">${rows}</table>
-        </td>
-      </tr>
-    </table>`;
-}
-
-function buildOrderRequestEmailHtml({
-  greetingName,
-  title,
-  intro,
-  providerLines = [],
-  orderItems = [],
-  message = "",
-}) {
-  const safeGreeting = escapeHtml(greetingName || "Hi there");
-  const safeTitle = escapeHtml(title);
-  const safeIntro = escapeHtml(intro);
-  const providerBlock = buildProviderDetailsHtml(providerLines);
-  const orderBlock = buildOrderItemsHighlightHtml(orderItems);
-  const messageBlock = buildMessageHighlightHtml(message);
-
-  return `
-<!DOCTYPE html>
-<html>
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
-<body style="margin:0;padding:0;background:#f5f3ef;font-family:'DM Sans',Helvetica,Arial,sans-serif">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f3ef;padding:40px 0">
-    <tr><td align="center">
-      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
-        <tr><td style="background:linear-gradient(135deg,#2D6B7F 0%,#7B8EC8 55%,#C8E63C 100%);padding:36px 40px;text-align:center;border-radius:16px 16px 0 0">
-          <img src="${escapeHtml(noviEmailLogoUrl)}" alt="NOVI Society" style="width:160px;height:auto" />
-        </td></tr>
-        <tr><td style="background:#fff;padding:40px;border-radius:0 0 16px 16px">
-          <p style="margin:0 0 18px;font-size:16px;color:#374151">${safeGreeting},</p>
-          <p style="margin:0 0 14px;font-size:18px;color:#1e2535;font-weight:700">${safeTitle}</p>
-          <p style="margin:0 0 20px;font-size:15px;color:#374151;line-height:1.6">${safeIntro}</p>
-          ${providerBlock}
-          ${orderBlock}
-          ${messageBlock}
-        </td></tr>
-      </table>
-    </td></tr>
-  </table>
-</body>
-</html>`;
-}
-
-function buildMessageHighlightHtml(message = "") {
-  const trimmed = String(message || "").trim();
-  if (!trimmed) return "";
-  return `
-    <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin:20px 0;border:1px solid #E5E7EB;border-collapse:separate;border-spacing:0;background-color:#F9FAFB;">
-      <tr>
-        <td style="padding:12px 14px;font-family:'DM Sans',Helvetica,Arial,sans-serif">
-          <p style="margin:0 0 6px;font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#6B7280">Message</p>
-          <p style="margin:0;font-size:14px;color:#374151;line-height:1.6">${escapeHtml(trimmed)}</p>
-        </td>
-      </tr>
-    </table>`;
-}
-
-function buildEmailHtml({
-  greetingName,
-  title,
-  intro,
-  summaryLines,
-  ctaLabel,
-  ctaUrl,
-  orderItems,
-  message,
-}) {
-  const safeGreeting = escapeHtml(greetingName || "Hi there");
-  const safeTitle = escapeHtml(title);
-  const safeIntro = escapeHtml(intro);
-  const bullets = summaryLines
-    .map((line) => `<li style="margin:0 0 8px">${escapeHtml(line)}</li>`)
-    .join("");
-  const orderBlock = buildOrderItemsHighlightHtml(orderItems || []);
-  const messageBlock = buildMessageHighlightHtml(message);
-  const ctaBlock = ctaUrl
-    ? `<p style="margin:24px 0 0"><a href="${escapeHtml(ctaUrl)}" style="display:inline-block;background:#1e2535;color:#C8E63C;padding:12px 22px;border-radius:10px;font-weight:700;text-decoration:none">${escapeHtml(ctaLabel || "Open NOVI")}</a></p>`
-    : "";
-  return `
-<!DOCTYPE html>
-<html>
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
-<body style="margin:0;padding:0;background:#f5f3ef;font-family:'DM Sans',Helvetica,Arial,sans-serif">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f3ef;padding:40px 0">
-    <tr><td align="center">
-      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
-        <tr><td style="background:linear-gradient(135deg,#2D6B7F 0%,#7B8EC8 55%,#C8E63C 100%);padding:36px 40px;text-align:center;border-radius:16px 16px 0 0">
-          <img src="${escapeHtml(noviEmailLogoUrl)}" alt="NOVI Society" style="width:160px;height:auto" />
-        </td></tr>
-        <tr><td style="background:#fff;padding:40px;border-radius:0 0 16px 16px">
-          <p style="margin:0 0 18px;font-size:16px;color:#374151">${safeGreeting},</p>
-          <p style="margin:0 0 14px;font-size:18px;color:#1e2535;font-weight:700">${safeTitle}</p>
-          <p style="margin:0 0 18px;font-size:15px;color:#374151;line-height:1.6">${safeIntro}</p>
-          <ul style="margin:0;padding-left:20px;color:#374151;font-size:14px;line-height:1.7">${bullets}</ul>
-          ${orderBlock}
-          ${messageBlock}
-          ${ctaBlock}
-        </td></tr>
-      </table>
-    </td></tr>
-  </table>
-</body>
-</html>`;
-}
-
 export async function notifyAdminsOfManufacturerApplication({
   application,
   manufacturer,
@@ -450,8 +219,7 @@ export async function notifyAdminsOfManufacturerApplication({
   if (!admins.length) return;
 
   const summary = buildSummaryBullets({ application, manufacturer });
-  const subject = `New supplier application: ${manufacturer?.name || "Unknown"}`;
-  const adminCtaUrl = `${appBaseUrl}/AdminManufacturers`;
+  const manufacturerName = manufacturer?.name || application?.manufacturer_name || "Unknown";
 
   for (const admin of admins) {
     const adminUserId = String(admin?.auth_user_id || "").trim() || null;
@@ -462,22 +230,16 @@ export async function notifyAdminsOfManufacturerApplication({
       userId: adminUserId,
       userEmail: adminEmail,
       type: "manufacturer_application_submitted",
-      message: `${application?.provider_name || application?.provider_email || "A provider"} applied to ${manufacturer?.name || application?.manufacturer_name || "a supplier"}.`,
+      message: `${application?.provider_name || application?.provider_email || "A provider"} applied to ${manufacturerName}.`,
       linkPage: `AdminManufacturers?focus_application=${encodeURIComponent(application?.id || "")}`,
     });
 
-    if (!adminEmail) continue;
-    await sendResendEmail({
+    if (!adminEmail || !isValidEmail(adminEmail)) continue;
+    await sendEmailFromTemplate("manufacturer_application_admin_alert", {
       to: adminEmail,
-      subject,
-      html: buildEmailHtml({
-        greetingName: `Hi ${greetingName}`,
-        title: subject,
-        intro: "A NOVI provider just applied to one of your suppliers. Full details are below — open the admin portal to manage the application.",
-        summaryLines: summary,
-        ctaLabel: "Open admin portal",
-        ctaUrl: adminCtaUrl,
-      }),
+      first_name: greetingName,
+      manufacturer_name: manufacturerName,
+      summary_lines: summary,
     });
   }
 }
@@ -487,23 +249,14 @@ export async function notifyRepOfManufacturerApplication({
   manufacturer,
 }) {
   const repEmail = String(manufacturer?.account_rep_email || "").trim();
-  if (!repEmail) return;
+  if (!repEmail || !isValidEmail(repEmail)) return;
 
   const summary = buildSummaryBullets({ application, manufacturer });
-  const subject = `New NOVI provider application for ${manufacturer?.name || "your account"}`;
-  const greetingName = manufacturer?.account_rep_name
-    ? `Hi ${manufacturer.account_rep_name}`
-    : "Hi there";
-
-  await sendResendEmail({
+  await sendEmailFromTemplate("manufacturer_application_rep", {
     to: repEmail,
-    subject,
-    html: buildEmailHtml({
-      greetingName,
-      title: subject,
-      intro: `A verified NOVI provider has applied to open an account with ${manufacturer?.name || "your brand"}. Their credentials, license, and practice details are below — reply directly to follow up.`,
-      summaryLines: summary,
-    }),
+    first_name: manufacturer?.account_rep_name || "there",
+    manufacturer_name: manufacturer?.name || application?.manufacturer_name || "your account",
+    summary_lines: summary,
   });
 }
 
@@ -517,7 +270,7 @@ export async function notifyRepOfContactRequest({
   const repEmail = String(
     orderRequest?.rep_email || savedRep?.rep_email || manufacturer?.account_rep_email || ""
   ).trim();
-  if (!repEmail) return { repSent: false, providerSent: false };
+  if (!repEmail || !isValidEmail(repEmail)) return { repSent: false, providerSent: false };
 
   const repGreetingName =
     savedRep?.rep_name || manufacturer?.account_rep_name || "there";
@@ -540,77 +293,47 @@ export async function notifyRepOfContactRequest({
   ].filter(Boolean);
 
   const summary = isOrder
-    ? [
-        ...basicProviderLines,
-        "Request type: Product order",
-      ]
-    : [
-        ...basicProviderLines,
-        `Request type: ${orderRequest?.contact_type || "message"}`,
-      ];
+    ? [...basicProviderLines, "Request type: Product order"]
+    : [...basicProviderLines, `Request type: ${orderRequest?.contact_type || "message"}`];
 
   const intro = isOrder
     ? `${providerName} submitted a product order request through NOVI. Basic contact details and order lines are below — reply directly to confirm pricing and fulfillment.`
     : `${providerName} sent a message through the NOVI supplier marketplace. Reply directly to follow up.`;
 
   const orderItems = isOrder
-    ? normalizeOrderItemsForEmail(
-        orderRequest?.order_items?.length
-          ? orderRequest.order_items
-          : orderRequest?.orderItems
+    ? mapOrderItemsForRegistry(
+        orderRequest?.order_items?.length ? orderRequest.order_items : orderRequest?.orderItems
       )
     : [];
   const providerMessage = orderRequest?.message || "";
-  const messageSummary = !isOrder && providerMessage
-    ? [`Message: ${providerMessage}`]
-    : [];
 
-  const orderEmailHtml = isOrder
-    ? buildOrderRequestEmailHtml({
-        greetingName: repGreetingName ? `Hi ${repGreetingName}` : "Hi there",
-        title: subject,
-        intro,
-        providerLines: summary,
-        orderItems,
-        message: providerMessage,
-      })
-    : null;
-
-  const repSent = await sendResendEmail({
+  const repResult = await sendEmailFromTemplate("manufacturer_contact_rep", {
     to: repEmail,
-    subject,
-    html: orderEmailHtml || buildEmailHtml({
-      greetingName: repGreetingName ? `Hi ${repGreetingName}` : "Hi there",
-      title: subject,
-      intro,
-      summaryLines: [...summary, ...messageSummary],
-    }),
+    first_name: repGreetingName,
+    contact_subject: subject,
+    intro,
+    summary_lines: summary,
+    order_items: orderItems,
+    message: providerMessage,
   });
+  const repSent = repResult.ok === true;
 
   let providerSent = false;
   const copyEmail = String(providerEmail || orderRequest?.provider_email || "").trim();
-  if (copyEmail) {
-    const providerCopyHtml = isOrder
-      ? buildOrderRequestEmailHtml({
-          greetingName: providerName ? `Hi ${providerName}` : "Hi there",
-          title: "Your request was sent",
-          intro: `A copy of your order request to ${mfrName} is below. Their rep team typically responds within 3–5 business days.`,
-          providerLines: summary,
-          orderItems,
-          message: providerMessage,
-        })
-      : buildEmailHtml({
-          greetingName: providerName ? `Hi ${providerName}` : "Hi there",
-          title: "Your request was sent",
-          intro: `A copy of your message to ${mfrName} is below. Their rep team typically responds within 3–5 business days.`,
-          summaryLines: [...summary, ...messageSummary],
-        });
-
-    providerSent = await sendResendEmail({
+  if (copyEmail && isValidEmail(copyEmail)) {
+    const copyIntro = isOrder
+      ? `A copy of your order request to ${mfrName} is below. Their rep team typically responds within 3–5 business days.`
+      : `A copy of your message to ${mfrName} is below. Their rep team typically responds within 3–5 business days.`;
+    const providerResult = await sendEmailFromTemplate("manufacturer_contact_provider_copy", {
       to: copyEmail,
-      subject: `[Copy] ${subject}`,
-      html: providerCopyHtml,
+      first_name: providerName || "there",
+      contact_subject: subject,
+      intro: copyIntro,
+      summary_lines: summary,
+      order_items: orderItems,
+      message: providerMessage,
     });
+    providerSent = providerResult.ok === true;
   }
 
   return { repSent, providerSent };

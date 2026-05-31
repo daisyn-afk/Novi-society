@@ -4,6 +4,7 @@ import { pool } from "../db.js";
 import { hasAdminOrStaffModuleAccess, requireAuth } from "../auth/helpers.js";
 import { notifyAdminsOfLicenseSubmission } from "../adminNotifications.js";
 import { getProviderIdAliases } from "../mdSupervisedAccess.js";
+import { sendEmailFromTemplate } from "../emails/renderTemplate.js";
 import {
   notifyProviderLicenseReinstated,
   reinstateProviderAfterLicenseVerified,
@@ -11,10 +12,6 @@ import {
 
 export const licensesRouter = Router();
 licensesRouter.use(requireAuth);
-const resendApiKey = process.env.RESEND_API_KEY;
-const resendFromEmail = process.env.RESEND_FROM_EMAIL || "NOVI Society <support@novisociety.com>";
-const appBaseUrl = process.env.APP_BASE_URL || "http://localhost:5173";
-const noviEmailLogoUrl = process.env.NOVI_EMAIL_LOGO_URL || `${appBaseUrl}/novi-email-logo.png`;
 const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const supabaseAdmin = supabaseUrl && supabaseServiceRoleKey
@@ -142,15 +139,6 @@ async function fetchLicenseById(client, id) {
   return rows[0] || null;
 }
 
-function escapeHtml(rawValue) {
-  return String(rawValue ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
 function resolveProviderFirstName(licenseRow) {
   const fromName = String(
     licenseRow?.provider_first_name ||
@@ -164,113 +152,32 @@ function resolveProviderFirstName(licenseRow) {
   return "Provider";
 }
 
-function buildLicenseDecisionEmailHtml({ providerFirstName, isApproved, rejectionReason }) {
-  const safeName = escapeHtml(providerFirstName || "Provider");
-  const safeReason = escapeHtml(rejectionReason || "");
-  const base = String(appBaseUrl || "").replace(/\/+$/, "");
-  const ctaUrl = `${base}/login?next=${encodeURIComponent("/ProviderCredentialsCoverage")}`;
-  const ctaMarkup = isApproved
-    ? `<p style="margin:0 0 32px">
-            <a href="${ctaUrl}" style="display:inline-block;background:#2D6B7F;color:#fff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:600;font-size:14px">
-              Apply for Coverage
-            </a>
-          </p>`
-    : "";
-  const contentBody = isApproved
-    ? `
-          <p style="margin:0 0 20px;font-size:16px;color:#374151;line-height:1.6">Your professional license has been verified by the NOVI admin team. ✓</p>
-          <p style="margin:0 0 20px;font-size:16px;color:#374151;line-height:1.6">You're now eligible to apply for MD Board Coverage, which lets you legally offer aesthetic services under NOVI's Board of Medical Directors.</p>
-          <p style="margin:0 0 12px;font-size:15px;font-weight:600;color:#111827">Your Next Steps:</p>
-          <ul style="margin:0 0 24px;padding-left:20px;color:#374151;font-size:15px;line-height:1.9">
-            <li>Enroll in a NOVI course or submit an external certification</li>
-            <li>Apply for MD Coverage for each service you want to offer</li>
-            <li>Get matched with a Board MD - NOVI handles the assignment</li>
-          </ul>
-          ${ctaMarkup}
-          <p style="margin:0 0 32px;font-size:15px;color:#374151;line-height:1.6">You're one step closer,<br/><strong>The NOVI Team</strong></p>
-      `
-    : `
-          <p style="margin:0 0 20px;font-size:16px;color:#374151;line-height:1.6">Your professional license submission has been reviewed by the NOVI admin team.</p>
-          <p style="margin:0 0 16px;font-size:16px;color:#374151;line-height:1.6"><strong>Status:</strong> Rejected</p>
-          <p style="margin:0 0 10px;font-size:15px;font-weight:600;color:#111827">Reason for rejection:</p>
-          <div style="background:#fff7f7;border:1px solid #fecaca;border-radius:10px;padding:14px 16px;margin:0 0 24px;color:#7f1d1d;font-size:14px;line-height:1.7">
-            ${safeReason}
-          </div>
-          <p style="margin:0 0 24px;font-size:15px;color:#374151;line-height:1.6">Please update and resubmit your license details in your provider dashboard.</p>
-          <p style="margin:0 0 32px;font-size:15px;color:#374151;line-height:1.6">The NOVI Team</p>
-      `;
-
-  return `
-<!DOCTYPE html>
-<html>
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
-<body style="margin:0;padding:0;background:#f5f3ef;font-family:'DM Sans',Helvetica,Arial,sans-serif">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f3ef;padding:40px 0">
-    <tr><td align="center">
-      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
-        <tr><td style="background:linear-gradient(135deg,#2D6B7F 0%,#7B8EC8 55%,#C8E63C 100%);padding:36px 40px;text-align:center;border-radius:16px 16px 0 0">
-          <img src="${noviEmailLogoUrl}" alt="NOVI Society" style="width:160px;height:auto" />
-        </td></tr>
-        <tr><td style="background:#fff;padding:48px 40px;border-radius:0 0 16px 16px">
-          <p style="margin:0 0 24px;font-size:16px;color:#374151;line-height:1.6">Hi ${safeName},</p>
-          ${contentBody}
-          <div style="border-top:1px solid #e5e7eb;padding-top:28px;margin-top:8px">
-            <p style="margin:0;font-size:15px;color:#374151">Best,<br><strong>The NOVI Society Team</strong></p>
-          </div>
-        </td></tr>
-        <tr><td style="padding:24px 40px;text-align:center">
-          <p style="margin:0;font-size:12px;color:#9ca3af">© 2026 NOVI Society LLC · 8109 Meadow Valley Dr, McKinney, TX 75071</p>
-          <p style="margin:4px 0 0;font-size:12px;color:#9ca3af"><a href="mailto:support@novisociety.com" style="color:#9ca3af">support@novisociety.com</a></p>
-        </td></tr>
-      </table>
-    </td></tr>
-  </table>
-</body>
-</html>`;
-}
-
 async function sendLicenseDecisionEmail({ providerEmail, providerFirstName, isApproved, rejectionReason }) {
   if (!providerEmail) return false;
-  if (!resendApiKey) {
+  const templateKey = isApproved ? "license_approved" : "license_rejected";
+  const vars = isApproved
+    ? {
+        to: providerEmail,
+        first_name: providerFirstName || "Provider",
+        summary_lines: [
+          "Enroll in a NOVI course or submit an external certification",
+          "Apply for MD Coverage for each service you want to offer",
+          "Get matched with a Board MD — NOVI handles the assignment",
+        ],
+      }
+    : {
+        to: providerEmail,
+        first_name: providerFirstName || "Provider",
+        rejection_reason: rejectionReason || "",
+        rejection_title: "Reason for rejection",
+      };
+  const result = await sendEmailFromTemplate(templateKey, vars);
+  if (!result.ok) {
     // eslint-disable-next-line no-console
-    console.warn("[licenses] license decision email skipped: RESEND_API_KEY missing");
+    console.error("[licenses] decision email send failed:", result.error);
     return false;
   }
-
-  const subject = isApproved
-    ? "Your license has been verified — unlock MD coverage now"
-    : "Your license submission was rejected";
-  const html = buildLicenseDecisionEmailHtml({
-    providerFirstName,
-    isApproved,
-    rejectionReason
-  });
-
-  try {
-    const response = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${resendApiKey}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        from: resendFromEmail,
-        to: [providerEmail],
-        subject,
-        html
-      })
-    });
-    if (!response.ok) {
-      const bodyText = await response.text().catch(() => "");
-      // eslint-disable-next-line no-console
-      console.error("[licenses] decision email send failed:", response.status, bodyText);
-    }
-    return response.ok;
-  } catch (error) {
-    // eslint-disable-next-line no-console
-    console.error("[licenses] decision email request failed:", error);
-    return false;
-  }
+  return true;
 }
 
 licensesRouter.get("/", async (req, res, next) => {

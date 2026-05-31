@@ -52,6 +52,7 @@ const { treatmentRecordsRouter } = await import("./treatment-records/routes.js")
 const { reviewsRouter } = await import("./reviews/routes.js");
 const { complianceLogsRouter } = await import("./compliance-logs/routes.js");
 const { launchRoadmapRouter } = await import("./launch-roadmap/routes.js");
+const { emailTemplatesRouter } = await import("./email-templates/routes.js");
 
 export function createAdminApp() {
   const app = express();
@@ -106,6 +107,7 @@ export function createAdminApp() {
   app.use("/admin/reviews", reviewsRouter);
   app.use("/admin/compliance-logs", complianceLogsRouter);
   app.use("/admin/launch-roadmap", launchRoadmapRouter);
+  app.use("/admin/email-templates", emailTemplatesRouter);
   app.use("/functions", functionsRouter);
 
   app.use((error, _req, res, _next) => {

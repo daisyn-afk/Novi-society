@@ -1,10 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { query } from "../db.js";
-import {
-  buildPasswordResetEmailHtml,
-  PASSWORD_RESET_EMAIL_SUBJECT,
-  sendResendHtmlEmail
-} from "../emails/courseStyleEmail.js";
+import { sendEmailFromTemplate } from "../emails/renderTemplate.js";
 import {
   resolveAppBaseUrl,
   resolveSetPasswordUrl
@@ -123,15 +119,11 @@ export async function sendPaidUserPasswordResetEmail({
     lastName
   });
 
-  const html = buildPasswordResetEmailHtml({
-    greetingName,
-    resetLink: link
-  });
-
-  const sendResult = await sendResendHtmlEmail({
+  const sendResult = await sendEmailFromTemplate("account_password_setup", {
     to: normalized,
-    subject: PASSWORD_RESET_EMAIL_SUBJECT,
-    html
+    first_name: greetingName,
+    reset_link: link,
+    role_label: "provider password",
   });
   if (!sendResult.ok) {
     const err = new Error(

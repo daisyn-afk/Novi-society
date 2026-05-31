@@ -221,6 +221,50 @@ export function createLovableProviderClient() {
   const entityProxy = new Proxy({}, {
     get: (_, entityName) => {
       const name = String(entityName);
+      if (name === "EmailTemplate") {
+        return {
+          list: (_sort = "") => authRequest("/admin/email-templates", { method: "GET" }),
+          filter: (_filters = {}, _sort = "") =>
+            authRequest("/admin/email-templates", { method: "GET" }),
+          get: (key) =>
+            authRequest(`/admin/email-templates/${encodeURIComponent(String(key || ""))}`, {
+              method: "GET",
+            }),
+          update: (key, payload) =>
+            authRequest(`/admin/email-templates/${encodeURIComponent(String(key || ""))}`, {
+              method: "PUT",
+              body: JSON.stringify(payload || {}),
+            }),
+          create: (payload = {}) => {
+            const key = String(payload.template_key || "").trim();
+            if (!key) {
+              return Promise.reject(
+                new Error("EmailTemplate.create requires payload.template_key matching a registered template.")
+              );
+            }
+            return authRequest(`/admin/email-templates/${encodeURIComponent(key)}`, {
+              method: "PUT",
+              body: JSON.stringify(payload || {}),
+            });
+          },
+          delete: (key) =>
+            authRequest(`/admin/email-templates/${encodeURIComponent(String(key || ""))}`, {
+              method: "DELETE",
+            }),
+          setActive: (key, isActive) =>
+            authRequest(`/admin/email-templates/${encodeURIComponent(String(key || ""))}/active`, {
+              method: "PATCH",
+              body: JSON.stringify({ is_active: Boolean(isActive) }),
+            }),
+          preview: (key, payload = {}) =>
+            authRequest(`/admin/email-templates/${encodeURIComponent(String(key || ""))}/preview`, {
+              method: "POST",
+              body: JSON.stringify(payload || {}),
+            }),
+          categories: () => authRequest("/admin/email-templates/categories", { method: "GET" }),
+          placeholders: () => authRequest("/admin/email-templates/placeholders", { method: "GET" }),
+        };
+      }
       if (name === "Manufacturer") {
         return {
           list: () => authRequest("/admin/manufacturers", { method: "GET" }),

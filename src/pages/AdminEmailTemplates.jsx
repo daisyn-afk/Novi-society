@@ -1,107 +1,45 @@
-import { useState } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import {
-  Mail, Plus, Zap, Edit2, Trash2, CheckCircle, Send,
-  Users, BookOpen, Award, Shield, Calendar, Clock, Eye
+  Mail,
+  Edit2,
+  Eye,
+  RotateCcw,
+  Send,
+  Sparkles,
+  Users,
+  BookOpen,
+  Award,
+  Shield,
+  Calendar,
+  AlertTriangle,
+  Building2,
 } from "lucide-react";
 import { format } from "date-fns";
 
-const TRIGGERS = [
-  { value: "enrollment_created", label: "Course Enrolled (payment pending)", icon: BookOpen, color: "#7B8EC8", desc: "Fires when a provider enrolls in a course" },
-  { value: "enrollment_paid", label: "Course Payment Received", icon: BookOpen, color: "#C8E63C", desc: "Fires when enrollment payment is confirmed" },
-  { value: "enrollment_completed", label: "Course Completed", icon: Award, color: "#C8E63C", desc: "Fires when a provider completes a course" },
-  { value: "md_subscription_created", label: "MD Membership Applied", icon: Shield, color: "#FA6F30", desc: "Fires when a provider applies for MD coverage" },
-  { value: "md_subscription_active", label: "MD Membership Activated", icon: Shield, color: "#C8E63C", desc: "Fires when MD coverage becomes active" },
-  { value: "license_verified", label: "License Verified", icon: CheckCircle, color: "#C8E63C", desc: "Fires when admin approves a provider license" },
-  { value: "license_rejected", label: "License Rejected", icon: CheckCircle, color: "#DA6A63", desc: "Fires when admin rejects a provider license" },
-  { value: "certification_approved", label: "Certification Approved", icon: Award, color: "#C8E63C", desc: "Fires when a certification is approved" },
-  { value: "appointment_confirmed", label: "Appointment Confirmed", icon: Calendar, color: "#7B8EC8", desc: "Fires when an appointment is confirmed" },
-  { value: "appointment_completed", label: "Appointment Completed", icon: Calendar, color: "#2D6B7F", desc: "Fires when an appointment is marked completed" },
-  { value: "pre_order_approved", label: "Pre-Order Approved", icon: CheckCircle, color: "#C8E63C", desc: "Fires when a pre-order application is approved" },
-];
+const CATEGORY_META = {
+  onboarding: { label: "Accounts & Onboarding", icon: BookOpen, color: "#7B8EC8" },
+  credentials: { label: "Licenses & Certifications", icon: Award, color: "#C8E63C" },
+  admin_alert: { label: "Admin Alerts", icon: AlertTriangle, color: "#FA6F30" },
+  supplier: { label: "Supplier / Manufacturer", icon: Building2, color: "#2D6B7F" },
+  appointments: { label: "Patient Appointments", icon: Calendar, color: "#7B8EC8" },
+  model: { label: "Model Training", icon: Sparkles, color: "#DA6A63" },
+  uncategorized: { label: "Other", icon: Mail, color: "#9CA3AF" },
+};
 
-const RECIPIENT_TYPES = [
-  { value: "provider", label: "Provider" },
-  { value: "patient", label: "Patient" },
-  { value: "medical_director", label: "Medical Director" },
-];
-
-const PLACEHOLDERS = [
-  { tag: "{{first_name}}", desc: "Recipient's first name" },
-  { tag: "{{full_name}}", desc: "Recipient's full name" },
-  { tag: "{{email}}", desc: "Recipient's email" },
-  { tag: "{{app_url}}", desc: "App URL link" },
-  { tag: "{{course_name}}", desc: "Course title" },
-  { tag: "{{service_name}}", desc: "Service or certification name" },
-  { tag: "{{provider_name}}", desc: "Provider name" },
-  { tag: "{{patient_name}}", desc: "Patient name" },
-];
-
-const DEFAULT_TEMPLATES = [
-  {
-    name: "Course Enrollment Confirmation",
-    trigger: "enrollment_created",
-    recipient_type: "provider",
-    subject: "You're enrolled in {{course_name}} — Here's what to do next",
-    body_html: `<p>Hi {{first_name}},</p>
-<p>You're officially enrolled in <strong>{{course_name}}</strong> on the NOVI Society platform! 🎉</p>
-<h3>Your Next Steps:</h3>
-<ol>
-  <li><strong>Complete payment</strong> — if you haven't already, finalize your enrollment to secure your spot.</li>
-  <li><strong>Review pre-course materials</strong> — log in to access study guides and prep resources.</li>
-  <li><strong>Show up ready</strong> — your instructor will give you a class code on the day of class to unlock your certification.</li>
-</ol>
-<p><a href="{{app_url}}/ProviderEnrollments" style="background:#7B8EC8;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block;margin:16px 0;">View My Enrollments →</a></p>
-<p>Questions? Just reply to this email or reach out through the NOVI platform.</p>
-<p>Welcome to NOVI Society,<br/>The NOVI Team</p>`,
-    is_active: true,
-  },
-  {
-    name: "MD Membership Activation",
-    trigger: "md_subscription_active",
-    recipient_type: "provider",
-    subject: "Your MD Board Coverage is Active for {{service_name}} ✓",
-    body_html: `<p>Hi {{first_name}},</p>
-<p>Great news — your <strong>Medical Director Board Coverage for {{service_name}}</strong> is now active!</p>
-<p>A NOVI Board Medical Director has been assigned to your account. They will sign your protocols and provide clinical oversight as required by your state.</p>
-<h3>You Can Now:</h3>
-<ul>
-  <li>Offer <strong>{{service_name}}</strong> to patients through the NOVI platform</li>
-  <li>List your profile on the Patient Marketplace</li>
-  <li>Accept appointment requests from patients</li>
-  <li>Submit treatment records for MD review</li>
-</ul>
-<p><a href="{{app_url}}/ProviderCredentialsCoverage" style="background:#C8E63C;color:#1e2535;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block;margin:16px 0;">View My Coverage →</a></p>
-<p>You're covered,<br/>The NOVI Team</p>`,
-    is_active: true,
-  },
-  {
-    name: "License Verified — Next Steps",
-    trigger: "license_verified",
-    recipient_type: "provider",
-    subject: "Your license has been verified — unlock MD coverage now",
-    body_html: `<p>Hi {{first_name}},</p>
-<p>Your professional license has been <strong>verified</strong> by the NOVI admin team. ✓</p>
-<p>You're now eligible to apply for MD Board Coverage, which lets you legally offer aesthetic services under NOVI's Board of Medical Directors.</p>
-<h3>Your Next Steps:</h3>
-<ol>
-  <li><strong>Enroll in a NOVI course</strong> or submit an external certification</li>
-  <li><strong>Apply for MD Coverage</strong> for each service you want to offer</li>
-  <li><strong>Get matched</strong> with a Board MD — NOVI handles the assignment</li>
-</ol>
-<p><a href="{{app_url}}/ProviderCredentialsCoverage" style="background:#FA6F30;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block;margin:16px 0;">Apply for Coverage →</a></p>
-<p>You're one step closer,<br/>The NOVI Team</p>`,
-    is_active: true,
-  },
-];
+const RECIPIENT_LABELS = {
+  provider: "Provider",
+  patient: "Patient",
+  medical_director: "Medical Director",
+  admin: "Admin",
+  manufacturer_rep: "Manufacturer Rep",
+};
 
 const CARD_STYLE = {
   background: "rgba(255,255,255,0.82)",
@@ -111,213 +49,327 @@ const CARD_STYLE = {
   boxShadow: "0 2px 16px rgba(30,37,53,0.07)",
 };
 
+function categoryMeta(key) {
+  return CATEGORY_META[key] || CATEGORY_META.uncategorized;
+}
+
+function recipientLabel(value) {
+  return RECIPIENT_LABELS[String(value || "").toLowerCase()] || value || "—";
+}
+
+// Block placeholders are kept in the stored body but hidden from the editor.
+const BLOCK_TAGS = new Set([
+  "cta_button",
+  "summary_list",
+  "details_block",
+  "order_table",
+  "message_block",
+  "rejection_block",
+]);
+
+function parseBodySegments(body) {
+  const lines = String(body || "").replace(/\r\n/g, "\n").split("\n");
+  const segments = [];
+  let buffer = [];
+  const flush = () => {
+    const text = buffer.join("\n").replace(/^\n+|\n+$/g, "");
+    if (text.trim()) segments.push({ type: "text", value: text });
+    buffer = [];
+  };
+  for (const line of lines) {
+    const match = line.trim().match(/^\{\{\s*([a-zA-Z0-9_]+)\s*\}\}$/);
+    if (match && BLOCK_TAGS.has(match[1])) {
+      flush();
+      segments.push({ type: "block", tag: line.trim() });
+    } else {
+      buffer.push(line);
+    }
+  }
+  flush();
+  return segments;
+}
+
+function stripMarkdown(text) {
+  return String(text || "")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/(^|[^*])\*([^*]+)\*(?!\*)/g, "$1$2");
+}
+
+function scalarSampleEntries(sampleVars) {
+  return Object.entries(sampleVars || {})
+    .filter(([, v]) => v != null && typeof v !== "object")
+    .map(([k, v]) => [k, String(v)])
+    .sort((a, b) => b[1].length - a[1].length);
+}
+
+// Fill {{placeholders}} with sample preview values so the editor reads like
+// the live email ("Order Request — Sam Provider" instead of {{contact_subject}}).
+function fillSampleValues(text, sampleVars) {
+  let out = stripMarkdown(text);
+  for (const [key, value] of scalarSampleEntries(sampleVars)) {
+    if (value) out = out.split(`{{${key}}}`).join(value);
+  }
+  return out;
+}
+
+// Turn edited preview text back into {{placeholders}} for storage.
+function restorePlaceholders(text, sampleVars) {
+  let out = String(text || "");
+  for (const [key, value] of scalarSampleEntries(sampleVars)) {
+    if (value) out = out.split(value).join(`{{${key}}}`);
+  }
+  return out;
+}
+
+const EDITOR_GREETING_LINE = "Hi {{first_name}},";
+
+function stripEditorGreeting(text) {
+  return String(text || "")
+    .replace(/^Hi\s+\{\{\s*first_name\s*\}\},?\s*\n+/i, "")
+    .replace(/^Hi\s+.+,\s*\n+/i, "");
+}
+
+// Stored body -> plain text shown in the editor (matches preview wording).
+// Greeting is shown separately as read-only Hi {{first_name}}, — not in the textarea.
+function bodyToEditorText(body, sampleVars) {
+  const segments = parseBodySegments(body);
+  return segments
+    .filter((s) => s.type === "text")
+    .map((s) => fillSampleValues(s.value, sampleVars))
+    .join("\n\n");
+}
+
+// Editor plain text -> stored body. Re-inserts hidden block placeholders
+// (table, bullet list, button) in their original positions.
+function editorTextToStoredBody(editorText, sampleVars, referenceBody) {
+  const stripped = stripEditorGreeting(editorText);
+  const paragraphs = stripped.split(/\n\n+/).map((p) => p.trim()).filter(Boolean);
+  const refSegments = parseBodySegments(referenceBody || "");
+  let pIdx = 0;
+  const parts = [];
+  for (const seg of refSegments) {
+    if (seg.type === "block") {
+      parts.push(seg.tag);
+    } else if (pIdx < paragraphs.length) {
+      parts.push(restorePlaceholders(paragraphs[pIdx++], sampleVars));
+    } else {
+      parts.push(seg.value);
+    }
+  }
+  while (pIdx < paragraphs.length) {
+    parts.push(restorePlaceholders(paragraphs[pIdx++], sampleVars));
+  }
+  return parts.join("\n\n");
+}
+
+function subjectToEditorText(subject, sampleVars) {
+  return fillSampleValues(subject, sampleVars);
+}
+
+const EMPTY_DRAFT = {
+  subject: "",
+  body_html: "",
+  cta_label: "",
+  cta_url_path: "",
+  is_active: true,
+};
+
 export default function AdminEmailTemplates() {
-  const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [previewTemplate, setPreviewTemplate] = useState(null);
-  const [form, setForm] = useState({
-    name: "", trigger: "", recipient_type: "provider", subject: "", body_html: "", is_active: true, send_delay_minutes: 0
-  });
+  const [draft, setDraft] = useState(EMPTY_DRAFT);
+  const [bodyText, setBodyText] = useState("");
+  const [subjectText, setSubjectText] = useState("");
+  const [previewHtml, setPreviewHtml] = useState("");
+  const [previewSubject, setPreviewSubject] = useState("");
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState("");
   const qc = useQueryClient();
 
   const { data: templates = [], isLoading } = useQuery({
     queryKey: ["email-templates"],
-    queryFn: () => base44.entities.EmailTemplate.list("-created_date"),
+    queryFn: () => base44.entities.EmailTemplate.list(),
   });
+
+  const grouped = useMemo(() => {
+    const buckets = {};
+    for (const tpl of templates) {
+      const key = tpl.category || "uncategorized";
+      if (!buckets[key]) buckets[key] = [];
+      buckets[key].push(tpl);
+    }
+    return buckets;
+  }, [templates]);
 
   const saveMutation = useMutation({
     mutationFn: async () => {
-      if (editing) {
-        return base44.entities.EmailTemplate.update(editing.id, form);
-      }
-      return base44.entities.EmailTemplate.create(form);
+      if (!editing) throw new Error("No template selected.");
+      return base44.entities.EmailTemplate.update(editing.template_key, draft);
     },
     onSuccess: () => {
-      qc.invalidateQueries(["email-templates"]);
-      setDialogOpen(false);
+      qc.invalidateQueries({ queryKey: ["email-templates"] });
       setEditing(null);
+      setDraft(EMPTY_DRAFT);
+      setBodyText("");
+      setSubjectText("");
     },
   });
 
-  const deleteMutation = useMutation({
-    mutationFn: (id) => base44.entities.EmailTemplate.delete(id),
-    onSuccess: () => qc.invalidateQueries(["email-templates"]),
+  const revertMutation = useMutation({
+    mutationFn: async (templateKey) =>
+      base44.entities.EmailTemplate.delete(templateKey),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["email-templates"] });
+      setEditing(null);
+      setDraft(EMPTY_DRAFT);
+      setBodyText("");
+      setSubjectText("");
+    },
   });
 
   const toggleMutation = useMutation({
-    mutationFn: ({ id, is_active }) => base44.entities.EmailTemplate.update(id, { is_active }),
-    onSuccess: () => qc.invalidateQueries(["email-templates"]),
+    mutationFn: ({ templateKey, isActive }) =>
+      base44.entities.EmailTemplate.setActive(templateKey, isActive),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["email-templates"] }),
   });
 
-  const seedDefaultsMutation = useMutation({
-    mutationFn: async () => {
-      for (const t of DEFAULT_TEMPLATES) {
-        await base44.entities.EmailTemplate.create(t);
-      }
-    },
-    onSuccess: () => qc.invalidateQueries(["email-templates"]),
-  });
+  function openEditor(tpl) {
+    const sample = tpl.sample_vars || {};
+    setEditing(tpl);
+    setDraft({
+      subject: tpl.subject || "",
+      body_html: tpl.body_html || "",
+      cta_label: tpl.cta_label || "",
+      cta_url_path: tpl.cta_url_path || "",
+      is_active: tpl.is_active !== false,
+    });
+    setSubjectText(subjectToEditorText(tpl.subject || "", sample));
+    setBodyText(bodyToEditorText(tpl.body_html || "", sample));
+    setPreviewHtml("");
+    setPreviewSubject("");
+    setPreviewError("");
+  }
 
-  const openNew = () => {
+  function closeEditor() {
     setEditing(null);
-    setForm({ name: "", trigger: "", recipient_type: "provider", subject: "", body_html: "", is_active: true, send_delay_minutes: 0 });
-    setDialogOpen(true);
-  };
+    setDraft(EMPTY_DRAFT);
+    setBodyText("");
+    setSubjectText("");
+    setPreviewHtml("");
+    setPreviewSubject("");
+    setPreviewError("");
+  }
 
-  const openEdit = (t) => {
-    setEditing(t);
-    setForm({ name: t.name, trigger: t.trigger, recipient_type: t.recipient_type, subject: t.subject, body_html: t.body_html, is_active: t.is_active, send_delay_minutes: t.send_delay_minutes || 0 });
-    setDialogOpen(true);
-  };
+  function syncDraftFromEditor(subjectValue, bodyValue) {
+    if (!editing) return;
+    const sample = editing.sample_vars || {};
+    const referenceBody = editing.default_body_html || editing.body_html || "";
+    setDraft((d) => ({
+      ...d,
+      subject: restorePlaceholders(subjectValue, sample),
+      body_html: editorTextToStoredBody(bodyValue, sample, referenceBody),
+    }));
+  }
 
-  const insertPlaceholder = (tag) => {
-    setForm(f => ({ ...f, body_html: f.body_html + tag }));
-  };
+  function handleSubjectTextChange(value) {
+    setSubjectText(value);
+    syncDraftFromEditor(value, bodyText);
+  }
 
-  const triggerMeta = (trigger) => TRIGGERS.find(t => t.value === trigger);
+  function handleBodyTextChange(value) {
+    setBodyText(value);
+    syncDraftFromEditor(subjectText, value);
+  }
 
-  // Group templates by trigger
-  const byTrigger = {};
-  templates.forEach(t => {
-    byTrigger[t.trigger] = byTrigger[t.trigger] || [];
-    byTrigger[t.trigger].push(t);
+  async function refreshPreview() {
+    if (!editing) return;
+    setPreviewLoading(true);
+    setPreviewError("");
+    try {
+      const result = await base44.entities.EmailTemplate.preview(editing.template_key, {
+        subject: draft.subject,
+        body_html: draft.body_html,
+        cta_label: draft.cta_label,
+        cta_url_path: draft.cta_url_path,
+      });
+      if (!result?.ok) {
+        setPreviewError(result?.error || "Preview failed.");
+        setPreviewHtml("");
+        setPreviewSubject("");
+      } else {
+        setPreviewHtml(result.html || "");
+        setPreviewSubject(result.subject || "");
+      }
+    } catch (err) {
+      setPreviewError(err?.message || "Preview failed.");
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!editing) return;
+    refreshPreview();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing?.template_key]);
+
+  const activeCount = templates.filter((t) => t.is_active !== false).length;
+  const overrideCount = templates.filter((t) => t.has_override).length;
+  const totalSent = templates.reduce((sum, t) => sum + (t.total_sent || 0), 0);
+  const categoryKeys = Object.keys(grouped).sort((a, b) => {
+    const order = ["onboarding", "credentials", "admin_alert", "supplier", "appointments", "model", "uncategorized"];
+    return order.indexOf(a) - order.indexOf(b);
   });
 
   return (
-    <div className="max-w-5xl space-y-6">
-      {/* Header */}
+    <div className="max-w-6xl space-y-6">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <p className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: "#7B8EC8" }}>Automated Emails</p>
-          <h1 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 28, color: "#1e2535", lineHeight: 1.2 }}>Email Automation</h1>
-          <p className="mt-1 text-sm" style={{ color: "rgba(30,37,53,0.6)", maxWidth: 480 }}>
-            Create emails that fire automatically when providers, patients, or MDs reach key milestones — course enrollment, license verification, MD activation, and more.
+          <p className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: "#7B8EC8" }}>
+            Automated Emails
           </p>
-        </div>
-        <div className="flex gap-2 flex-shrink-0">
-          {templates.length === 0 && (
-            <Button variant="outline" onClick={() => seedDefaultsMutation.mutate()} disabled={seedDefaultsMutation.isPending} className="gap-2 text-sm">
-              <Zap className="w-4 h-4" /> {seedDefaultsMutation.isPending ? "Loading..." : "Load Starter Templates"}
-            </Button>
-          )}
-          <Button onClick={openNew} className="gap-2 font-bold" style={{ background: "#FA6F30", color: "#fff", borderRadius: 12 }}>
-            <Plus className="w-4 h-4" /> New Template
-          </Button>
+          <h1
+            style={{
+              fontFamily: "'DM Serif Display', serif",
+              fontSize: 28,
+              color: "#1e2535",
+              lineHeight: 1.2,
+            }}
+          >
+            Email Automation
+          </h1>
+          <p className="mt-1 text-sm" style={{ color: "rgba(30,37,53,0.6)", maxWidth: 560 }}>
+            Every email NOVI sends — to providers, patients, MDs, admins and suppliers — uses the same
+            branded design. You only edit the wording: just change the text like a normal document. The
+            logo, colours, layout and structured pieces (button, detail box, bullet list) are added
+            automatically.
+          </p>
         </div>
       </div>
 
-      {/* Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
           { label: "Total Templates", value: templates.length, color: "#7B8EC8" },
-          { label: "Active", value: templates.filter(t => t.is_active).length, color: "#C8E63C" },
-          { label: "Inactive", value: templates.filter(t => !t.is_active).length, color: "#FA6F30" },
-          { label: "Total Sent", value: templates.reduce((s, t) => s + (t.total_sent || 0), 0), color: "#DA6A63" },
+          { label: "Active", value: activeCount, color: "#C8E63C" },
+          { label: "Customised", value: overrideCount, color: "#FA6F30" },
+          { label: "Sent (lifetime)", value: totalSent, color: "#DA6A63" },
         ].map(({ label, value, color }) => (
           <div key={label} className="rounded-2xl px-4 py-4" style={CARD_STYLE}>
-            <p style={{ fontFamily: "'DM Serif Display', serif", fontSize: 28, color: "#1e2535", lineHeight: 1 }}>{value}</p>
-            <p className="text-xs font-semibold mt-1" style={{ color }}>{label}</p>
+            <p
+              style={{
+                fontFamily: "'DM Serif Display', serif",
+                fontSize: 28,
+                color: "#1e2535",
+                lineHeight: 1,
+              }}
+            >
+              {value}
+            </p>
+            <p className="text-xs font-semibold mt-1" style={{ color }}>
+              {label}
+            </p>
           </div>
         ))}
       </div>
-
-      {/* Trigger overview */}
-      <div className="rounded-2xl overflow-hidden" style={CARD_STYLE}>
-        <div className="px-6 py-4 border-b" style={{ borderColor: "rgba(30,37,53,0.08)" }}>
-          <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.5)" }}>All Trigger Events</p>
-          <p className="text-sm mt-0.5" style={{ color: "rgba(30,37,53,0.6)" }}>Each trigger fires automatically when the event occurs</p>
-        </div>
-        <div className="divide-y" style={{ borderColor: "rgba(30,37,53,0.06)" }}>
-          {TRIGGERS.map(trigger => {
-            const tpls = byTrigger[trigger.value] || [];
-            const Icon = trigger.icon;
-            return (
-              <div key={trigger.value} className="px-6 py-4 flex items-center gap-4">
-                <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: `${trigger.color}18` }}>
-                  <Icon className="w-4 h-4" style={{ color: trigger.color }} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="font-semibold text-sm" style={{ color: "#1e2535" }}>{trigger.label}</p>
-                  <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.5)" }}>{trigger.desc}</p>
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  {tpls.length === 0 ? (
-                    <span className="text-xs px-2.5 py-1 rounded-full" style={{ background: "rgba(30,37,53,0.06)", color: "rgba(30,37,53,0.4)" }}>No template</span>
-                  ) : (
-                    tpls.map(t => (
-                      <div key={t.id} className="flex items-center gap-1.5">
-                        <span className="text-xs font-semibold px-2.5 py-1 rounded-full" style={{
-                          background: t.is_active ? "rgba(200,230,60,0.15)" : "rgba(30,37,53,0.06)",
-                          color: t.is_active ? "#4a6b10" : "rgba(30,37,53,0.4)"
-                        }}>
-                          {t.is_active ? "Active" : "Off"} · {t.recipient_type}
-                        </span>
-                        <button onClick={() => openEdit(t)} className="text-xs px-2 py-1 rounded-lg hover:opacity-80 transition-opacity" style={{ background: "rgba(123,142,200,0.12)", color: "#7B8EC8" }}>
-                          <Edit2 className="w-3 h-3" />
-                        </button>
-                      </div>
-                    ))
-                  )}
-                  <button
-                    onClick={() => { setForm(f => ({ ...f, trigger: trigger.value })); openNew(); }}
-                    className="text-xs px-2.5 py-1.5 rounded-lg font-semibold transition-all hover:opacity-80"
-                    style={{ background: "rgba(250,111,48,0.1)", color: "#FA6F30", border: "1px solid rgba(250,111,48,0.25)" }}>
-                    <Plus className="w-3 h-3 inline mr-1" />Add
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* All templates list */}
-      {templates.length > 0 && (
-        <div className="space-y-3">
-          <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.4)" }}>All Templates</p>
-          {templates.map(t => {
-            const meta = triggerMeta(t.trigger);
-            const Icon = meta?.icon || Mail;
-            return (
-              <div key={t.id} className="rounded-2xl overflow-hidden" style={CARD_STYLE}>
-                <div className="px-5 py-4 flex items-center gap-4">
-                  <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: `${meta?.color || "#7B8EC8"}18` }}>
-                    <Icon className="w-5 h-5" style={{ color: meta?.color || "#7B8EC8" }} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <p className="font-bold text-sm" style={{ color: "#1e2535" }}>{t.name}</p>
-                      <span className="text-xs px-2 py-0.5 rounded-full font-semibold capitalize" style={{ background: "rgba(123,142,200,0.12)", color: "#7B8EC8" }}>{t.recipient_type}</span>
-                    </div>
-                    <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.5)" }}>
-                      Trigger: <strong>{meta?.label || t.trigger}</strong>
-                      {t.last_sent_at && ` · Last sent ${format(new Date(t.last_sent_at), "MMM d, yyyy")}`}
-                      {t.total_sent > 0 && ` · ${t.total_sent} sent`}
-                    </p>
-                    <p className="text-xs mt-0.5 truncate" style={{ color: "rgba(30,37,53,0.4)" }}>Subject: {t.subject}</p>
-                  </div>
-                  <div className="flex items-center gap-3 flex-shrink-0">
-                    <Switch
-                      checked={t.is_active}
-                      onCheckedChange={(v) => toggleMutation.mutate({ id: t.id, is_active: v })}
-                    />
-                    <button onClick={() => { setPreviewTemplate(t); setPreviewOpen(true); }} className="p-1.5 rounded-lg hover:opacity-80 transition-opacity" style={{ color: "#7B8EC8" }} title="Preview">
-                      <Eye className="w-4 h-4" />
-                    </button>
-                    <button onClick={() => openEdit(t)} className="p-1.5 rounded-lg hover:opacity-80 transition-opacity" style={{ color: "#FA6F30" }}>
-                      <Edit2 className="w-4 h-4" />
-                    </button>
-                    <button onClick={() => { if (confirm("Delete this template?")) deleteMutation.mutate(t.id); }} className="p-1.5 rounded-lg hover:opacity-80 transition-opacity" style={{ color: "#DA6A63" }}>
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
 
       {isLoading && (
         <div className="flex items-center justify-center py-16">
@@ -325,111 +377,342 @@ export default function AdminEmailTemplates() {
         </div>
       )}
 
-      {/* Edit / Create Dialog */}
-      <Dialog open={dialogOpen} onOpenChange={(v) => { if (!v) setDialogOpen(false); }}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle style={{ fontFamily: "'DM Serif Display', serif", fontSize: 20 }}>
-              {editing ? "Edit Email Template" : "New Email Template"}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 pt-2">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="col-span-2">
-                <Label>Template Name</Label>
-                <Input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Course Enrollment Welcome" />
+      {!isLoading &&
+        categoryKeys.map((catKey) => {
+          const meta = categoryMeta(catKey);
+          const Icon = meta.icon;
+          const rows = grouped[catKey] || [];
+          return (
+            <div key={catKey} className="rounded-2xl overflow-hidden" style={CARD_STYLE}>
+              <div
+                className="px-6 py-4 border-b flex items-center gap-3"
+                style={{ borderColor: "rgba(30,37,53,0.08)" }}
+              >
+                <div
+                  className="w-9 h-9 rounded-xl flex items-center justify-center"
+                  style={{ background: `${meta.color}18` }}
+                >
+                  <Icon className="w-4 h-4" style={{ color: meta.color }} />
+                </div>
+                <div className="flex-1">
+                  <p className="font-semibold text-sm" style={{ color: "#1e2535" }}>
+                    {meta.label}
+                  </p>
+                  <p className="text-xs" style={{ color: "rgba(30,37,53,0.5)" }}>
+                    {rows.length} template{rows.length === 1 ? "" : "s"} in this group
+                  </p>
+                </div>
               </div>
-              <div>
-                <Label>Trigger Event *</Label>
-                <Select value={form.trigger} onValueChange={v => setForm(f => ({ ...f, trigger: v }))}>
-                  <SelectTrigger><SelectValue placeholder="Select trigger..." /></SelectTrigger>
-                  <SelectContent>
-                    {TRIGGERS.map(t => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                {form.trigger && <p className="text-xs mt-1" style={{ color: "rgba(30,37,53,0.5)" }}>{triggerMeta(form.trigger)?.desc}</p>}
-              </div>
-              <div>
-                <Label>Send To *</Label>
-                <Select value={form.recipient_type} onValueChange={v => setForm(f => ({ ...f, recipient_type: v }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {RECIPIENT_TYPES.map(r => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="col-span-2">
-                <Label>Email Subject *</Label>
-                <Input value={form.subject} onChange={e => setForm(f => ({ ...f, subject: e.target.value }))} placeholder="e.g. Welcome to {{course_name}}!" />
-              </div>
-            </div>
-
-            {/* Placeholder helper */}
-            <div className="rounded-xl p-3" style={{ background: "rgba(123,142,200,0.08)", border: "1px solid rgba(123,142,200,0.2)" }}>
-              <p className="text-xs font-bold uppercase tracking-widest mb-2" style={{ color: "#7B8EC8" }}>Available Placeholders — click to insert</p>
-              <div className="flex flex-wrap gap-1.5">
-                {PLACEHOLDERS.map(p => (
-                  <button key={p.tag} onClick={() => insertPlaceholder(p.tag)} title={p.desc}
-                    className="text-xs px-2.5 py-1 rounded-full font-mono transition-all hover:opacity-80"
-                    style={{ background: "rgba(123,142,200,0.15)", color: "#4a5fa8", border: "1px solid rgba(123,142,200,0.3)" }}>
-                    {p.tag}
-                  </button>
+              <div className="divide-y" style={{ borderColor: "rgba(30,37,53,0.06)" }}>
+                {rows.map((tpl) => (
+                  <div key={tpl.template_key} className="px-6 py-4 flex items-center gap-4">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="font-bold text-sm" style={{ color: "#1e2535" }}>
+                          {tpl.name}
+                        </p>
+                        <span
+                          className="text-xs px-2 py-0.5 rounded-full font-semibold"
+                          style={{
+                            background: "rgba(123,142,200,0.12)",
+                            color: "#7B8EC8",
+                          }}
+                        >
+                          {recipientLabel(tpl.recipient_type)}
+                        </span>
+                        {tpl.has_override && (
+                          <span
+                            className="text-xs px-2 py-0.5 rounded-full font-semibold"
+                            style={{
+                              background: "rgba(250,111,48,0.12)",
+                              color: "#FA6F30",
+                            }}
+                          >
+                            Customised
+                          </span>
+                        )}
+                        {tpl.is_active === false && (
+                          <span
+                            className="text-xs px-2 py-0.5 rounded-full font-semibold"
+                            style={{
+                              background: "rgba(218,106,99,0.12)",
+                              color: "#DA6A63",
+                            }}
+                          >
+                            Inactive
+                          </span>
+                        )}
+                      </div>
+                      <p
+                        className="text-xs mt-1 truncate"
+                        style={{ color: "rgba(30,37,53,0.55)" }}
+                      >
+                        Subject: {tpl.subject}
+                      </p>
+                      <p
+                        className="text-[11px] font-mono mt-0.5"
+                        style={{ color: "rgba(30,37,53,0.4)" }}
+                      >
+                        {tpl.template_key}
+                        {tpl.last_sent_at &&
+                          ` · Last sent ${format(new Date(tpl.last_sent_at), "MMM d, yyyy")}`}
+                        {tpl.total_sent > 0 && ` · ${tpl.total_sent} sent`}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-3 flex-shrink-0">
+                      <Switch
+                        checked={tpl.is_active !== false}
+                        onCheckedChange={(v) =>
+                          toggleMutation.mutate({
+                            templateKey: tpl.template_key,
+                            isActive: v,
+                          })
+                        }
+                      />
+                      <button
+                        onClick={() => openEditor(tpl)}
+                        className="p-1.5 rounded-lg hover:opacity-80 transition-opacity"
+                        style={{ color: "#FA6F30" }}
+                        title="Edit"
+                      >
+                        <Edit2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
                 ))}
               </div>
             </div>
+          );
+        })}
 
-            <div>
-              <Label>Email Body (HTML or plain text) *</Label>
-              <textarea
-                value={form.body_html}
-                onChange={e => setForm(f => ({ ...f, body_html: e.target.value }))}
-                rows={14}
-                className="w-full rounded-xl px-3 py-2.5 text-sm font-mono outline-none resize-y"
-                style={{ background: "rgba(0,0,0,0.04)", border: "1px solid rgba(30,37,53,0.12)", color: "#1e2535", lineHeight: 1.6 }}
-                placeholder="<p>Hi {{first_name}},</p>&#10;<p>Your email content here...</p>&#10;<p><a href='{{app_url}}'>Back to NOVI →</a></p>"
-              />
-            </div>
-
-            <div className="flex items-center gap-3">
-              <Switch checked={form.is_active} onCheckedChange={v => setForm(f => ({ ...f, is_active: v }))} />
-              <Label>Active (emails will send automatically when trigger fires)</Label>
-            </div>
-
-            <div className="flex gap-2 justify-end pt-2">
-              <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
-              <Button
-                onClick={() => saveMutation.mutate()}
-                disabled={!form.name || !form.trigger || !form.subject || !form.body_html || saveMutation.isPending}
-                style={{ background: "#FA6F30", color: "#fff" }}
-              >
-                {saveMutation.isPending ? "Saving..." : editing ? "Save Changes" : "Create Template"}
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Preview Dialog */}
-      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+      <Dialog
+        open={Boolean(editing)}
+        onOpenChange={(v) => {
+          if (!v) closeEditor();
+        }}
+      >
+        <DialogContent className="max-w-5xl max-h-[92vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Preview: {previewTemplate?.name}</DialogTitle>
+            <DialogTitle
+              style={{ fontFamily: "'DM Serif Display', serif", fontSize: 22 }}
+            >
+              {editing?.name || "Edit Email Template"}
+            </DialogTitle>
+            {editing && (
+              <p className="text-xs font-mono" style={{ color: "rgba(30,37,53,0.5)" }}>
+                {editing.template_key} · {recipientLabel(editing.recipient_type)} ·{" "}
+                {categoryMeta(editing.category).label}
+              </p>
+            )}
           </DialogHeader>
-          {previewTemplate && (
-            <div className="space-y-3 pt-2">
-              <div className="rounded-xl px-4 py-3" style={{ background: "rgba(30,37,53,0.05)", border: "1px solid rgba(30,37,53,0.1)" }}>
-                <p className="text-xs font-bold" style={{ color: "rgba(30,37,53,0.5)" }}>SUBJECT</p>
-                <p className="text-sm font-semibold mt-0.5" style={{ color: "#1e2535" }}>{previewTemplate.subject}</p>
+          {editing && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 pt-2">
+              <div className="space-y-4">
+                <div>
+                  <Label>Email Subject</Label>
+                  <Input
+                    value={subjectText}
+                    onChange={(e) => handleSubjectTextChange(e.target.value)}
+                  />
+                  <p
+                    className="text-[11px] mt-1"
+                    style={{ color: "rgba(30,37,53,0.45)" }}
+                  >
+                    Default:{" "}
+                    {subjectToEditorText(editing.default_subject, editing.sample_vars)}
+                  </p>
+                </div>
+
+                <div>
+                  <Label>Message text</Label>
+                  <div
+                    className="rounded-t-xl px-3 py-2 text-sm select-none"
+                    style={{
+                      background: "rgba(123,142,200,0.1)",
+                      border: "1px solid rgba(30,37,53,0.12)",
+                      borderBottom: "none",
+                      color: "rgba(30,37,53,0.65)",
+                      lineHeight: 1.6,
+                    }}
+                  >
+                    {EDITOR_GREETING_LINE}
+                    <span
+                      className="ml-2 text-[11px] italic"
+                      style={{ color: "rgba(30,37,53,0.45)" }}
+                    >
+                      — added automatically for each recipient
+                    </span>
+                  </div>
+                  <textarea
+                    value={bodyText}
+                    onChange={(e) => handleBodyTextChange(e.target.value)}
+                    rows={16}
+                    className="w-full rounded-b-xl px-3 py-2.5 text-sm outline-none resize-y"
+                    style={{
+                      background: "rgba(0,0,0,0.04)",
+                      border: "1px solid rgba(30,37,53,0.12)",
+                      borderTop: "1px dashed rgba(30,37,53,0.15)",
+                      color: "#1e2535",
+                      lineHeight: 1.6,
+                    }}
+                  />
+                  <p
+                    className="text-[11px] mt-1.5 leading-relaxed"
+                    style={{ color: "rgba(30,37,53,0.55)" }}
+                  >
+                    The greeting uses each recipient&apos;s first name automatically — do not type
+                    a name here. Edit the message below it. Order details, tables, buttons and
+                    bullet lists are still added for you when the email is sent.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <Switch
+                    checked={draft.is_active}
+                    onCheckedChange={(v) => setDraft((d) => ({ ...d, is_active: v }))}
+                  />
+                  <Label>
+                    Active — use this customised text. Turn off to fall back to the built-in default.
+                  </Label>
+                </div>
+
+                <div className="flex gap-2 flex-wrap pt-2">
+                  <Button
+                    onClick={() => saveMutation.mutate()}
+                    disabled={saveMutation.isPending}
+                    style={{ background: "#FA6F30", color: "#fff" }}
+                  >
+                    {saveMutation.isPending ? "Saving..." : "Save Changes"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => refreshPreview()}
+                    disabled={previewLoading}
+                  >
+                    {previewLoading ? "Rendering..." : "Refresh Preview"}
+                  </Button>
+                  {editing.has_override && (
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        if (confirm("Discard customisation and revert to built-in default?")) {
+                          revertMutation.mutate(editing.template_key);
+                        }
+                      }}
+                      disabled={revertMutation.isPending}
+                      className="gap-2"
+                    >
+                      <RotateCcw className="w-4 h-4" />
+                      Revert to default
+                    </Button>
+                  )}
+                  <Button variant="ghost" onClick={closeEditor}>
+                    Close
+                  </Button>
+                </div>
               </div>
-              <div className="rounded-xl overflow-hidden" style={{ border: "1px solid rgba(30,37,53,0.1)" }}>
-                <div className="px-4 py-2.5 text-xs font-bold uppercase tracking-widest" style={{ background: "rgba(30,37,53,0.05)", color: "rgba(30,37,53,0.5)", borderBottom: "1px solid rgba(30,37,53,0.08)" }}>EMAIL BODY</div>
-                <div className="p-5" style={{ color: "#1e2535", lineHeight: 1.7 }} dangerouslySetInnerHTML={{ __html: previewTemplate.body_html }} />
+
+              <div className="space-y-3">
+                <div
+                  className="rounded-xl px-4 py-3"
+                  style={{
+                    background: "rgba(30,37,53,0.05)",
+                    border: "1px solid rgba(30,37,53,0.1)",
+                  }}
+                >
+                  <p
+                    className="text-xs font-bold"
+                    style={{ color: "rgba(30,37,53,0.5)" }}
+                  >
+                    SUBJECT PREVIEW
+                  </p>
+                  <p
+                    className="text-sm font-semibold mt-0.5"
+                    style={{ color: "#1e2535" }}
+                  >
+                    {previewSubject || (previewLoading ? "Rendering…" : "—")}
+                  </p>
+                </div>
+                <div
+                  className="rounded-xl overflow-hidden"
+                  style={{ border: "1px solid rgba(30,37,53,0.1)" }}
+                >
+                  <div
+                    className="px-4 py-2.5 text-xs font-bold uppercase tracking-widest flex items-center justify-between"
+                    style={{
+                      background: "rgba(30,37,53,0.05)",
+                      color: "rgba(30,37,53,0.5)",
+                      borderBottom: "1px solid rgba(30,37,53,0.08)",
+                    }}
+                  >
+                    <span className="flex items-center gap-2">
+                      <Eye className="w-3.5 h-3.5" /> Live shell preview
+                    </span>
+                    {editing.has_override ? (
+                      <span style={{ color: "#FA6F30" }}>Custom</span>
+                    ) : (
+                      <span style={{ color: "#9CA3AF" }}>Default</span>
+                    )}
+                  </div>
+                  {previewError ? (
+                    <div className="p-5 text-xs" style={{ color: "#DA6A63" }}>
+                      {previewError}
+                    </div>
+                  ) : (
+                    <iframe
+                      title="Email preview"
+                      srcDoc={previewHtml}
+                      sandbox=""
+                      style={{
+                        width: "100%",
+                        height: 640,
+                        border: "none",
+                        background: "#f5f3ef",
+                      }}
+                    />
+                  )}
+                </div>
+                <p
+                  className="text-[11px]"
+                  style={{ color: "rgba(30,37,53,0.45)" }}
+                >
+                  Preview uses sample placeholder data from the registry. Real
+                  sends substitute live values when each event fires.
+                </p>
+                <div className="rounded-xl px-4 py-3" style={{ background: "rgba(200,230,60,0.1)" }}>
+                  <p
+                    className="text-xs font-bold uppercase tracking-widest mb-1"
+                    style={{ color: "#4a6b10" }}
+                  >
+                    <Send className="w-3 h-3 inline mr-1" /> Sender metadata
+                  </p>
+                  <p className="text-xs" style={{ color: "rgba(30,37,53,0.7)" }}>
+                    {recipientLabel(editing.recipient_type)} ·{" "}
+                    {editing.is_active ? "Active" : "Inactive"} ·{" "}
+                    {editing.total_sent || 0} sent
+                  </p>
+                </div>
               </div>
-              <Button variant="outline" onClick={() => setPreviewOpen(false)} className="w-full">Close Preview</Button>
             </div>
           )}
         </DialogContent>
       </Dialog>
+
+      {!isLoading && templates.length === 0 && (
+        <div
+          className="rounded-2xl p-10 text-center"
+          style={CARD_STYLE}
+        >
+          <Users className="w-8 h-8 mx-auto mb-3" style={{ color: "#7B8EC8" }} />
+          <p style={{ fontFamily: "'DM Serif Display', serif", fontSize: 18 }}>
+            No templates found
+          </p>
+          <p className="text-xs mt-1" style={{ color: "rgba(30,37,53,0.5)" }}>
+            Make sure the email_templates migration has run and the backend route
+            <code>/admin/email-templates</code> is reachable.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
