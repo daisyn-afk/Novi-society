@@ -49,6 +49,7 @@ export default function ProviderEnrollments() {
   const [activeTab, setActiveTab] = useState("browse");
   const [search, setSearch] = useState("");
   const [preMaterialsCourse, setPreMaterialsCourse] = useState(null);
+  const [preMaterialsPreview, setPreMaterialsPreview] = useState(true);
   const [onboardingEnrollment, setOnboardingEnrollment] = useState(null);
   const cancelEnrollment = useMutation({
     mutationFn: ({ id }) => base44.entities.Enrollment.update(id, {
@@ -148,7 +149,10 @@ export default function ProviderEnrollments() {
 
   const { data: courses = [], isLoading: loadingCourses } = useQuery({
     queryKey: ["courses"],
-    queryFn: async () => (await adminCoursesApi.list()).filter((course) => course?.is_active !== false),
+    queryFn: async () =>
+      (await adminCoursesApi.list("scheduled", { publicCatalog: true })).filter(
+        (course) => course?.is_active !== false
+      ),
     staleTime: 0,
   });
 
@@ -308,6 +312,10 @@ export default function ProviderEnrollments() {
                         isEnrolled={(courseId) => enrolledCourseIds.has(courseId)}
                         onEnroll={(course) => navigate(createPageUrl(`CourseCheckout?course_id=${course.id}`))}
                         onSelect={(course) => navigate(createPageUrl(`CourseCheckout?course_id=${course.id}`))}
+                        onViewMaterials={(course) => {
+                          setPreMaterialsPreview(true);
+                          setPreMaterialsCourse(course);
+                        }}
                         showControls
                       />
                     );
@@ -406,7 +414,10 @@ export default function ProviderEnrollments() {
                     session={sessionByEnrollment[e.id]}
                     certs={certs}
                     activeSubServiceIds={activeSubServiceIds}
-                    onViewMaterials={() => setPreMaterialsCourse(courseMap[e.course_id])}
+                    onViewMaterials={() => {
+                      setPreMaterialsPreview(false);
+                      setPreMaterialsCourse(course);
+                    }}
                     onCancel={() => { if (window.confirm("Cancel this enrollment?")) cancelEnrollment.mutate({ id: e.id }); }}
                     showClassWizardCta={showWizard}
                     onOpenClassWizard={() => setOnboardingEnrollment(e)}
@@ -427,11 +438,9 @@ export default function ProviderEnrollments() {
         {preMaterialsCourse && (
           <PreCourseMaterials
             course={preMaterialsCourse}
+            open
+            preview={preMaterialsPreview}
             onClose={() => setPreMaterialsCourse(null)}
-            onProceed={() => {
-              navigate(createPageUrl(`CourseCheckout?course_id=${preMaterialsCourse.id}`));
-              setPreMaterialsCourse(null);
-            }}
           />
         )}
 

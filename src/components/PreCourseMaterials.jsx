@@ -18,7 +18,7 @@ const TYPE_COLORS = {
   text: "bg-green-50 text-green-600",
 };
 
-export default function PreCourseMaterials({ course, open, onClose }) {
+export default function PreCourseMaterials({ course, open = true, preview = false, onClose }) {
   const [viewed, setViewed] = useState(new Set());
   const materials = course?.pre_course_materials || [];
 
@@ -93,11 +93,15 @@ export default function PreCourseMaterials({ course, open, onClose }) {
 
           <Button
             className="w-full mt-2"
-            style={{ background: allRequiredViewed ? "#FA6F30" : "#94a3b8", color: "#fff" }}
+            style={{ background: preview || allRequiredViewed ? "#FA6F30" : "#94a3b8", color: "#fff" }}
             onClick={onClose}
-            disabled={!allRequiredViewed}
+            disabled={!preview && !allRequiredViewed}
           >
-            {allRequiredViewed ? "Continue to Enrollment" : `Review ${requiredCount - viewedRequired} more required material(s)`}
+            {preview
+              ? "Close"
+              : allRequiredViewed
+                ? "Continue to Enrollment"
+                : `Review ${requiredCount - viewedRequired} more required material(s)`}
           </Button>
         </div>
       </DialogContent>

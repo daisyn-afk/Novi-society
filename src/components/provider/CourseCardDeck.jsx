@@ -6,6 +6,7 @@ export default function CourseCardDeck({
   courses,
   isEnrolled,
   onSelect,
+  onViewMaterials,
   title,
   showControls = true,
   enrollmentStatusLoading = false,
@@ -85,6 +86,7 @@ export default function CourseCardDeck({
               isEnrolled={isEnrolled(course.id)}
               enrollmentStatusLoading={enrollmentStatusLoading}
               onSelect={onSelect}
+              onViewMaterials={onViewMaterials}
             />
           </div>
         ))}

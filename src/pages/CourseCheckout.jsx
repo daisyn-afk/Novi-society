@@ -9,6 +9,7 @@ import { format } from "date-fns";
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { courseCheckoutApi } from "@/api/courseCheckoutApi";
+import { adminCoursesApi } from "@/api/adminCoursesApi";
 import { redirectToStripeCheckout } from "@/lib/redirectToStripeCheckout";
 import { CHECKOUT_RETURN_PROVIDER, stashCheckoutReturnTo } from "@/lib/checkoutReturnPath";
 
@@ -18,7 +19,7 @@ export default function CourseCheckout() {
 
   const { data: course, isLoading: loadingCourse } = useQuery({
     queryKey: ["course", courseId],
-    queryFn: () => base44.entities.Course.get(courseId),
+    queryFn: () => adminCoursesApi.getById(courseId),
     enabled: !!courseId,
   });
 
@@ -110,6 +111,36 @@ export default function CourseCheckout() {
               <p className="text-sm italic" style={{ color: "rgba(30,37,53,0.4)" }}>No upcoming dates available. Contact us for scheduling.</p>
             )}
           </div>
+        </div>
+      )}
+
+      {/* Pre-Course Materials */}
+      {course?.pre_course_materials?.length > 0 && (
+        <div className="rounded-2xl p-6 overflow-hidden" style={{ background: "rgba(255,255,255,0.75)", backdropFilter: "blur(30px)", WebkitBackdropFilter: "blur(30px)", border: "1px solid rgba(255,255,255,0.9)", boxShadow: "0 4px 16px rgba(31,38,135,0.08)" }}>
+          <div className="flex items-center gap-2 mb-4">
+            <BookOpen className="w-4 h-4" style={{ color: "#7B8EC8" }} />
+            <h3 className="font-bold text-base" style={{ color: "#1e2535" }}>Pre-Course Materials to Study</h3>
+          </div>
+          <p className="text-sm mb-4" style={{ color: "rgba(30,37,53,0.6)" }}>
+            Review these materials before your class. You can access them anytime after enrollment.
+          </p>
+          <ul className="space-y-2">
+            {course.pre_course_materials.map((mat, i) => (
+              <li
+                key={i}
+                className="flex items-start gap-2.5 p-3 rounded-lg text-sm"
+                style={{ background: "rgba(123,142,200,0.08)", border: "1px solid rgba(123,142,200,0.15)", color: "#1e2535" }}
+              >
+                <CheckCircle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: "#7B8EC8" }} />
+                <span>
+                  {mat.title}
+                  {mat.required !== false && (
+                    <Badge className="ml-2 text-xs bg-orange-100 text-orange-700">Required</Badge>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
