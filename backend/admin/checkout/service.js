@@ -24,11 +24,9 @@ import {
   PAYMENT_FLOW
 } from "../payments/service.js";
 import { resolveAppBaseUrl } from "../lib/frontendBaseUrl.js";
+import { sendEmailFromTemplate } from "../emails/renderTemplate.js";
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
-const resendApiKey = process.env.RESEND_API_KEY;
-const resendFromEmail = process.env.RESEND_FROM_EMAIL || "NOVI Society <support@novisociety.com>";
-const noviEmailLogoUrl = process.env.NOVI_EMAIL_LOGO_URL || `${resolveAppBaseUrl(null)}/novi-email-logo.png`;
 
 const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -727,110 +725,25 @@ async function sendMdServiceConfirmationEmail({ to, customerName, serviceName })
     console.warn("[checkout] md service confirmation skipped: missing recipient email");
     return false;
   }
-  if (!resendApiKey) {
+  const firstName = String(customerName || "there").trim().split(/\s+/)[0] || "there";
+  const result = await sendEmailFromTemplate("md_service_welcome", {
+    to,
+    first_name: firstName,
+    service_name: serviceName || "NOVI MD Services",
+    summary_lines: [
+      "Your onboarding spot is confirmed",
+      "You'll receive early access updates as we approach launch",
+      "Our team will personally reach out to begin your setup",
+    ],
+  });
+  if (!result.ok) {
     // eslint-disable-next-line no-console
-    console.warn("[checkout] md service confirmation skipped: RESEND_API_KEY is not configured");
-    return false;
+    console.error("[checkout] md service confirmation send failed:", result.error);
+  } else {
+    // eslint-disable-next-line no-console
+    console.log(`[checkout] md service confirmation sent to ${to}`);
   }
-  const safeFirstName = String(customerName || "there").trim().split(/\s+/)[0] || "there";
-  const safeServiceName = serviceName || "NOVI MD Services";
-  const logoMarkup = noviEmailLogoUrl
-    ? `<img src="${noviEmailLogoUrl}" alt="NOVI Society" style="width:160px;height:auto" />`
-    : `<div style="font-size:28px;font-weight:700;letter-spacing:0.04em;color:#ffffff">NOVI SOCIETY</div>`;
-
-  const emailHtml = `
-<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#f9fafb;font-family:'Helvetica Neue',Arial,sans-serif">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f9fafb;padding:40px 20px">
-    <tr><td align="center">
-      <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 6px rgba(0,0,0,0.06);max-width:600px;width:100%">
-        <tr><td style="background:linear-gradient(135deg,#2D6B7F 0%,#7B8EC8 55%,#C8E63C 100%);padding:32px 40px;text-align:center">
-          ${logoMarkup}
-        </td></tr>
-        <tr><td style="padding:40px">
-          <p style="margin:0 0 16px;font-size:16px;color:#111827">Hi ${safeFirstName},</p>
-          <p style="margin:0 0 24px;font-size:15px;color:#374151;line-height:1.6">We're so excited to welcome you to NOVI MD Services.</p>
-          <p style="margin:0 0 24px;font-size:15px;color:#374151;line-height:1.6">You've officially secured your place in our pre-launch group for <strong>${safeServiceName}</strong> — an early circle of providers stepping into something entirely new for this industry.</p>
-          <p style="margin:0 0 24px;font-size:15px;color:#374151;line-height:1.6">What we're building with NOVI isn't just another platform. It's a complete shift in how providers enter, operate, and grow within aesthetics — where everything you need is finally connected, elevated, and built to support you long-term.</p>
-
-          <p style="margin:0 0 12px;font-size:15px;font-weight:600;color:#111827">What Happens Next</p>
-          <p style="margin:0 0 12px;font-size:15px;color:#374151;line-height:1.6">Over the coming weeks, we'll be working closely with you to prepare for activation:</p>
-          <ul style="margin:0 0 24px;padding-left:20px;color:#374151;font-size:15px;line-height:1.8">
-            <li>Your onboarding spot is confirmed</li>
-            <li>You'll receive early access updates as we approach our June 1st launch</li>
-            <li>Our team will personally reach out to begin your setup</li>
-          </ul>
-
-          <p style="margin:0 0 24px;font-size:15px;color:#374151;line-height:1.6">At this stage, no payment is required. We'll coordinate billing once the platform is fully live so your experience starts seamlessly and at the right time.</p>
-
-          <p style="margin:0 0 12px;font-size:15px;font-weight:600;color:#111827">How We'll Support You</p>
-          <p style="margin:0 0 12px;font-size:15px;color:#374151;line-height:1.6">This isn't a hands-off experience - we're building this with you.</p>
-          <ul style="margin:0 0 24px;padding-left:20px;color:#374151;font-size:15px;line-height:1.8">
-            <li>You'll receive direct communication from our team via email</li>
-            <li>Our sales and onboarding team will personally connect with you</li>
-            <li>We'll guide you through every step so you're fully ready to activate</li>
-          </ul>
-
-          <p style="margin:0 0 12px;font-size:15px;font-weight:600;color:#111827">What Makes NOVI Different</p>
-          <p style="margin:0 0 12px;font-size:15px;color:#374151;line-height:1.6">NOVI was designed to solve what's been missing in this industry - completely.</p>
-          <p style="margin:0 0 12px;font-size:15px;color:#374151;line-height:1.6">Instead of piecing together systems, you'll step into one platform that brings everything together:</p>
-          <ul style="margin:0 0 24px;padding-left:20px;color:#374151;font-size:15px;line-height:1.8">
-            <li>Medical Director oversight built directly into your workflow</li>
-            <li>Seamless compliance and real-time chart review</li>
-            <li>A fully connected patient journey - from discovery to treatment and beyond</li>
-            <li>Intelligent growth tools designed to help you build and scale your practice</li>
-          </ul>
-
-          <p style="margin:0 0 28px;font-size:15px;color:#374151;line-height:1.6">There truly isn't another platform operating at this level - and you're getting in at the very beginning.</p>
-          <p style="margin:0 0 24px;font-size:15px;color:#374151;line-height:1.6">If you have any questions in the meantime, just reply directly to this email - we're here for you.</p>
-          <p style="margin:0 0 4px;font-size:15px;color:#374151">We're genuinely excited to have you with us and can't wait to bring you live on NOVI.</p>
-
-          <div style="margin-top:32px;padding-top:28px;border-top:1px solid #e5e7eb">
-            <p style="margin:0 0 4px;font-size:15px;font-style:italic;color:#6b7280">Welcome to NOVI.</p>
-            <p style="margin:0 0 20px;font-size:13px;letter-spacing:1px;color:#9ca3af;text-transform:uppercase">A New Way to Be Seen.</p>
-            <p style="margin:0;font-size:14px;color:#374151">Best,<br/><strong>The NOVI Society Team</strong></p>
-          </div>
-        </td></tr>
-        <tr><td style="padding:24px 40px;text-align:center;background:#f3f4f6">
-          <p style="margin:0;font-size:12px;color:#9ca3af">© ${new Date().getFullYear()} NOVI Society LLC · 8109 Meadow Valley Dr, McKinney, TX 75071</p>
-          <p style="margin:4px 0 0;font-size:12px;color:#9ca3af"><a href="mailto:support@novisociety.com" style="color:#9ca3af">support@novisociety.com</a></p>
-        </td></tr>
-      </table>
-    </td></tr>
-  </table>
-</body>
-</html>`;
-
-  try {
-    const result = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${resendApiKey}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        from: resendFromEmail,
-        to: [to],
-        subject: "You're In — Welcome to NOVI MD Services",
-        html: emailHtml
-      })
-    });
-    if (!result.ok) {
-      const bodyText = await result.text().catch(() => "");
-      // eslint-disable-next-line no-console
-      console.error("[checkout] md service confirmation send failed:", result.status, bodyText);
-    } else {
-      // eslint-disable-next-line no-console
-      console.log(`[checkout] md service confirmation sent to ${to}`);
-    }
-    return result.ok;
-  } catch (error) {
-    // eslint-disable-next-line no-consolee
-    console.error("[checkout] md service confirmation request failed:", error);
-    return false;
-  }
+  return result.ok;
 }
 
 export async function validateCoursePromoCode({ courseId, promoCode }) {
@@ -1130,13 +1043,9 @@ async function sendConfirmationEmail({ to, customerName, courseTitle, courseData
     console.warn("[checkout] course confirmation skipped: missing recipient email");
     return false;
   }
-  if (!resendApiKey) {
-    // eslint-disable-next-line no-console
-    console.warn("[checkout] course confirmation skipped: RESEND_API_KEY is not configured");
-    return false;
-  }
   const safeFirstName = customerName || "there";
   const safeCourseName = courseTitle || "your course";
+
   const formatCourseDate = (value) => {
     if (!value) return "";
     const d = new Date(value);
@@ -1163,6 +1072,7 @@ async function sendConfirmationEmail({ to, customerName, courseTitle, courseData
     if (start && end) return `${start} - ${end}`;
     return start || end || "";
   };
+
   let courseDateStr = formatCourseDate(courseDate);
   let courseTimeStr = "";
   let courseLocation = "";
@@ -1182,116 +1092,33 @@ async function sendConfirmationEmail({ to, customerName, courseTitle, courseData
     courseLocation = courseData.course_location;
   }
 
-  const courseDetailsRows = [
-    `<tr><td style="padding:6px 0;color:#6b7280;font-size:14px;width:100px"><strong>Course</strong></td><td style="padding:6px 0;font-size:14px;color:#111827">${safeCourseName}</td></tr>`,
-    courseDateStr ? `<tr><td style="padding:6px 0;color:#6b7280;font-size:14px"><strong>Date</strong></td><td style="padding:6px 0;font-size:14px;color:#111827">${courseDateStr}</td></tr>` : "",
-    courseTimeStr ? `<tr><td style="padding:6px 0;color:#6b7280;font-size:14px"><strong>Time</strong></td><td style="padding:6px 0;font-size:14px;color:#111827">${courseTimeStr}</td></tr>` : "",
-    courseLocation ? `<tr><td style="padding:6px 0;color:#6b7280;font-size:14px"><strong>Location</strong></td><td style="padding:6px 0;font-size:14px;color:#111827">${courseLocation}</td></tr>` : ""
-  ].filter(Boolean).join("");
+  const details = [
+    { label: "Course", value: safeCourseName },
+    courseDateStr ? { label: "Date", value: courseDateStr } : null,
+    courseTimeStr ? { label: "Time", value: courseTimeStr } : null,
+    courseLocation ? { label: "Location", value: courseLocation } : null,
+  ].filter(Boolean);
 
-  const logoMarkup = noviEmailLogoUrl
-    ? `<img src="${noviEmailLogoUrl}" alt="NOVI Society" style="width:160px;height:auto" />`
-    : `<div style="font-size:28px;font-weight:700;letter-spacing:0.04em;color:#ffffff">NOVI SOCIETY</div>`;
+  const result = await sendEmailFromTemplate("course_enrollment_confirmed", {
+    to,
+    first_name: safeFirstName,
+    course_title: safeCourseName,
+    course_date_label: courseDateStr,
+    details,
+    details_title: "Course details",
+    summary_lines: [
+      "Additional course details and preparation instructions will be sent prior to your training date",
+      "Any required forms or documentation will be provided for completion",
+      "Our team will be available for any questions leading up to your course",
+    ],
+  });
 
-  const html = `
-<!DOCTYPE html>
-<html>
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
-<body style="margin:0;padding:0;background:#f5f3ef;font-family:'DM Sans',Helvetica,Arial,sans-serif">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f3ef;padding:40px 0">
-    <tr><td align="center">
-      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
-        <tr><td style="background:linear-gradient(135deg,#2D6B7F 0%,#7B8EC8 55%,#C8E63C 100%);padding:36px 40px;text-align:center;border-radius:16px 16px 0 0">
-          ${logoMarkup}
-        </td></tr>
-        <tr><td style="background:#fff;padding:48px 40px;border-radius:0 0 16px 16px">
-          <p style="margin:0 0 24px;font-size:16px;color:#374151;line-height:1.6">Hi ${safeFirstName},</p>
-          <p style="margin:0 0 24px;font-size:16px;color:#374151;line-height:1.6">Welcome to NOVI Society - we're excited to have you with us.</p>
-          <p style="margin:0 0 24px;font-size:16px;color:#374151;line-height:1.6">Your enrollment for <strong>${safeCourseName}</strong> has been successfully confirmed.</p>
-
-          <div style="background:#f9f8f6;border-radius:12px;padding:24px;margin-bottom:32px;border:1px solid rgba(0,0,0,0.07)">
-            <p style="margin:0 0 12px;font-size:13px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#2D6B7F">Course Details</p>
-            <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
-              ${courseDetailsRows}
-            </table>
-          </div>
-
-          <p style="margin:0 0 12px;font-size:15px;color:#374151;line-height:1.6">This immersive training is designed to take you from foundational knowledge to confident, hands-on application. You'll receive in-depth education on anatomy, product selection, injection techniques, and patient safety - along with live model experience to ensure you leave fully prepared.</p>
-          <p style="margin:0 0 24px;font-size:15px;color:#374151;line-height:1.6">As part of NOVI, this course is more than just training. It's your entry point into a fully supported system that includes:</p>
-
-          <ul style="margin:0 0 32px;padding-left:20px;color:#374151;font-size:15px;line-height:1.9">
-            <li>Ongoing mentorship and guidance</li>
-            <li>Medical director oversight</li>
-            <li>Compliance and scope-of-practice support</li>
-            <li>Tools to help you launch and grow your aesthetic practice</li>
-          </ul>
-
-          <p style="margin:0 0 12px;font-size:15px;font-weight:600;color:#111827">What to Expect Next</p>
-          <ul style="margin:0 0 32px;padding-left:20px;color:#374151;font-size:15px;line-height:1.9">
-            <li>Additional course details and preparation instructions will be sent prior to your training date</li>
-            <li>Any required forms or documentation will be provided for completion</li>
-            <li>Our team will be available for any questions leading up to your course</li>
-          </ul>
-
-          <p style="margin:0 0 16px;font-size:15px;color:#374151;line-height:1.6">To further access your course details set up your account, follow the steps in "Set up your NOVI Society account" email or if you already have an account login to the account.</p>
-          <p style="margin:0 0 32px;font-size:15px;color:#374151;line-height:1.6">If you have any questions in the meantime, feel free to reach out - we're here to support you every step of the way.</p>
-
-          <div style="border-top:1px solid #e5e7eb;padding-top:28px;margin-top:8px">
-            <p style="margin:0 0 4px;font-size:15px;color:#374151">We look forward to seeing you soon.</p>
-            <p style="margin:0 0 4px;font-family:Georgia,serif;font-size:17px;color:#1e2535;font-style:italic">Welcome to NOVI.</p>
-            <p style="margin:0 0 20px;font-size:14px;color:#6b7280;font-style:italic">A New Way to Be Seen.</p>
-            <p style="margin:0;font-size:15px;color:#374151">Best,<br><strong>The NOVI Society Team</strong></p>
-          </div>
-        </td></tr>
-        <tr><td style="padding:24px 40px;text-align:center">
-          <p style="margin:0;font-size:12px;color:#9ca3af">© ${new Date().getFullYear()} NOVI Society LLC · 8109 Meadow Valley Dr, McKinney, TX 75071</p>
-          <p style="margin:4px 0 0;font-size:12px;color:#9ca3af"><a href="mailto:support@novisociety.com" style="color:#9ca3af">support@novisociety.com</a></p>
-        </td></tr>
-      </table>
-    </td></tr>
-  </table>
-</body>
-</html>`;
-
-  try {
-    const primaryFrom = resendFromEmail;
-    const fallbackFrom = String(process.env.RESEND_FALLBACK_FROM_EMAIL || "").trim();
-    const sendWithFrom = async (fromAddress) => fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${resendApiKey}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        from: fromAddress,
-        to: [to],
-        subject: "Your NOVI course enrollment is confirmed",
-        html
-      })
-    });
-    let res = await sendWithFrom(primaryFrom);
-    if (!res.ok) {
-      const bodyText = await res.text().catch(() => "");
-      // eslint-disable-next-line no-console
-      console.error("[checkout] resend send failed (primary sender):", res.status, bodyText);
-      if (fallbackFrom && fallbackFrom !== primaryFrom) {
-        res = await sendWithFrom(fallbackFrom);
-        if (!res.ok) {
-          const fallbackBody = await res.text().catch(() => "");
-          // eslint-disable-next-line no-console
-          console.error("[checkout] resend send failed (fallback sender):", res.status, fallbackBody);
-        } else {
-          // eslint-disable-next-line no-console
-          console.warn(`[checkout] resend send succeeded with fallback sender: ${fallbackFrom}`);
-        }
-      }
-    }
-    return res.ok;
-  } catch (error) {
+  if (!result.ok) {
     // eslint-disable-next-line no-console
-    console.error("[checkout] resend request failed:", error);
+    console.error("[checkout] course confirmation send failed:", result.error);
     return false;
   }
+  return true;
 }
 
 async function sendNewUserInviteEmail({ to, firstName, signupLink }) {
@@ -1305,76 +1132,18 @@ async function sendNewUserInviteEmail({ to, firstName, signupLink }) {
     console.warn("[checkout] account setup email skipped: missing signup link");
     return false;
   }
-  if (!resendApiKey) {
-    // eslint-disable-next-line no-console
-    console.warn("[checkout] account setup email skipped: RESEND_API_KEY is not configured");
-    return false;
-  }
   const greetingName = firstName || "there";
-  const html = `
-<!DOCTYPE html>
-<html>
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
-<body style="margin:0;padding:0;background:#f5f3ef;font-family:'DM Sans',Helvetica,Arial,sans-serif">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f3ef;padding:40px 0">
-    <tr><td align="center">
-      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
-        <tr><td style="background:linear-gradient(135deg,#2D6B7F 0%,#7B8EC8 55%,#C8E63C 100%);padding:36px 40px;text-align:center;border-radius:16px 16px 0 0">
-          <img src="${noviEmailLogoUrl}" alt="NOVI Society" style="width:160px;height:auto" />
-        </td></tr>
-        <tr><td style="background:#fff;padding:40px;border-radius:0 0 16px 16px">
-          <p style="margin:0 0 16px;font-size:16px;color:#374151;line-height:1.6">Hi ${greetingName},</p>
-          <p style="margin:0 0 16px;font-size:15px;color:#374151;line-height:1.6">You are almost ready to start. Use the button below to set up your NOVI Society account.</p>
-          <p style="margin:0 0 28px">
-            <a href="${signupLink}" style="display:inline-block;background:#2D6B7F;color:#fff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:600;font-size:14px">
-              Set your account
-            </a>
-          </p>
-        </td></tr>
-      </table>
-    </td></tr>
-  </table>
-</body>
-</html>`;
-  try {
-    const primaryFrom = resendFromEmail;
-    const fallbackFrom = String(process.env.RESEND_FALLBACK_FROM_EMAIL || "").trim();
-    const sendWithFrom = async (fromAddress) => fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${resendApiKey}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        from: fromAddress,
-        to: [to],
-        subject: "Set up your NOVI Society account",
-        html
-      })
-    });
-    let res = await sendWithFrom(primaryFrom);
-    if (!res.ok) {
-      const bodyText = await res.text().catch(() => "");
-      // eslint-disable-next-line no-console
-      console.error("[checkout] invite resend failed (primary sender):", res.status, bodyText);
-      if (fallbackFrom && fallbackFrom !== primaryFrom) {
-        res = await sendWithFrom(fallbackFrom);
-        if (!res.ok) {
-          const fallbackBody = await res.text().catch(() => "");
-          // eslint-disable-next-line no-console
-          console.error("[checkout] invite resend failed (fallback sender):", res.status, fallbackBody);
-        } else {
-          // eslint-disable-next-line no-console
-          console.warn(`[checkout] invite resend succeeded with fallback sender: ${fallbackFrom}`);
-        }
-      }
-    }
-    return res.ok;
-  } catch (error) {
+  const result = await sendEmailFromTemplate("checkout_account_invite", {
+    to,
+    first_name: greetingName,
+    signup_link: signupLink,
+  });
+  if (!result.ok) {
     // eslint-disable-next-line no-console
-    console.error("[checkout] invite resend request failed:", error);
+    console.error("[checkout] account setup email send failed:", result.error);
     return false;
   }
+  return true;
 }
 
 async function upsertProviderUserRow(client, {

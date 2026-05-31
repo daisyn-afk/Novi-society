@@ -14,12 +14,20 @@ import {
   requireAdminOrStaffWithModule,
 } from "../auth/helpers.js";
 import { markUserSetupEmailSent } from "./passwordSetup.js";
-import {
-  buildPasswordResetEmailHtml,
-  getPasswordSetupSubject,
-  sendResendHtmlEmail
-} from "../emails/courseStyleEmail.js";
+import { sendEmailFromTemplate } from "../emails/renderTemplate.js";
 import { resolveSetPasswordUrl } from "../lib/frontendBaseUrl.js";
+
+const ROLE_PASSWORD_LABELS = {
+  provider: "provider password",
+  staff: "staff account password",
+  admin: "admin account password",
+  medical_director: "medical director account password",
+};
+
+function resolveRoleLabel(role) {
+  const normalized = String(role || "").trim().toLowerCase();
+  return ROLE_PASSWORD_LABELS[normalized] || "account password";
+}
 
 const _supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
 const _supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -91,11 +99,11 @@ async function sendAdminUserSetupEmail(createdUser, req) {
     });
 
     const greetingName = firstName || email;
-    const html = buildPasswordResetEmailHtml({ greetingName, resetLink: link, role });
-    const result = await sendResendHtmlEmail({
+    const result = await sendEmailFromTemplate("account_password_setup", {
       to: email,
-      subject: getPasswordSetupSubject(role),
-      html
+      first_name: greetingName,
+      reset_link: link,
+      role_label: resolveRoleLabel(role),
     });
 
     if (!result.ok) {

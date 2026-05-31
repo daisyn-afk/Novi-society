@@ -2,7 +2,7 @@ import Stripe from "stripe";
 import { query } from "../db.js";
 import { getMeFromAccessToken } from "../auth/service.js";
 import { hasAdminAccess } from "../auth/helpers.js";
-import { withCourseEmailShell } from "../courseEmailShell.js";
+import { sendEmailFromTemplate } from "../emails/renderTemplate.js";
 import {
   recordCheckoutInitiated,
   enrichPaymentTransaction,
@@ -12,8 +12,6 @@ import {
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || "";
 const appBaseUrl = process.env.APP_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || "";
-const resendApiKey = process.env.RESEND_API_KEY || "";
-const resendFromEmail = process.env.RESEND_FROM_EMAIL || "NOVI Society Training <hello@novisociety.com>";
 
 export const DEFAULT_APPOINTMENT_DEPOSIT_USD = 50;
 export const stripe = stripeSecretKey ? new Stripe(stripeSecretKey) : null;
@@ -49,27 +47,6 @@ function formatDepositUsd(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return "0";
   return n % 1 === 0 ? String(n) : n.toFixed(2);
-}
-
-async function sendResendEmail({ to, subject, html }) {
-  if (!resendApiKey) return;
-  const result = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${resendApiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      from: resendFromEmail,
-      to: [to],
-      subject,
-      html,
-    }),
-  });
-  if (!result.ok) {
-    const payload = await result.json().catch(() => ({}));
-    throw new Error(payload?.message || "Email send failed");
-  }
 }
 
 export async function resolveProviderBookingDeposit(providerId, { totalAmount } = {}) {
@@ -199,13 +176,12 @@ export async function processAppointmentCheckoutCompletedSession(session) {
   const patientEmail = String(appt.patient_email || metadata.customer_email || "").trim();
   if (patientEmail) {
     try {
-      await sendResendEmail({
+      await sendEmailFromTemplate("appointment_deposit_received", {
         to: patientEmail,
-        subject: "Deposit received — your appointment is confirmed",
-        html: withCourseEmailShell({
-          title: "Payment received",
-          contentHtml: `<p style="color:#1e2535;font-size:15px;margin:0 0 16px;">Your deposit of <strong>$${paidAmount.toFixed(2)}</strong> for <strong>${appt.service || "your appointment"}</strong> with ${appt.provider_name || "your provider"} has been received.</p><p style="color:rgba(30,37,53,0.7);font-size:14px;line-height:1.7;margin:0;">Your appointment is now confirmed. View details in My Appointments.</p>`,
-        }),
+        first_name: String(appt.patient_name || "there").split(/\s+/)[0],
+        deposit_amount: `$${paidAmount.toFixed(2)}`,
+        service_label: appt.service || "your appointment",
+        provider_name: appt.provider_name || "your provider",
       });
     } catch {
       // best effort
