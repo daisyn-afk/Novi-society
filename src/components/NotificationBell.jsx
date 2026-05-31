@@ -24,6 +24,7 @@ const NOTIF_ICONS = {
   treatment_record_changes_requested: FileText,
   treatment_record_resubmitted: FileText,
   appointment_message: MessageSquare,
+  appointment_cancelled: Calendar,
 };
 
 const NOTIF_COLORS = {
@@ -44,6 +45,7 @@ const NOTIF_COLORS = {
   treatment_record_changes_requested: "text-orange-600 bg-orange-50",
   treatment_record_resubmitted: "text-blue-600 bg-blue-50",
   appointment_message: "text-indigo-600 bg-indigo-50",
+  appointment_cancelled: "text-red-600 bg-red-50",
 };
 
 const NOTIF_ROW_STYLES = {
@@ -64,6 +66,7 @@ const NOTIF_ROW_STYLES = {
   treatment_record_changes_requested: "bg-orange-50/80 border-orange-200",
   treatment_record_resubmitted: "bg-blue-50/80 border-blue-200",
   appointment_message: "bg-indigo-50/80 border-indigo-200",
+  appointment_cancelled: "bg-red-50/80 border-red-200",
 };
 
 export default function NotificationBell() {
@@ -193,10 +196,15 @@ export default function NotificationBell() {
         tab: type === "cert_submitted" ? "certifications" : "licenses",
         focus_type: type === "cert_submitted" ? "certification" : "license",
       });
-    } else if (type === "appointment_request") {
-      targetHref = appendQueryParams(targetHref || createPageUrl("ProviderPractice"), {
-        tab: "appointments",
-      });
+    } else if (type === "appointment_request" || type === "appointment_cancelled") {
+      const link = String(notification?.link_page || "");
+      if (link.includes("PatientAppointments")) {
+        targetHref = createPageUrl("PatientAppointments");
+      } else {
+        targetHref = appendQueryParams(targetHref || createPageUrl("ProviderPractice"), {
+          tab: "appointments",
+        });
+      }
     } else if (type === "treatment_record_resubmitted") {
       targetHref = createPageUrl("MDTreatmentRecords");
     } else if (type.startsWith("treatment_record_")) {

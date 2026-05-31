@@ -49,6 +49,7 @@ export default function MessageThread({
   recipientName,
   recipientEmail,
   providerIdForBooking,
+  className = "",
 }) {
   const [message, setMessage] = useState("");
   const [sendError, setSendError] = useState("");
@@ -168,10 +169,14 @@ export default function MessageThread({
     ? `/PatientMarketplace?provider=${encodeURIComponent(providerIdForBooking)}`
     : "/PatientMarketplace";
 
+  const rootClassName = className
+    ? `flex flex-col min-w-0 min-h-0 ${className}`
+    : "flex flex-col min-w-0 min-h-[280px] h-[min(500px,65dvh)] sm:h-[500px]";
+
   return (
-    <div className="flex flex-col h-[500px]">
+    <div className={rootClassName}>
       {isPreBooking && isPatient && (
-        <div className="mx-4 mt-3 rounded-lg px-3 py-2 text-xs bg-slate-50 border border-slate-200 text-slate-600">
+        <div className="mx-2 sm:mx-4 mt-3 rounded-lg px-3 py-2 text-xs bg-slate-50 border border-slate-200 text-slate-600 break-words">
           {inquiryComplete ? (
             <p className="flex items-start gap-1.5 text-amber-800">
               <CheckCircle2 className="w-3.5 h-3.5 shrink-0 mt-0.5 text-green-600" />
@@ -220,15 +225,15 @@ export default function MessageThread({
         )}
 
         {isPreBooking && isPatient && currentQuestion && !inquiryComplete && (
-          <div className="space-y-2">
-            <p className="text-sm font-semibold text-slate-800">{currentQuestion.label}</p>
-            <div className="flex gap-2">
+          <div className="space-y-2 min-w-0">
+            <p className="text-sm font-semibold text-slate-800 break-words">{currentQuestion.label}</p>
+            <div className="flex flex-col sm:flex-row gap-2 min-w-0">
               <Textarea
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
                 placeholder={currentQuestion.placeholder}
                 rows={3}
-                className="resize-none text-sm"
+                className="resize-none text-sm min-w-0 flex-1"
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
@@ -250,13 +255,13 @@ export default function MessageThread({
         )}
 
         {(!isPreBooking || !isPatient) && !inquiryComplete && (
-          <div className="flex gap-2">
+          <div className="flex flex-col sm:flex-row gap-2 min-w-0">
             <Textarea
               value={message}
               onChange={(e) => setMessage(e.target.value)}
               placeholder={`Message ${effectiveRecipientName || recipientName || "..."}...`}
               rows={2}
-              className="resize-none"
+              className="resize-none min-w-0 flex-1"
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();

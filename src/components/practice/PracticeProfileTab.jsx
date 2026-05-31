@@ -340,9 +340,9 @@ export default function PracticeProfileTab({
               <GlassInput type="number" placeholder="e.g. 200" value={form.starting_price || ""} onChange={e => f("starting_price", e.target.value)} />
             </div>
             <div>
-              <FieldLabel><DollarSign className="w-3.5 h-3.5" /> Booking Deposit (%)</FieldLabel>
-              <GlassInput type="number" placeholder="e.g. 25" value={form.deposit_percent || ""} onChange={e => f("deposit_percent", e.target.value)} />
-              <p className="text-xs mt-1 text-gray-400">Collected upfront to hold the appointment</p>
+              <FieldLabel><DollarSign className="w-3.5 h-3.5" /> Booking Deposit ($)</FieldLabel>
+              <GlassInput type="number" placeholder="e.g. 50 (default $50 if empty)" value={form.booking_deposit || ""} onChange={e => f("booking_deposit", e.target.value)} />
+              <p className="text-xs mt-1 text-gray-400">Flat amount charged via Stripe to hold the appointment</p>
             </div>
             <div>
               <FieldLabel><Clock className="w-3.5 h-3.5" /> Cancellation Window (hours)</FieldLabel>

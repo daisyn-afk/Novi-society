@@ -28,8 +28,8 @@ function GalleryImage({ src, label, compact }) {
 
 function PairRow({ pair, compact }) {
   return (
-    <div className={compact ? "space-y-1.5" : "space-y-2"}>
-      <div className={`flex gap-2 ${compact ? "sm:gap-2.5" : "sm:gap-3"}`}>
+    <div className={`min-w-0 w-full ${compact ? "space-y-1.5" : "space-y-2"}`}>
+      <div className={`flex gap-2 min-w-0 w-full ${compact ? "sm:gap-2.5" : "sm:gap-3"}`}>
         <GalleryImage src={pair.before_url} label="Before" compact={compact} />
         <GalleryImage src={pair.after_url} label="After" compact={compact} />
       </div>
@@ -49,7 +49,7 @@ export function BeforeAfterGallery({ pairs, variant = "card", maxSets }) {
   const compact = variant === "card";
 
   return (
-    <div className={compact ? "space-y-3" : "space-y-4"}>
+    <div className={`min-w-0 w-full overflow-hidden ${compact ? "space-y-3" : "space-y-4"}`}>
       {shown.map((pair, i) => (
         <PairRow key={i} pair={pair} compact={compact} />
       ))}

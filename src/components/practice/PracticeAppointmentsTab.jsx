@@ -357,7 +357,13 @@ export default function PracticeAppointmentsTab({
 
   const cancelAppt = useMutation({
     mutationFn: ({ id }) => base44.entities.Appointment.update(id, { status: "cancelled", cancellation_reason: cancelReason }),
-    onSuccess: () => { qc.invalidateQueries(["my-appointments"]); setCancelDialog({ open: false, appt: null }); setCancelReason(""); setDetailOpen(false); },
+    onSuccess: () => {
+      qc.invalidateQueries(["my-appointments"]);
+      qc.invalidateQueries({ queryKey: ["my-notifications"] });
+      setCancelDialog({ open: false, appt: null });
+      setCancelReason("");
+      setDetailOpen(false);
+    },
   });
 
   const saveNotes = useMutation({
