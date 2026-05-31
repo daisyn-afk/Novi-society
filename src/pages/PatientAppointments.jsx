@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { appointmentsApi } from "@/api/appointmentsApi";
 import { sessionApi } from "@/api/sessionApi";
@@ -20,6 +21,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Calendar, Clock, User, MessageSquare, FileText, DollarSign, Star, Image as ImageIcon } from "lucide-react";
 import { format } from "date-fns";
 import MessageThread from "@/components/messaging/MessageThread";
+import MessageUnreadBadge from "@/components/messaging/MessageUnreadBadge";
+import { useAppointmentMessageUnread, unreadCountForThread } from "@/hooks/useAppointmentMessageUnread";
 import ConsentFormDialog from "@/components/appointments/ConsentFormDialog";
 import { subscribeAppointmentsRefresh, broadcastAppointmentsRefresh } from "@/lib/appointmentSync";
 import { redirectToStripeCheckout } from "@/lib/redirectToStripeCheckout";
@@ -45,7 +48,9 @@ function patchAppointmentInCache(qc, queryKey, appointmentId, patch) {
 
 export default function PatientAppointments() {
   const qc = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [msgDialog, setMsgDialog] = useState(null);
+  const { data: unreadSummary } = useAppointmentMessageUnread();
   const [consentDialog, setConsentDialog] = useState(null);
   const [reviewDialog, setReviewDialog] = useState(null);
   const [reviewForm, setReviewForm] = useState({ rating: 5, comment: "" });
@@ -63,6 +68,16 @@ export default function PatientAppointments() {
       return rows.some((a) => String(a.status || "").toLowerCase() === "awaiting_payment") ? 1500 : false;
     },
   });
+
+  useEffect(() => {
+    const openId = String(searchParams.get("open_message") || "").trim();
+    if (!openId) return;
+    const appt = (appointments || []).find((a) => String(a.id) === openId);
+    if (appt) setMsgDialog(appt);
+    const next = new URLSearchParams(searchParams);
+    next.delete("open_message");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, appointments, setSearchParams]);
 
   useEffect(() => {
     return subscribeAppointmentsRefresh(() => {
@@ -235,8 +250,9 @@ export default function PatientAppointments() {
                           <FileText className="w-3.5 h-3.5" /> Sign Consent Form
                         </Button>
                       )}
-                      <Button size="sm" variant="outline" onClick={() => setMsgDialog(a)} className="gap-1">
+                      <Button size="sm" variant="outline" onClick={() => setMsgDialog(a)} className="gap-1 relative">
                         <MessageSquare className="w-3.5 h-3.5" /> Message Provider
+                        <MessageUnreadBadge count={unreadCountForThread(unreadSummary, a.id)} />
                       </Button>
                       {["requested", "confirmed", "awaiting_payment", "awaiting_consent"].includes(a.status) && (
                         <Button size="sm" variant="outline" className="text-red-500" onClick={() => cancel.mutate(a.id)}>
@@ -337,6 +353,7 @@ export default function PatientAppointments() {
               appointmentId={msgDialog.id}
               recipientId={msgDialog.provider_id}
               recipientName={msgDialog.provider_name}
+              recipientEmail={msgDialog.provider_email}
             />
           )}
         </DialogContent>

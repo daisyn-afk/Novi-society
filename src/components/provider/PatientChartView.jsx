@@ -80,9 +80,22 @@ export default function PatientChartView({ patientId }) {
         </CardContent>
       </Card>
 
-      <Tabs defaultValue="journey">
-        <TabsList className="grid w-full grid-cols-6">
-          <TabsTrigger value="ai_insights" className="flex items-center gap-1"><Sparkles className="w-3 h-3" />AI Insights</TabsTrigger>
+      <Tabs defaultValue="ai_insights">
+        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 h-auto gap-1">
+          <TabsTrigger value="ai_insights" className="flex items-center gap-1 text-xs sm:text-sm">
+            <Sparkles className="w-3 h-3 shrink-0" />AI Insights
+          </TabsTrigger>
+          <TabsTrigger value="journey" className="text-xs sm:text-sm">Journey</TabsTrigger>
+          <TabsTrigger value="checkins" className="flex items-center gap-1 text-xs sm:text-sm">
+            <Activity className="w-3 h-3 shrink-0" />Check-ins
+          </TabsTrigger>
+          <TabsTrigger value="history" className="flex items-center gap-1 text-xs sm:text-sm">
+            <Calendar className="w-3 h-3 shrink-0" />Appointments
+          </TabsTrigger>
+          <TabsTrigger value="treatments" className="flex items-center gap-1 text-xs sm:text-sm">
+            <FileText className="w-3 h-3 shrink-0" />Treatments
+          </TabsTrigger>
+          <TabsTrigger value="consents" className="text-xs sm:text-sm">Consents</TabsTrigger>
         </TabsList>
 
         <TabsContent value="ai_insights">
@@ -196,11 +209,14 @@ export default function PatientChartView({ patientId }) {
                     </Badge>
                   </div>
                   {t.areas_treated && t.areas_treated.length > 0 && (
-                    <div className="flex gap-1 flex-wrap">
+                    <div className="flex gap-1 flex-wrap mb-2">
                       {t.areas_treated.map(area => (
                         <Badge key={area} variant="outline" className="text-xs">{area}</Badge>
                       ))}
                     </div>
+                  )}
+                  {t.clinical_notes && (
+                    <p className="text-xs text-slate-600 whitespace-pre-wrap border-t pt-2 mt-2">{t.clinical_notes}</p>
                   )}
                 </CardContent>
               </Card>

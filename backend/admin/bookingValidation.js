@@ -1,4 +1,8 @@
 import { query } from "./db.js";
+import {
+  activeNonExpiredCertSql,
+  verifiedNonExpiredLicenseSql,
+} from "./lib/providerCredentialEligibility.js";
 
 function normalizeStatus(value) {
   return String(value || "").trim().toLowerCase();
@@ -81,10 +85,21 @@ export async function validateBookingScope({ providerId, service, referral_code 
     return { eligible: false, reason: "This provider is not accepting new patients right now." };
   }
 
-  const [{ rows: licenseRows }, { rows: subRows }, { rows: relRows }] = await Promise.all([
+  const [{ rows: licenseRows }, { rows: expiredLicenseRows }, { rows: subRows }, { rows: relRows }] =
+    await Promise.all([
     query(
-      `select id from public.licenses
-        where provider_id = $1 and status = 'verified'
+      `select id from public.licenses l
+        where l.provider_id = $1
+          and ${verifiedNonExpiredLicenseSql("l")}
+        limit 1`,
+      [pid]
+    ),
+    query(
+      `select id from public.licenses l
+        where l.provider_id = $1
+          and l.status = 'verified'
+          and l.expiration_date is not null
+          and l.expiration_date <= current_date
         limit 1`,
       [pid]
     ),
@@ -111,6 +126,12 @@ export async function validateBookingScope({ providerId, service, referral_code 
   ]);
 
   if (!licenseRows.length) {
+    if (expiredLicenseRows.length) {
+      return {
+        eligible: false,
+        reason: "This provider's professional license has expired. Choose another provider.",
+      };
+    }
     return {
       eligible: false,
       reason: "This provider does not have a verified professional license on file.",
@@ -143,6 +164,42 @@ export async function validateBookingScope({ providerId, service, referral_code 
       eligible: false,
       reason: "This provider's medical director supervision is suspended. They cannot accept bookings.",
     };
+  }
+
+  const serviceTypeId = String(subRows[0].service_type_id || "").trim();
+  const serviceCertFilterSql = `(
+    ($2::text <> '' and c.service_type_id = $2)
+    or lower(trim(coalesce(c.service_type_name, ''))) = lower($3)
+    or c.service_type_id in (
+      select st.id::text from public.service_type st where lower(trim(st.name)) = lower($3) limit 1
+    )
+  )`;
+
+  const { rows: serviceCertRows } = await query(
+    `select 1
+       from public.certification c
+      where c.provider_id = $1
+        and ${serviceCertFilterSql}
+      limit 1`,
+    [pid, serviceTypeId, serviceName]
+  );
+
+  if (serviceCertRows.length) {
+    const { rows: activeServiceCertRows } = await query(
+      `select 1
+         from public.certification c
+        where c.provider_id = $1
+          and ${activeNonExpiredCertSql("c")}
+          and ${serviceCertFilterSql}
+        limit 1`,
+      [pid, serviceTypeId, serviceName]
+    );
+    if (!activeServiceCertRows.length) {
+      return {
+        eligible: false,
+        reason: "This provider's certification for this service has expired. Choose another provider.",
+      };
+    }
   }
 
   const referralCheck = validateReferralAgainstProvider({

@@ -10,8 +10,14 @@ import { Dialog, DialogClose, DialogContent, DialogHeader, DialogTitle } from "@
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Search, Star, MapPin, Award, Calendar, DollarSign, MessageSquare, Sparkles, Filter, Gift, Package, Tag, ImageIcon, Info, X } from "lucide-react";
+import { Search, Star, MapPin, Award, Calendar, DollarSign, MessageSquare, Sparkles, Filter, Gift, Package, Tag, ImageIcon, Info, X, Loader2 } from "lucide-react";
 import MessageThread from "@/components/messaging/MessageThread";
+import MessageUnreadBadge from "@/components/messaging/MessageUnreadBadge";
+import { useAppointmentMessageUnread, unreadCountForThread } from "@/hooks/useAppointmentMessageUnread";
+import {
+  buildPreBookingThreadId,
+  parsePreBookingThreadId,
+} from "@/lib/appointmentMessageThreads";
 import { broadcastAppointmentsRefresh } from "@/lib/appointmentSync";
 import { providerReviewAverage } from "@/lib/providerRating";
 import { galleryPairsForPatientDisplay } from "@/lib/galleryPhotos";
@@ -105,15 +111,29 @@ export default function PatientMarketplace() {
     staleTime: 60_000,
   });
 
+  const { data: unreadSummary } = useAppointmentMessageUnread({ enabled: !!me && !msgDialog });
+
   const { data: catalog, isLoading: catalogLoading } = useQuery({
     queryKey: ["marketplace-catalog"],
     queryFn: () => base44.marketplace.getCatalog(),
-    staleTime: 0,
-    refetchInterval: 5_000,
+    staleTime: 30_000,
+    refetchInterval: msgDialog ? false : 5_000,
     refetchIntervalInBackground: false,
   });
 
   const providers = catalog?.providers || [];
+
+  useEffect(() => {
+    const openId = String(searchParams.get("open_message") || "").trim();
+    if (!openId || !me?.id) return;
+    const pre = parsePreBookingThreadId(openId);
+    if (!pre?.providerId) return;
+    const provider = (providers || []).find((p) => String(p.id) === pre.providerId);
+    if (provider) setMsgDialog(provider);
+    const next = new URLSearchParams(searchParams);
+    next.delete("open_message");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, providers, setSearchParams, me?.id]);
   const mdSubs = catalog?.md_subscriptions || [];
   const certs = catalog?.certifications || [];
   const reviews = catalog?.reviews || [];
@@ -282,6 +302,14 @@ Based on my concerns and goals, which service types would be most relevant? Retu
           const list = Array.isArray(old) ? old : [];
           return [appointment, ...list];
         });
+        if (me?.id && activeProvider?.id) {
+          const preThreadId = buildPreBookingThreadId(activeProvider.id, me.id);
+          if (preThreadId) {
+            qc.removeQueries({ queryKey: ["appointment-messages", preThreadId] });
+          }
+          void qc.invalidateQueries({ queryKey: ["appointment-messages", appointment.id] });
+          void qc.invalidateQueries({ queryKey: ["appointment-message-unread"] });
+        }
       }
       if (activeProvider?.id) {
         void base44.entities.Notification.create({
@@ -486,6 +514,10 @@ Based on my concerns and goals, which service types would be most relevant? Retu
               onBook={() => openBookDialog(p)}
               onProfile={() => setSelectedProvider(p)}
               onMessage={() => setMsgDialog(p)}
+              messageUnreadCount={unreadCountForThread(
+                unreadSummary,
+                me?.id ? buildPreBookingThreadId(p.id, me.id) : null
+              )}
             />
           ))}
           {filtered.length === 0 && (
@@ -595,19 +627,32 @@ Based on my concerns and goals, which service types would be most relevant? Retu
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!msgDialog} onOpenChange={() => setMsgDialog(null)}>
+      <Dialog
+        open={!!msgDialog}
+        onOpenChange={(open) => {
+          if (!open) setMsgDialog(null);
+        }}
+      >
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Message {msgDialog ? displayName(msgDialog) : ""}</DialogTitle>
           </DialogHeader>
-          <p className="text-sm text-slate-500 mb-4">Ask questions before booking your appointment</p>
-          {msgDialog && (
+          <p className="text-sm text-slate-500 mb-4">
+            Answer a few quick questions about your visit. After that, book an appointment to keep messaging.
+          </p>
+          {msgDialog && me?.id ? (
             <MessageThread
-              appointmentId={`pre-${msgDialog.id}`}
+              key={buildPreBookingThreadId(msgDialog.id, me.id)}
+              appointmentId={buildPreBookingThreadId(msgDialog.id, me.id)}
               recipientId={msgDialog.id}
               recipientName={displayName(msgDialog)}
+              providerIdForBooking={msgDialog.id}
             />
-          )}
+          ) : msgDialog ? (
+            <div className="flex justify-center py-12">
+              <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
+            </div>
+          ) : null}
         </DialogContent>
       </Dialog>
     </div>
@@ -890,6 +935,7 @@ function MarketplaceProviderCard({
   onBook,
   onProfile,
   onMessage,
+  messageUnreadCount = 0,
 }) {
   const photoPairs = galleryPairsForPatientDisplay(provider.gallery_photos);
   const packages = activePackages(provider);
@@ -1067,12 +1113,13 @@ function MarketplaceProviderCard({
           type="button"
           variant="outline"
           size="icon"
-          className="h-10 w-10 rounded-xl shrink-0"
+          className="h-10 w-10 rounded-xl shrink-0 relative"
           style={{ borderColor: "rgba(123,142,200,0.25)", color: "#7B8EC8" }}
           onClick={onMessage}
           title="Message"
         >
           <MessageSquare className="w-4 h-4" />
+          <MessageUnreadBadge count={messageUnreadCount} />
         </Button>
       </div>
     </article>

@@ -38,6 +38,10 @@ export const PROVIDER_METADATA_TEXT_KEYS = [
   "facebook",
   "tiktok",
   "booking_deposit",
+  "md_name",
+  "md_license_number",
+  "md_license_state",
+  "supervision_agreement_date",
 ];
 
 export const PROVIDER_METADATA_JSON_KEYS = [
@@ -121,5 +125,9 @@ export function mapProviderProfileToMeExtras(providerProfile) {
     practice_packages: Array.isArray(metadata.practice_packages) ? metadata.practice_packages : [],
     gallery_photos: Array.isArray(metadata.gallery_photos) ? metadata.gallery_photos : [],
     address: providerProfile?.address_line1 || null,
+    md_name: normalizeNullableText(metadata.md_name),
+    md_license_number: normalizeNullableText(metadata.md_license_number),
+    md_license_state: normalizeNullableText(metadata.md_license_state),
+    supervision_agreement_date: normalizeNullableText(metadata.supervision_agreement_date),
   };
 }

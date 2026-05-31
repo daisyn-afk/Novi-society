@@ -1,5 +1,5 @@
 import launchRoadmap from "@/data/launchRoadmap.json";
-import { isCprBlsCert } from "@/lib/cprBlsCert";
+import { isBbpCert, isCprBlsCert } from "@/lib/complianceCerts";
 
 const PROFILE_FIELDS = [
   "avatar_url",
@@ -57,13 +57,20 @@ function buildAutoChecks({
   return {
     license_uploaded: licenses.length > 0,
     license_verified: verifiedLicense,
-    md_mpi: activeMdRelationship || activeMd,
+    md_mpi:
+      activeMdRelationship ||
+      activeMd ||
+      Boolean(String(me?.md_name || "").trim()),
     deposit_policy: !!(
       Number(me?.deposit_percent) > 0 || Number(me?.cancellation_hours) > 0
     ),
     cpr_bls: !!(
       me?.launch_checklist?.cpr_bls ||
       certs.some(isCprBlsCert)
+    ),
+    bloodborne: !!(
+      me?.launch_checklist?.bloodborne ||
+      certs.some(isBbpCert)
     ),
     course_enrolled: enrollments.length > 0,
     course_completed: enrollments.some((e) =>

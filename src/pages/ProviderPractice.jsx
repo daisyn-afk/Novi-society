@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useNavigate } from "react-router-dom";
+import { createPageUrl } from "@/utils";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import ProviderSalesLock from "@/components/ProviderSalesLock";
@@ -23,6 +24,7 @@ import {
 import { format } from "date-fns";
 import { subscribeAppointmentsRefresh } from "@/lib/appointmentSync";
 import { buildProviderProfileForm, sanitizeProfileSavePayload } from "@/lib/providerProfileForm";
+import { useAppointmentMessageUnread, unreadMessagesByPatient } from "@/hooks/useAppointmentMessageUnread";
 
 const PANEL_TABS = new Set(["profile", "treatments", "appointments", "patients", "performance"]);
 
@@ -115,6 +117,7 @@ function PanelModal({ open, onClose, title, children }) {
 export default function ProviderPractice() {
   const { status: accessStatus } = useProviderAccess();
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const qc = useQueryClient();
   const [saved, setSaved] = useState(false);
   const [activePanel, setActivePanel] = useState(() => getPanelFromSearch(searchParams));
@@ -201,6 +204,20 @@ export default function ProviderPractice() {
   useEffect(() => {
     setActivePanel(getPanelFromSearch(searchParams));
   }, [searchParams]);
+
+  useEffect(() => {
+    const openId = String(searchParams.get("open_message") || "").trim();
+    if (!openId) return;
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set("tab", "appointments");
+    nextParams.delete("open_message");
+    setSearchParams(nextParams, { replace: true });
+    setActivePanel("appointments");
+  }, [searchParams, setSearchParams]);
+
+  const { data: messageUnreadSummary } = useAppointmentMessageUnread();
+  const unreadMessagePatients = unreadMessagesByPatient(appointments, messageUnreadSummary);
+  const totalUnreadMessages = Number(messageUnreadSummary?.total || 0);
 
   useEffect(() => {
     if (me && !initialized) {
@@ -407,9 +424,15 @@ export default function ProviderPractice() {
           iconColor="#FA6F30"
           title="Appointments"
           meta={`${appointments.filter(a => ["confirmed","requested"].includes(a.status)).length} upcoming · ${completedCount} completed all-time`}
-          status={pendingCount > 0 ? `${pendingCount} pending` : "Up to date"}
-          statusColor={pendingCount > 0 ? "#DA6A63" : "#4a6b10"}
-          warning={pendingCount > 0 ? "#DA6A63" : undefined}
+          status={
+            totalUnreadMessages > 0
+              ? `${totalUnreadMessages} unread message${totalUnreadMessages !== 1 ? "s" : ""}`
+              : pendingCount > 0
+                ? `${pendingCount} pending`
+                : "Up to date"
+          }
+          statusColor={totalUnreadMessages > 0 ? "#FA6F30" : pendingCount > 0 ? "#DA6A63" : "#4a6b10"}
+          warning={totalUnreadMessages > 0 ? "#FA6F30" : pendingCount > 0 ? "#DA6A63" : undefined}
           action="Manage"
           onAction={() => openPanel("appointments")}
         />
@@ -466,6 +489,63 @@ export default function ProviderPractice() {
         />
 
       </div>
+
+      {unreadMessagePatients.length > 0 && (
+        <div className="mt-5 mb-6">
+          <div className="flex items-center gap-2 mb-3">
+            <MessageSquare className="w-4 h-4" style={{ color: "#FA6F30" }} />
+            <p className="text-sm font-bold" style={{ color: "#1e2535" }}>
+              Patient Messages
+              <span className="ml-2 px-2 py-0.5 rounded-full text-xs font-bold" style={{ background: "rgba(250,111,48,0.15)", color: "#FA6F30" }}>
+                {totalUnreadMessages}
+              </span>
+            </p>
+          </div>
+          <p className="text-xs mb-2" style={{ color: "rgba(30,37,53,0.45)" }}>
+            Pre-booking inquiries open in Messages. Booked visits — reply from Appointments.
+          </p>
+          <div className="rounded-2xl overflow-hidden" style={{ background: "rgba(255,255,255,0.65)", border: "1.5px solid rgba(250,111,48,0.25)" }}>
+            {unreadMessagePatients.map((p, i) => (
+              <button
+                key={p.key}
+                type="button"
+                className="w-full flex items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-orange-50/30"
+                style={{ borderBottom: i < unreadMessagePatients.length - 1 ? "1px solid rgba(30,37,53,0.06)" : "none" }}
+                onClick={() => {
+                  if (p.isPreBooking) {
+                    const qs = new URLSearchParams({ tab: "patient_queries" });
+                    if (p.thread_id) qs.set("thread_id", p.thread_id);
+                    navigate(`${createPageUrl("ProviderMessaging")}?${qs.toString()}`);
+                    return;
+                  }
+                  openPanel("appointments");
+                }}
+              >
+                <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: "rgba(250,111,48,0.1)" }}>
+                  <MessageSquare className="w-4 h-4" style={{ color: "#FA6F30" }} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold truncate" style={{ color: "#1e2535" }}>
+                    {p.patient_name || p.patient_email || "Patient"}
+                  </p>
+                  {p.patient_email && p.patient_name && (
+                    <p className="text-xs truncate" style={{ color: "rgba(30,37,53,0.45)" }}>{p.patient_email}</p>
+                  )}
+                  {p.isPreBooking && (
+                    <p className="text-[11px] mt-0.5" style={{ color: "rgba(30,37,53,0.4)" }}>Pre-booking inquiry</p>
+                  )}
+                </div>
+                <span
+                  className="flex-shrink-0 min-w-[22px] h-[22px] px-1.5 rounded-full text-[11px] font-bold flex items-center justify-center text-white"
+                  style={{ background: "#FA6F30" }}
+                >
+                  {p.unread > 9 ? "9+" : p.unread}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── MD flagged / changes requested ─────────────────────────── */}
       {flaggedRecords.length > 0 && (
@@ -575,7 +655,10 @@ export default function ProviderPractice() {
       {/* ── Panel Modals ─────────────────────────────────────────── */}
 
       <PanelModal open={activePanel === "appointments"} onClose={closePanel} title="Appointments">
-        <PracticeAppointmentsTab appointments={appointments} initialFilter={appointmentsPanelFilter} />
+        <PracticeAppointmentsTab
+          appointments={appointments}
+          initialFilter={appointmentsPanelFilter}
+        />
       </PanelModal>
 
       <PanelModal open={activePanel === "patients"} onClose={closePanel} title="Patients">
@@ -588,6 +671,7 @@ export default function ProviderPractice() {
           onSave={handleSave} saving={saveMutation.isPending} saved={saved}
           serviceTypes={serviceTypes} activeServiceIds={activeServiceIds}
           manufacturerApplications={manufacturerApplications}
+          focusSection={String(searchParams.get("step") || "").trim() || undefined}
         />
       </PanelModal>
 
@@ -600,7 +684,16 @@ export default function ProviderPractice() {
       </PanelModal>
 
       {/* ── Quick Log + direct doc dialogs ────────────────────────── */}
-      <QuickLogTreatmentDialog open={quickLogOpen} onClose={() => setQuickLogOpen(false)} />
+      <QuickLogTreatmentDialog
+        open={quickLogOpen}
+        onClose={() => setQuickLogOpen(false)}
+        appointments={appointments}
+        treatmentRecords={treatmentRecords}
+        onStartDocumenting={(appt, existing) => {
+          setQuickLogOpen(false);
+          setDocDialog({ open: true, appt, existing: existing || null });
+        }}
+      />
       <TreatmentDocumentDialog
         open={docDialog.open}
         onClose={() => { setDocDialog({ open: false, appt: null, existing: null }); qc.invalidateQueries(["treatment-records"]); }}
