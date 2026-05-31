@@ -62,7 +62,7 @@ function buildAutoChecks({
       activeMd ||
       Boolean(String(me?.md_name || "").trim()),
     deposit_policy: !!(
-      Number(me?.deposit_percent) > 0 || Number(me?.cancellation_hours) > 0
+      Number(me?.booking_deposit) > 0 || Number(me?.cancellation_hours) > 0
     ),
     cpr_bls: !!(
       me?.launch_checklist?.cpr_bls ||

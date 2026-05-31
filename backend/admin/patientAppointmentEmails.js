@@ -96,6 +96,42 @@ export async function sendAppointmentGfeInviteEmail({
 /**
  * In-app notification for the patient (bell icon).
  */
+async function ensureNotificationsTable() {
+  await query(
+    `create table if not exists public.notifications (
+       id text primary key default ('notif_' || md5(random()::text || clock_timestamp()::text)),
+       user_id text null,
+       user_email text null,
+       type text null,
+       message text not null,
+       link_page text null,
+       read_at timestamptz null,
+       created_at timestamptz not null default now(),
+       updated_at timestamptz not null default now()
+     )`
+  );
+}
+
+async function insertInAppNotification({ userId, userEmail, type, message, linkPage }) {
+  const uid = String(userId || "").trim();
+  const email = String(userEmail || "").trim();
+  if (!uid && !email) return { sent: false };
+
+  try {
+    await ensureNotificationsTable();
+    await query(
+      `insert into public.notifications (user_id, user_email, type, message, link_page)
+       values ($1, $2, $3, $4, $5)`,
+      [uid || null, email || null, type || "general", message, linkPage || null]
+    );
+    return { sent: true };
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.warn("[insertInAppNotification] failed:", error?.message || error);
+    return { sent: false, error: error?.message };
+  }
+}
+
 export async function notifyPatientGfeInvite({
   patientId,
   patientEmail,
@@ -110,31 +146,13 @@ export async function notifyPatientGfeInvite({
   const service = String(serviceLabel || "your appointment").trim();
   const message = `${provider} sent you a Good Faith Exam link for ${service}. Complete it before your visit.`;
 
-  try {
-    await query(
-      `create table if not exists public.notifications (
-         id text primary key default ('notif_' || md5(random()::text || clock_timestamp()::text)),
-         user_id text null,
-         user_email text null,
-         type text null,
-         message text not null,
-         link_page text null,
-         read_at timestamptz null,
-         created_at timestamptz not null default now(),
-         updated_at timestamptz not null default now()
-       )`
-    );
-    await query(
-      `insert into public.notifications (user_id, user_email, type, message, link_page)
-       values ($1, $2, 'general', $3, 'PatientAppointments')`,
-      [pid || null, email || null, message]
-    );
-    return { sent: true };
-  } catch (error) {
-    // eslint-disable-next-line no-console
-    console.warn("[notifyPatientGfeInvite] failed:", error?.message || error);
-    return { sent: false, error: error?.message };
-  }
+  return insertInAppNotification({
+    userId: pid,
+    userEmail: email,
+    type: "gfe_invite",
+    message,
+    linkPage: "PatientAppointments",
+  });
 }
 
 export async function sendAppointmentConfirmedPatientEmail({
@@ -199,6 +217,55 @@ export async function sendAppointmentCancelledPatientEmail({
   return { sent: true };
 }
 
+/** In-app notification when a provider cancels or declines an appointment. */
+export async function notifyPatientAppointmentCancelled({
+  patientId,
+  patientEmail,
+  providerName,
+  serviceLabel,
+  appointmentDate,
+  wasRequest,
+}) {
+  const provider = String(providerName || "Your provider").trim();
+  const service = String(serviceLabel || "your appointment").trim();
+  const when = fmtAppointmentDateLocal(appointmentDate);
+  const message = wasRequest
+    ? `${provider} declined your request for ${service}${when ? ` on ${when}` : ""}.`
+    : `${provider} cancelled your ${service} appointment${when ? ` on ${when}` : ""}.`;
+
+  return insertInAppNotification({
+    userId: patientId,
+    userEmail: patientEmail,
+    type: "appointment_cancelled",
+    message,
+    linkPage: "PatientAppointments",
+  });
+}
+
+/** In-app notification when a patient cancels an appointment. */
+export async function notifyProviderAppointmentCancelled({
+  providerId,
+  providerEmail,
+  patientName,
+  serviceLabel,
+  appointmentDate,
+}) {
+  const patient = String(patientName || "A patient").trim();
+  const service = String(serviceLabel || "an appointment").trim();
+  const when = fmtAppointmentDateLocal(appointmentDate);
+  const message = when
+    ? `${patient} cancelled their ${service} appointment scheduled for ${when}.`
+    : `${patient} cancelled their ${service} appointment.`;
+
+  return insertInAppNotification({
+    userId: providerId,
+    userEmail: providerEmail,
+    type: "appointment_cancelled",
+    message,
+    linkPage: "ProviderPractice",
+  });
+}
+
 export async function sendAppointmentNoShowPatientEmail({
   to,
   patientName,
@@ -258,31 +325,13 @@ export async function notifyPatientAppointmentNoShow({
     ? `You were marked as absent for ${service} with ${provider} on ${when}. Book a new appointment when you're ready.`
     : `You were marked as absent for ${service} with ${provider}. Book a new appointment when you're ready.`;
 
-  try {
-    await query(
-      `create table if not exists public.notifications (
-         id text primary key default ('notif_' || md5(random()::text || clock_timestamp()::text)),
-         user_id text null,
-         user_email text null,
-         type text null,
-         message text not null,
-         link_page text null,
-         read_at timestamptz null,
-         created_at timestamptz not null default now(),
-         updated_at timestamptz not null default now()
-       )`
-    );
-    await query(
-      `insert into public.notifications (user_id, user_email, type, message, link_page)
-       values ($1, $2, 'general', $3, 'PatientMarketplace')`,
-      [pid || null, email || null, message]
-    );
-    return { sent: true };
-  } catch (error) {
-    // eslint-disable-next-line no-console
-    console.warn("[notifyPatientAppointmentNoShow] failed:", error?.message || error);
-    return { sent: false, error: error?.message };
-  }
+  return insertInAppNotification({
+    userId: pid,
+    userEmail: email,
+    type: "general",
+    message,
+    linkPage: "PatientMarketplace",
+  });
 }
 
 export async function sendAppointmentGfeApprovedPatientEmail({

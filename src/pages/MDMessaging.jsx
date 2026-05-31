@@ -12,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { MessageSquare, Plus, Send, X, Loader2 } from "lucide-react";
+import { MessageSquare, Plus, Send, X, Loader2, ChevronLeft } from "lucide-react";
 import { format, isToday, isYesterday } from "date-fns";
 
 function formatMsgTime(ts) {
@@ -216,6 +216,11 @@ export default function MDMessaging() {
     setShowComposer(false);
   }
 
+  function clearActiveThread() {
+    setActiveThread(null);
+    setReplyText("");
+  }
+
   function handleSendReply() {
     if (!replyText.trim() || !activeThread || sendMutation.isPending) return;
     const thread = threads.find((t) => t.thread_id === activeThread);
@@ -256,7 +261,7 @@ export default function MDMessaging() {
   );
 
   return (
-    <div className="flex flex-col h-full" style={{ minHeight: 0 }}>
+    <div className="flex flex-col h-full min-w-0 overflow-x-hidden" style={{ minHeight: 0 }}>
       {/* Page header */}
       <div className="mb-4 flex-shrink-0">
         <p
@@ -282,11 +287,11 @@ export default function MDMessaging() {
       </div>
 
       {/* Main two-panel layout */}
-      <div className="flex flex-1 gap-4 overflow-hidden" style={{ minHeight: 0 }}>
+      <div className="flex flex-1 flex-col md:flex-row gap-4 overflow-hidden min-h-0 min-w-0">
         {/* LEFT PANEL — Thread List */}
         <div
-          className="flex flex-col flex-shrink-0 overflow-hidden"
-          style={{ width: 264, ...glassCard }}
+          className={`flex flex-col flex-shrink-0 overflow-hidden w-full md:w-[264px] min-w-0 min-h-0 ${activeThread ? "hidden md:flex" : "flex"}`}
+          style={glassCard}
         >
           {/* Thread list header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-white/60">
@@ -441,8 +446,8 @@ export default function MDMessaging() {
 
         {/* RIGHT PANEL — Chat View */}
         <div
-          className="flex flex-col flex-1 overflow-hidden"
-          style={{ minWidth: 0, ...glassCard }}
+          className={`flex flex-col flex-1 overflow-hidden min-w-0 min-h-0 ${activeThread ? "flex" : "hidden md:flex"}`}
+          style={glassCard}
         >
           {!activeThread ? (
             <div className="flex flex-col items-center justify-center flex-1 text-center px-6">
@@ -457,7 +462,15 @@ export default function MDMessaging() {
           ) : (
             <>
               {/* Chat header */}
-              <div className="flex items-center gap-3 px-5 py-3 border-b border-white/60 flex-shrink-0">
+              <div className="flex items-center gap-3 px-4 sm:px-5 py-3 border-b border-white/60 flex-shrink-0 min-w-0">
+                <button
+                  type="button"
+                  onClick={clearActiveThread}
+                  className="md:hidden inline-flex items-center justify-center w-8 h-8 rounded-lg text-slate-500 shrink-0"
+                  aria-label="Back to conversations"
+                >
+                  <ChevronLeft className="w-5 h-5" />
+                </button>
                 <div
                   className="flex items-center justify-center w-8 h-8 rounded-full text-white text-xs font-semibold"
                   style={{ background: "rgba(218,106,99,0.55)" }}
@@ -466,8 +479,8 @@ export default function MDMessaging() {
                     activeThreadData?.other_user_name || activeThreadData?.other_user_email
                   )}
                 </div>
-                <div>
-                  <p className="text-sm font-semibold text-slate-800">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-slate-800 truncate">
                     {activeThreadData?.other_user_name ||
                       activeThreadData?.other_user_email ||
                       activeThreadData?.other_user_id}
@@ -477,7 +490,7 @@ export default function MDMessaging() {
               </div>
 
               {/* Message list */}
-              <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
+              <div className="flex-1 overflow-y-auto px-4 sm:px-5 py-4 space-y-3 min-h-0">
                 {messagesLoading && (
                   <div className="flex items-center justify-center py-10">
                     <Loader2 size={20} className="animate-spin text-slate-300" />
@@ -528,13 +541,13 @@ export default function MDMessaging() {
               </div>
 
               {/* Reply input */}
-              <div className="flex items-end gap-2 px-4 py-3 border-t border-white/60 flex-shrink-0">
+              <div className="flex items-end gap-2 px-3 sm:px-4 py-3 border-t border-white/60 flex-shrink-0 min-w-0">
                 <Textarea
                   value={replyText}
                   onChange={(e) => setReplyText(e.target.value)}
                   onKeyDown={handleReplyKeyDown}
                   placeholder="Type a message... (Enter to send)"
-                  className="flex-1 resize-none text-sm"
+                  className="flex-1 resize-none text-sm min-w-0"
                   rows={1}
                   style={{ minHeight: 38, maxHeight: 120 }}
                 />

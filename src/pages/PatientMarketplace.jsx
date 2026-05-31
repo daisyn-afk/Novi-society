@@ -362,7 +362,7 @@ Based on my concerns and goals, which service types would be most relevant? Retu
   };
 
   return (
-    <div className="space-y-6" style={{ fontFamily: "'DM Sans', sans-serif" }}>
+    <div className="space-y-6 min-w-0 max-w-full overflow-x-hidden" style={{ fontFamily: "'DM Sans', sans-serif" }}>
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl leading-tight" style={{ fontFamily: "'DM Serif Display', serif", color: "#2a3050" }}>
@@ -501,7 +501,7 @@ Based on my concerns and goals, which service types would be most relevant? Retu
           ))}
         </div>
       ) : (
-        <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-5">
+        <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-5 min-w-0">
           {filtered.map((p) => (
             <MarketplaceProviderCard
               key={p.id}
@@ -535,37 +535,40 @@ Based on my concerns and goals, which service types would be most relevant? Retu
       <Dialog open={!!selectedProvider} onOpenChange={() => setSelectedProvider(null)}>
         <DialogContent
           hideCloseButton
-          className="max-w-3xl w-[calc(100%-1rem)] sm:w-full max-h-[92dvh] h-[92dvh] sm:h-auto sm:max-h-[90vh] flex flex-col p-0 gap-0 overflow-hidden sm:rounded-2xl"
+          className="max-w-3xl w-full sm:w-[calc(100%-2rem)] left-0 top-0 translate-x-0 translate-y-0 sm:left-[50%] sm:top-[50%] sm:translate-x-[-50%] sm:translate-y-[-50%] h-[100dvh] max-h-[100dvh] sm:h-auto sm:max-h-[90vh] rounded-none sm:rounded-2xl flex flex-col p-0 gap-0 overflow-hidden border-0 sm:border"
         >
           {selectedProvider && (
             <Tabs defaultValue="about" className="flex flex-col flex-1 min-h-0 w-full">
               <div
-                className="shrink-0 z-20 bg-white border-b px-4 sm:px-6 pb-0"
+                className="shrink-0 sticky top-0 z-20 bg-white border-b"
                 style={{ paddingTop: "max(0.75rem, env(safe-area-inset-top))" }}
               >
-                <div className="flex items-center justify-between gap-3 pb-3">
+                <div className="flex items-center justify-between gap-3 px-4 sm:px-6 pb-3">
                   <DialogHeader className="text-left p-0 flex-1 min-w-0 space-y-0">
-                    <DialogTitle className="text-base sm:text-lg font-semibold text-slate-900 truncate">
+                    <DialogTitle className="text-base sm:text-lg font-semibold text-slate-900 truncate pr-2">
                       {displayName(selectedProvider)}
                     </DialogTitle>
                   </DialogHeader>
                   <DialogClose asChild>
                     <button
                       type="button"
-                      className="flex h-10 w-10 min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-800 shadow-sm transition-colors hover:bg-slate-50 hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
-                      aria-label="Close"
+                      className="inline-flex h-10 min-h-[44px] shrink-0 items-center justify-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 text-sm font-semibold text-slate-800 shadow-sm transition-colors hover:bg-slate-50 hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                      aria-label="Close profile"
                     >
-                      <X className="h-4 w-4" />
+                      <X className="h-4 w-4 shrink-0" />
+                      <span>Close</span>
                     </button>
                   </DialogClose>
                 </div>
-                <TabsList className="grid w-full grid-cols-2 mb-0">
-                  <TabsTrigger value="about" className="min-h-[44px]">Profile</TabsTrigger>
-                  <TabsTrigger value="book" className="min-h-[44px]">Book Appointment</TabsTrigger>
-                </TabsList>
+                <div className="px-4 sm:px-6 pb-3">
+                  <TabsList className="grid w-full grid-cols-2">
+                    <TabsTrigger value="about" className="min-h-[44px] text-xs sm:text-sm">Profile</TabsTrigger>
+                    <TabsTrigger value="book" className="min-h-[44px] text-xs sm:text-sm">Book Appointment</TabsTrigger>
+                  </TabsList>
+                </div>
               </div>
 
-              <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+              <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain pb-[max(1rem,env(safe-area-inset-bottom))]">
                 <TabsContent value="about" className="mt-0 px-4 sm:px-6 py-5 focus-visible:outline-none">
                   <ProviderProfilePanel
                     provider={selectedProvider}
@@ -600,7 +603,7 @@ Based on my concerns and goals, which service types would be most relevant? Retu
       </Dialog>
 
       <Dialog open={!!bookDialog} onOpenChange={() => setBookDialog(null)}>
-        <DialogContent>
+        <DialogContent className="w-[calc(100%-1rem)] max-w-lg max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Book with {bookDialog ? displayName(bookDialog) : ""}</DialogTitle>
           </DialogHeader>
@@ -633,16 +636,18 @@ Based on my concerns and goals, which service types would be most relevant? Retu
           if (!open) setMsgDialog(null);
         }}
       >
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
+        <DialogContent className="max-w-2xl w-[calc(100%-1rem)] max-h-[92dvh] flex flex-col overflow-hidden p-0 gap-0">
+          <DialogHeader className="px-6 pt-6 pb-2 shrink-0">
             <DialogTitle>Message {msgDialog ? displayName(msgDialog) : ""}</DialogTitle>
           </DialogHeader>
-          <p className="text-sm text-slate-500 mb-4">
+          <p className="text-sm text-slate-500 mb-2 px-6 shrink-0 break-words">
             Answer a few quick questions about your visit. After that, book an appointment to keep messaging.
           </p>
+          <div className="flex-1 min-h-0 px-4 sm:px-6 pb-4 sm:pb-6">
           {msgDialog && me?.id ? (
             <MessageThread
               key={buildPreBookingThreadId(msgDialog.id, me.id)}
+              className="h-full min-h-0"
               appointmentId={buildPreBookingThreadId(msgDialog.id, me.id)}
               recipientId={msgDialog.id}
               recipientName={displayName(msgDialog)}
@@ -653,6 +658,7 @@ Based on my concerns and goals, which service types would be most relevant? Retu
               <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
             </div>
           ) : null}
+          </div>
         </DialogContent>
       </Dialog>
     </div>
@@ -684,9 +690,9 @@ function ProviderProfilePanel({ provider, mdServices, certs, rating, reviewCount
   const showGallery = photoPairs.length > 0;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 min-w-0 max-w-full">
       <div
-        className="flex items-start gap-5 p-4 rounded-2xl"
+        className="flex flex-col sm:flex-row items-start gap-4 sm:gap-5 p-4 rounded-2xl min-w-0"
         style={{ background: "rgba(123,142,200,0.06)", border: "1px solid rgba(123,142,200,0.12)" }}
       >
         {avatarUrl ? (
@@ -711,7 +717,7 @@ function ProviderProfilePanel({ provider, mdServices, certs, rating, reviewCount
         )}
         <div className="flex-1 min-w-0 flex flex-col gap-2.5">
           <div className="space-y-1 min-w-0">
-            <h2 className="text-xl font-semibold text-slate-900 leading-tight tracking-tight">{displayName(provider)}</h2>
+            <h2 className="text-xl font-semibold text-slate-900 leading-tight tracking-tight break-words">{displayName(provider)}</h2>
             {provider.practice_name && provider.full_name && provider.practice_name !== provider.full_name && (
               <p className="text-sm text-slate-600 leading-snug">{provider.full_name}</p>
             )}
@@ -721,9 +727,9 @@ function ProviderProfilePanel({ provider, mdServices, certs, rating, reviewCount
           </div>
           <div className="flex flex-col gap-2 text-sm text-slate-600">
             {(provider.city || provider.state) && (
-              <span className="inline-flex items-center gap-1.5">
-                <MapPin className="w-3.5 h-3.5 shrink-0 text-slate-400" />
-                <span>
+              <span className="inline-flex items-start gap-1.5 min-w-0">
+                <MapPin className="w-3.5 h-3.5 shrink-0 text-slate-400 mt-0.5" />
+                <span className="break-words min-w-0">
                   {provider.city}
                   {provider.city && provider.state ? ", " : ""}
                   {provider.state || ""}
@@ -734,20 +740,17 @@ function ProviderProfilePanel({ provider, mdServices, certs, rating, reviewCount
               <p className="text-sm leading-relaxed">
                 <span className="text-slate-500">Consultation </span>
                 <strong className="text-slate-900 font-semibold">${provider.consultation_fee}</strong>
-                {provider.deposit_percent != null && provider.deposit_percent !== "" ? (
-                  <span className="text-slate-500">
-                    {" "}
-                    · Deposit <strong style={{ color: "#7B8EC8" }}>{provider.deposit_percent}%</strong>
-                    {provider.booking_deposit != null && provider.booking_deposit !== "" && (
-                      <span> (≈ ${provider.booking_deposit})</span>
-                    )}
-                  </span>
-                ) : provider.booking_deposit != null && provider.booking_deposit !== "" ? (
+                {provider.booking_deposit != null && provider.booking_deposit !== "" ? (
                   <span className="text-slate-500">
                     {" "}
                     · Deposit <strong style={{ color: "#7B8EC8" }}>${provider.booking_deposit}</strong>
                   </span>
-                ) : null}
+                ) : (
+                  <span className="text-slate-500">
+                    {" "}
+                    · Deposit <strong style={{ color: "#7B8EC8" }}>$50</strong>
+                  </span>
+                )}
               </p>
             )}
           </div>
@@ -755,7 +758,7 @@ function ProviderProfilePanel({ provider, mdServices, certs, rating, reviewCount
       </div>
 
       <ProfileSection title="About" emptyText={!provider.bio ? "No bio added yet." : null}>
-        {provider.bio && <p className="text-sm text-slate-600 leading-relaxed">{provider.bio}</p>}
+        {provider.bio && <p className="text-sm text-slate-600 leading-relaxed break-words">{provider.bio}</p>}
       </ProfileSection>
 
       <ProfileSection title="Star rating" emptyText={rating ? null : "No patient reviews yet."}>
@@ -922,8 +925,8 @@ function StarRatingDisplay({ average, reviewCount, size = "sm" }) {
   );
 }
 
-const mdServiceBadge = "text-[11px] font-medium px-2.5 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200";
-const certBadge = "text-[11px] font-medium px-2 py-0.5 rounded-full inline-flex items-center gap-1 bg-amber-50 text-amber-800 border border-amber-200";
+const mdServiceBadge = "text-[11px] font-medium px-2.5 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200 break-words max-w-full";
+const certBadge = "text-[11px] font-medium px-2 py-0.5 rounded-full inline-flex items-center gap-1 bg-amber-50 text-amber-800 border border-amber-200 break-words max-w-full";
 
 function MarketplaceProviderCard({
   provider,
@@ -944,14 +947,14 @@ function MarketplaceProviderCard({
 
   return (
     <article
-      className="rounded-2xl p-5 flex flex-col h-full transition-shadow hover:shadow-md"
+      className="rounded-2xl p-4 sm:p-5 flex flex-col h-full min-w-0 max-w-full overflow-hidden transition-shadow hover:shadow-md"
       style={surfaceCard}
     >
-      <div className="flex items-start gap-4">
+      <div className="flex items-start gap-4 min-w-0">
         <CardBrandMark provider={provider} />
         <div className="flex-1 min-w-0 flex flex-col gap-2.5">
           <div className="min-w-0 space-y-1">
-            <h3 className="font-semibold text-base text-slate-900 leading-tight tracking-tight truncate">
+            <h3 className="font-semibold text-base text-slate-900 leading-tight tracking-tight break-words">
               {displayName(provider)}
             </h3>
             {provider.practice_name && provider.full_name && provider.practice_name !== provider.full_name && (
@@ -966,9 +969,9 @@ function MarketplaceProviderCard({
           {(provider.city || provider.state || (provider.consultation_fee != null && provider.consultation_fee !== "")) && (
             <div className="flex flex-col gap-1.5 text-sm text-slate-600">
               {(provider.city || provider.state) && (
-                <span className="inline-flex items-center gap-1.5 min-w-0">
-                  <MapPin className="w-3.5 h-3.5 shrink-0 text-slate-400" />
-                  <span className="truncate">
+                <span className="inline-flex items-start gap-1.5 min-w-0">
+                  <MapPin className="w-3.5 h-3.5 shrink-0 text-slate-400 mt-0.5" />
+                  <span className="break-words min-w-0">
                     {provider.city}
                     {provider.city && provider.state ? ", " : ""}
                     {provider.state || ""}
@@ -990,7 +993,7 @@ function MarketplaceProviderCard({
       </div>
 
       {provider.bio && (
-        <p className="text-sm text-slate-600 line-clamp-2 leading-relaxed mt-3">{provider.bio}</p>
+        <p className="text-sm text-slate-600 line-clamp-2 leading-relaxed mt-3 break-words">{provider.bio}</p>
       )}
 
       {rating && (
@@ -1049,7 +1052,7 @@ function MarketplaceProviderCard({
       )}
 
       {showGallery && (
-        <div>
+        <div className="min-w-0 w-full overflow-hidden">
           <CardSectionHeading>Before/After Gallery Photos:</CardSectionHeading>
           <BeforeAfterGallery pairs={photoPairs} variant="card" maxSets={2} />
         </div>
@@ -1077,10 +1080,10 @@ function MarketplaceProviderCard({
       )}
 
       {showReferral && (
-        <div className="mt-3 flex items-center gap-1.5 text-xs text-slate-600 px-2.5 py-2 rounded-lg" style={{ background: "rgba(123,142,200,0.08)", border: "1px solid rgba(123,142,200,0.15)" }}>
-          <Gift className="w-3.5 h-3.5 shrink-0" style={{ color: "#7B8EC8" }} />
-          <span>
-            Referral: <strong className="font-mono text-slate-800">{provider.referral_code}</strong>
+        <div className="mt-3 flex items-start gap-1.5 text-xs text-slate-600 px-2.5 py-2 rounded-lg min-w-0" style={{ background: "rgba(123,142,200,0.08)", border: "1px solid rgba(123,142,200,0.15)" }}>
+          <Gift className="w-3.5 h-3.5 shrink-0 mt-0.5" style={{ color: "#7B8EC8" }} />
+          <span className="break-words min-w-0">
+            Referral: <strong className="font-mono text-slate-800 break-all">{provider.referral_code}</strong>
             {provider.referral_discount ? ` · ${provider.referral_discount}` : ""}
           </span>
         </div>
@@ -1088,21 +1091,21 @@ function MarketplaceProviderCard({
 
       <div className="flex-1 min-h-2" />
 
-      <div className="flex gap-2 mt-4 pt-3 border-t border-slate-100">
+      <div className="flex gap-2 mt-4 pt-3 border-t border-slate-100 min-w-0 w-full">
         <Button
           type="button"
-          className="flex-1 h-10 rounded-xl font-semibold text-sm"
+          className="flex-1 min-w-0 h-10 rounded-xl font-semibold text-sm"
           style={{ background: "#FA6F30", color: "#fff" }}
           onClick={onBook}
         >
-          <Calendar className="w-4 h-4 mr-1.5" />
+          <Calendar className="w-4 h-4 mr-1.5 shrink-0" />
           Book
         </Button>
         <Button
           type="button"
           variant="outline"
           size="icon"
-          className="h-10 w-10 rounded-xl shrink-0"
+          className="h-10 w-10 min-w-[2.5rem] rounded-xl shrink-0"
           style={{ borderColor: "rgba(123,142,200,0.25)", color: "#7B8EC8" }}
           onClick={onProfile}
           title="View profile"
@@ -1113,7 +1116,7 @@ function MarketplaceProviderCard({
           type="button"
           variant="outline"
           size="icon"
-          className="h-10 w-10 rounded-xl shrink-0 relative"
+          className="h-10 w-10 min-w-[2.5rem] rounded-xl shrink-0 relative"
           style={{ borderColor: "rgba(123,142,200,0.25)", color: "#7B8EC8" }}
           onClick={onMessage}
           title="Message"
@@ -1154,12 +1157,12 @@ function BookingForm({ provider, bookForm, setBookForm, services, bookingError, 
           </SelectContent>
         </Select>
       </div>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-4">
         <div className="min-w-0 space-y-2">
           <Label>Date *</Label>
           <Input
             type="date"
-            className="w-full min-w-0 max-w-full"
+            className="w-full min-w-0 max-w-full box-border"
             value={bookForm.appointment_date}
             onChange={(e) => setBookForm({ ...bookForm, appointment_date: e.target.value })}
           />
@@ -1168,7 +1171,7 @@ function BookingForm({ provider, bookForm, setBookForm, services, bookingError, 
           <Label>Time</Label>
           <Input
             type="time"
-            className="w-full min-w-0 max-w-full"
+            className="w-full min-w-0 max-w-full box-border"
             value={bookForm.appointment_time}
             onChange={(e) => setBookForm({ ...bookForm, appointment_time: e.target.value })}
           />

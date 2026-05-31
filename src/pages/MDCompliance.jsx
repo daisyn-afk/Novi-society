@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/components/ui/use-toast";
-import { ShieldCheck, Plus, AlertTriangle } from "lucide-react";
+import { ShieldCheck, Plus, AlertTriangle, X } from "lucide-react";
 import { format } from "date-fns";
 import TreatmentRecordsReview from "@/components/md/TreatmentRecordsReview.jsx";
 import {
@@ -26,10 +26,15 @@ import {
 export default function MDCompliance() {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ ...EMPTY_COMPLIANCE_LOG_FORM, log_type: "supervision_check" });
+  const [createError, setCreateError] = useState("");
   const [resolveTarget, setResolveTarget] = useState(null);
+  const [resolveError, setResolveError] = useState("");
   const [actionTaken, setActionTaken] = useState("");
   const qc = useQueryClient();
   const { toast } = useToast();
+
+  const formatApiError = (err) =>
+    String(err?.message || "Try again.").replace(/^\[lovable-provider\]\s*\d+\s+/, "");
 
   const { data: relationships = [] } = useQuery({
     queryKey: ["md-relationships"],
@@ -61,12 +66,13 @@ export default function MDCompliance() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["md-compliance-logs"] });
       qc.invalidateQueries({ queryKey: ["compliance-logs"] });
+      setCreateError("");
       setOpen(false);
       setForm({ ...EMPTY_COMPLIANCE_LOG_FORM, log_type: "supervision_check" });
       toast({ title: "Compliance log saved" });
     },
     onError: (err) => {
-      toast({ title: "Save failed", description: err?.message || "Try again.", variant: "destructive" });
+      setCreateError(formatApiError(err));
     },
   });
 
@@ -81,28 +87,36 @@ export default function MDCompliance() {
       qc.invalidateQueries({ queryKey: ["md-compliance-logs"] });
       qc.invalidateQueries({ queryKey: ["compliance-logs"] });
       setResolveTarget(null);
+      setResolveError("");
       setActionTaken("");
       toast({ title: "Log marked resolved" });
     },
     onError: (err) => {
-      toast({ title: "Resolve failed", description: err?.message || "Try again.", variant: "destructive" });
+      setResolveError(formatApiError(err));
     },
   });
 
   const pendingCount = logs.filter(isLogPendingAction).length;
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-8 min-w-0 max-w-full overflow-x-hidden">
       <TreatmentRecordsReview />
 
       <div style={{ borderTop: "1px solid rgba(198,190,168,0.4)" }} className="pt-6" />
 
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between min-w-0">
+        <div className="min-w-0">
           <h2 className="text-2xl font-bold text-slate-900">Compliance Logs</h2>
           <p className="text-slate-500 text-sm mt-1">{pendingCount} requiring action</p>
         </div>
-        <Button onClick={() => setOpen(true)} style={{ background: "var(--novi-gold)", color: "#1A1A2E" }}>
+        <Button
+          onClick={() => {
+            setCreateError("");
+            setOpen(true);
+          }}
+          className="w-full sm:w-auto shrink-0"
+          style={{ background: "var(--novi-gold)", color: "#1A1A2E" }}
+        >
           <Plus className="w-4 h-4 mr-2" /> New Log
         </Button>
       </div>
@@ -120,16 +134,16 @@ export default function MDCompliance() {
           {logs.map((l) => (
             <Card key={l.id} className={isLogPendingAction(l) ? "border-amber-200" : ""}>
               <CardContent className="pt-4 pb-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-start gap-3 min-w-0">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between min-w-0">
+                  <div className="flex items-start gap-3 min-w-0 flex-1">
                     {isLogPendingAction(l) ? (
                       <AlertTriangle className="w-4 h-4 text-amber-500 mt-0.5 flex-shrink-0" />
                     ) : (
                       <ShieldCheck className="w-4 h-4 text-slate-400 mt-0.5 flex-shrink-0" />
                     )}
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-semibold text-slate-900">{l.summary}</span>
+                        <span className="font-semibold text-slate-900 break-words">{l.summary}</span>
                         <Badge variant="outline" className="text-xs capitalize">
                           {formatLogTypeLabel(l.log_type)}
                         </Badge>
@@ -137,21 +151,21 @@ export default function MDCompliance() {
                         {l.resolved_at && <Badge className="bg-green-100 text-green-700 text-xs">Resolved</Badge>}
                         {isAutomatedLog(l) && <Badge className="bg-slate-100 text-slate-600 text-xs">Automated</Badge>}
                       </div>
-                      <p className="text-sm text-slate-500">{l.provider_email || l.provider_id}</p>
+                      <p className="text-sm text-slate-500 break-all">{l.provider_email || l.provider_id}</p>
                       <p className="text-xs text-slate-400 mt-1">
                         {l.created_date ? format(new Date(l.created_date), "MMM d, yyyy") : ""}
                         {l.resolved_at ? ` · Resolved ${format(new Date(l.resolved_at), "MMM d, yyyy")}` : ""}
                       </p>
-                      {l.details && <p className="text-sm text-slate-600 mt-2">{l.details}</p>}
+                      {l.details && <p className="text-sm text-slate-600 mt-2 break-words">{l.details}</p>}
                       {l.action_taken && (
-                        <p className="text-xs text-green-700 mt-2">
+                        <p className="text-xs text-green-700 mt-2 break-words">
                           <strong>Action taken:</strong> {l.action_taken}
                         </p>
                       )}
                     </div>
                   </div>
                   {isLogPendingAction(l) && (
-                    <Button size="sm" variant="outline" onClick={() => setResolveTarget(l)}>
+                    <Button size="sm" variant="outline" className="w-full sm:w-auto shrink-0" onClick={() => setResolveTarget(l)}>
                       Resolve
                     </Button>
                   )}
@@ -163,12 +177,37 @@ export default function MDCompliance() {
         </div>
       )}
 
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent>
+      <Dialog
+        open={open}
+        onOpenChange={(next) => {
+          setOpen(next);
+          if (!next) {
+            setCreateError("");
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg w-[calc(100%-1rem)]">
           <DialogHeader>
             <DialogTitle>New Compliance Log</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
+            {createError && (
+              <div
+                className="relative rounded-lg border border-red-200 bg-red-50 px-3 py-3 pr-10 text-sm text-red-800"
+                role="alert"
+              >
+                <button
+                  type="button"
+                  onClick={() => setCreateError("")}
+                  className="absolute top-2 right-2 rounded-md p-1 text-red-600 hover:bg-red-100"
+                  aria-label="Dismiss error"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+                <p className="font-semibold">Save failed</p>
+                <p className="mt-1 break-words">{createError}</p>
+              </div>
+            )}
             <div>
               <Label>Provider Email *</Label>
               <Input
@@ -206,8 +245,8 @@ export default function MDCompliance() {
               <Switch checked={form.action_required} onCheckedChange={(v) => setForm({ ...form, action_required: v })} />
               <Label>Action Required</Label>
             </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setOpen(false)}>
+            <DialogFooter className="flex-col-reverse sm:flex-row gap-2 sm:gap-0">
+              <Button variant="outline" onClick={() => setOpen(false)} className="w-full sm:w-auto">
                 Cancel
               </Button>
               <Button
@@ -222,12 +261,37 @@ export default function MDCompliance() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={Boolean(resolveTarget)} onOpenChange={(next) => !next && setResolveTarget(null)}>
-        <DialogContent>
+      <Dialog
+        open={Boolean(resolveTarget)}
+        onOpenChange={(next) => {
+          if (!next) {
+            setResolveTarget(null);
+            setResolveError("");
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg w-[calc(100%-1rem)]">
           <DialogHeader>
             <DialogTitle>Resolve compliance log</DialogTitle>
           </DialogHeader>
-          <p className="text-sm text-slate-600">
+          {resolveError && (
+            <div
+              className="relative rounded-lg border border-red-200 bg-red-50 px-3 py-3 pr-10 text-sm text-red-800"
+              role="alert"
+            >
+              <button
+                type="button"
+                onClick={() => setResolveError("")}
+                className="absolute top-2 right-2 rounded-md p-1 text-red-600 hover:bg-red-100"
+                aria-label="Dismiss error"
+              >
+                <X className="w-4 h-4" />
+              </button>
+              <p className="font-semibold">Resolve failed</p>
+              <p className="mt-1 break-words">{resolveError}</p>
+            </div>
+          )}
+          <p className="text-sm text-slate-600 break-words">
             Mark <strong>{resolveTarget?.summary}</strong> as handled. The provider will not be notified.
           </p>
           <div>

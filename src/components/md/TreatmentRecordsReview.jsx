@@ -78,7 +78,7 @@ export default function TreatmentRecordsReview({ providerId = null }) {
   const pendingCount = records.filter(r => r.status === "submitted").length;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 min-w-0 max-w-full overflow-x-hidden">
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-lg font-semibold" style={{ fontFamily: "'DM Serif Display', serif", color: "#243257" }}>Treatment Records</h3>
@@ -122,48 +122,54 @@ export default function TreatmentRecordsReview({ providerId = null }) {
                 border: r.status === "submitted" ? "1.5px solid rgba(250,111,48,0.35)" : "1px solid rgba(198,190,168,0.4)"
               }}>
                 <CardContent className="pt-3 pb-3">
-                  <button className="w-full flex items-center gap-3 text-left" onClick={() => setExpanded(isOpen ? null : r.id)}>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-semibold text-sm" style={{ color: "#243257" }}>{r.service}</span>
-                        <Badge className={`text-xs border-0 ${ss.bg} ${ss.text}`}>{ss.label}</Badge>
-                        {isResubmittedRecord(r) && (
-                          <Badge className="text-xs border-0 bg-blue-100 text-blue-700">Resubmitted</Badge>
-                        )}
-                        {isAwaitingProviderResubmit(r) && (
-                          <Badge className="text-xs border-0 bg-slate-100 text-slate-600">Awaiting provider resubmission</Badge>
-                        )}
-                        {r.adverse_reaction && (
-                          <Badge className="text-xs border-0 bg-red-100 text-red-600 flex items-center gap-1">
-                            <AlertTriangle className="w-3 h-3" />Adverse Reaction
-                          </Badge>
-                        )}
-                        <GFEStatusBadge status={r.gfe_status} examUrl={r.gfe_exam_url} />
+                  <div className="space-y-3 min-w-0">
+                    <button
+                      type="button"
+                      className="w-full flex items-start gap-2 text-left min-w-0"
+                      onClick={() => setExpanded(isOpen ? null : r.id)}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-semibold text-sm break-words" style={{ color: "#243257" }}>{r.service}</span>
+                          <Badge className={`text-xs border-0 ${ss.bg} ${ss.text}`}>{ss.label}</Badge>
+                          {isResubmittedRecord(r) && (
+                            <Badge className="text-xs border-0 bg-blue-100 text-blue-700">Resubmitted</Badge>
+                          )}
+                          {isAwaitingProviderResubmit(r) && (
+                            <Badge className="text-xs border-0 bg-slate-100 text-slate-600">Awaiting provider resubmission</Badge>
+                          )}
+                          {r.adverse_reaction && (
+                            <Badge className="text-xs border-0 bg-red-100 text-red-600 flex items-center gap-1">
+                              <AlertTriangle className="w-3 h-3" />Adverse Reaction
+                            </Badge>
+                          )}
+                          <GFEStatusBadge status={r.gfe_status} examUrl={r.gfe_exam_url} />
+                        </div>
+                        <p className="text-xs mt-0.5 break-words" style={{ color: "#6B7DB3" }}>
+                          {r.provider_name} → {r.patient_name} · {r.treatment_date ? format(new Date(r.treatment_date), "MMM d, yyyy") : ""}
+                        </p>
                       </div>
-                      <p className="text-xs mt-0.5" style={{ color: "#6B7DB3" }}>
-                        {r.provider_name} → {r.patient_name} · {r.treatment_date ? format(new Date(r.treatment_date), "MMM d, yyyy") : ""}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end max-w-[min(100%,320px)]">
-                      {canMdActOnRecord(r) && (
-                        <>
-                          <Button size="sm" className="h-8 px-2 text-xs" style={{ background: "#FA6F30", color: "#fff" }}
-                            onClick={e => { e.stopPropagation(); setReviewDialog({ open: true, record: r, action: "approve" }); }}>
-                            <CheckCircle className="w-3.5 h-3.5 mr-1" />Approve
-                          </Button>
-                          <Button size="sm" variant="outline" className="h-8 px-2 text-xs text-orange-600 border-orange-200"
-                            onClick={e => { e.stopPropagation(); setReviewDialog({ open: true, record: r, action: "flag" }); }}>
-                            <Flag className="w-3.5 h-3.5 mr-1" />Flag
-                          </Button>
-                          <Button size="sm" variant="outline" className="h-8 px-2 text-xs text-blue-700 border-blue-200"
-                            onClick={e => { e.stopPropagation(); setReviewDialog({ open: true, record: r, action: "changes_requested" }); }}>
-                            <MessageSquare className="w-3.5 h-3.5 mr-1" />Request Changes
-                          </Button>
-                        </>
-                      )}
-                      {isOpen ? <ChevronUp className="w-4 h-4" style={{ color: "#C6BEA8" }} /> : <ChevronDown className="w-4 h-4" style={{ color: "#C6BEA8" }} />}
-                    </div>
-                  </button>
+                      <div className="shrink-0 pt-0.5">
+                        {isOpen ? <ChevronUp className="w-4 h-4" style={{ color: "#C6BEA8" }} /> : <ChevronDown className="w-4 h-4" style={{ color: "#C6BEA8" }} />}
+                      </div>
+                    </button>
+
+                    {canMdActOnRecord(r) && (
+                      <div className="flex flex-wrap gap-2">
+                        <Button size="sm" className="h-8 px-2.5 text-xs shrink-0" style={{ background: "#FA6F30", color: "#fff" }}
+                          onClick={() => setReviewDialog({ open: true, record: r, action: "approve" })}>
+                          <CheckCircle className="w-3.5 h-3.5 mr-1" />Approve
+                        </Button>
+                        <Button size="sm" variant="outline" className="h-8 px-2.5 text-xs text-orange-600 border-orange-200 shrink-0"
+                          onClick={() => setReviewDialog({ open: true, record: r, action: "flag" })}>
+                          <Flag className="w-3.5 h-3.5 mr-1" />Flag
+                        </Button>
+                        <Button size="sm" variant="outline" className="h-8 px-2.5 text-xs text-blue-700 border-blue-200 shrink-0"
+                          onClick={() => setReviewDialog({ open: true, record: r, action: "changes_requested" })}>
+                          <MessageSquare className="w-3.5 h-3.5 mr-1" />Request Changes
+                        </Button>
+                      </div>
+                    )}
 
                   {isOpen && (
                     <div className="mt-3 pt-3 space-y-4" style={{ borderTop: "1px solid rgba(198,190,168,0.3)" }}>
@@ -269,7 +275,7 @@ export default function TreatmentRecordsReview({ providerId = null }) {
                       )}
 
                       {canMdActOnRecord(r) && (
-                        <div className="flex gap-2">
+                        <div className="flex flex-wrap gap-2">
                           <Button size="sm" style={{ background: "#FA6F30", color: "#fff" }}
                             onClick={() => setReviewDialog({ open: true, record: r, action: "approve" })}>
                             <CheckCircle className="w-3.5 h-3.5 mr-1" />Approve
@@ -286,6 +292,7 @@ export default function TreatmentRecordsReview({ providerId = null }) {
                       )}
                     </div>
                   )}
+                  </div>
                 </CardContent>
               </Card>
             );

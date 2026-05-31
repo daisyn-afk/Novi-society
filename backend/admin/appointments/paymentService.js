@@ -49,7 +49,8 @@ function formatDepositUsd(value) {
   return n % 1 === 0 ? String(n) : n.toFixed(2);
 }
 
-export async function resolveProviderBookingDeposit(providerId, { totalAmount } = {}) {
+/** Flat booking deposit from provider profile metadata, or platform default. */
+export async function resolveProviderBookingDeposit(providerId) {
   const pid = String(providerId || "").trim();
   if (!pid) return DEFAULT_APPOINTMENT_DEPOSIT_USD;
   const { rows } = await query(
@@ -64,25 +65,17 @@ export async function resolveProviderBookingDeposit(providerId, { totalAmount } 
   const metadata =
     rows[0]?.metadata && typeof rows[0].metadata === "object" ? rows[0].metadata : {};
 
-  const percent = Number(metadata.deposit_percent);
-  const basePrice =
-    Number(totalAmount) > 0
-      ? Number(totalAmount)
-      : Number(metadata.starting_price) > 0
-        ? Number(metadata.starting_price)
-        : Number(metadata.consultation_fee) > 0
-          ? Number(metadata.consultation_fee)
-          : null;
-
-  if (Number.isFinite(percent) && percent > 0 && basePrice != null && basePrice > 0) {
-    const deposit = Math.round(((basePrice * percent) / 100) * 100) / 100;
-    if (deposit > 0) return deposit;
-  }
-
   const fixed = Number(metadata.booking_deposit);
   if (Number.isFinite(fixed) && fixed > 0) return fixed;
 
   return DEFAULT_APPOINTMENT_DEPOSIT_USD;
+}
+
+/** Deposit for an appointment: saved amount first, then provider profile default. */
+export async function resolveAppointmentDeposit(appointment) {
+  const saved = Number(appointment?.deposit_amount);
+  if (Number.isFinite(saved) && saved > 0) return saved;
+  return resolveProviderBookingDeposit(appointment?.provider_id);
 }
 
 export async function processAppointmentCheckoutCompletedSession(session) {
@@ -267,9 +260,7 @@ export async function createAppointmentDepositCheckout({
       throw e;
     }
 
-    const depositUsd = await resolveProviderBookingDeposit(appt.provider_id, {
-      totalAmount: appt.total_amount,
-    });
+    const depositUsd = await resolveAppointmentDeposit(appt);
     const depositCents = Math.round(depositUsd * 100);
     if (depositCents <= 0) {
       const e = new Error("No deposit amount configured for this appointment.");
@@ -420,9 +411,7 @@ export async function requestAppointmentDeposit({ token, appointmentId }) {
     throw e;
   }
 
-  const depositAmount = await resolveProviderBookingDeposit(existing.provider_id, {
-    totalAmount: existing.total_amount,
-  });
+  const depositAmount = await resolveAppointmentDeposit(existing);
   const nowIso = new Date().toISOString();
 
   const { rows } = await query(

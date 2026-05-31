@@ -13,6 +13,8 @@ import {
   sendAppointmentCancelledPatientEmail,
   sendAppointmentNoShowPatientEmail,
   notifyPatientAppointmentNoShow,
+  notifyPatientAppointmentCancelled,
+  notifyProviderAppointmentCancelled,
 } from "../patientAppointmentEmails.js";
 import { migratePreBookingMessagesToAppointment } from "../appointment-messages/migratePreBookingThread.js";
 
@@ -82,83 +84,131 @@ async function runAppointmentPatientNotifications({
   patientName,
   patientId,
   providerName,
+  providerId,
+  providerEmail,
   serviceLabel,
   appointmentDate,
   appointmentTime,
-  providerId,
   cancelReason,
   wasRequest,
+  cancelledBy,
 }) {
   const outcomes = {
     confirmed_email: null,
     cancelled_email: null,
+    cancelled_patient_notification: null,
+    cancelled_provider_notification: null,
     no_show_email: null,
     no_show_notification: null,
   };
 
-  if (!patientEmail) {
-    // eslint-disable-next-line no-console
-    console.warn("[appointments] skipped patient emails — no patient email", { patientId, nextStatus });
-    return outcomes;
-  }
-
   const notifyUserId = await resolvePatientNotifyUserId(patientId);
 
   if (prevStatus !== "confirmed" && nextStatus === "confirmed") {
-    try {
-      await sendAppointmentConfirmedPatientEmail({
-        to: patientEmail,
-        patientName,
-        providerName,
-        serviceLabel,
-        appointmentDate,
-        appointmentTime,
-      });
-      outcomes.confirmed_email = "sent";
-    } catch (err) {
-      outcomes.confirmed_email = "failed";
+    if (!patientEmail) {
       // eslint-disable-next-line no-console
-      console.warn("[appointments] confirmed email failed:", err?.message || err);
+      console.warn("[appointments] skipped confirmed email — no patient email", { patientId });
+    } else {
+      try {
+        await sendAppointmentConfirmedPatientEmail({
+          to: patientEmail,
+          patientName,
+          providerName,
+          serviceLabel,
+          appointmentDate,
+          appointmentTime,
+        });
+        outcomes.confirmed_email = "sent";
+      } catch (err) {
+        outcomes.confirmed_email = "failed";
+        // eslint-disable-next-line no-console
+        console.warn("[appointments] confirmed email failed:", err?.message || err);
+      }
     }
   }
 
   if (prevStatus !== "cancelled" && nextStatus === "cancelled") {
-    try {
-      await sendAppointmentCancelledPatientEmail({
-        to: patientEmail,
-        patientName,
-        providerName,
-        serviceLabel,
-        appointmentDate,
-        reason: cancelReason,
-        wasRequest,
-      });
-      outcomes.cancelled_email = "sent";
-    } catch (err) {
-      outcomes.cancelled_email = "failed";
-      // eslint-disable-next-line no-console
-      console.warn("[appointments] cancelled email failed:", err?.message || err);
+    const cancelledByPatient = cancelledBy === "patient";
+    const cancelledByProvider = cancelledBy === "provider" || cancelledBy === "admin";
+
+    if (cancelledByProvider && patientEmail) {
+      try {
+        await sendAppointmentCancelledPatientEmail({
+          to: patientEmail,
+          patientName,
+          providerName,
+          serviceLabel,
+          appointmentDate,
+          reason: cancelReason,
+          wasRequest,
+        });
+        outcomes.cancelled_email = "sent";
+      } catch (err) {
+        outcomes.cancelled_email = "failed";
+        // eslint-disable-next-line no-console
+        console.warn("[appointments] cancelled email failed:", err?.message || err);
+      }
+    }
+
+    if (cancelledByProvider) {
+      try {
+        const notif = await notifyPatientAppointmentCancelled({
+          patientId: notifyUserId,
+          patientEmail,
+          providerName,
+          serviceLabel,
+          appointmentDate,
+          wasRequest,
+        });
+        outcomes.cancelled_patient_notification = notif.sent ? "sent" : "skipped";
+      } catch (err) {
+        outcomes.cancelled_patient_notification = "failed";
+        // eslint-disable-next-line no-console
+        console.warn("[appointments] cancelled patient notification failed:", err?.message || err);
+      }
+    }
+
+    if (cancelledByPatient) {
+      try {
+        const notif = await notifyProviderAppointmentCancelled({
+          providerId,
+          providerEmail,
+          patientName,
+          serviceLabel,
+          appointmentDate,
+        });
+        outcomes.cancelled_provider_notification = notif.sent ? "sent" : "skipped";
+      } catch (err) {
+        outcomes.cancelled_provider_notification = "failed";
+        // eslint-disable-next-line no-console
+        console.warn("[appointments] cancelled provider notification failed:", err?.message || err);
+      }
     }
   }
 
   if (prevStatus !== "no_show" && nextStatus === "no_show") {
-    try {
-      await sendAppointmentNoShowPatientEmail({
-        to: patientEmail,
-        patientName,
-        providerName,
-        serviceLabel,
-        appointmentDate,
-        appointmentTime,
-        providerId,
-      });
-      outcomes.no_show_email = "sent";
+    if (!patientEmail) {
       // eslint-disable-next-line no-console
-      console.log("[appointments] no-show email sent to", patientEmail);
-    } catch (err) {
-      outcomes.no_show_email = "failed";
-      // eslint-disable-next-line no-console
-      console.warn("[appointments] no-show email failed:", err?.message || err);
+      console.warn("[appointments] skipped no-show email — no patient email", { patientId });
+    } else {
+      try {
+        await sendAppointmentNoShowPatientEmail({
+          to: patientEmail,
+          patientName,
+          providerName,
+          serviceLabel,
+          appointmentDate,
+          appointmentTime,
+          providerId,
+        });
+        outcomes.no_show_email = "sent";
+        // eslint-disable-next-line no-console
+        console.log("[appointments] no-show email sent to", patientEmail);
+      } catch (err) {
+        outcomes.no_show_email = "failed";
+        // eslint-disable-next-line no-console
+        console.warn("[appointments] no-show email failed:", err?.message || err);
+      }
     }
 
     try {
@@ -413,9 +463,7 @@ appointmentsRouter.patch("/:id", async (req, res, next) => {
       !Object.prototype.hasOwnProperty.call(updates, "deposit_amount") &&
       !(Number(existing.deposit_amount) > 0)
     ) {
-      updates.deposit_amount = await resolveProviderBookingDeposit(existing.provider_id, {
-        totalAmount: existing.total_amount,
-      });
+      updates.deposit_amount = await resolveProviderBookingDeposit(existing.provider_id);
     }
 
     for (const key of PATCH_ALLOWED) {
@@ -451,6 +499,17 @@ appointmentsRouter.patch("/:id", async (req, res, next) => {
     const cancelReason =
       updates.cancellation_reason != null ? String(updates.cancellation_reason) : String(existing.cancellation_reason || "");
 
+    let cancelledBy = null;
+    if (prevStatus !== "cancelled" && nextStatus === "cancelled") {
+      if (existing.patient_id === me.id && !hasAdminAccess(me.role)) {
+        cancelledBy = "patient";
+      } else if (existing.provider_id === me.id && !hasAdminAccess(me.role)) {
+        cancelledBy = "provider";
+      } else if (hasAdminAccess(me.role)) {
+        cancelledBy = "admin";
+      }
+    }
+
     const { patientEmail, patientName } = await resolvePatientContact(
       updated.patient_id || existing.patient_id,
       updated.patient_email || existing.patient_email,
@@ -464,12 +523,14 @@ appointmentsRouter.patch("/:id", async (req, res, next) => {
       patientName,
       patientId: updated.patient_id || existing.patient_id,
       providerName: updated.provider_name || existing.provider_name,
+      providerId: updated.provider_id || existing.provider_id,
+      providerEmail: updated.provider_email || existing.provider_email,
       serviceLabel: updated.service || existing.service,
       appointmentDate: updated.appointment_date || existing.appointment_date,
       appointmentTime: updated.appointment_time || existing.appointment_time,
-      providerId: updated.provider_id || existing.provider_id,
       cancelReason,
       wasRequest: prevStatus === "requested",
+      cancelledBy,
     });
 
     return res.json({ ...updated, patient_notifications: patientNotifications });

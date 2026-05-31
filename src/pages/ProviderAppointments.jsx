@@ -278,7 +278,10 @@ export default function ProviderAppointments() {
 
   const update = useMutation({
     mutationFn: ({ id, data }) => appointmentsApi.update(id, data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["my-appointments"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["my-appointments"] });
+      qc.invalidateQueries({ queryKey: ["my-notifications"] });
+    },
   });
 
   const requestDeposit = useMutation({

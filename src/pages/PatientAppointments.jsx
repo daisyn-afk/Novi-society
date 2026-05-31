@@ -138,7 +138,10 @@ export default function PatientAppointments() {
   const cancel = useMutation({
     mutationFn: (id) =>
       appointmentsApi.update(id, { status: "cancelled", cancellation_reason: "Cancelled by patient" }),
-    onSuccess: () => qc.invalidateQueries(["patient-appointments"]),
+    onSuccess: () => {
+      qc.invalidateQueries(["patient-appointments"]);
+      qc.invalidateQueries({ queryKey: ["my-notifications"] });
+    },
   });
 
   const payDeposit = useMutation({
