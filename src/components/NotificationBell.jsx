@@ -22,6 +22,7 @@ const NOTIF_ICONS = {
   treatment_record_approved: CheckCircle,
   treatment_record_flagged: FileText,
   treatment_record_changes_requested: FileText,
+  treatment_record_resubmitted: FileText,
   appointment_message: MessageSquare,
 };
 
@@ -41,6 +42,7 @@ const NOTIF_COLORS = {
   treatment_record_approved: "text-green-600 bg-green-50",
   treatment_record_flagged: "text-red-600 bg-red-50",
   treatment_record_changes_requested: "text-orange-600 bg-orange-50",
+  treatment_record_resubmitted: "text-blue-600 bg-blue-50",
   appointment_message: "text-indigo-600 bg-indigo-50",
 };
 
@@ -60,6 +62,7 @@ const NOTIF_ROW_STYLES = {
   treatment_record_approved: "bg-green-50/80 border-green-200",
   treatment_record_flagged: "bg-red-50/80 border-red-200",
   treatment_record_changes_requested: "bg-orange-50/80 border-orange-200",
+  treatment_record_resubmitted: "bg-blue-50/80 border-blue-200",
   appointment_message: "bg-indigo-50/80 border-indigo-200",
 };
 
@@ -194,6 +197,8 @@ export default function NotificationBell() {
       targetHref = appendQueryParams(targetHref || createPageUrl("ProviderPractice"), {
         tab: "appointments",
       });
+    } else if (type === "treatment_record_resubmitted") {
+      targetHref = createPageUrl("MDTreatmentRecords");
     } else if (type.startsWith("treatment_record_")) {
       targetHref = targetHref || createPageUrl("ProviderPractice");
     } else if (type === "appointment_message") {

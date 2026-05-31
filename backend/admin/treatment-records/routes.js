@@ -1,6 +1,11 @@
 import { Router } from "express";
 import { query } from "../db.js";
 import { getMeFromAccessToken } from "../auth/service.js";
+import { getProviderIdAliases } from "../mdSupervisedAccess.js";
+import {
+  notifyMdOfTreatmentRecordResubmit,
+  notifyProviderOfTreatmentRecordReview,
+} from "./notifications.js";
 
 export const treatmentRecordsRouter = Router();
 
@@ -20,38 +25,8 @@ function isMedicalDirectorRole(role) {
 }
 
 const MD_REVIEW_STATUSES = new Set(["approved", "flagged", "changes_requested"]);
-
-async function notifyProviderOfTreatmentRecordReview(record) {
-  const status = String(record?.status || "").trim();
-  if (!MD_REVIEW_STATUSES.has(status)) return;
-  const service = String(record?.service || "treatment").trim();
-  const patient = String(record?.patient_name || record?.patient_email || "patient").trim();
-  const notes = String(record?.md_review_notes || "").trim();
-  const messages = {
-    approved: `Your MD approved your treatment record for ${service} (${patient}).`,
-    flagged: `Your MD flagged your treatment record for ${service} (${patient}).${notes ? ` Notes: ${notes}` : ""}`,
-    changes_requested: `Your MD requested changes on your treatment record for ${service} (${patient}).${notes ? ` Notes: ${notes}` : ""}`,
-  };
-  const types = {
-    approved: "treatment_record_approved",
-    flagged: "treatment_record_flagged",
-    changes_requested: "treatment_record_changes_requested",
-  };
-  const message = messages[status];
-  const type = types[status];
-  if (!message || !record?.provider_id) return;
-  await query(
-    `insert into public.notifications (user_id, user_email, type, message, link_page)
-     values ($1, $2, $3, $4, $5)`,
-    [
-      record.provider_id,
-      record.provider_email || null,
-      type,
-      message,
-      "ProviderPractice",
-    ]
-  ).catch(() => {});
-}
+const PROVIDER_SUBMIT_FROM = new Set(["flagged", "changes_requested", "draft"]);
+const PROVIDER_RESUBMIT_NOTIFY_MD = new Set(["flagged", "changes_requested"]);
 
 function mapRow(row) {
   return {
@@ -99,15 +74,29 @@ function buildPayload(body) {
   };
 }
 
+async function providerOwnsRecord(me, providerId) {
+  if (String(providerId || "") === String(me.id || "")) return true;
+  const { aliases } = await getProviderIdAliases(providerId);
+  return aliases.includes(String(me.id || ""));
+}
+
 async function supervisedProviderIdsForMd(mdAuthUserId) {
   const { rows } = await query(
     `select provider_id::text as provider_id
        from public.medical_director_relationship
       where medical_director_id = $1
-        and lower(status) = 'active'`,
+        and lower(coalesce(status, '')) = 'active'`,
     [mdAuthUserId]
   );
-  return rows.map((r) => r.provider_id).filter(Boolean);
+  const ids = new Set();
+  for (const row of rows || []) {
+    const pid = String(row.provider_id || "").trim();
+    if (!pid) continue;
+    ids.add(pid);
+    const { aliases } = await getProviderIdAliases(pid);
+    for (const alias of aliases) ids.add(alias);
+  }
+  return Array.from(ids);
 }
 
 treatmentRecordsRouter.get("/", async (req, res, next) => {
@@ -182,7 +171,7 @@ treatmentRecordsRouter.post("/", async (req, res, next) => {
     const me = await getMeFromAccessToken(token);
     const body = req.body || {};
     const providerId = String(body.provider_id || "").trim() || me.id;
-    if (!hasAdminAccess(me.role) && providerId !== me.id) {
+    if (!hasAdminAccess(me.role) && !(await providerOwnsRecord(me, providerId))) {
       return res.status(403).json({ error: "Forbidden." });
     }
     const p = buildPayload({ ...body, provider_id: providerId });
@@ -256,17 +245,41 @@ treatmentRecordsRouter.patch("/:id", async (req, res, next) => {
     const existing = existingRows[0];
     if (!existing) return res.status(404).json({ error: "Treatment record not found." });
 
-    const role = String(me.role || "").toLowerCase();
-    let canEdit =
-      existing.provider_id === me.id ||
-      hasAdminAccess(me.role);
-    if (!canEdit && isMedicalDirectorRole(me.role)) {
+    const isMd = isMedicalDirectorRole(me.role);
+    const isAdmin = hasAdminAccess(me.role);
+    const isProviderUpdate = !isMd && !isAdmin;
+
+    let canEdit = isAdmin || (await providerOwnsRecord(me, existing.provider_id));
+    if (!canEdit && isMd) {
       const supervised = await supervisedProviderIdsForMd(me.id);
       canEdit = supervised.includes(String(existing.provider_id || ""));
     }
     if (!canEdit) return res.status(403).json({ error: "Forbidden." });
 
-    const body = req.body || {};
+    const body = { ...(req.body || {}) };
+    const prevStatus = String(existing.status || "").trim();
+
+    if (isProviderUpdate) {
+      delete body.md_review_notes;
+      delete body.md_reviewed_by;
+      delete body.md_reviewed_at;
+
+      if (Object.prototype.hasOwnProperty.call(body, "status")) {
+        const nextStatus = String(body.status || "").trim();
+        const allowedStatuses = new Set(["draft", "submitted"]);
+        if (!allowedStatuses.has(nextStatus)) {
+          return res.status(400).json({ error: "Providers may only save draft or submitted records." });
+        }
+        if (nextStatus === "submitted" && !PROVIDER_SUBMIT_FROM.has(prevStatus) && prevStatus !== "submitted") {
+          return res.status(400).json({ error: "This record cannot be submitted in its current state." });
+        }
+        if (nextStatus === "submitted" && PROVIDER_SUBMIT_FROM.has(prevStatus)) {
+          body.md_reviewed_by = null;
+          body.md_reviewed_at = null;
+        }
+      }
+    }
+
     const allowed = [
       "areas_treated", "products_used", "units_used", "units_label", "clinical_notes",
       "adverse_reaction", "adverse_reaction_notes", "before_photo_urls", "after_photo_urls",
@@ -295,14 +308,24 @@ treatmentRecordsRouter.patch("/:id", async (req, res, next) => {
       params
     );
     const updated = mapRow(rows[0]);
-    const prevStatus = String(existing.status || "").trim();
     const nextStatus = String(updated.status || "").trim();
-    const mdActed =
-      (isMedicalDirectorRole(me.role) || hasAdminAccess(me.role)) &&
-      Object.prototype.hasOwnProperty.call(body, "status");
+
+    const mdActed = (isMd || isAdmin) && Object.prototype.hasOwnProperty.call(body, "status");
     if (mdActed && prevStatus !== nextStatus && MD_REVIEW_STATUSES.has(nextStatus)) {
       await notifyProviderOfTreatmentRecordReview(updated);
     }
+
+    const providerResubmitted =
+      isProviderUpdate &&
+      Object.prototype.hasOwnProperty.call(body, "status") &&
+      nextStatus === "submitted" &&
+      prevStatus !== nextStatus &&
+      PROVIDER_RESUBMIT_NOTIFY_MD.has(prevStatus);
+
+    if (providerResubmitted) {
+      await notifyMdOfTreatmentRecordResubmit(updated);
+    }
+
     return res.json(updated);
   } catch (error) {
     return next(error);
