@@ -10,7 +10,7 @@ import {
   Plus, X, ChevronDown, ChevronUp, ShieldCheck, Eye, Star, Clock, Shield, Copy, Link, Upload
 } from "lucide-react";
 import { base44 } from "@/api/base44Client";
-import CprBlsCertSection from "@/components/practice/CprBlsCertSection.jsx";
+import RequiredComplianceDocuments from "@/components/practice/RequiredComplianceDocuments.jsx";
 import { providerReviewAverage } from "@/lib/providerRating";
 import { emptyGalleryPair } from "@/lib/galleryPhotos";
 
@@ -90,7 +90,18 @@ function BookingLinkCard({ me }) {
   );
 }
 
-export default function PracticeProfileTab({ form, setForm, me, onSave, saving, saved, serviceTypes = [], activeServiceIds = new Set(), manufacturerApplications = [], focusSection }) {
+export default function PracticeProfileTab({
+  form,
+  setForm,
+  me,
+  onSave,
+  saving,
+  saved,
+  serviceTypes = [],
+  activeServiceIds = new Set(),
+  manufacturerApplications = [],
+  focusSection,
+}) {
   const qc = useQueryClient();
   const f = (key, val) => setForm(prev => ({ ...prev, [key]: val }));
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
@@ -239,8 +250,6 @@ export default function PracticeProfileTab({ form, setForm, me, onSave, saving, 
           {form.bio && <p className="text-gray-600 text-sm mt-4 leading-relaxed line-clamp-3">{form.bio}</p>}
         </div>
       </GlassCard>
-
-      <CprBlsCertSection me={me} focusSection={focusSection} />
 
       {/* ── Practice Info ── */}
       <GlassCard>
@@ -623,6 +632,14 @@ export default function PracticeProfileTab({ form, setForm, me, onSave, saving, 
           })}
         </div>
       </GlassCard>
+
+      <RequiredComplianceDocuments
+        form={form}
+        setForm={setForm}
+        me={me}
+        focusSection={focusSection}
+        activeServiceIds={activeServiceIds}
+      />
 
       {/* ── Credentials & Education ── */}
       <GlassCard>

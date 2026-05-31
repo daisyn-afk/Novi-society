@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "node scripts/free-dev-ports.mjs && concurrently -k -n \"vite,admin\" -c \"cyan,magenta\" \"vite\" \"npm run dev --prefix backend/admin\"",
+    "dev": "node scripts/free-dev-ports.mjs && concurrently -k -n \"admin,vite\" -c \"magenta,cyan\" \"npm run dev --prefix backend/admin\" \"node scripts/wait-for-admin-api.mjs && vite\"",
     "dev:vite": "vite",
     "dev:admin": "npm run dev --prefix backend/admin",
     "dev:all": "npm run dev",

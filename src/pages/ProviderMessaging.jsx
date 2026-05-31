@@ -1,12 +1,16 @@
 import { useState, useRef, useEffect, useMemo } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { mdMessagesApi } from "@/api/mdMessagesApi";
+import { appointmentMessagesApi } from "@/api/appointmentMessagesApi";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { MessageSquare, Send, Loader2 } from "lucide-react";
+import MessageThread from "@/components/messaging/MessageThread";
+import { MessageSquare, Send, Loader2, Stethoscope, User } from "lucide-react";
 import { format, isToday, isYesterday } from "date-fns";
+import { parsePreBookingThreadId } from "@/lib/appointmentMessageThreads";
 
 function formatMsgTime(ts) {
   if (!ts) return "";
@@ -45,7 +49,13 @@ const glassCard = {
 
 export default function ProviderMessaging() {
   const qc = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab =
+    String(searchParams.get("tab") || "").trim() === "patient_queries"
+      ? "patient_queries"
+      : "md";
   const [activeThread, setActiveThread] = useState(null);
+  const [activePatientConv, setActivePatientConv] = useState(null);
   const [replyText, setReplyText] = useState("");
   const messagesEndRef = useRef(null);
   const prevMsgCountRef = useRef(0);
@@ -73,11 +83,55 @@ export default function ProviderMessaging() {
   const { data: threads = [], isLoading: threadsLoading } = useQuery({
     queryKey: ["msg-threads"],
     queryFn: () => mdMessagesApi.getThreads(),
+    enabled: !!me && activeTab === "md",
+    refetchInterval: 5000,
+    staleTime: 4000,
+    refetchOnWindowFocus: true,
+  });
+
+  const { data: preInbox = [], isLoading: preInboxLoading } = useQuery({
+    queryKey: ["pre-booking-inbox"],
+    queryFn: () => appointmentMessagesApi.getPreBookingInbox(),
     enabled: !!me,
     refetchInterval: 5000,
     staleTime: 4000,
     refetchOnWindowFocus: true,
   });
+
+  const preInboxUnreadTotal = useMemo(
+    () => preInbox.reduce((s, c) => s + Number(c.unread_count || 0), 0),
+    [preInbox]
+  );
+
+  const setTab = (tab) => {
+    const next = new URLSearchParams(searchParams);
+    if (tab === "patient_queries") next.set("tab", "patient_queries");
+    else next.delete("tab");
+    next.delete("thread_id");
+    setSearchParams(next, { replace: true });
+    if (tab === "md") setActivePatientConv(null);
+    else setActiveThread(null);
+  };
+
+  useEffect(() => {
+    if (activeTab !== "patient_queries") return;
+    const threadId = String(searchParams.get("thread_id") || "").trim();
+    if (!threadId) return;
+    const found = preInbox.find((c) => c.thread_id === threadId);
+    if (found) {
+      setActivePatientConv(found);
+      return;
+    }
+    const pre = parsePreBookingThreadId(threadId);
+    if (pre?.patientId) {
+      setActivePatientConv({
+        thread_id: threadId,
+        patient_id: pre.patientId,
+        patient_name: "Patient",
+        patient_email: null,
+      });
+    }
+  }, [activeTab, searchParams, preInbox]);
 
   // Messages for active thread — faster poll while user is actively reading.
   const { data: messages = [], isLoading: messagesLoading } = useQuery({
@@ -242,7 +296,15 @@ export default function ProviderMessaging() {
     [activeMDRelationships, me, activeThread]
   );
 
-  const isLoading = relsLoading || threadsLoading;
+  const isLoading = activeTab === "md" ? relsLoading || threadsLoading : preInboxLoading;
+
+  const selectPatientConv = (conv) => {
+    setActivePatientConv(conv);
+    const next = new URLSearchParams(searchParams);
+    next.set("tab", "patient_queries");
+    next.set("thread_id", conv.thread_id);
+    setSearchParams(next, { replace: true });
+  };
 
   return (
     <div className="flex flex-col h-full" style={{ minHeight: 0 }}>
@@ -266,11 +328,135 @@ export default function ProviderMessaging() {
           Messages
         </h1>
         <p style={{ color: "rgba(30,37,53,0.6)", fontSize: 13, marginTop: 4 }}>
-          Direct messaging with your supervising medical director
+          {activeTab === "patient_queries"
+            ? "Pre-booking questions from patients on the marketplace"
+            : "Direct messaging with your supervising medical director"}
         </p>
+        <div className="flex gap-2 mt-3 flex-wrap">
+          <button
+            type="button"
+            onClick={() => setTab("md")}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors"
+            style={{
+              background: activeTab === "md" ? "rgba(99,130,218,0.15)" : "rgba(30,37,53,0.05)",
+              color: activeTab === "md" ? "#4a5fa8" : "rgba(30,37,53,0.55)",
+              border: activeTab === "md" ? "1px solid rgba(99,130,218,0.35)" : "1px solid rgba(30,37,53,0.1)",
+            }}
+          >
+            <Stethoscope className="w-3.5 h-3.5" /> Medical Director
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab("patient_queries")}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors relative"
+            style={{
+              background: activeTab === "patient_queries" ? "rgba(250,111,48,0.12)" : "rgba(30,37,53,0.05)",
+              color: activeTab === "patient_queries" ? "#c2440a" : "rgba(30,37,53,0.55)",
+              border:
+                activeTab === "patient_queries"
+                  ? "1px solid rgba(250,111,48,0.35)"
+                  : "1px solid rgba(30,37,53,0.1)",
+            }}
+          >
+            <User className="w-3.5 h-3.5" /> Pre-booking inquiries
+            {preInboxUnreadTotal > 0 && (
+              <span
+                className="ml-1 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold flex items-center justify-center text-white"
+                style={{ background: "#FA6F30" }}
+              >
+                {preInboxUnreadTotal > 9 ? "9+" : preInboxUnreadTotal}
+              </span>
+            )}
+          </button>
+        </div>
       </div>
 
-      {/* Main two-panel layout */}
+      {activeTab === "patient_queries" ? (
+        <div className="flex flex-1 gap-4 overflow-hidden" style={{ minHeight: 0 }}>
+          <div className="flex flex-col flex-shrink-0 overflow-hidden" style={{ width: 280, ...glassCard }}>
+            <div className="px-4 py-3 border-b border-white/60">
+              <p className="font-semibold text-sm text-slate-800">Patient inquiries</p>
+              <p className="text-xs text-slate-400">Before they book an appointment</p>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              {preInboxLoading && (
+                <div className="flex justify-center py-10">
+                  <Loader2 size={20} className="animate-spin text-slate-300" />
+                </div>
+              )}
+              {!preInboxLoading && preInbox.length === 0 && (
+                <div className="text-center py-10 px-4">
+                  <MessageSquare size={28} className="mx-auto text-slate-200 mb-2" />
+                  <p className="text-xs text-slate-400">No marketplace messages yet</p>
+                </div>
+              )}
+              {preInbox.map((conv) => {
+                const isActive = activePatientConv?.thread_id === conv.thread_id;
+                const hasUnread = Number(conv.unread_count || 0) > 0;
+                return (
+                  <button
+                    key={conv.thread_id + (conv.patient_id || "")}
+                    type="button"
+                    onClick={() => selectPatientConv(conv)}
+                    className="w-full text-left px-4 py-3 border-b border-white/40 hover:bg-white/50"
+                    style={{
+                      background: isActive ? "rgba(250,111,48,0.08)" : "transparent",
+                      borderLeft: isActive ? "3px solid #FA6F30" : "3px solid transparent",
+                    }}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold truncate text-slate-800">
+                          {conv.patient_name || conv.patient_email || "Patient"}
+                        </p>
+                        {conv.patient_email && conv.patient_name && (
+                          <p className="text-[10px] text-slate-400 truncate">{conv.patient_email}</p>
+                        )}
+                        <p className="text-[11px] text-slate-400 truncate mt-0.5">
+                          {conv.last_message || "No messages"}
+                        </p>
+                      </div>
+                      {hasUnread && (
+                        <Badge className="h-4 min-w-[16px] text-[10px] text-white border-0" style={{ background: "#FA6F30" }}>
+                          {conv.unread_count}
+                        </Badge>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="flex flex-col flex-1 overflow-hidden" style={{ minWidth: 0, ...glassCard }}>
+            {!activePatientConv ? (
+              <div className="flex flex-col items-center justify-center flex-1 text-center px-6">
+                <MessageSquare size={26} className="text-slate-300 mb-2" />
+                <p className="text-sm text-slate-400">Select a patient inquiry to reply</p>
+                <p className="text-xs text-slate-400 mt-1 max-w-xs">
+                  These are messages sent from your marketplace profile before booking.
+                </p>
+              </div>
+            ) : (
+              <div className="flex flex-col flex-1 min-h-0 p-4">
+                <div className="mb-3 flex-shrink-0">
+                  <p className="text-sm font-semibold text-slate-800">
+                    {activePatientConv.patient_name || activePatientConv.patient_email || "Patient"}
+                  </p>
+                  <p className="text-[11px] text-slate-400">Pre-booking · encourage them to book when ready</p>
+                </div>
+                <MessageThread
+                  appointmentId={activePatientConv.thread_id}
+                  recipientId={activePatientConv.patient_id}
+                  recipientName={activePatientConv.patient_name || "Patient"}
+                  recipientEmail={activePatientConv.patient_email}
+                />
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
+      /* Main two-panel layout — MD */
       <div className="flex flex-1 gap-4 overflow-hidden" style={{ minHeight: 0 }}>
         {/* LEFT PANEL — MD list */}
         <div
@@ -496,6 +682,7 @@ export default function ProviderMessaging() {
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }

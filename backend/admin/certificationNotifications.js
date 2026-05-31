@@ -80,7 +80,7 @@ async function listAdminRecipients() {
   return rows || [];
 }
 
-async function resolveNotificationRecipient({ providerId, providerEmail }) {
+export async function resolveNotificationRecipient({ providerId, providerEmail }) {
   const id = String(providerId || "").trim();
   const email = String(providerEmail || "").trim().toLowerCase();
   if (!id && !email) return { userId: null, userEmail: null };

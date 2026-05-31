@@ -32,6 +32,10 @@ export function buildProviderProfileForm(me = {}) {
     specialties: Array.isArray(me.specialties) ? me.specialties : [],
     languages: Array.isArray(me.languages) ? me.languages : [],
     credentials: Array.isArray(me.credentials) ? me.credentials : [],
+    md_name: me.md_name || "",
+    md_license_number: me.md_license_number || "",
+    md_license_state: me.md_license_state || "",
+    supervision_agreement_date: me.supervision_agreement_date || "",
   };
 }
 

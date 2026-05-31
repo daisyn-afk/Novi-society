@@ -10,6 +10,8 @@ const CATEGORY_ENUM = new Set([
   "other"
 ]);
 
+const MAX_SUPERVISION_MONTHS = 120;
+
 function rowToApi(row) {
   return {
     id: row.id,
@@ -152,6 +154,17 @@ function normalizeServiceTypePayload(payload = {}) {
     );
     err.statusCode = 400;
     throw err;
+  }
+
+  if (normalized.requires_supervision_months !== null) {
+    const months = normalized.requires_supervision_months;
+    if (!Number.isInteger(months) || months < 0 || months > MAX_SUPERVISION_MONTHS) {
+      const err = new Error(
+        `requires_supervision_months must be a whole number between 0 and ${MAX_SUPERVISION_MONTHS}.`
+      );
+      err.statusCode = 400;
+      throw err;
+    }
   }
 
   return normalized;

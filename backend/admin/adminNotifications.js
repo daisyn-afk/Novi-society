@@ -247,6 +247,59 @@ export async function notifyAdminsOfLicenseSubmission({
 // Public: notify admins of certification submission
 // ---------------------------------------------------------------------------
 
+/**
+ * Provider requested MD coverage cancel — in-app + email. Does not call Stripe.
+ */
+export async function notifyAdminsOfProviderMdCancellation({
+  providerName,
+  providerEmail,
+  serviceTypeName,
+  mdSubscriptionId,
+  stripeSubscriptionId,
+  reason,
+  notes,
+}) {
+  const admins = await listAdminRecipients();
+  if (!admins.length) return;
+
+  const stripeLabel = String(stripeSubscriptionId || "").trim() || "(none on file)";
+  const summaryLines = [
+    `Provider: ${providerName || providerEmail || "Unknown"}`,
+    `Email: ${providerEmail || "Not provided"}`,
+    `Service: ${serviceTypeName || "N/A"}`,
+    `Reason: ${reason || "Not provided"}`,
+    notes ? `Notes: ${notes}` : null,
+    `NOVI subscription id: ${mdSubscriptionId || "N/A"}`,
+    `Stripe subscription id: ${stripeLabel}`,
+    "Action required: cancel or deactivate this subscription in the Stripe dashboard if billing should stop.",
+    "NOVI marked coverage as cancelled in the database only — Stripe was not modified by the app.",
+  ].filter(Boolean);
+
+  for (const admin of admins) {
+    const adminUserId = String(admin?.auth_user_id || "").trim() || null;
+    const adminEmail = String(admin?.email || "").trim().toLowerCase() || null;
+    if (!adminEmail) continue;
+
+    await insertAdminNotification({
+      adminUserId,
+      adminEmail,
+      type: "md_subscription_cancel_requested",
+      message: `${providerName || providerEmail || "A provider"} requested cancellation of MD coverage for ${serviceTypeName || "a service"}. Deactivate in Stripe manually.`,
+      linkPage: "AdminLicenses",
+    });
+
+    await sendAdminEmail({
+      adminEmail,
+      subject: `MD coverage cancellation — deactivate in Stripe (${serviceTypeName || "service"})`,
+      html: buildAdminSubmissionEmailHtml({
+        adminName: admin?.first_name || admin?.full_name || "Admin",
+        title: "Provider requested MD coverage cancellation",
+        summaryLines,
+      }),
+    });
+  }
+}
+
 export async function notifyAdminsOfCertificationSubmission({
   providerName,
   providerEmail,
