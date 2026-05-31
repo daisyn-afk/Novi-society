@@ -745,7 +745,15 @@ export function createLovableProviderClient() {
           filter: async (filters = {}) => {
             const pid = String(filters?.provider_id || "").trim();
             const qs = pid ? `?provider_id=${encodeURIComponent(pid)}` : "";
-            return authRequest(`/admin/md-relationships${qs}`, { method: "GET" });
+            const rows = await authRequest(`/admin/md-relationships${qs}`, { method: "GET" });
+            const list = Array.isArray(rows) ? rows : [];
+            const mdId = String(filters?.medical_director_id || "").trim();
+            const status = String(filters?.status || "").trim().toLowerCase();
+            return list.filter((row) => {
+              if (mdId && String(row.medical_director_id || "") !== mdId) return false;
+              if (status && String(row.status || "").toLowerCase() !== status) return false;
+              return true;
+            });
           },
           create: (payload) =>
             authRequest("/admin/md-relationships", { method: "POST", body: JSON.stringify(payload || {}) }),

@@ -18,6 +18,23 @@ const STATUS_STYLE = {
   changes_requested: { bg: "bg-orange-100", text: "text-orange-700", label: "Changes Requested" },
 };
 
+function canMdActOnRecord(record) {
+  return String(record?.status || "") === "submitted";
+}
+
+function isAwaitingProviderResubmit(record) {
+  const status = String(record?.status || "");
+  return status === "flagged" || status === "changes_requested";
+}
+
+function isResubmittedRecord(record) {
+  return (
+    String(record?.status || "") === "submitted" &&
+    Boolean(String(record?.md_review_notes || "").trim()) &&
+    !record?.md_reviewed_at
+  );
+}
+
 export default function TreatmentRecordsReview({ providerId = null }) {
   const qc = useQueryClient();
   const [expanded, setExpanded] = useState(null);
@@ -27,19 +44,12 @@ export default function TreatmentRecordsReview({ providerId = null }) {
 
   const { data: records = [], isLoading } = useQuery({
     queryKey: ["md-treatment-records", providerId],
-    queryFn: async () => {
-      const me = await base44.auth.me();
-      const rels = await base44.entities.MedicalDirectorRelationship.filter({ medical_director_id: me.id, status: "active" });
-      const providerIds = rels.map((r) => r.provider_id);
-      if (!providerIds.length) return [];
-      if (providerId && !providerIds.includes(providerId)) return [];
-      const all = await base44.entities.TreatmentRecord.filter(
+    queryFn: () =>
+      base44.entities.TreatmentRecord.filter(
         providerId ? { provider_id: providerId } : {},
         "-created_date",
         200
-      );
-      return (all || []).filter((r) => providerIds.includes(r.provider_id));
-    },
+      ),
   });
 
   const displayed = records.filter((r) => {
@@ -58,7 +68,7 @@ export default function TreatmentRecordsReview({ providerId = null }) {
       });
     },
     onSuccess: () => {
-      qc.invalidateQueries(["md-treatment-records"]);
+      qc.invalidateQueries({ queryKey: ["md-treatment-records"] });
       qc.invalidateQueries({ queryKey: ["my-notifications"] });
       setReviewDialog({ open: false, record: null, action: null });
       setReviewNote("");
@@ -117,6 +127,12 @@ export default function TreatmentRecordsReview({ providerId = null }) {
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-semibold text-sm" style={{ color: "#243257" }}>{r.service}</span>
                         <Badge className={`text-xs border-0 ${ss.bg} ${ss.text}`}>{ss.label}</Badge>
+                        {isResubmittedRecord(r) && (
+                          <Badge className="text-xs border-0 bg-blue-100 text-blue-700">Resubmitted</Badge>
+                        )}
+                        {isAwaitingProviderResubmit(r) && (
+                          <Badge className="text-xs border-0 bg-slate-100 text-slate-600">Awaiting provider resubmission</Badge>
+                        )}
                         {r.adverse_reaction && (
                           <Badge className="text-xs border-0 bg-red-100 text-red-600 flex items-center gap-1">
                             <AlertTriangle className="w-3 h-3" />Adverse Reaction
@@ -129,7 +145,7 @@ export default function TreatmentRecordsReview({ providerId = null }) {
                       </p>
                     </div>
                     <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end max-w-[min(100%,320px)]">
-                      {r.status === "submitted" && (
+                      {canMdActOnRecord(r) && (
                         <>
                           <Button size="sm" className="h-8 px-2 text-xs" style={{ background: "#FA6F30", color: "#fff" }}
                             onClick={e => { e.stopPropagation(); setReviewDialog({ open: true, record: r, action: "approve" }); }}>
@@ -252,7 +268,7 @@ export default function TreatmentRecordsReview({ providerId = null }) {
                         </div>
                       )}
 
-                      {r.status === "submitted" && (
+                      {canMdActOnRecord(r) && (
                         <div className="flex gap-2">
                           <Button size="sm" style={{ background: "#FA6F30", color: "#fff" }}
                             onClick={() => setReviewDialog({ open: true, record: r, action: "approve" })}>

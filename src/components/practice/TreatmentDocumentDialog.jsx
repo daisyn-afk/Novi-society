@@ -150,6 +150,9 @@ export default function TreatmentDocumentDialog({ open, onClose, appointment, ex
     setUploading(u => ({ ...u, [type]: false }));
   };
 
+  const isResubmitMode =
+    existingRecord?.status === "flagged" || existingRecord?.status === "changes_requested";
+
   const save = useMutation({
     mutationFn: async (status) => {
       const me = await base44.auth.me();
@@ -174,7 +177,12 @@ export default function TreatmentDocumentDialog({ open, onClose, appointment, ex
       };
       let record;
       if (existingRecord) {
-        record = await base44.entities.TreatmentRecord.update(existingRecord.id, payload);
+        const updatePayload = { ...payload };
+        if (status === "submitted" && isResubmitMode) {
+          updatePayload.md_reviewed_by = null;
+          updatePayload.md_reviewed_at = null;
+        }
+        record = await base44.entities.TreatmentRecord.update(existingRecord.id, updatePayload);
       } else {
         record = await base44.entities.TreatmentRecord.create(payload);
       }
@@ -186,6 +194,7 @@ export default function TreatmentDocumentDialog({ open, onClose, appointment, ex
     },
     onSuccess: (record) => {
       qc.invalidateQueries({ queryKey: ["treatment-records"] });
+      qc.invalidateQueries({ queryKey: ["md-treatment-records"] });
       qc.invalidateQueries({ queryKey: ["my-appointments"] });
       qc.invalidateQueries({ queryKey: ["my-treatment-records-mktplace"] });
       qc.invalidateQueries({ queryKey: ["my-treatment-records-spend"] });
@@ -206,7 +215,7 @@ export default function TreatmentDocumentDialog({ open, onClose, appointment, ex
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle style={{ fontFamily: "'DM Serif Display', serif", color: "#243257" }}>
-            Document Treatment
+            {isResubmitMode ? "Update & Resubmit Treatment Record" : "Document Treatment"}
           </DialogTitle>
         </DialogHeader>
 
