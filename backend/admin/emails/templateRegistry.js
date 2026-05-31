@@ -167,6 +167,70 @@ If you have any questions in the meantime, just reply directly to this email —
       ],
     },
   },
+  {
+    template_key: "pre_order_application_approved",
+    name: "Pre-order application approved",
+    category: "onboarding",
+    recipient_type: "provider",
+    subject: "Registration is open — complete your NOVI Society account",
+    body_html: `Thank you for pre-registering for Medical Director Coverage through NOVI Society.
+
+We're excited to let you know that registration is now officially open.
+
+NOVI Society is more than Medical Director coverage. It's a complete provider ecosystem designed to help you operate compliantly, simplify your business, access education and mentorship, connect with industry vendors, and grow your practice—all from one platform.
+
+To activate your account and complete your registration, please use the link below:
+
+{{cta_button}}
+
+After registering, you'll be able to complete your provider profile, upload any required documents, select the services you plan to offer, and begin the onboarding process. Once submitted, our team will verify your information, review your compliance requirements, and help you activate your NOVI Society membership and Medical Director coverage.
+
+If you have any questions, simply reply to this email and our team will be happy to help.
+
+We look forward to welcoming you to NOVI Society.`,
+    cta_label: "Register Here",
+    cta_url_path: "{{signup_link}}",
+    placeholders: [
+      { tag: "{{first_name}}", desc: "Provider first name" },
+      { tag: "{{service_name}}", desc: "Service or course name from the application" },
+      { tag: "{{signup_link}}", desc: "One-time account registration link" },
+      { tag: "{{cta_button}}", desc: "Primary call-to-action button" },
+    ],
+    include_signoff: true,
+    sample_vars: {
+      first_name: "Sam",
+      service_name: "Medical Director Coverage",
+      signup_link: "https://app.novisociety.com/set-password?token=demo",
+    },
+  },
+  {
+    template_key: "pre_order_application_rejected",
+    name: "Pre-order application rejected",
+    category: "onboarding",
+    recipient_type: "provider",
+    subject: "Update on your NOVI Society pre-registration",
+    body_html: `Thank you for your interest in Medical Director Coverage through NOVI Society.
+
+After reviewing your application, we are unable to approve your pre-registration at this time.
+
+{{rejection_block}}
+
+If you believe this decision was made in error or would like to discuss next steps, please reply to this email and our team will be happy to help.
+
+We appreciate your interest in NOVI Society.`,
+    placeholders: [
+      { tag: "{{first_name}}", desc: "Provider first name" },
+      { tag: "{{service_name}}", desc: "Service or course name from the application" },
+      { tag: "{{rejection_reason}}", desc: "Admin rejection reason" },
+      { tag: "{{rejection_block}}", desc: "Highlighted rejection-reason block" },
+    ],
+    include_signoff: true,
+    sample_vars: {
+      first_name: "Sam",
+      service_name: "Medical Director Coverage",
+      rejection_reason: "We could not verify the license number provided against the state board records.",
+    },
+  },
 
   // -------------------------------------------------------------------------
   // Licenses & Certifications

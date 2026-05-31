@@ -14,7 +14,8 @@ import { format } from "date-fns";
 const STATUS_COLORS = {
   pending_approval: { bg: "rgba(250,111,48,0.15)", color: "#FA6F30", label: "Pending Approval" },
   approved: { bg: "rgba(123,142,200,0.15)", color: "#7B8EC8", label: "Approved" },
-  payment_link_sent: { bg: "rgba(123,142,200,0.15)", color: "#7B8EC8", label: "Payment Link Sent" },
+  payment_link_sent: { bg: "rgba(123,142,200,0.15)", color: "#7B8EC8", label: "Signup Link Sent" },
+  signup_link_sent: { bg: "rgba(123,142,200,0.15)", color: "#7B8EC8", label: "Signup Link Sent" },
   pending_payment: { bg: "rgba(250,111,48,0.15)", color: "#FA6F30", label: "Pending Payment" },
   paid: { bg: "rgba(200,230,60,0.15)", color: "#a8cc20", label: "Paid" },
   confirmed: { bg: "rgba(200,230,60,0.15)", color: "#a8cc20", label: "Confirmed" },
@@ -43,6 +44,8 @@ function getFileTypeFromUrl(url) {
 }
 
 const PAID_STATUSES = new Set(["paid", "confirmed", "completed"]);
+
+const SIGNUP_LINK_SENT_STATUSES = new Set(["signup_link_sent", "payment_link_sent", "approved"]);
 
 function DocumentPreview({ label, url }) {
   if (!url) return null;
@@ -89,8 +92,10 @@ function PreOrderRow({ order, onApprove, onReject, onSendPasswordReset, isProces
 
   const isPending = order.status === "pending_approval";
   const isPaid = PAID_STATUSES.has(order.status);
+  const awaitingSignup = SIGNUP_LINK_SENT_STATUSES.has(order.status);
   const canExpand = !isPaid;
   const passwordAlreadySet = isPasswordSetupComplete(order.password_setup_status);
+  const canResendSignupLink = awaitingSignup && !passwordAlreadySet;
 
   return (
     <div className="rounded-2xl overflow-hidden mb-3" style={{ background: "rgba(255,255,255,0.7)", border: "1px solid rgba(30,37,53,0.1)" }}>
@@ -201,7 +206,7 @@ function PreOrderRow({ order, onApprove, onReject, onSendPasswordReset, isProces
           {order.approved_by && (
             <p className="text-xs mb-4" style={{ color: "rgba(30,37,53,0.45)" }}>
               Approved by {order.approved_by} · {order.approved_at ? format(new Date(order.approved_at), "MMM d, yyyy 'at' h:mm a") : ""}
-              {order.payment_link_sent_at && ` · Payment link sent ${format(new Date(order.payment_link_sent_at), "MMM d")}`}
+              {order.payment_link_sent_at && ` · Signup link sent ${format(new Date(order.payment_link_sent_at), "MMM d")}`}
             </p>
           )}
 
@@ -215,7 +220,7 @@ function PreOrderRow({ order, onApprove, onReject, onSendPasswordReset, isProces
                 style={{ background: "#C8E63C", color: "#1a2540", border: "none" }}
               >
                 <CheckCircle2 className="w-4 h-4" />
-                Approve & Send Payment Link
+                Approve & Send Sign up link
               </Button>
               <Button
                 onClick={() => setShowRejectForm(true)}
@@ -242,7 +247,7 @@ function PreOrderRow({ order, onApprove, onReject, onSendPasswordReset, isProces
               <div className="flex gap-3">
                 <Button
                   onClick={() => onReject(order.id, rejectionReason)}
-                  disabled={isProcessing}
+                  disabled={isProcessing || !rejectionReason.trim()}
                   className="px-5 py-2 rounded-xl text-sm font-bold"
                   style={{ background: "#DA6A63", color: "#fff", border: "none" }}
                 >
@@ -260,7 +265,7 @@ function PreOrderRow({ order, onApprove, onReject, onSendPasswordReset, isProces
             </div>
           )}
 
-          {(order.status === "payment_link_sent" || order.status === "approved") && (
+          {canResendSignupLink && (
             <Button
               onClick={() => onApprove(order.id)}
               disabled={isProcessing}
@@ -268,8 +273,14 @@ function PreOrderRow({ order, onApprove, onReject, onSendPasswordReset, isProces
               style={{ background: "rgba(123,142,200,0.2)", color: "#7B8EC8", border: "1px solid rgba(123,142,200,0.3)" }}
             >
               <Send className="w-4 h-4" />
-              Resend Payment Link
+              Resend Sign up link
             </Button>
+          )}
+
+          {awaitingSignup && passwordAlreadySet && (
+            <p className="text-xs font-semibold" style={{ color: "#2d5016" }}>
+              Provider registered — they can sign in at login
+            </p>
           )}
 
           {SHOW_ADMIN_PASSWORD_RESET_UI && isPaid && order.customer_email && (
@@ -459,24 +470,47 @@ export default function AdminPreOrders() {
 
   const actionMutation = useMutation({
     mutationFn: ({ pre_order_id, action, rejection_reason }) =>
-      base44.functions.invoke("approvePreOrder", { pre_order_id, action, rejection_reason }),
-    onSuccess: () => {
+      base44.functions.invoke("approvePreOrder", {
+        pre_order_id,
+        action,
+        rejection_reason,
+        frontend_origin: typeof window !== "undefined" ? window.location.origin : "",
+      }),
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["pre-orders"] });
       queryClient.invalidateQueries({ queryKey: ["admin-course-payments"] });
+      toast({
+        title: variables.action === "approve" ? "Signup link sent" : "Application rejected",
+        description:
+          variables.action === "approve"
+            ? "The provider will receive an email with their registration link."
+            : "The applicant has been notified by email.",
+      });
+    },
+    onError: (err, variables) => {
+      toast({
+        title: variables.action === "approve" ? "Could not send signup link" : "Could not reject application",
+        description: err?.message || "Request failed. Restart npm run dev if the admin API was updated recently.",
+        variant: "destructive",
+      });
     },
   });
+
+  const signupLinkSentCount = preOrders.filter((o) => SIGNUP_LINK_SENT_STATUSES.has(o.status)).length;
 
   const filtered = statusFilter === "all"
     ? preOrders
     : statusFilter === "paid"
       ? preOrders.filter((o) => PAID_STATUSES.has(o.status))
-      : preOrders.filter((o) => o.status === statusFilter);
+      : statusFilter === "signup_link_sent"
+        ? preOrders.filter((o) => SIGNUP_LINK_SENT_STATUSES.has(o.status))
+        : preOrders.filter((o) => o.status === statusFilter);
 
   const pendingCount = preOrders.filter(o => o.status === "pending_approval").length;
 
   const tabs = [
     { value: "pending_approval", label: "Pending Approval", count: pendingCount },
-    { value: "payment_link_sent", label: "Awaiting Payment" },
+    { value: "signup_link_sent", label: "Signup Link Sent", count: signupLinkSentCount },
     { value: "paid", label: "Paid" },
     { value: "rejected", label: "Rejected" },
     { value: "all", label: "All" },
@@ -535,7 +569,7 @@ export default function AdminPreOrders() {
       <div className="grid grid-cols-4 gap-3">
         {[
           { label: "Pending Approval", value: preOrders.filter(o => o.status === "pending_approval").length, color: "#FA6F30" },
-          { label: "Awaiting Payment", value: preOrders.filter(o => o.status === "payment_link_sent").length, color: "#7B8EC8" },
+          { label: "Signup Link Sent", value: signupLinkSentCount, color: "#7B8EC8" },
           { label: "Paid", value: preOrders.filter(o => o.status === "paid" || o.status === "confirmed").length, color: "#a8cc20" },
           { label: "Total Applications", value: preOrders.length, color: "rgba(30,37,53,0.7)" },
         ].map((s, i) => (

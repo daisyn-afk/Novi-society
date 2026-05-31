@@ -118,50 +118,77 @@ export async function listPreOrders({ limit = 200, customerEmail = "", orderType
   return rows;
 }
 
-export async function updatePreOrderStatus({ id, action, rejectionReason, actor }) {
+export async function getPreOrderById(id) {
+  if (!id) return null;
+  const selectColumns = await getSelectColumnsSql();
+  const { rows } = await query(
+    `select ${selectColumns}
+     from public.pre_orders
+     where id = $1
+     limit 1`,
+    [id]
+  );
+  return rows[0] || null;
+}
+
+export async function markPreOrderSignupLinkSent({ id, actor }) {
   if (!id) {
     const err = new Error("pre_order_id is required.");
     err.statusCode = 400;
     throw err;
   }
-  if (!["approve", "reject"].includes(action)) {
-    const err = new Error("action must be 'approve' or 'reject'.");
+  const selectColumns = await getSelectColumnsSql();
+  const { rows } = await query(
+    `update public.pre_orders
+     set status = 'signup_link_sent',
+         approved_at = now(),
+         approved_by = $2,
+         payment_link = null,
+         payment_link_sent_at = now(),
+         rejection_reason = null,
+         rejected_at = null,
+         rejected_by = null,
+         updated_at = now()
+     where id = $1
+     returning ${selectColumns}`,
+    [id, actor || null]
+  );
+  return rows[0] || null;
+}
+
+export async function markPreOrderRejected({ id, actor, rejectionReason }) {
+  if (!id) {
+    const err = new Error("pre_order_id is required.");
     err.statusCode = 400;
     throw err;
   }
-
-  if (action === "approve") {
-    const selectColumns = await getSelectColumnsSql();
-    const paymentLink = `/PreOrderCheckout?pre_order_id=${encodeURIComponent(id)}`;
-    const { rows } = await query(
-      `update public.pre_orders
-       set status = 'payment_link_sent',
-           approved_at = now(),
-           approved_by = $2,
-           payment_link = $3,
-           payment_link_sent_at = now(),
-           rejection_reason = null,
-           rejected_at = null,
-           rejected_by = null
-       where id = $1
-       returning ${selectColumns}`,
-      [id, actor || null, paymentLink]
-    );
-    return rows[0] || null;
-  }
-
   const selectColumns = await getSelectColumnsSql();
   const { rows } = await query(
     `update public.pre_orders
      set status = 'rejected',
          rejection_reason = $3,
          rejected_at = now(),
-         rejected_by = $2
+         rejected_by = $2,
+         updated_at = now()
      where id = $1
      returning ${selectColumns}`,
     [id, actor || null, rejectionReason || null]
   );
   return rows[0] || null;
+}
+
+export async function confirmPreOrdersAfterPasswordSetup(email) {
+  const normalized = String(email || "").trim().toLowerCase();
+  if (!normalized) return 0;
+  const { rowCount } = await query(
+    `update public.pre_orders
+     set status = 'confirmed',
+         updated_at = now()
+     where lower(customer_email) = lower($1)
+       and status in ('signup_link_sent', 'payment_link_sent', 'approved')`,
+    [normalized]
+  );
+  return rowCount || 0;
 }
 
 const PATCHABLE_PRE_ORDER_KEYS = new Set([
