@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
+import { coursePaymentsAdminApi } from "@/api/coursePaymentsAdminApi";
 import {
   BookOpen, Award, TrendingUp, Clock, AlertTriangle, ArrowRight,
   Stethoscope, ShieldCheck, Star, Calendar, Activity, FileText,
@@ -89,10 +90,17 @@ function StatusBadge({ status, label }) {
 
 const PIE_COLORS = ["#7B8EC8", "#C8E63C", "#FA6F30", "#DA6A63", "#2D6B7F", "#a8cc20"];
 
+const PAID_ENROLLMENT_STATUSES = new Set(["paid", "confirmed", "attended", "completed"]);
+
 export default function AdminDashboard() {
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => base44.auth.me(), retry: false });
   const { data: preOrders = [] } = useQuery({ queryKey: ["pre-orders-dash"], queryFn: () => base44.entities.PreOrder.list("-created_date", 100) });
   const { data: enrollments = [] } = useQuery({ queryKey: ["enrollments"], queryFn: () => base44.entities.Enrollment.list() });
+  const { data: courseRevenueStats } = useQuery({
+    queryKey: ["course-revenue-stats"],
+    queryFn: () => coursePaymentsAdminApi.stats(),
+    retry: false,
+  });
   const { data: courses = [] } = useQuery({ queryKey: ["courses"], queryFn: () => base44.entities.Course.list() });
   const { data: licenses = [] } = useQuery({ queryKey: ["licenses"], queryFn: () => base44.entities.License.list() });
   const { data: certifications = [] } = useQuery({ queryKey: ["certifications"], queryFn: () => base44.entities.Certification.list() });
@@ -131,7 +139,15 @@ export default function AdminDashboard() {
   const licenseTypeData = Object.entries(licenseTypeMap).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
 
   // ── Derived: Enrollments / Revenue ──────────────────────────────
-  const revenue = enrollments.filter(e => e.status !== "cancelled").reduce((sum, e) => sum + (e.amount_paid || 0), 0);
+  const paidEnrollmentRecords = enrollments.filter((e) =>
+    PAID_ENROLLMENT_STATUSES.has(String(e.status || "").toLowerCase())
+  );
+  const enrollmentRevenue = paidEnrollmentRecords.reduce(
+    (sum, e) => sum + (Number(e.amount_paid) || 0),
+    0
+  );
+  const courseRevenue = courseRevenueStats?.total ?? enrollmentRevenue;
+  const paidEnrollmentCount = courseRevenueStats?.count ?? paidEnrollmentRecords.length;
   const enrollmentsByStatus = {
     completed: enrollments.filter(e => e.status === "completed").length,
     paid: enrollments.filter(e => e.status === "paid" || e.status === "confirmed").length,
@@ -229,7 +245,7 @@ export default function AdminDashboard() {
           <StatCard label="Total Providers" value={providers.length} icon={Stethoscope} color="#7B8EC8" bg="rgba(123,142,200,0.12)" sub={`${newUsersLast30.filter(u => u.role === "provider").length} new this month`} />
           <StatCard label="Total Patients" value={patients.length} icon={HeartPulse} color="#DA6A63" bg="rgba(218,106,99,0.12)" sub={`${premiumPatients} premium`} />
           <StatCard label="Medical Directors" value={mds.length} icon={UserCheck} color="#FA6F30" bg="rgba(250,111,48,0.12)" sub={`${activeMDRels} active supervisions`} />
-          <StatCard label="Total Revenue" value={`$${revenue.toLocaleString()}`} icon={DollarSign} color="#C8E63C" bg="rgba(200,230,60,0.12)" sub={`${enrollments.filter(e => e.status !== "cancelled").length} paid enrollments`} />
+          <StatCard label="Course Revenue" value={`$${courseRevenue.toLocaleString()}`} icon={DollarSign} color="#C8E63C" bg="rgba(200,230,60,0.12)" sub={`${paidEnrollmentCount} completed payments`} />
         </div>
       </div>
 
