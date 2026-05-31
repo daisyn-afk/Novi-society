@@ -1,5 +1,6 @@
 import { Router } from "express";
-import { listPreOrders, updatePreOrderStatus, patchPreOrder } from "./repository.js";
+import { listPreOrders, patchPreOrder } from "./repository.js";
+import { processPreOrderAction } from "./service.js";
 import { hasAdminAccess, hasStaffModuleAccess, requireAuth } from "../auth/helpers.js";
 
 export const preOrdersRouter = Router();
@@ -71,11 +72,13 @@ preOrdersRouter.post("/action", async (req, res, next) => {
     if (!hasAdminAccess(me.role) && !hasStaffModuleAccess(me, "AdminPreOrders")) {
       return res.status(403).json({ error: "Forbidden." });
     }
-    const row = await updatePreOrderStatus({
+    const row = await processPreOrderAction({
       id: req.body?.pre_order_id,
       action: req.body?.action,
       rejectionReason: req.body?.rejection_reason,
-      actor: req.headers["x-admin-email"] || null
+      actor: req.headers["x-admin-email"] || null,
+      req,
+      frontendOrigin: req.body?.frontend_origin
     });
     if (!row) return res.status(404).json({ error: "Pre-order not found." });
     res.json(row);

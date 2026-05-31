@@ -225,5 +225,16 @@ export async function markPasswordResetCompleted(authUserId, email) {
      returning id, email, password_setup_status, password_reset_completed_at`,
     [authUserId || null, PASSWORD_SETUP_STATUS.COMPLETED, normalizedEmail]
   );
+
+  if (rows[0] && normalizedEmail) {
+    try {
+      const { confirmPreOrdersAfterPasswordSetup } = await import("../pre-orders/repository.js");
+      await confirmPreOrdersAfterPasswordSetup(normalizedEmail);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn("[passwordSetup] confirmPreOrdersAfterPasswordSetup failed:", err?.message || err);
+    }
+  }
+
   return rows[0] || null;
 }
