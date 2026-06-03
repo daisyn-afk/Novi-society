@@ -81,7 +81,22 @@ integrationsRouter.post("/invoke-llm", async (req, res, next) => {
 
     const rawText = await response.text();
     if (!response.ok) {
-      const err = new Error(`OpenAI request failed (${response.status}): ${rawText.slice(0, 500)}`);
+      let detail = rawText.slice(0, 500);
+      try {
+        const openAiErr = JSON.parse(rawText)?.error;
+        if (openAiErr?.message) detail = String(openAiErr.message);
+        if (openAiErr?.code === "insufficient_quota") {
+          const err = new Error(
+            "OpenAI API credits are exhausted. Add billing credits at platform.openai.com, then try again."
+          );
+          err.statusCode = 503;
+          err.code = "insufficient_quota";
+          throw err;
+        }
+      } catch (parseErr) {
+        if (parseErr?.code === "insufficient_quota") throw parseErr;
+      }
+      const err = new Error(`OpenAI request failed (${response.status}): ${detail}`);
       err.statusCode = 502;
       throw err;
     }

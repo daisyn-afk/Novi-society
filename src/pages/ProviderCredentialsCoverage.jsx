@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useLayoutEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import ProviderSalesLock from "@/components/ProviderSalesLock";
 import { useProviderAccess } from "@/components/useProviderAccess";
@@ -17,7 +17,7 @@ import {
   Calendar, KeyRound, Award, Zap, ChevronRight, RotateCcw, Upload,
   BookOpen, Users, FileText, MapPin, ShieldCheck,
   ChevronDown, ChevronUp, Sparkles, ExternalLink, Download, Star, DollarSign, Info, TrendingUp,
-  XCircle, Settings, Trash2, CreditCard, RefreshCw, X
+  XCircle, Settings, Trash2, CreditCard, X
 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Link } from "react-router-dom";
@@ -26,13 +26,24 @@ import { format } from "date-fns";
 import { getSessionWindowForDate, isNowWithinSessionRedeemWindow } from "@/lib/classCodeWindow";
 import { CLASS_TIME_ZONE } from "@/lib/classCodeWindow";
 import { downloadCertificateDocument, hasCertificateDocument, openCertificateDocument } from "@/lib/certificateDocument";
+import {
+  getMdContractUrl,
+  getMdContractDisplayName,
+  getSignedMdContractFileName,
+  filterProtocolDocuments,
+  isUsableDocumentUrl,
+} from "@/lib/serviceTypeDocuments";
+import {
+  MD_FIRST_SERVICE_MONTHLY_FEE as FIRST_SERVICE_PRICE,
+  MD_ADDON_SERVICE_MONTHLY_FEE as ADDON_SERVICE_PRICE,
+  MD_MAX_COVERED_SERVICES as MAX_SERVICES,
+  MD_MAX_MONTHLY_CAP as MAX_MONTHLY_CAP,
+  monthlyFeeForNewMdService,
+} from "@/lib/mdMembershipPricing";
+
 const LICENSE_TYPES = ["RN", "NP", "PA", "MD", "DO", "esthetician", "other"];
 const CERT_TYPES = ["RN", "NP", "PA", "MD", "DO", "esthetician", "other"];
 const ACTIVATION_STEPS = ["Verify Training", "Select Service", "Sign & Activate"];
-const FIRST_SERVICE_PRICE = 279;
-const ADDON_SERVICE_PRICE = 129;
-const MAX_SERVICES = 5;
-const MAX_MONTHLY_CAP = 795;
 
 function toDateOnly(value) {
   const raw = String(value || "").trim();
@@ -55,6 +66,92 @@ function formatSessionDateLabel(value) {
   const [y, m, d] = dateOnly.split("-").map(Number);
   if (!y || !m || !d) return dateOnly;
   return format(new Date(y, m - 1, d), "MMM d, yyyy");
+}
+
+/** Embed PDF without browser sidebar/toolbar clutter where supported. */
+function mdContractViewerUrl(url) {
+  const base = String(url || "").trim();
+  if (!base) return "";
+  const params = "toolbar=0&navpanes=0&scrollbar=1&view=FitH";
+  return base.includes("#") ? `${base}&${params}` : `${base}#${params}`;
+}
+
+const mdCoveragePendingKey = (serviceTypeId) => `md_coverage_pending:${serviceTypeId}`;
+
+function readMdCoveragePending(serviceTypeId) {
+  try {
+    const raw = sessionStorage.getItem(mdCoveragePendingKey(serviceTypeId));
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeMdCoveragePending(serviceTypeId, payload) {
+  try {
+    sessionStorage.setItem(mdCoveragePendingKey(serviceTypeId), JSON.stringify(payload || {}));
+  } catch { /* ignore */ }
+}
+
+function clearMdCoveragePending(serviceTypeId) {
+  try {
+    sessionStorage.removeItem(mdCoveragePendingKey(serviceTypeId));
+    sessionStorage.removeItem(`md_coverage_signature:${serviceTypeId}`);
+  } catch { /* ignore */ }
+}
+
+function upsertMdSubscriptionInCache(qc, entry) {
+  const stId = String(entry?.service_type_id || "").trim();
+  if (!stId) return;
+  qc.setQueryData(["my-md-subscriptions"], (old = []) => {
+    const rows = Array.isArray(old) ? old : [];
+    const idx = rows.findIndex((s) => String(s.service_type_id) === stId);
+    const merged = {
+      ...(idx >= 0 ? rows[idx] : {}),
+      ...entry,
+      service_type_id: stId,
+      status: entry.status || "active",
+    };
+    const next = idx >= 0 ? [...rows] : [merged, ...rows];
+    if (idx >= 0) next[idx] = merged;
+    return mergeMdSubscriptionsWithPending(next);
+  });
+}
+
+function readAllMdCoveragePending() {
+  const entries = [];
+  try {
+    for (let i = 0; i < sessionStorage.length; i += 1) {
+      const key = sessionStorage.key(i);
+      if (!key?.startsWith("md_coverage_pending:")) continue;
+      const raw = sessionStorage.getItem(key);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw);
+      if (parsed?.service_type_id) entries.push(parsed);
+    }
+  } catch {
+    /* ignore */
+  }
+  return entries;
+}
+
+/** Keep signed PDF + active status visible while Stripe checkout is finishing server-side. */
+function mergeMdSubscriptionsWithPending(rows = []) {
+  const list = Array.isArray(rows) ? [...rows] : [];
+  for (const pending of readAllMdCoveragePending()) {
+    const stId = String(pending.service_type_id || "").trim();
+    if (!stId) continue;
+    const idx = list.findIndex((s) => String(s.service_type_id) === stId);
+    const merged = {
+      ...(idx >= 0 ? list[idx] : {}),
+      ...pending,
+      service_type_id: stId,
+      status: "active",
+    };
+    if (idx >= 0) list[idx] = merged;
+    else list.unshift(merged);
+  }
+  return list;
 }
 
 const statusColorLicense = {
@@ -157,10 +254,20 @@ export default function ProviderCredentialsCoverage() {
   };
 
   const { status: accessStatus } = useProviderAccess();
-  const [activeTab, setActiveTab] = useState("overview");
+  const [activeTab, setActiveTab] = useState(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("tab")) return params.get("tab");
+      if (params.get("md_payment_status") === "success") return "documents";
+    } catch {
+      /* ignore */
+    }
+    return "overview";
+  });
   const [licenseOpen, setLicenseOpen] = useState(false);
   const [licenseForm, setLicenseForm] = useState({ license_type: "RN" });
   const [licenseExpiryError, setLicenseExpiryError] = useState("");
+  const [licenseDocumentError, setLicenseDocumentError] = useState("");
   const [uploading, setUploading] = useState(false);
   const [certSubmitOpen, setCertSubmitOpen] = useState(false);
   const [certSubmitStep, setCertSubmitStep] = useState(0);
@@ -195,6 +302,9 @@ export default function ProviderCredentialsCoverage() {
   const [cancelStep, setCancelStep] = useState(0); // 0=form, 1=confirm, 2=done
   const [cancelLoading, setCancelLoading] = useState(false);
   const [dismissedApprovedAlertIds, setDismissedApprovedAlertIds] = useState([]);
+  const [expandedServiceCard, setExpandedServiceCard] = useState(null);
+  const [pricingOpen, setPricingOpen] = useState(false);
+  const [activateError, setActivateError] = useState("");
   const canvasRef = useRef(null);
   const isDrawing = useRef(false);
   const qc = useQueryClient();
@@ -237,12 +347,14 @@ export default function ProviderCredentialsCoverage() {
   });
   const { data: mySubscriptions = [] } = useQuery({
     queryKey: ["my-md-subscriptions"],
-    queryFn: async () => { const u = await base44.auth.me(); return base44.entities.MDSubscription.filter({ provider_id: u.id }); },
+    queryFn: async () => {
+      const u = await base44.auth.me();
+      const rows = await base44.entities.MDSubscription.filter({ provider_id: u.id });
+      return mergeMdSubscriptionsWithPending(rows);
+    },
     enabled: !!me,
-    initialData: () => readUiCache("my-md-subscriptions", []),
-    staleTime: 120000,
+    staleTime: 60_000,
     refetchOnWindowFocus: true,
-    refetchInterval: 10000,
   });
   const { data: myEnrollments = [], isLoading: loadingMyEnrollments, isFetching: fetchingMyEnrollments } = useQuery({
     queryKey: ["my-enrollments-coverage"],
@@ -324,7 +436,6 @@ export default function ProviderCredentialsCoverage() {
   });
   useEffect(() => { writeUiCache("my-licenses", licenses || []); }, [licenses]);
   useEffect(() => { writeUiCache("my-certs", myCerts || []); }, [myCerts]);
-  useEffect(() => { writeUiCache("my-md-subscriptions", mySubscriptions || []); }, [mySubscriptions]);
   useEffect(() => { writeUiCache("my-enrollments-coverage", myEnrollments || []); }, [myEnrollments]);
   useEffect(() => { writeUiCache("my-sessions-coverage", mySessions || []); }, [mySessions]);
   useEffect(() => {
@@ -347,44 +458,35 @@ export default function ProviderCredentialsCoverage() {
     enabled: !!me,
   });
 
-  /** After Stripe success (or immediate $0 checkout): ensure one active MDSubscription per service, then assignment engine (pending MD approval). */
-  async function finalizeActiveMdCoverageAndAssignMd({ stId, enrollId, nowIso, signatureData }) {
-    if (!me?.id || !stId) return;
+  /** After Stripe success or $0 signup: server activates subscription + MD assignment (idempotent). */
+  async function finalizeActiveMdCoverageAndAssignMd({ stId, enrollId, signatureData }) {
+    if (!me?.id || !stId) return null;
     const serviceTypeName = serviceTypes.find((s) => s.id === stId)?.name;
-    let existingSubs = [];
-    try {
-      existingSubs = await base44.entities.MDSubscription.filter({ provider_id: me.id, service_type_id: stId });
-    } catch {
-      existingSubs = [];
-    }
-    const hasActiveForService = (existingSubs || []).some(
-      (s) => String(s?.status || "").toLowerCase() === "active"
-    );
-    if (!hasActiveForService) {
-      await base44.entities.MDSubscription.create({
-        provider_id: me.id,
-        provider_email: me.email,
-        provider_name: me.full_name,
-        service_type_id: stId,
-        service_type_name: serviceTypeName,
-        status: "active",
-        signed_at: nowIso,
-        signed_by_name: me.full_name,
-        activated_at: nowIso,
-        enrollment_id: enrollId || null,
-        ...(signatureData ? { signature_data: signatureData } : {}),
-      });
-    }
-    qc.invalidateQueries({ queryKey: ["my-md-subscriptions"] });
-    const res = await base44.functions.invoke("submitMdBoardCoverageAssignment", {
+    const res = await base44.functions.invoke("finalizeMdBoardCoverage", {
       service_type_id: stId,
       service_type_name: serviceTypeName || "",
+      enrollment_id: enrollId || null,
+      signature_data: signatureData || null,
     });
     const data = res?.data;
-    if (!data?.ok) {
-      throw new Error(data?.error || "Unable to assign a Board Medical Director for this service.");
+    if (!data?.success && !data?.ok) {
+      throw new Error(data?.error || "Unable to activate MD coverage.");
     }
+    const pending = readMdCoveragePending(stId);
+    upsertMdSubscriptionInCache(qc, {
+      id: data.md_subscription_id || pending?.id,
+      service_type_id: stId,
+      service_type_name: serviceTypeName || pending?.service_type_name,
+      signed_contract_url: data.signed_contract_url || pending?.signed_contract_url || null,
+      signed_by_name: me?.full_name || pending?.signed_by_name,
+      signed_at: pending?.signed_at || new Date().toISOString(),
+      status: "active",
+      md_contract_url: pending?.md_contract_url || null,
+      md_agreement_text: pending?.md_agreement_text || null,
+    });
+    clearMdCoveragePending(stId);
     qc.invalidateQueries({ queryKey: ["my-md-relationships"] });
+    return data;
   }
 
   // Open MD coverage apply flow when arriving from cert-approval notification (?prompt_service=)
@@ -409,7 +511,28 @@ export default function ProviderCredentialsCoverage() {
     }, 150);
   }, [location.search, serviceTypes.length, navigate]);
 
-  // Stripe return
+  // Stripe return: hydrate Documents tab before paint so signed PDF link appears immediately.
+  useLayoutEffect(() => {
+    if (!me?.id) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("md_payment_status") !== "success") return;
+    const stId = params.get("service_type_id");
+    if (!stId) return;
+
+    const pending = readMdCoveragePending(stId);
+    if (pending?.signed_contract_url) {
+      upsertMdSubscriptionInCache(qc, {
+        ...pending,
+        service_type_id: stId,
+        status: "active",
+        signed_by_name: pending.signed_by_name || me?.full_name,
+      });
+      setActiveTab("documents");
+      setActivateDialog(false);
+    }
+  }, [me?.id, me?.full_name, qc]);
+
+  // Stripe return: finalize subscription + MD assignment in background.
   useEffect(() => {
     if (stripeHandled || !me?.id || serviceTypes.length === 0) return;
     const params = new URLSearchParams(window.location.search);
@@ -418,15 +541,27 @@ export default function ProviderCredentialsCoverage() {
     const enrollId = params.get("enrollment_id");
     if (mdStatus === "success" && stId) {
       setStripeHandled(true);
-      const now = new Date().toISOString();
-      finalizeActiveMdCoverageAndAssignMd({ stId, enrollId: enrollId || null, nowIso: now, signatureData: null })
-        .then(() => navigate(createPageUrl("ProviderLaunchPad")))
+      let signatureData = null;
+      try {
+        signatureData = sessionStorage.getItem(`md_coverage_signature:${stId}`);
+      } catch { /* ignore */ }
+
+      const pending = readMdCoveragePending(stId);
+      navigate(`${createPageUrl("ProviderCredentialsCoverage")}?tab=documents`, { replace: true });
+
+      finalizeActiveMdCoverageAndAssignMd({ stId, enrollId: enrollId || null, signatureData })
+        .then(async () => {
+          try { window.localStorage.removeItem("pcache:my-md-subscriptions"); } catch { /* ignore */ }
+          qc.invalidateQueries({ queryKey: ["my-md-subscriptions"] });
+        })
         .catch((err) => {
           console.error("[md-coverage] finalize after Stripe failed:", err);
-          navigate(createPageUrl("ProviderLaunchPad"));
+          if (!pending?.signed_contract_url) {
+            navigate(createPageUrl("ProviderLaunchPad"));
+          }
         });
     }
-  }, [me, serviceTypes, stripeHandled, navigate]);
+  }, [me, serviceTypes, stripeHandled, navigate, qc]);
 
   // Keep Novi Class status fresh whenever Apply dialog opens.
   useEffect(() => {
@@ -439,7 +574,8 @@ export default function ProviderCredentialsCoverage() {
   const activeCerts = myCerts.filter(c => c.status === "active");
   const pendingCerts = myCerts.filter(c => c.status === "pending");
   const otherCerts = myCerts.filter(c => c.status !== "active" && c.status !== "pending");
-  const activeSubscriptions = mySubscriptions.filter(s => s.status === "active");
+  const activeSubscriptions = mySubscriptions.filter((s) => s.status === "active");
+
   const alreadyActiveServices = activeSubscriptions.map(s => s.service_type_id);
   const activeRelationships = relationships.filter(r => r.status === "active");
   const pendingRelationships = relationships.filter(r => r.status === "pending");
@@ -486,6 +622,7 @@ export default function ProviderCredentialsCoverage() {
   const unlockedServiceTypeIds = new Set([...earnedServiceTypeIds, ...activeCertServiceTypeIds]);
   const availableServices = serviceTypes.filter((s) => !alreadyActiveServices.includes(s.id) && unlockedServiceTypeIds.has(s.id));
   const selectedService = serviceTypes.find(s => s.id === selectedServiceTypeId);
+  const selectedServiceContractUrl = getMdContractUrl(selectedService);
   const activeServices = serviceTypes.filter(s => alreadyActiveServices.includes(s.id));
   const approvedCertsWithoutCoverage = myCerts.filter(c => c.status === "active" && c.service_type_id && !alreadyActiveServices.includes(c.service_type_id));
   const visibleApprovedCertsWithoutCoverage = approvedCertsWithoutCoverage.filter((c) => !dismissedApprovedAlertIds.includes(c.id));
@@ -625,6 +762,11 @@ export default function ProviderCredentialsCoverage() {
       return;
     }
     setLicenseExpiryError("");
+    if (!licenseForm.document_url) {
+      setLicenseDocumentError("License document is required.");
+      return;
+    }
+    setLicenseDocumentError("");
     createLicense.mutate();
   };
 
@@ -635,6 +777,7 @@ export default function ProviderCredentialsCoverage() {
       setLicenseOpen(false);
       setLicenseForm({ license_type: "RN" });
       setLicenseExpiryError("");
+      setLicenseDocumentError("");
     },
   });
   const uploadLicenseFile = async (e) => {
@@ -928,6 +1071,7 @@ export default function ProviderCredentialsCoverage() {
   });
   const activateMutation = useMutation({
     mutationFn: async () => {
+      setActivateError("");
       const canvas = canvasRef.current;
       if (!canvas) throw new Error("Signature pad is not ready. Close the dialog and try again.");
       const signatureData = canvas.toDataURL("image/png");
@@ -939,25 +1083,42 @@ export default function ProviderCredentialsCoverage() {
         signature_data: signatureData,
       });
       if (res.data?.url) {
+        const st = serviceTypes.find((s) => s.id === selectedServiceTypeId);
+        try {
+          sessionStorage.setItem(
+            `md_coverage_signature:${selectedServiceTypeId}`,
+            signatureData
+          );
+          writeMdCoveragePending(selectedServiceTypeId, {
+            id: res.data.md_subscription_id,
+            service_type_id: selectedServiceTypeId,
+            service_type_name: res.data.service_type_name || st?.name,
+            signed_contract_url: res.data.signed_contract_url || null,
+            signed_by_name: me?.full_name,
+            signed_at: new Date().toISOString(),
+            md_contract_url: st?.md_contract_url || null,
+            md_agreement_text: st?.md_agreement_text || null,
+          });
+        } catch { /* ignore */ }
         window.location.href = res.data.url;
         return;
       }
-      if (res.data?.success) {
-        const now = new Date().toISOString();
+      if (res.data?.success || res.data?.ok) {
         await finalizeActiveMdCoverageAndAssignMd({
           stId: selectedServiceTypeId,
           enrollId: verifiedSession?.enrollment_id || null,
-          nowIso: now,
           signatureData,
         });
-        qc.invalidateQueries({ queryKey: ["my-md-subscriptions"] });
+        try { window.localStorage.removeItem("pcache:my-md-subscriptions"); } catch { /* ignore */ }
         setActivateDialog(false);
         resetActivation();
-        navigate(createPageUrl("ProviderLaunchPad"));
+        setActiveTab("documents");
+        navigate(`${createPageUrl("ProviderCredentialsCoverage")}?tab=documents`);
         return;
       }
       throw new Error(res.data?.error || "Unable to activate MD coverage.");
     },
+    onError: (err) => setActivateError(err?.message || "Something went wrong. Please try again."),
   });
 
   const openCancelDialog = (sub) => {
@@ -985,23 +1146,47 @@ export default function ProviderCredentialsCoverage() {
     setCancelLoading(false);
   };
 
-  // Canvas drawing
+  // Canvas drawing — scale internal resolution to displayed size so strokes align with cursor
+  const setupSignatureCanvas = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const container = canvas.parentElement;
+    const displayWidth = Math.max(container?.clientWidth || 520, 280);
+    const displayHeight = 120;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(displayWidth * dpr);
+    canvas.height = Math.round(displayHeight * dpr);
+    canvas.style.width = `${displayWidth}px`;
+    canvas.style.height = `${displayHeight}px`;
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.scale(dpr, dpr);
+    ctx.strokeStyle = "#1A1A2E";
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+  };
+
   useEffect(() => {
     if (!activateDialog || step !== 2) return;
-    setTimeout(() => {
-      const canvas = canvasRef.current; if (!canvas) return;
-      const ctx = canvas.getContext("2d");
-      ctx.strokeStyle = "#1A1A2E"; ctx.lineWidth = 2.5; ctx.lineCap = "round"; ctx.lineJoin = "round";
-    }, 100);
-  }, [activateDialog, step]);
+    const t = setTimeout(setupSignatureCanvas, 50);
+    window.addEventListener("resize", setupSignatureCanvas);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener("resize", setupSignatureCanvas);
+    };
+  }, [activateDialog, step, selectedServiceTypeId]);
+
   const getPos = (e, canvas) => {
     const rect = canvas.getBoundingClientRect();
-    return { x: (e.touches ? e.touches[0].clientX : e.clientX) - rect.left, y: (e.touches ? e.touches[0].clientY : e.clientY) - rect.top };
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    return { x: clientX - rect.left, y: clientY - rect.top };
   };
   const startDraw = (e) => { const canvas = canvasRef.current; const ctx = canvas.getContext("2d"); isDrawing.current = true; ctx.beginPath(); const p = getPos(e, canvas); ctx.moveTo(p.x, p.y); e.preventDefault(); };
   const draw = (e) => { if (!isDrawing.current) return; const canvas = canvasRef.current; const ctx = canvas.getContext("2d"); const p = getPos(e, canvas); ctx.lineTo(p.x, p.y); ctx.stroke(); setHasSigned(true); e.preventDefault(); };
   const endDraw = () => { isDrawing.current = false; };
-  const clearSignature = () => { const canvas = canvasRef.current; if (!canvas) return; canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height); setHasSigned(false); };
+  const clearSignature = () => { setupSignatureCanvas(); setHasSigned(false); };
 
   /** Opens apply dialog on Sign & Activate (step 2) for a known service — e.g. approved-cert banner or deep-link parity. */
   const openApplyDialogToSignForService = (serviceTypeId) => {
@@ -1036,19 +1221,21 @@ export default function ProviderCredentialsCoverage() {
     <div className="max-w-5xl space-y-6">
 
       {/* Header */}
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <p className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: "#DA6A63" }}>My Credentials & Coverage</p>
-          <h1 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 30, color: "#1e2535", lineHeight: 1.15 }}>
+      <div className="flex items-start justify-between gap-6 flex-wrap">
+        <div style={{ borderLeft: "2px solid #DA6A63", paddingLeft: 16 }}>
+          <p className="text-[10px] font-black uppercase tracking-widest mb-1.5" style={{ color: "#DA6A63", letterSpacing: "0.18em" }}>My Credentials & Coverage</p>
+          <h1 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 28, color: "#1e2535", lineHeight: 1.1, fontStyle: "italic", fontWeight: 400 }}>
             Practice with Full Protection
           </h1>
-          <p className="mt-1 text-sm" style={{ color: "rgba(30,37,53,0.6)", maxWidth: 480 }}>
-            Manage your licenses, certifications, and NOVI Board of Medical Directors coverage — everything needed to practice legally and confidently.
+          <p className="mt-1.5 text-sm" style={{ color: "rgba(30,37,53,0.5)", maxWidth: 440, lineHeight: 1.6 }}>
+            Licenses, certifications, and NOVI Board coverage — everything needed to practice legally.
           </p>
         </div>
-        <Button onClick={() => { setActivateDialog(true); resetActivation(); }} className="font-bold gap-2 flex-shrink-0" style={{ background: "#FA6F30", color: "#fff", borderRadius: 12 }}>
+        <button onClick={() => { setActivateDialog(true); resetActivation(); }}
+          className="flex items-center gap-2 text-sm font-bold transition-all hover:opacity-75 flex-shrink-0"
+          style={{ color: "#FA6F30" }}>
           <Zap className="w-4 h-4" /> Apply for MD Coverage
-        </Button>
+        </button>
       </div>
 
       {/* Alerts */}
@@ -1073,194 +1260,166 @@ export default function ProviderCredentialsCoverage() {
         </div>
       ))}
 
-      {/* Stats Row */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      {/* Stats Row — editorial inline */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 rounded-2xl overflow-hidden" style={{ background: "rgba(255,255,255,0.65)", border: "1px solid rgba(30,37,53,0.07)" }}>
         {[
-          { label: "Licenses", value: licenses.length, sub: `${verifiedLicenses.length} verified`, icon: FileText, color: "#7B8EC8", tab: "licenses" },
-          { label: "Certifications", value: activeCerts.length, sub: `${pendingCerts.length} under review`, icon: Award, color: "#FA6F30", tab: "certifications" },
-          { label: "MD Coverage", value: activeSubscriptions.length, sub: `services active`, icon: Shield, color: "#C8E63C", tab: "coverage" },
-          { label: "Assigned MD", value: activeRelationships.length > 0 ? "✓" : "—", sub: activeRelationships[0]?.medical_director_name || "Not yet assigned", icon: Users, color: "#DA6A63", tab: "coverage" },
-        ].map(({ label, value, sub, icon: Icon, color, tab }) => (
-          <button key={label} onClick={() => setActiveTab(tab)} className="text-left rounded-2xl px-4 py-4 transition-all hover:scale-[1.02]" style={{ background: "rgba(255,255,255,0.3)", backdropFilter: "blur(30px)", WebkitBackdropFilter: "blur(30px)", boxShadow: "0 8px 32px rgba(31,38,135,0.15)", border: activeTab === tab ? `2px solid ${color}` : "1px solid rgba(255,255,255,0.4)" }}>
-            <div className="w-8 h-8 rounded-lg flex items-center justify-center mb-2" style={{ background: `${color}22` }}>
-              <Icon className="w-4 h-4" style={{ color }} />
-            </div>
-            <p style={{ fontSize: 26, fontWeight: 700, color: "#1e2535", lineHeight: 1 }}>{value}</p>
-            <p className="text-xs font-semibold mt-0.5" style={{ color: "#1e2535" }}>{label}</p>
-            <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.5)" }}>{sub}</p>
+          { label: "Licenses", value: licenses.length, sub: `${verifiedLicenses.length} verified`, tab: "credentials" },
+          { label: "Certifications", value: activeCerts.length, sub: `${pendingCerts.length} under review`, tab: "credentials" },
+          { label: "MD Coverage", value: activeSubscriptions.length, sub: "services active", tab: "coverage" },
+          { label: "Assigned MD", value: activeRelationships.length > 0 ? "✓" : "—", sub: activeRelationships[0]?.medical_director_name || "Not yet assigned", tab: "coverage" },
+        ].map(({ label, value, sub, tab }, i) => (
+          <button key={label} onClick={() => setActiveTab(tab)}
+            className="text-left px-4 py-4 transition-all hover:bg-white/50 min-w-0"
+            style={{ borderLeft: i % 2 === 0 ? "none" : "1px solid rgba(30,37,53,0.07)", borderTop: i >= 2 ? "1px solid rgba(30,37,53,0.07)" : "none" }}>
+            <p style={{ fontFamily: "'DM Serif Display', serif", fontSize: 22, color: "#1e2535", lineHeight: 1, fontWeight: 400 }}>{value}</p>
+            <p className="text-xs font-semibold mt-1" style={{ color: "#1e2535" }}>{label}</p>
+            <p className="text-[10px] mt-0.5 truncate" style={{ color: "rgba(30,37,53,0.4)" }}>{sub}</p>
           </button>
         ))}
       </div>
 
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="w-full grid grid-cols-5 h-auto p-1" style={{ background: "rgba(255,255,255,0.6)", backdropFilter: "blur(12px)", borderRadius: 14, border: "1px solid rgba(255,255,255,0.8)" }}>
+        <div className="flex gap-0 overflow-x-auto" style={{ borderBottom: "1px solid rgba(30,37,53,0.1)", scrollbarWidth: "none" }}>
           {[
             { value: "overview", label: "Overview" },
-            { value: "licenses", label: "Licenses" },
-            { value: "certifications", label: "Certifications" },
+            { value: "credentials", label: "Credentials" },
             { value: "coverage", label: "MD Coverage" },
             { value: "documents", label: "Documents" },
-          ].map(t => (
-            <TabsTrigger key={t.value} value={t.value} className="rounded-xl text-sm font-semibold transition-all" style={{ color: activeTab === t.value ? "#FA6F30" : "rgba(30,37,53,0.55)" }}>
-              {t.label}
-            </TabsTrigger>
+          ].map(({ value, label }) => (
+            <button key={value} onClick={() => setActiveTab(value)}
+              className="px-4 pb-3 pt-1 text-sm font-semibold transition-all flex-shrink-0"
+              style={{ color: activeTab === value ? "#1e2535" : "rgba(30,37,53,0.38)", borderBottom: activeTab === value ? "2px solid #FA6F30" : "2px solid transparent", marginBottom: -1 }}>
+              {label}
+            </button>
           ))}
-        </TabsList>
+        </div>
 
         {/* ── OVERVIEW TAB ── */}
         <TabsContent value="overview" className="pt-5 space-y-5">
-          {/* What is MD Board Coverage */}
           <GlassCard>
-            {/* Gradient texture header */}
-            <div className="relative overflow-hidden" style={{ height: 160, borderRadius: "16px 16px 0 0", background: "linear-gradient(135deg, #2D6B7F 0%, #7B8EC8 45%, #C8E63C 100%)" }}>
-              <div style={{ position: "absolute", inset: 0, backgroundImage: "radial-gradient(ellipse at 20% 50%, rgba(200,230,60,0.25) 0%, transparent 60%), radial-gradient(ellipse at 80% 20%, rgba(45,107,127,0.4) 0%, transparent 55%), radial-gradient(ellipse at 60% 80%, rgba(218,106,99,0.2) 0%, transparent 50%)" }} />
-              <div className="absolute bottom-4 left-6">
-                <p className="text-xs font-bold uppercase tracking-widest mb-0.5" style={{ color: "rgba(200,230,60,0.95)", letterSpacing: "0.18em" }}>How NOVI Coverage Works</p>
-                <h3 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 20, color: "#fff", fontStyle: "italic", fontWeight: 400 }}>The NOVI Board of Medical Directors</h3>
-              </div>
+            <div className="px-6 pt-6 pb-2">
+              <p className="text-[10px] font-black uppercase tracking-widest mb-2" style={{ color: "rgba(30,37,53,0.35)", letterSpacing: "0.18em" }}>How NOVI Coverage Works</p>
+              <h3 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 22, color: "#1e2535", fontStyle: "italic", fontWeight: 400, lineHeight: 1.2 }}>The NOVI Board of Medical Directors</h3>
             </div>
             <div className="px-6 py-5 space-y-4">
-              <p className="text-sm leading-relaxed" style={{ color: "rgba(30,37,53,0.75)" }}>
+              <p className="text-sm leading-relaxed" style={{ color: "rgba(30,37,53,0.65)", borderLeft: "2px solid rgba(30,37,53,0.1)", paddingLeft: 14 }}>
                 NOVI maintains a Board of Medical Directors — licensed physicians who provide clinical oversight and legal supervision for all providers.
               </p>
-              <div className="grid sm:grid-cols-2 gap-3">
+              <div className="divide-y" style={{ borderTop: "1px solid rgba(30,37,53,0.06)", borderBottom: "1px solid rgba(30,37,53,0.06)" }}>
                 {[
-                  { icon: Shield, title: "You don't find an MD", desc: "NOVI assigns a Board MD to you automatically upon approval" },
-                  { icon: FileText, title: "Signed Protocols", desc: "Your assigned MD signs your service agreements and clinical scope docs" },
-                  { icon: ShieldCheck, title: "Legal Compliance", desc: "Full medical directorship coverage as required by your state" },
-                  { icon: CheckCircle2, title: "Per-Service Coverage", desc: "Each service you offer requires its own MD coverage membership" },
-                ].map(({ icon: Icon, title, desc }, i) => (
-                  <div key={i} className="flex gap-3 px-4 py-3 rounded-xl" style={{ background: "rgba(30,37,53,0.04)", border: "1px solid rgba(30,37,53,0.06)" }}>
-                    <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: "rgba(250,111,48,0.12)" }}>
-                      <Icon className="w-4.5 h-4.5" style={{ color: "#FA6F30", width: 18, height: 18 }} />
-                    </div>
-                    <div>
-                      <p className="font-semibold text-sm" style={{ color: "#1e2535" }}>{title}</p>
-                      <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.6)" }}>{desc}</p>
-                    </div>
+                  { title: "You don't find an MD", desc: "NOVI assigns a Board MD to you automatically upon approval" },
+                  { title: "Signed Protocols", desc: "Your assigned MD signs your service agreements and clinical scope docs" },
+                  { title: "Legal Compliance", desc: "Full medical directorship coverage as required by your state" },
+                  { title: "Per-Service Coverage", desc: "Each service you offer requires its own MD coverage membership" },
+                ].map(({ title, desc }, i) => (
+                  <div key={i} className="flex items-baseline gap-4 py-3">
+                    <p className="text-sm font-semibold flex-shrink-0 w-44" style={{ color: "#1e2535" }}>{title}</p>
+                    <p className="text-xs" style={{ color: "rgba(30,37,53,0.55)", lineHeight: 1.6 }}>{desc}</p>
                   </div>
                 ))}
               </div>
             </div>
           </GlassCard>
 
-          {/* Pricing */}
-          {(() => {
-            const [pricingOpen, setPricingOpen] = useState(false);
-            return (
-              <GlassCard>
-                <button className="w-full px-6 py-5 flex items-center justify-between text-left" onClick={() => setPricingOpen(v => !v)} style={{ borderBottom: pricingOpen ? "1px solid rgba(30,37,53,0.08)" : "none" }}>
-                  <div>
-                    <p className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: "#4a6b10" }}>Pricing</p>
-                    <h3 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 20, color: "#1e2535" }}>MD Coverage Membership</h3>
-                  </div>
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    <span className="text-sm font-semibold" style={{ color: "rgba(30,37,53,0.4)" }}>from $279/mo</span>
-                    {pricingOpen ? <ChevronUp className="w-5 h-5" style={{ color: "rgba(30,37,53,0.4)" }} /> : <ChevronDown className="w-5 h-5" style={{ color: "rgba(30,37,53,0.4)" }} />}
-                  </div>
-                </button>
-                {pricingOpen && (
-                  <div className="px-6 py-5">
-                    <div className="grid sm:grid-cols-2 gap-4 mb-5">
-                      {/* First service */}
-                      <div className="rounded-2xl p-5 relative overflow-hidden" style={{ background: "linear-gradient(135deg, rgba(250,111,48,0.25) 0%, rgba(218,106,99,0.2) 100%)", border: "1px solid rgba(250,111,48,0.4)" }}>
-                        <p className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: "#FA6F30" }}>Base Service (Injectables)</p>
-                        <p style={{ fontFamily: "'DM Serif Display', serif", fontSize: 38, color: "#1e2535", lineHeight: 1 }}>${FIRST_SERVICE_PRICE}</p>
-                        <p className="text-sm mt-1" style={{ color: "rgba(30,37,53,0.6)" }}>per month · required</p>
-                        <div className="mt-4 space-y-1.5">
-                          {["Board MD assigned to you", "Signed protocol documents", "Clinical scope coverage", "State compliance included"].map(f => (
-                            <div key={f} className="flex items-center gap-2">
-                              <CheckCircle className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#FA6F30" }} />
-                              <span className="text-xs" style={{ color: "rgba(30,37,53,0.8)" }}>{f}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                      {/* Each additional */}
-                      <div className="rounded-2xl p-5" style={{ background: "rgba(30,37,53,0.04)", border: "1px solid rgba(30,37,53,0.08)" }}>
-                        <p className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: "rgba(30,37,53,0.5)" }}>Each Additional Service</p>
-                        <p style={{ fontFamily: "'DM Serif Display', serif", fontSize: 38, color: "#1e2535", lineHeight: 1 }}>${ADDON_SERVICE_PRICE}</p>
-                        <p className="text-sm mt-1" style={{ color: "rgba(30,37,53,0.6)" }}>per month, per service</p>
-                        <div className="mt-4 space-y-1.5">
-                          {["Microneedling, laser, etc.", "Same Board MD covers all", "Capped at 5 services max"].map(f => (
-                            <div key={f} className="flex items-center gap-2">
-                              <CheckCircle className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "rgba(30,37,53,0.4)" }} />
-                              <span className="text-xs" style={{ color: "rgba(30,37,53,0.7)" }}>{f}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Pricing breakdown table */}
-                    <div className="rounded-xl overflow-hidden mb-4" style={{ border: "1px solid rgba(30,37,53,0.1)" }}>
-                      <div className="px-4 py-2.5 flex items-center justify-between text-xs font-bold uppercase tracking-widest" style={{ background: "rgba(30,37,53,0.06)", color: "rgba(30,37,53,0.5)" }}>
-                        <span>Services</span><span>Monthly Total</span>
-                      </div>
-                      {[
-                        { label: "1 Service (Injectables only)", total: 279 },
-                        { label: "2 Services", total: 408 },
-                        { label: "3 Services", total: 537 },
-                        { label: "4 Services", total: 666 },
-                        { label: "5 Services (Maximum — all services covered)", total: 795 },
-                      ].map(({ label, total }, i) => (
-                        <div key={i} className="px-4 py-2.5 flex items-center justify-between text-sm" style={{ background: i % 2 === 0 ? "rgba(255,255,255,0.7)" : "rgba(30,37,53,0.02)", borderTop: "1px solid rgba(30,37,53,0.06)" }}>
-                          <span style={{ color: "rgba(30,37,53,0.75)" }}>{label}</span>
-                          <span className="font-bold" style={{ color: total === 795 ? "#FA6F30" : "#1e2535" }}>${total}/mo{total === 795 ? " 🔒 cap" : ""}</span>
+          <GlassCard>
+            <button className="w-full px-6 py-5 flex items-center justify-between text-left" onClick={() => setPricingOpen(v => !v)} style={{ borderBottom: pricingOpen ? "1px solid rgba(30,37,53,0.08)" : "none" }}>
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-widest mb-1.5" style={{ color: "rgba(30,37,53,0.35)", letterSpacing: "0.18em" }}>Pricing</p>
+                <h3 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 20, color: "#1e2535", fontStyle: "italic", fontWeight: 400 }}>MD Coverage Membership</h3>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <span className="text-sm" style={{ color: "rgba(30,37,53,0.35)" }}>from $279/mo</span>
+                {pricingOpen ? <ChevronUp className="w-4 h-4" style={{ color: "rgba(30,37,53,0.3)" }} /> : <ChevronDown className="w-4 h-4" style={{ color: "rgba(30,37,53,0.3)" }} />}
+              </div>
+            </button>
+            {pricingOpen && (
+              <div className="px-6 py-5">
+                <div className="grid sm:grid-cols-2 gap-4 mb-5">
+                  <div className="rounded-2xl p-5 relative overflow-hidden" style={{ background: "linear-gradient(135deg, rgba(250,111,48,0.25) 0%, rgba(218,106,99,0.2) 100%)", border: "1px solid rgba(250,111,48,0.4)" }}>
+                    <p className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: "#FA6F30" }}>Base Service (Injectables)</p>
+                    <p style={{ fontFamily: "'DM Serif Display', serif", fontSize: 38, color: "#1e2535", lineHeight: 1 }}>${FIRST_SERVICE_PRICE}</p>
+                    <p className="text-sm mt-1" style={{ color: "rgba(30,37,53,0.6)" }}>per month · required</p>
+                    <div className="mt-4 space-y-1.5">
+                      {["Board MD assigned to you", "Signed protocol documents", "Clinical scope coverage", "State compliance included"].map(f => (
+                        <div key={f} className="flex items-center gap-2">
+                          <CheckCircle className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#FA6F30" }} />
+                          <span className="text-xs" style={{ color: "rgba(30,37,53,0.8)" }}>{f}</span>
                         </div>
                       ))}
                     </div>
-
-                    {/* Service cap notice */}
-                    <div className="rounded-xl px-4 py-3 mb-4 flex items-start gap-3" style={{ background: "rgba(200,230,60,0.1)", border: "1px solid rgba(200,230,60,0.3)" }}>
-                      <CheckCircle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: "#5a7a20" }} />
-                      <p className="text-xs leading-relaxed" style={{ color: "rgba(30,37,53,0.7)" }}>
-                        <strong>5-Service Cap:</strong> Once you reach 5 services, you're fully covered for all services within your scope at <strong>$795/mo</strong> — no additional fees ever.
-                      </p>
-                    </div>
-
-                    {/* Current bill if active */}
-                    {activeSubscriptions.length > 0 && (
-                      <div className="rounded-xl px-4 py-3 flex items-center justify-between" style={{ background: "rgba(200,230,60,0.12)", border: "1px solid rgba(200,230,60,0.3)" }}>
-                        <div>
-                          <p className="text-sm font-bold text-white">Your Current Monthly</p>
-                          <p className="text-xs" style={{ color: "rgba(255,255,255,0.55)" }}>{activeSubscriptions.length} service{activeSubscriptions.length > 1 ? "s" : ""} covered{activeSubscriptions.length >= MAX_SERVICES ? " · Fully capped" : ""}</p>
+                  </div>
+                  <div className="rounded-2xl p-5" style={{ background: "rgba(30,37,53,0.04)", border: "1px solid rgba(30,37,53,0.08)" }}>
+                    <p className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: "rgba(30,37,53,0.5)" }}>Each Additional Service</p>
+                    <p style={{ fontFamily: "'DM Serif Display', serif", fontSize: 38, color: "#1e2535", lineHeight: 1 }}>${ADDON_SERVICE_PRICE}</p>
+                    <p className="text-sm mt-1" style={{ color: "rgba(30,37,53,0.6)" }}>per month, per service</p>
+                    <div className="mt-4 space-y-1.5">
+                      {["Microneedling, laser, etc.", "Same Board MD covers all", "Capped at 5 services max"].map(f => (
+                        <div key={f} className="flex items-center gap-2">
+                          <CheckCircle className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "rgba(30,37,53,0.4)" }} />
+                          <span className="text-xs" style={{ color: "rgba(30,37,53,0.7)" }}>{f}</span>
                         </div>
-                        <p style={{ fontFamily: "'DM Serif Display', serif", fontSize: 26, color: "#C8E63C" }}>
-                          ${calcMonthlyTotal(activeSubscriptions.length)}/mo
-                        </p>
-                      </div>
-                    )}
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <div className="rounded-xl overflow-hidden mb-4" style={{ border: "1px solid rgba(30,37,53,0.1)" }}>
+                  <div className="px-4 py-2.5 flex items-center justify-between text-xs font-bold uppercase tracking-widest" style={{ background: "rgba(30,37,53,0.06)", color: "rgba(30,37,53,0.5)" }}>
+                    <span>Services</span><span>Monthly Total</span>
+                  </div>
+                  {[
+                    { label: "1 Service (Injectables only)", total: 279 },
+                    { label: "2 Services", total: 408 },
+                    { label: "3 Services", total: 537 },
+                    { label: "4 Services", total: 666 },
+                    { label: "5 Services (Maximum — all services covered)", total: 795 },
+                  ].map(({ label, total }, i) => (
+                    <div key={i} className="px-4 py-2.5 flex items-center justify-between text-sm" style={{ background: i % 2 === 0 ? "rgba(255,255,255,0.7)" : "rgba(30,37,53,0.02)", borderTop: "1px solid rgba(30,37,53,0.06)" }}>
+                      <span style={{ color: "rgba(30,37,53,0.75)" }}>{label}</span>
+                      <span className="font-bold" style={{ color: total === 795 ? "#FA6F30" : "#1e2535" }}>${total}/mo{total === 795 ? " 🔒 cap" : ""}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="rounded-xl px-4 py-3 mb-4 flex items-start gap-3" style={{ background: "rgba(200,230,60,0.1)", border: "1px solid rgba(200,230,60,0.3)" }}>
+                  <CheckCircle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: "#5a7a20" }} />
+                  <p className="text-xs leading-relaxed" style={{ color: "rgba(30,37,53,0.7)" }}>
+                    <strong>5-Service Cap:</strong> Once you reach 5 services, you're fully covered for all services within your scope at <strong>$795/mo</strong> — no additional fees ever.
+                  </p>
+                </div>
+                {activeSubscriptions.length > 0 && (
+                  <div className="rounded-xl px-4 py-3 flex items-center justify-between" style={{ background: "rgba(200,230,60,0.12)", border: "1px solid rgba(200,230,60,0.3)" }}>
+                    <div>
+                      <p className="text-sm font-bold" style={{ color: "#1e2535" }}>Your Current Monthly</p>
+                      <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.45)" }}>{activeSubscriptions.length} service{activeSubscriptions.length > 1 ? "s" : ""} covered{activeSubscriptions.length >= MAX_SERVICES ? " · Fully capped" : ""}</p>
+                    </div>
+                    <p style={{ fontFamily: "'DM Serif Display', serif", fontSize: 26, color: "#4a6b10" }}>
+                      ${calcMonthlyTotal(activeSubscriptions.length)}/mo
+                    </p>
                   </div>
                 )}
-              </GlassCard>
-            );
-          })()}
-
-          {/* Eligibility Requirements */}
-          <GlassCard>
-            <div className="relative overflow-hidden" style={{ height: 140, borderRadius: "16px 16px 0 0", background: "linear-gradient(135deg, #1e2535 0%, #7B8EC8 50%, #DA6A63 100%)" }}>
-              <div style={{ position: "absolute", inset: 0, backgroundImage: "radial-gradient(ellipse at 75% 30%, rgba(200,230,60,0.2) 0%, transparent 55%), radial-gradient(ellipse at 25% 70%, rgba(123,142,200,0.35) 0%, transparent 50%), radial-gradient(ellipse at 90% 80%, rgba(218,106,99,0.25) 0%, transparent 45%)" }} />
-              <div className="absolute bottom-4 left-6">
-                <p className="text-xs font-bold uppercase tracking-widest mb-0.5" style={{ color: "rgba(200,230,60,0.95)", letterSpacing: "0.18em" }}>Requirements</p>
-                <h3 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 20, color: "#fff", fontStyle: "italic", fontWeight: 400 }}>How to Qualify for Coverage</h3>
               </div>
+            )}
+          </GlassCard>
+
+          <GlassCard>
+            <div className="px-6 pt-6 pb-2">
+              <p className="text-[10px] font-black uppercase tracking-widest mb-2" style={{ color: "rgba(30,37,53,0.35)", letterSpacing: "0.18em" }}>Requirements</p>
+              <h3 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 22, color: "#1e2535", fontStyle: "italic", fontWeight: 400, lineHeight: 1.2 }}>How to Qualify for Coverage</h3>
             </div>
-            <div className="px-6 py-5 grid sm:grid-cols-2 gap-4">
+            <div className="px-6 py-5 grid sm:grid-cols-2 gap-3">
               {[
-                { step: "1", title: "Upload Your License", desc: "Submit your professional license (RN, NP, PA, MD, etc.) for verification by our admin team.", done: licenses.length > 0, page: "licenses" },
-                { step: "2", title: "Get License Verified", desc: "NOVI verifies your credentials. This typically takes 1–2 business days.", done: verifiedLicenses.length > 0, page: "licenses" },
-                { step: "3", title: "Complete Training or Submit Cert", desc: "Attend a NOVI course and enter your class code, or submit an existing certification for review.", done: activeCerts.length > 0, page: "certifications" },
+                { step: "1", title: "Upload Your License", desc: "Submit your professional license (RN, NP, PA, MD, etc.) for verification by our admin team.", done: licenses.length > 0, page: "credentials" },
+                { step: "2", title: "Get License Verified", desc: "NOVI verifies your credentials. This typically takes 1–2 business days.", done: verifiedLicenses.length > 0, page: "credentials" },
+                { step: "3", title: "Complete Training or Submit Cert", desc: "Attend a NOVI course and enter your class code, or submit an existing certification for review.", done: activeCerts.length > 0, page: "credentials" },
                 { step: "4", title: "Apply & Sign Agreement", desc: "Apply for coverage on a per-service basis. Sign the MD Board agreement and activate your membership.", done: activeSubscriptions.length > 0, page: "coverage" },
               ].map(({ step: s, title, desc, done, page }) => (
-                <button key={s} onClick={() => setActiveTab(page)} className="text-left flex gap-3 px-4 py-4 rounded-xl transition-all hover:scale-[1.01]" style={{ background: done ? "rgba(200,230,60,0.1)" : "rgba(30,37,53,0.03)", border: `1px solid ${done ? "rgba(200,230,60,0.35)" : "rgba(30,37,53,0.08)"}` }}>
-                  <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 text-xs font-bold" style={{ background: done ? "#C8E63C" : "rgba(30,37,53,0.1)", color: done ? "#1a2540" : "rgba(30,37,53,0.4)" }}>
-                    {done ? <CheckCircle className="w-4 h-4" style={{ color: "#1a2540" }} /> : s}
-                  </div>
+                <button key={s} onClick={() => setActiveTab(page)}
+                  className="text-left flex gap-3 px-4 py-4 rounded-xl transition-all hover:scale-[1.01]"
+                  style={{ borderLeft: done ? "2px solid rgba(200,230,60,0.6)" : "2px solid rgba(30,37,53,0.12)", background: done ? "rgba(200,230,60,0.06)" : "rgba(30,37,53,0.02)", border: `1px solid ${done ? "rgba(200,230,60,0.2)" : "rgba(30,37,53,0.07)"}`, borderLeftWidth: 2, borderLeftColor: done ? "rgba(200,230,60,0.5)" : "rgba(30,37,53,0.15)" }}>
+                  <div className="text-xs font-black mt-0.5 flex-shrink-0" style={{ color: done ? "#4a6b10" : "rgba(30,37,53,0.25)", fontFamily: "'DM Serif Display', serif", fontSize: 16, fontStyle: "italic" }}>{done ? "✓" : s}</div>
                   <div>
                     <p className="font-semibold text-sm" style={{ color: "#1e2535" }}>{title}</p>
-                    <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.6)" }}>{desc}</p>
+                    <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.5)", lineHeight: 1.55 }}>{desc}</p>
                   </div>
                 </button>
               ))}
@@ -1268,47 +1427,51 @@ export default function ProviderCredentialsCoverage() {
           </GlassCard>
         </TabsContent>
 
-        {/* ── LICENSES TAB ── */}
-        <TabsContent value="licenses" className="pt-5 space-y-4">
-          <div className="flex items-center justify-between">
-            <SectionLabel>Your Licenses</SectionLabel>
-            <Button size="sm" onClick={() => setLicenseOpen(true)} style={{ background: "#FA6F30", color: "#fff", borderRadius: 10 }} className="gap-1.5 h-8 text-xs font-bold">
-              <Plus className="w-3.5 h-3.5" /> Add License
-            </Button>
+        {/* ── CREDENTIALS TAB (Licenses + Certifications) ── */}
+        <TabsContent value="credentials" className="pt-5 space-y-4">
+          {/* Licenses */}
+          <div className="flex items-baseline justify-between mb-4">
+            <div style={{ borderLeft: "2px solid rgba(30,37,53,0.15)", paddingLeft: 12 }}>
+              <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.35)", letterSpacing: "0.18em" }}>Your Licenses</p>
+            </div>
+            <button onClick={() => setLicenseOpen(true)}
+              className="text-xs font-bold transition-all hover:opacity-70"
+              style={{ color: "#FA6F30" }}>+ Add License</button>
           </div>
           {loadingLicenses ? (
-            <div className="space-y-2">{[1, 2].map(i => <div key={i} className="h-16 rounded-xl animate-pulse" style={{ background: "rgba(255,255,255,0.08)" }} />)}</div>
+            <div className="space-y-2">{[1,2].map(i => <div key={i} className="h-14 animate-pulse rounded-xl" style={{ background: "rgba(255,255,255,0.5)" }} />)}</div>
           ) : licenses.length === 0 ? (
-            <GlassCard className="py-16 text-center">
-              <FileText className="w-10 h-10 mx-auto mb-3" style={{ color: "rgba(30,37,53,0.2)" }} />
-              <p className="font-semibold" style={{ color: "#1e2535" }}>No licenses uploaded yet</p>
-              <p className="text-sm mt-1 mb-5" style={{ color: "rgba(30,37,53,0.5)" }}>Upload your professional license to begin the verification process.</p>
-              <Button onClick={() => setLicenseOpen(true)} style={{ background: "#FA6F30", color: "#fff" }} className="gap-2">
-                <Plus className="w-4 h-4" /> Upload License
-              </Button>
-            </GlassCard>
+            <div className="py-10 text-center rounded-2xl" style={{ background: "rgba(255,255,255,0.5)", border: "1px dashed rgba(30,37,53,0.12)" }}>
+              <p className="text-sm font-semibold" style={{ color: "#1e2535" }}>No licenses uploaded yet</p>
+              <p className="text-xs mt-1 mb-4" style={{ color: "rgba(30,37,53,0.4)" }}>Upload your professional license to begin the verification process.</p>
+              <button onClick={() => setLicenseOpen(true)} className="text-xs font-bold" style={{ color: "#FA6F30" }}>+ Upload License</button>
+            </div>
           ) : (
-            <div className="space-y-2">
-              {licenses.map(l => {
+            <div className="rounded-2xl overflow-hidden" style={{ background: "rgba(255,255,255,0.72)", border: "1px solid rgba(30,37,53,0.07)" }}>
+              {licenses.map((l, i) => {
                 const isExpiredOrRejected = l.status === "expired" || l.status === "rejected";
-                const cfgKey = statusColorLicense[l.status] || "bg-slate-100 text-slate-500";
+                const statusStyles = {
+                  verified: { color: "#4a6b10", label: "verified" },
+                  pending_review: { color: "#FA6F30", label: "pending" },
+                  rejected: { color: "#DA6A63", label: "rejected" },
+                  expired: { color: "rgba(30,37,53,0.4)", label: "expired" },
+                };
+                const st = statusStyles[l.status] || statusStyles.pending_review;
                 return (
-                  <div key={l.id} className="flex items-center gap-4 px-5 py-4 rounded-xl" style={{ background: "rgba(255,255,255,0.7)", border: `1px solid ${isExpiredOrRejected ? "rgba(218,106,99,0.3)" : "rgba(30,37,53,0.08)"}` }}>
-                    <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: "rgba(123,142,200,0.15)" }}>
-                      <FileText className="w-5 h-5" style={{ color: "#7B8EC8" }} />
-                    </div>
+                  <div key={l.id} className="flex items-center gap-4 px-5 py-4"
+                    style={{ borderLeft: isExpiredOrRejected ? "2px solid #DA6A63" : l.status === "verified" ? "2px solid rgba(200,230,60,0.5)" : "2px solid rgba(250,111,48,0.35)", borderBottom: i < licenses.length - 1 ? "1px solid rgba(30,37,53,0.06)" : "none" }}>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <p className="font-semibold" style={{ color: "#1e2535" }}>{l.license_type} — {l.license_number}</p>
-                        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${cfgKey}`}>{l.status?.replace("_", " ")}</span>
+                      <div className="flex items-baseline gap-3">
+                        <p className="font-semibold text-sm" style={{ color: "#1e2535", fontFamily: "'DM Serif Display', serif", fontStyle: "italic" }}>{l.license_type} — {l.license_number}</p>
+                        <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: st.color }}>{st.label}</span>
                       </div>
-                      <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.5)" }}>{l.issuing_state}{l.expiration_date ? ` · Expires ${format(new Date(l.expiration_date), "MMM d, yyyy")}` : ""}</p>
-                      {l.rejection_reason && <p className="text-xs text-red-400 mt-1">Rejected: {l.rejection_reason}</p>}
+                      <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.4)" }}>{l.issuing_state}{l.expiration_date ? ` · Expires ${format(new Date(l.expiration_date), "MMM d, yyyy")}` : ""}</p>
+                      {l.rejection_reason && <p className="text-xs mt-0.5" style={{ color: "#DA6A63" }}>Rejected: {l.rejection_reason}</p>}
                     </div>
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      {l.document_url && <a href={l.document_url} target="_blank" rel="noreferrer" className="text-xs font-medium hover:underline" style={{ color: "#7B8EC8" }}>View</a>}
+                    <div className="flex items-center gap-3 flex-shrink-0">
+                      {l.document_url && <a href={l.document_url} target="_blank" rel="noreferrer" className="text-xs font-semibold hover:underline" style={{ color: "rgba(30,37,53,0.4)" }}>View</a>}
                       {isExpiredOrRejected && (
-                        <button className="text-xs font-bold px-3 py-1.5 rounded-lg" style={{ background: "#FA6F30", color: "#fff" }}
+                        <button className="text-xs font-bold" style={{ color: "#FA6F30" }}
                           onClick={() => { setLicenseForm({ license_type: l.license_type, issuing_state: l.issuing_state }); setLicenseOpen(true); }}>
                           {l.status === "expired" ? "Renew" : "Resubmit"}
                         </button>
@@ -1317,153 +1480,110 @@ export default function ProviderCredentialsCoverage() {
                   </div>
                 );
               })}
+              <button onClick={() => setLicenseOpen(true)} className="w-full py-3 text-xs font-semibold text-center transition-all hover:bg-white/60"
+                style={{ color: "rgba(30,37,53,0.4)", borderTop: "1px dashed rgba(30,37,53,0.1)" }}>
+                + Add Another License
+              </button>
             </div>
           )}
-        </TabsContent>
 
-        {/* ── CERTIFICATIONS TAB ── */}
-        <TabsContent value="certifications" className="pt-5 space-y-4">
-          <div className="flex items-center justify-between">
-            <SectionLabel>Your Certifications</SectionLabel>
-            <Button size="sm" onClick={() => { setCertSubmitOpen(true); resetExtCertForm(); }} style={{ background: "#FA6F30", color: "#fff", borderRadius: 10 }} className="gap-1.5 h-8 text-xs font-bold">
-              <Plus className="w-3.5 h-3.5" /> Submit External Cert
-            </Button>
-          </div>
-
-          {myCerts.length === 0 ? (
-            <GlassCard className="py-16 text-center">
-              <Sparkles className="w-10 h-10 mx-auto mb-3" style={{ color: "rgba(30,37,53,0.2)" }} />
-              <p className="font-semibold" style={{ color: "#1e2535" }}>No certifications yet</p>
-              <p className="text-sm mt-1 mb-5" style={{ color: "rgba(30,37,53,0.5)" }}>Complete a NOVI course to earn a certification, or submit an existing cert for review.</p>
-              <div className="flex flex-col sm:flex-row gap-2 justify-center">
-                <Link to={createPageUrl("ProviderEnrollments")}>
-                  <Button style={{ background: "rgba(30,37,53,0.08)", color: "#1e2535", border: "1px solid rgba(30,37,53,0.15)" }} className="gap-2">
-                    <BookOpen className="w-4 h-4" /> Browse NOVI Courses
-                  </Button>
-                </Link>
-                <Button style={{ background: "#FA6F30", color: "#fff" }} className="gap-2" onClick={() => { setCertSubmitOpen(true); resetExtCertForm(); }}>
-                  <Award className="w-4 h-4" /> Submit External Cert
-                </Button>
+          {/* Certifications */}
+          <div className="space-y-4">
+            <div className="flex items-baseline justify-between mb-4">
+              <div style={{ borderLeft: "2px solid rgba(30,37,53,0.15)", paddingLeft: 12 }}>
+                <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.35)", letterSpacing: "0.18em" }}>Your Certifications</p>
               </div>
-            </GlassCard>
-          ) : (
-            <div className="space-y-4">
-              {activeCerts.length > 0 && (
-                <div className="space-y-2">
-                  <p className="text-xs font-bold uppercase tracking-wider" style={{ color: "#C8E63C" }}>Active</p>
-                  {activeCerts.map(c => <CertRow key={c.id} cert={c} />)}
-                </div>
-              )}
-              {pendingCerts.length > 0 && (
-                <div className="space-y-2">
-                  <p className="text-xs font-bold uppercase tracking-wider" style={{ color: "#FA6F30" }}>Under Review</p>
-                  {pendingCerts.map(c => <CertRow key={c.id} cert={c} />)}
-                </div>
-              )}
-              {otherCerts.length > 0 && (
-                <div className="space-y-2">
-                  <p className="text-xs font-bold uppercase tracking-wider" style={{ color: "rgba(255,255,255,0.35)" }}>Other</p>
-                  {otherCerts.map(c => <CertRow key={c.id} cert={c} muted />)}
-                </div>
-              )}
+              <button onClick={() => { setCertSubmitOpen(true); resetExtCertForm(); }}
+                className="text-xs font-bold transition-all hover:opacity-70"
+                style={{ color: "#FA6F30" }}>+ Submit External Cert</button>
             </div>
-          )}
-        </TabsContent>
-
-        {/* ── MD COVERAGE TAB ── */}
-        <TabsContent value="coverage" className="pt-5 space-y-5">
-
-          {/* Assigned MD Board */}
-          <GlassCard>
-            <div className="px-5 py-4 border-b flex items-center gap-2" style={{ borderColor: "rgba(30,37,53,0.08)" }}>
-              <Users className="w-4 h-4" style={{ color: "#DA6A63" }} />
-              <p className="font-bold text-sm" style={{ color: "#1e2535" }}>Your Assigned Medical Director</p>
-            </div>
-            <div className="px-5 py-5">
-              {activeRelationships.length > 0 ? (
-                activeRelationships.map(rel => (
-                  <div key={rel.id} className="flex items-start gap-4">
-                    <div className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: "rgba(218,106,99,0.2)" }}>
-                      <Users className="w-6 h-6" style={{ color: "#DA6A63" }} />
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <p className="font-bold" style={{ color: "#1e2535" }}>{rel.medical_director_name}</p>
-                        <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: "rgba(200,230,60,0.2)", color: "#C8E63C", border: "1px solid rgba(200,230,60,0.3)" }}>Active</span>
-                      </div>
-                      <p className="text-sm mt-0.5" style={{ color: "rgba(30,37,53,0.5)" }}>{rel.medical_director_email}</p>
-                      <p className="text-xs mt-1" style={{ color: "rgba(30,37,53,0.4)" }}>Assigned by NOVI Board · supervising {activeSubscriptions.length} service{activeSubscriptions.length > 1 ? "s" : ""}</p>
-                      {rel.supervision_notes && (
-                        <div className="mt-3 px-3 py-2 rounded-lg text-xs" style={{ background: "rgba(30,37,53,0.05)", color: "rgba(30,37,53,0.65)" }}>
-                          {rel.supervision_notes}
+            {/* cert list rendered inline */}
+            {myCerts.length === 0 ? (
+              <div className="py-10 text-center rounded-2xl" style={{ background: "rgba(255,255,255,0.5)", border: "1px dashed rgba(30,37,53,0.12)" }}>
+                <p className="text-sm font-semibold" style={{ color: "#1e2535" }}>No certifications yet</p>
+                <p className="text-xs mt-1 mb-4" style={{ color: "rgba(30,37,53,0.4)" }}>Complete a NOVI course, or submit an existing cert for review.</p>
+              </div>
+            ) : (
+              <div className="rounded-2xl overflow-hidden" style={{ background: "rgba(255,255,255,0.72)", border: "1px solid rgba(30,37,53,0.07)" }}>
+                {[...activeCerts, ...pendingCerts, ...otherCerts].map((c, i, arr) => {
+                  const cfg = {
+                    active: { color: "#4a6b10", label: "active", accent: "rgba(200,230,60,0.5)" },
+                    pending: { color: "#FA6F30", label: "under review", accent: "rgba(250,111,48,0.35)" },
+                    expired: { color: "rgba(30,37,53,0.35)", label: "expired", accent: "rgba(30,37,53,0.15)" },
+                    revoked: { color: "#DA6A63", label: "revoked", accent: "#DA6A63" },
+                  }[c.status] || { color: "#FA6F30", label: c.status, accent: "rgba(250,111,48,0.35)" };
+                  return (
+                    <div key={c.id} className="flex items-center gap-4 px-5 py-4"
+                      style={{ borderLeft: `2px solid ${cfg.accent}`, borderBottom: i < arr.length - 1 ? "1px solid rgba(30,37,53,0.06)" : "none", opacity: c.status === "expired" || c.status === "revoked" ? 0.55 : 1 }}>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-baseline gap-3">
+                          <p className="font-semibold text-sm" style={{ color: "#1e2535", fontFamily: "'DM Serif Display', serif", fontStyle: "italic" }}>{c.certification_name}</p>
+                          <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: cfg.color }}>{cfg.label}</span>
                         </div>
+                        {c.service_type_name && <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.5)" }}>{c.service_type_name}</p>}
+                        {c.issued_by && <p className="text-xs" style={{ color: "rgba(30,37,53,0.35)" }}>Issued by {c.issued_by}</p>}
+                      </div>
+                      {c.certificate_url && (
+                        <a href={c.certificate_url} target="_blank" rel="noreferrer" className="text-xs font-semibold hover:underline flex-shrink-0" style={{ color: "rgba(30,37,53,0.4)" }}>View</a>
                       )}
                     </div>
-                  </div>
-                ))
-              ) : pendingRelationships.length > 0 ? (
-                <div className="flex items-center gap-3 px-4 py-3 rounded-xl" style={{ background: "rgba(250,111,48,0.1)", border: "1px solid rgba(250,111,48,0.2)" }}>
-                  <Clock className="w-5 h-5 flex-shrink-0" style={{ color: "#FA6F30" }} />
-                  <div>
-                    <p className="font-semibold text-sm" style={{ color: "#1e2535" }}>MD Assignment Pending</p>
-                    <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.55)" }}>NOVI is assigning a Board Medical Director to your account. This typically takes 1–2 business days.</p>
-                  </div>
-                </div>
-              ) : (
-                <div className="text-center py-6">
-                  <div className="w-12 h-12 rounded-xl flex items-center justify-center mx-auto mb-3" style={{ background: "rgba(255,255,255,0.08)" }}>
-                    <Users className="w-6 h-6" style={{ color: "rgba(255,255,255,0.3)" }} />
-                  </div>
-                  <p className="font-semibold text-sm" style={{ color: "#1e2535" }}>No MD Assigned Yet</p>
-                  <p className="text-xs mt-1 mb-4" style={{ color: "rgba(30,37,53,0.5)", maxWidth: 320, margin: "8px auto 16px" }}>
-                    When you apply for MD Coverage, NOVI will assign a Board Medical Director to supervise your practice. You don't select them — we match you.
-                  </p>
-                  <Button onClick={() => { setActivateDialog(true); resetActivation(); }} style={{ background: "#FA6F30", color: "#fff" }} className="gap-2">
-                    <Zap className="w-4 h-4" /> Apply for Coverage
-                  </Button>
-                </div>
-              )}
-            </div>
-          </GlassCard>
-
-          {/* Active Service Coverage */}
-          {activeSubscriptions.length > 0 && (
-          <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <SectionLabel>Active Service Coverage</SectionLabel>
-            <Button size="sm" onClick={() => { setActivateDialog(true); resetActivation(); }} style={{ background: "#FA6F30", color: "#fff", borderRadius: 10 }} className="gap-1.5 h-8 text-xs font-semibold">
-              <Plus className="w-3.5 h-3.5" /> Add Service
-            </Button>
+                  );
+                })}
+                <button onClick={() => { setCertSubmitOpen(true); resetExtCertForm(); }} className="w-full py-3 text-xs font-semibold text-center transition-all hover:bg-white/60"
+                  style={{ color: "rgba(30,37,53,0.4)", borderTop: "1px dashed rgba(30,37,53,0.1)" }}>
+                  + Submit Another External Cert
+                </button>
+              </div>
+            )}
           </div>
+        </TabsContent>
+
+        <TabsContent value="coverage" className="pt-6 space-y-6">
+
+          {/* MD Assignment — editorial strip */}
+          {activeRelationships.length > 0 ? (
+            <div className="flex items-baseline gap-4 px-5 py-3 rounded-xl" style={{ borderLeft: "2px solid rgba(200,230,60,0.5)", background: "rgba(255,255,255,0.55)" }}>
+              <p className="text-sm font-semibold" style={{ color: "#1e2535" }}>Board MD</p>
+              <p className="text-sm" style={{ color: "#4a6b10", fontFamily: "'DM Serif Display', serif", fontStyle: "italic" }}>{activeRelationships[0].medical_director_name}</p>
+              <p className="text-xs ml-auto flex-shrink-0" style={{ color: "rgba(30,37,53,0.4)" }}>supervising {activeSubscriptions.length} service{activeSubscriptions.length !== 1 ? "s" : ""}</p>
+            </div>
+          ) : pendingRelationships.length > 0 ? (
+            <div className="flex items-baseline gap-3 px-5 py-3 rounded-xl" style={{ borderLeft: "2px solid rgba(250,111,48,0.4)", background: "rgba(255,255,255,0.55)" }}>
+              <p className="text-sm" style={{ color: "rgba(30,37,53,0.6)" }}>MD assignment in progress — typically 1–2 business days.</p>
+            </div>
+          ) : null}
+
+          {/* ── Active Services ── */}
+          {activeSubscriptions.length > 0 ? (
+            <div className="space-y-3">
+              <div className="flex items-baseline justify-between mb-4">
+                <div style={{ borderLeft: "2px solid rgba(30,37,53,0.15)", paddingLeft: 12 }}>
+                  <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.35)", letterSpacing: "0.18em" }}>Active MD Coverage</p>
+                  <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.45)" }}>Monthly total: <strong style={{ color: "#1e2535" }}>${calcMonthlyTotal(activeSubscriptions.length)}/mo</strong>{activeSubscriptions.length >= MAX_SERVICES ? " (capped)" : ""}</p>
+                </div>
+                {!isAtCap && (
+                  <button onClick={() => { setActivateDialog(true); resetActivation(); }}
+                    className="text-xs font-bold transition-all hover:opacity-70" style={{ color: "#FA6F30" }}>+ Add Service</button>
+                )}
+              </div>
               {activeSubscriptions.map((sub, idx) => {
                 const st = serviceTypes.find(s => s.id === sub.service_type_id);
                 const isExp = expandedService === sub.id;
                 return (
                   <GlassCard key={sub.id}>
-                    <button className="w-full flex items-center gap-4 px-5 py-4 text-left hover:brightness-110 transition-all" onClick={() => setExpandedService(isExp ? null : sub.id)}>
-                      <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: "rgba(200,230,60,0.15)" }}>
-                        <CheckCircle2 className="w-5 h-5" style={{ color: "#C8E63C" }} />
-                      </div>
+                    <button className="w-full flex items-center gap-4 px-5 py-4 text-left transition-all" onClick={() => setExpandedService(isExp ? null : sub.id)}
+                      style={{ borderLeft: "2px solid rgba(200,230,60,0.5)" }}>
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <p className="font-bold" style={{ color: "#1e2535" }}>{sub.service_type_name}</p>
-                          <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ background: "rgba(200,230,60,0.2)", color: "#C8E63C" }}>Active</span>
+                        <div className="flex items-baseline gap-3">
+                          <p className="font-semibold text-sm" style={{ color: "#1e2535", fontFamily: "'DM Serif Display', serif", fontStyle: "italic" }}>{sub.service_type_name}</p>
+                          <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: String(sub.status).toLowerCase() === "suspended" ? "#FA6F30" : "#4a6b10" }}>{String(sub.status).toLowerCase() === "suspended" ? "Payment issue" : "Active"}</span>
                         </div>
-                        <p className="text-xs mt-0.5 capitalize" style={{ color: "rgba(30,37,53,0.5)" }}>{st?.category?.replace("_", " ")}</p>
+                        <p className="text-xs mt-0.5 capitalize" style={{ color: "rgba(30,37,53,0.4)" }}>{st?.category?.replace("_", " ")}{sub.activated_at ? ` · Since ${format(new Date(sub.activated_at), "MMM d, yyyy")}` : ""}</p>
                       </div>
-                      <div className="text-right mr-3">
-                        <p className="font-bold" style={{ color: "#1e2535" }}>${idx === 0 ? FIRST_SERVICE_PRICE : ADDON_SERVICE_PRICE}<span className="text-xs font-normal" style={{ color: "rgba(30,37,53,0.4)" }}>/mo</span></p>
-                        {activeSubscriptions.length >= MAX_SERVICES && idx === MAX_SERVICES - 1 && <p className="text-xs font-semibold" style={{ color: "#FA6F30" }}>All services covered</p>}
-                        {sub.activated_at && <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.4)" }}>Since {format(new Date(sub.activated_at), "MMM d, yyyy")}</p>}
+                      <div className="flex items-center gap-3 flex-shrink-0">
+                        <p className="text-sm font-bold" style={{ color: "#1e2535" }}>${Number(sub.service_type_monthly_fee ?? (idx === 0 ? FIRST_SERVICE_PRICE : ADDON_SERVICE_PRICE))}<span className="text-xs font-normal" style={{ color: "rgba(30,37,53,0.35)" }}>/mo</span></p>
+                        {isExp ? <ChevronUp className="w-3.5 h-3.5" style={{ color: "rgba(30,37,53,0.3)" }} /> : <ChevronDown className="w-3.5 h-3.5" style={{ color: "rgba(30,37,53,0.3)" }} />}
                       </div>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); openCancelDialog(sub); }}
-                        className="flex-shrink-0 flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg transition-all hover:opacity-80"
-                        style={{ background: "rgba(218,106,99,0.12)", color: "#DA6A63", border: "1px solid rgba(218,106,99,0.25)" }}
-                      >
-                        <XCircle className="w-3.5 h-3.5" /> Cancel
-                      </button>
-                      {isExp ? <ChevronUp className="w-4 h-4 flex-shrink-0" style={{ color: "rgba(255,255,255,0.4)" }} /> : <ChevronDown className="w-4 h-4 flex-shrink-0" style={{ color: "rgba(255,255,255,0.4)" }} />}
                     </button>
                     {isExp && st && (() => {
                       const currentTierNum = sub.coverage_tier || 1;
@@ -1471,159 +1591,79 @@ export default function ProviderCredentialsCoverage() {
                       const hasTiers = tiers.length > 0;
                       const currentTierDef = tiers.find(t => t.tier_number === currentTierNum);
                       const nextTierDef = tiers.find(t => t.tier_number === currentTierNum + 1);
-                      // Effective scope: use tier def if tiers exist, else fall back to service type top-level
                       const effectiveAreas = hasTiers ? (currentTierDef?.allowed_areas || []) : (st.allowed_areas || []);
                       const effectiveUnits = hasTiers ? currentTierDef?.max_units_per_session : st.max_units_per_session;
-                      const effectiveRules = hasTiers ? (currentTierDef?.scope_rules || []) : (st.scope_rules || []);
-                      const effectiveDocs = hasTiers ? (currentTierDef?.protocol_document_urls || []) : (st.protocol_document_urls || []);
+                      const effectiveDocs = filterProtocolDocuments(
+                        hasTiers ? (currentTierDef?.protocol_document_urls || []) : (st.protocol_document_urls || [])
+                      );
+                      const activatedDate = sub.activated_at ? new Date(sub.activated_at) : null;
+                      const monthlyAmount = Number(sub.service_type_monthly_fee ?? (idx === 0 ? FIRST_SERVICE_PRICE : ADDON_SERVICE_PRICE));
+                      const today = new Date();
+                      const nextBilling = new Date(today.getFullYear(), today.getMonth() + 1, 1);
                       return (
-                        <div className="px-5 pb-5 space-y-3 border-t" style={{ borderColor: "rgba(30,37,53,0.08)", paddingTop: 16 }}>
+                        <div className="border-t" style={{ borderColor: "rgba(30,37,53,0.08)" }}>
+                          {/* Billing row — compact single line */}
+                          <div className="px-5 py-3 flex items-center justify-between flex-wrap gap-2" style={{ background: "rgba(123,142,200,0.05)", borderBottom: "1px solid rgba(30,37,53,0.06)" }}>
+                            <div className="flex items-center gap-4 text-xs" style={{ color: "rgba(30,37,53,0.55)" }}>
+                              <span><strong style={{ color: "#1e2535" }}>${monthlyAmount}/mo</strong> · billed 1st</span>
+                              {activatedDate && <span>Active since {format(activatedDate, "MMM d, yyyy")}</span>}
+                              <span>Next: {format(nextBilling, "MMM 1, yyyy")}</span>
+                            </div>
+                            <button onClick={e => { e.stopPropagation(); openCancelDialog(sub); }} className="text-xs font-semibold hover:opacity-70" style={{ color: "#DA6A63" }}>Cancel</button>
+                          </div>
 
-                          {/* ── Billing Details ── */}
-                          {(() => {
-                            const activatedDate = sub.activated_at ? new Date(sub.activated_at) : null;
-                            const monthlyAmount = idx === 0 ? FIRST_SERVICE_PRICE : ADDON_SERVICE_PRICE;
-                            const capNote = activeSubscriptions.length >= MAX_SERVICES ? " (capped — all services included)" : "";
-                            const today = new Date();
-                            // Next billing = 1st of next month
-                            const nextBilling = new Date(today.getFullYear(), today.getMonth() + 1, 1);
-                            // Proration: if activated_at is not the 1st, calculate prorated amount for first month
-                            let proratedAmount = null;
-                            let proratedNote = null;
-                            if (activatedDate) {
-                              const dayOfMonth = activatedDate.getDate();
-                              const daysInMonth = new Date(activatedDate.getFullYear(), activatedDate.getMonth() + 1, 0).getDate();
-                              if (dayOfMonth !== 1) {
-                                const daysRemaining = daysInMonth - dayOfMonth + 1;
-                                proratedAmount = ((monthlyAmount / daysInMonth) * daysRemaining).toFixed(2);
-                                proratedNote = `${daysRemaining} of ${daysInMonth} days in ${format(activatedDate, "MMMM")}`;
-                              }
-                            }
-                            return (
-                              <div className="rounded-xl overflow-hidden" style={{ background: "rgba(123,142,200,0.08)", border: "1px solid rgba(123,142,200,0.2)" }}>
-                                <div className="flex items-center gap-2 px-4 py-2.5" style={{ borderBottom: "1px solid rgba(123,142,200,0.15)" }}>
-                                  <CreditCard className="w-3.5 h-3.5" style={{ color: "#7B8EC8" }} />
-                                  <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "#7B8EC8" }}>Billing Details</p>
-                                </div>
-                                <div className="px-4 py-3 space-y-2.5">
-                                  {/* Monthly rate */}
-                                  <div className="flex items-center justify-between">
-                                    <span className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>Monthly rate</span>
-                                    <span className="text-xs font-bold" style={{ color: "#1e2535" }}>${monthlyAmount}.00/mo</span>
-                                  </div>
-                                  {/* Billing cycle */}
-                                  <div className="flex items-center justify-between">
-                                    <span className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>Billing cycle</span>
-                                    <span className="text-xs font-semibold" style={{ color: "#1e2535" }}>1st of each month</span>
-                                  </div>
-                                  {/* Next billing date */}
-                                  <div className="flex items-center justify-between">
-                                    <span className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>Next billing date</span>
-                                    <span className="text-xs font-semibold" style={{ color: "#1e2535" }}>{format(nextBilling, "MMMM 1, yyyy")}</span>
-                                  </div>
-                                  {/* Coverage start */}
-                                  {activatedDate && (
-                                    <div className="flex items-center justify-between">
-                                      <span className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>Coverage started</span>
-                                      <span className="text-xs font-semibold" style={{ color: "#1e2535" }}>{format(activatedDate, "MMMM d, yyyy")}</span>
-                                    </div>
-                                  )}
-                                  {/* Proration note */}
-                                  {proratedAmount && (
-                                    <div className="mt-1 pt-2 rounded-lg px-3 py-2.5" style={{ background: "rgba(250,111,48,0.08)", border: "1px solid rgba(250,111,48,0.2)", borderTop: "none", marginLeft: -4, marginRight: -4 }}>
-                                      <div className="flex items-start gap-2">
-                                        <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" style={{ color: "#FA6F30" }} />
-                                        <div>
-                                          <p className="text-xs font-bold" style={{ color: "#FA6F30" }}>First month prorated</p>
-                                          <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.65)" }}>
-                                            Your coverage started mid-month ({proratedNote}), so your first charge was <strong>${proratedAmount}</strong>. All subsequent billing is ${monthlyAmount}.00 on the 1st.
-                                          </p>
-                                        </div>
-                                      </div>
-                                    </div>
-                                  )}
-                                  {/* No proration note if started on the 1st */}
-                                  {activatedDate && activatedDate.getDate() === 1 && (
-                                    <div className="flex items-center gap-1.5 pt-0.5">
-                                      <RefreshCw className="w-3 h-3" style={{ color: "rgba(30,37,53,0.35)" }} />
-                                      <p className="text-xs" style={{ color: "rgba(30,37,53,0.45)" }}>Started on the 1st — no proration applied</p>
-                                    </div>
-                                  )}
+                          <div className="px-5 py-4 space-y-3">
+                            {/* Current tier */}
+                            {hasTiers && currentTierDef && (
+                              <div className="flex items-center gap-3">
+                                <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0" style={{ background: "#C8E63C", color: "#1a2540" }}>{currentTierNum}</div>
+                                <div>
+                                  <p className="text-sm font-bold" style={{ color: "#1e2535" }}>{currentTierDef.tier_name}</p>
+                                  {currentTierDef.description && <p className="text-xs" style={{ color: "rgba(30,37,53,0.5)" }}>{currentTierDef.description}</p>}
                                 </div>
                               </div>
-                            );
-                          })()}
+                            )}
 
-                          {/* Tier indicator */}
-                          {hasTiers && (
-                            <div className="rounded-xl p-3 flex items-center gap-3" style={{ background: "rgba(200,230,60,0.12)", border: "1px solid rgba(200,230,60,0.3)" }}>
-                              <div className="w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm flex-shrink-0" style={{ background: "#C8E63C", color: "#1a2540" }}>
-                                {currentTierNum}
+                            {/* Allowed areas */}
+                            {effectiveAreas.length > 0 && (
+                              <div>
+                                <p className="text-[10px] font-bold uppercase tracking-widest mb-1.5" style={{ color: "rgba(30,37,53,0.4)" }}>Allowed Areas</p>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {effectiveAreas.map((a, i) => <span key={i} className="text-xs px-2.5 py-1 rounded-full capitalize" style={{ background: "rgba(30,37,53,0.07)", color: "rgba(30,37,53,0.7)", border: "1px solid rgba(30,37,53,0.1)" }}>{a}</span>)}
+                                </div>
                               </div>
-                              <div className="flex-1">
-                                <p className="font-bold text-sm" style={{ color: "#1e2535" }}>
-                                  {currentTierDef?.tier_name || `Tier ${currentTierNum}`}
-                                </p>
-                                {currentTierDef?.description && <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.6)" }}>{currentTierDef.description}</p>}
-                              </div>
-                              <span className="text-xs font-bold px-2 py-1 rounded-full" style={{ background: "rgba(200,230,60,0.2)", color: "#4a6b10" }}>Current</span>
-                            </div>
-                          )}
+                            )}
 
-                          {/* Allowed Areas */}
-                          {effectiveAreas.length > 0 && (
-                            <div>
-                              <p className="text-xs font-semibold uppercase tracking-wider mb-2 flex items-center gap-1" style={{ color: "rgba(30,37,53,0.5)" }}><MapPin className="w-3 h-3" /> Allowed Areas</p>
-                              <div className="flex flex-wrap gap-1.5">
-                                {effectiveAreas.map((a, i) => <span key={i} className="text-xs px-2.5 py-1 rounded-full capitalize" style={{ background: "rgba(30,37,53,0.07)", color: "rgba(30,37,53,0.7)", border: "1px solid rgba(30,37,53,0.1)" }}>{a}</span>)}
-                              </div>
-                            </div>
-                          )}
-                          {effectiveUnits && (
-                            <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm" style={{ background: "rgba(123,142,200,0.1)", color: "rgba(30,37,53,0.8)" }}>
-                              <Zap className="w-4 h-4 flex-shrink-0" style={{ color: "#7B8EC8" }} />
-                              Max {effectiveUnits} units per session
-                            </div>
-                          )}
-                          {effectiveRules.length > 0 && effectiveRules.map((r, i) => (
-                            <div key={i} className="px-3 py-2 rounded-lg text-xs" style={{ background: "rgba(30,37,53,0.04)", color: "rgba(30,37,53,0.7)" }}>
-                              <span className="font-bold">{r.rule_name}: </span>{r.rule_value} {r.unit}
-                            </div>
-                          ))}
-                          {effectiveDocs.length > 0 && (
-                            <div className="flex flex-wrap gap-2">
-                              {effectiveDocs.map((doc, i) => (
-                                <a key={i} href={doc.url} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs" style={{ background: "rgba(123,142,200,0.15)", color: "#7B8EC8", border: "1px solid rgba(123,142,200,0.25)" }}>
-                                  <FileText className="w-3 h-3" /> {doc.name}
-                                </a>
-                              ))}
-                            </div>
-                          )}
-                          {st.protocol_notes && !hasTiers && (
-                            <div className="px-3 py-2 rounded-lg text-xs" style={{ background: "rgba(250,180,50,0.1)", color: "rgba(140,100,0,0.9)", border: "1px solid rgba(250,180,50,0.25)" }}>
-                              <span className="font-bold">Protocol Note: </span>{st.protocol_notes}
-                            </div>
-                          )}
-
-                          {/* Next tier unlock preview */}
-                          {hasTiers && nextTierDef && (
-                            <div className="rounded-xl p-4 space-y-2" style={{ background: "rgba(30,37,53,0.04)", border: "1px dashed rgba(30,37,53,0.15)" }}>
-                              <p className="text-xs font-bold uppercase tracking-wider flex items-center gap-1.5" style={{ color: "rgba(30,37,53,0.5)" }}>
-                                <Sparkles className="w-3.5 h-3.5" /> Unlock Next: {nextTierDef.tier_name || `Tier ${nextTierDef.tier_number}`}
+                            {/* Max units */}
+                            {effectiveUnits && (
+                              <p className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>
+                                <span className="font-semibold" style={{ color: "#1e2535" }}>Max {effectiveUnits} units</span> per session
                               </p>
-                              {nextTierDef.description && <p className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>{nextTierDef.description}</p>}
-                              {nextTierDef.allowed_areas?.length > 0 && (
-                                <div className="flex flex-wrap gap-1">
-                                  {nextTierDef.allowed_areas.filter(a => !effectiveAreas.includes(a)).map((a, i) => (
-                                    <span key={i} className="text-xs px-2 py-0.5 rounded-full" style={{ background: "rgba(200,230,60,0.15)", color: "#5a7a20", border: "1px dashed rgba(200,230,60,0.4)" }}>+ {a}</span>
-                                  ))}
+                            )}
+
+                            {/* Protocol docs */}
+                            {effectiveDocs.length > 0 && (
+                              <div className="flex flex-wrap gap-2">
+                                {effectiveDocs.map((doc, i) => (
+                                  <a key={i} href={doc.url} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs" style={{ background: "rgba(123,142,200,0.12)", color: "#7B8EC8", border: "1px solid rgba(123,142,200,0.2)" }}>
+                                    <FileText className="w-3 h-3" /> {doc.name}
+                                  </a>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Unlock next tier */}
+                            {hasTiers && nextTierDef && (
+                              <div className="flex items-start gap-2.5 px-3 py-2.5 rounded-xl" style={{ background: "rgba(250,111,48,0.06)", border: "1px solid rgba(250,111,48,0.18)" }}>
+                                <Sparkles className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" style={{ color: "#FA6F30" }} />
+                                <div>
+                                  <p className="text-xs font-bold" style={{ color: "#1e2535" }}>Next: {nextTierDef.tier_name || `Tier ${nextTierDef.tier_number}`}</p>
+                                  {nextTierDef.description && <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.55)" }}>{nextTierDef.description}</p>}
+                                  <p className="text-xs mt-1 font-semibold" style={{ color: "#FA6F30" }}>Complete a NOVI course to unlock</p>
                                 </div>
-                              )}
-                              <p className="text-xs font-semibold" style={{ color: "#FA6F30" }}>
-                                Complete the required NOVI course to unlock this tier — same membership fee.
-                              </p>
-                            </div>
-                          )}
+                              </div>
+                            )}
+                          </div>
                         </div>
                       );
                     })()}
@@ -1631,52 +1671,152 @@ export default function ProviderCredentialsCoverage() {
                 );
               })}
             </div>
+          ) : (
+            /* No active coverage — CTA */
+            <GlassCard className="py-12 text-center">
+              <div className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4" style={{ background: "rgba(250,111,48,0.1)" }}>
+                <Shield className="w-7 h-7" style={{ color: "#FA6F30" }} />
+              </div>
+              <p className="font-bold text-lg" style={{ color: "#1e2535", fontFamily: "'DM Serif Display', serif" }}>No MD Coverage Yet</p>
+              <p className="text-sm mt-2 mb-5" style={{ color: "rgba(30,37,53,0.55)", maxWidth: 340, margin: "8px auto 20px" }}>
+                Apply for NOVI Board of Medical Directors coverage to legally practice. We'll assign you a Board MD — you don't need to find one yourself.
+              </p>
+              <Button onClick={() => { setActivateDialog(true); resetActivation(); }} style={{ background: "#FA6F30", color: "#fff" }} className="gap-2 font-bold">
+                <Zap className="w-4 h-4" /> Apply for Coverage
+              </Button>
+            </GlassCard>
           )}
 
-          {/* No coverage CTA */}
-          {activeSubscriptions.length === 0 && (
-            <GlassCard>
-              <div className="px-6 py-10 text-center">
-                <div className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4" style={{ background: "rgba(250,111,48,0.15)" }}>
-                  <Shield className="w-7 h-7" style={{ color: "#FA6F30" }} />
-                </div>
-                <p className="text-xs font-bold uppercase tracking-widest mb-2" style={{ color: "#FA6F30" }}>No Active Coverage</p>
-                <h3 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 22, color: "#1e2535", marginBottom: 8 }}>Get Covered by the NOVI Board</h3>
-                <p className="text-sm mb-6" style={{ color: "rgba(30,37,53,0.6)", maxWidth: 380, margin: "0 auto 24px" }}>
-                  Apply for MD Board coverage for each service you offer. NOVI assigns a Board MD to supervise your practice — no searching, no negotiating.
-                </p>
-                <Button onClick={() => { setActivateDialog(true); resetActivation(); }} style={{ background: "#FA6F30", color: "#fff" }} className="font-bold gap-2">
-                  <Zap className="w-4 h-4" /> Apply for MD Coverage — starts at ${FIRST_SERVICE_PRICE}/mo
-                </Button>
-                <p className="mt-3 text-xs" style={{ color: "rgba(30,37,53,0.4)" }}>+${ADDON_SERVICE_PRICE}/mo per additional service · capped at ${MAX_MONTHLY_CAP}/mo (5 services)</p>
-              </div>
-            </GlassCard>
+          {/* ── Add More Services (only non-active services) ── */}
+          {serviceTypes.filter(s => !alreadyActiveServices.includes(s.id)).length > 0 && (
+            <div className="space-y-3">
+              <SectionLabel>{activeSubscriptions.length === 0 ? "Available Coverage Plans" : "Add More Services"}</SectionLabel>
+              {serviceTypes.filter(s => !alreadyActiveServices.includes(s.id)).map(service => {
+                const isEligible = unlockedServiceTypeIds.has(service.id);
+                const tiers = service.coverage_tiers || [];
+                const hasTiers = tiers.length > 0;
+                const isExpanded = expandedServiceCard === service.id;
+                const price = activeSubscriptions.length === 0 ? FIRST_SERVICE_PRICE : ADDON_SERVICE_PRICE;
+                return (
+                  <GlassCard key={service.id}>
+                    <div className="px-5 py-4 flex items-start gap-4">
+                      {/* Left: icon */}
+                      <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5" style={{ background: isEligible ? "rgba(200,230,60,0.12)" : "rgba(123,142,200,0.1)" }}>
+                        <Shield className="w-5 h-5" style={{ color: isEligible ? "#5a7a20" : "#7B8EC8" }} />
+                      </div>
+                      {/* Middle: info */}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                          <h4 className="font-bold text-base" style={{ color: "#1e2535" }}>{service.name}</h4>
+                        </div>
+                        <p className="text-xs capitalize mb-2" style={{ color: "rgba(30,37,53,0.5)" }}>
+                          {service.category?.replace("_", " ")}{hasTiers ? ` · ${tiers.length} treatment tiers` : ""}
+                        </p>
+                        {/* Status + CTA */}
+                        {isEligible ? (
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-semibold px-2.5 py-1 rounded-full" style={{ background: "rgba(200,230,60,0.15)", color: "#5a7a20", border: "1px solid rgba(200,230,60,0.35)" }}>✓ Training Complete — Ready to Apply</span>
+                            <Button size="sm" className="font-bold gap-1.5 h-8" style={{ background: "#FA6F30", color: "#fff" }}
+                              onClick={() => { setSelectedServiceTypeId(service.id); setActivateDialog(true); resetActivation(); }}>
+                              <Zap className="w-3.5 h-3.5" /> Apply for Coverage
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            <p className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>To apply for this service, you need to complete training first:</p>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <Button size="sm" className="h-8 text-xs font-semibold gap-1.5" style={{ background: "#2d3d66", color: "#fff" }} onClick={() => navigate(createPageUrl("ProviderEnrollments"))}>
+                                <BookOpen className="w-3.5 h-3.5" /> Browse NOVI Courses
+                              </Button>
+                              <span className="text-xs" style={{ color: "rgba(30,37,53,0.4)" }}>or</span>
+                              <button className="text-xs font-semibold underline" style={{ color: "#7B8EC8" }} onClick={() => { setCertSubmitOpen(true); resetExtCertForm(); }}>
+                                Submit existing certification
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                      {/* Right: price */}
+                      <div className="text-right flex-shrink-0">
+                        <p className="text-xl font-bold" style={{ color: "#1e2535" }}>${price}<span className="text-xs font-normal" style={{ color: "rgba(30,37,53,0.4)" }}>/mo</span></p>
+                        {activeSubscriptions.length > 0 && <p className="text-xs font-semibold" style={{ color: "#5a7a20" }}>add-on</p>}
+                      </div>
+                    </div>
+                    {/* Tier preview toggle */}
+                    {hasTiers && (
+                      <div style={{ borderTop: "1px solid rgba(30,37,53,0.07)" }}>
+                        <button
+                          onClick={() => setExpandedServiceCard(isExpanded ? null : service.id)}
+                          className="w-full px-5 py-2.5 flex items-center justify-between text-xs font-semibold"
+                          style={{ color: "rgba(30,37,53,0.5)" }}
+                        >
+                          <span>{tiers.length} Treatment Tiers Included</span>
+                          {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                        </button>
+                        {isExpanded && (
+                          <div className="px-5 pb-4 space-y-2">
+                            {tiers.sort((a,b) => a.tier_number - b.tier_number).map(tier => {
+                              const linkedCourseNames = (tier.linked_course_ids || []).map(cid => courseMap[cid]?.title).filter(Boolean);
+                              const tierCertEarned = linkedCourseNames.length === 0 || completedEnrollments.some(e => (tier.linked_course_ids || []).includes(e.course_id));
+                              return (
+                                <div key={tier.tier_number} className="flex items-start gap-3 rounded-xl px-3 py-2.5" style={{ background: "rgba(30,37,53,0.03)", border: "1px solid rgba(30,37,53,0.07)" }}>
+                                  <div className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5" style={{ background: "rgba(30,37,53,0.08)", color: "rgba(30,37,53,0.4)" }}>{tier.tier_number}</div>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="font-semibold text-sm" style={{ color: "#1e2535" }}>{tier.tier_name}</p>
+                                    {tier.description && <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.5)" }}>{tier.description}</p>}
+                                    {tier.allowed_areas?.length > 0 && <p className="text-xs mt-0.5 font-medium" style={{ color: "#2D6B7F" }}>{tier.allowed_areas.join(", ")}</p>}
+                                    {linkedCourseNames.length > 0 && (
+                                      <p className="text-xs mt-1 flex items-center gap-1" style={{ color: tierCertEarned ? "#4a6b10" : "#FA6F30" }}>
+                                        {tierCertEarned ? <CheckCircle className="w-3 h-3 flex-shrink-0" /> : <Award className="w-3 h-3 flex-shrink-0" />}
+                                        {tierCertEarned ? "Cert earned" : `Requires cert: ${linkedCourseNames.join(", ")}`}
+                                      </p>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </GlassCard>
+                );
+              })}
+            </div>
           )}
         </TabsContent>
 
-        {/* ── DOCUMENTS & CONTRACTS TAB ── */}
-        <TabsContent value="documents" className="pt-5 space-y-5">
+        {/* ── DOCUMENTS TAB ── */}
+        <TabsContent value="documents" className="pt-6 space-y-6">
 
-          {/* MD Agreement Contracts */}
+          {/* MD Board Agreements */}
           <GlassCard>
-            <div className="px-6 py-5 border-b flex items-center gap-2" style={{ borderColor: "rgba(30,37,53,0.08)" }}>
-              <FileText className="w-4 h-4" style={{ color: "#FA6F30" }} />
-              <p className="font-bold text-sm" style={{ color: "#1e2535" }}>MD Board Agreements</p>
+            <div className="px-6 pt-5 pb-3" style={{ borderBottom: "1px solid rgba(30,37,53,0.06)" }}>
+              <div style={{ borderLeft: "2px solid rgba(30,37,53,0.15)", paddingLeft: 12 }}>
+                <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.35)", letterSpacing: "0.18em" }}>MD Board Agreements</p>
+              </div>
             </div>
             <div className="px-6 py-5">
               {activeSubscriptions.length === 0 ? (
-                <div className="text-center py-8">
-                  <FileText className="w-10 h-10 mx-auto mb-3" style={{ color: "rgba(30,37,53,0.2)" }} />
-                  <p className="font-semibold text-sm" style={{ color: "#1e2535" }}>No active MD agreements</p>
-                  <p className="text-xs mt-1 mb-4" style={{ color: "rgba(30,37,53,0.5)" }}>Once you activate MD coverage, your signed agreements will appear here.</p>
-                  <Button size="sm" onClick={() => { setActivateDialog(true); resetActivation(); }} style={{ background: "#FA6F30", color: "#fff" }} className="gap-2">
-                    <Zap className="w-3.5 h-3.5" /> Apply for Coverage
-                  </Button>
+                <div className="text-center py-6">
+                  <p className="text-sm font-semibold" style={{ color: "#1e2535" }}>No active MD agreements</p>
+                  <p className="text-xs mt-1 mb-3" style={{ color: "rgba(30,37,53,0.4)" }}>Once you activate MD coverage, your signed agreements will appear here.</p>
+                  <button onClick={() => { setActivateDialog(true); resetActivation(); }} className="text-xs font-bold" style={{ color: "#FA6F30" }}>Apply for Coverage</button>
                 </div>
               ) : (
                 <div className="space-y-3">
                   {activeSubscriptions.map((sub) => {
-                    const st = serviceTypes.find(s => s.id === sub.service_type_id);
+                    const st = serviceTypes.find((s) => String(s.id) === String(sub.service_type_id));
+                    const contractMeta = st || {
+                      name: sub.service_type_name,
+                      md_contract_url: sub.md_contract_url,
+                      md_agreement_text: sub.md_agreement_text,
+                    };
+                    const agreementText = contractMeta.md_agreement_text || sub.md_agreement_text;
+                    const signedPdfUrl = isUsableDocumentUrl(sub.signed_contract_url)
+                      ? sub.signed_contract_url
+                      : null;
+                    const contractLabel = getMdContractDisplayName(contractMeta);
                     return (
                       <div key={sub.id} className="rounded-xl overflow-hidden" style={{ border: "1px solid rgba(30,37,53,0.08)" }}>
                         <div className="px-4 py-3 flex items-center gap-3" style={{ background: "rgba(30,37,53,0.03)" }}>
@@ -1692,18 +1832,47 @@ export default function ProviderCredentialsCoverage() {
                           <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ background: "rgba(200,230,60,0.15)", color: "#4a6b10" }}>Active</span>
                         </div>
                         <div className="px-4 py-3 space-y-2">
-                          {/* MD Agreement text preview */}
-                          {st?.md_agreement_text && (
-                            <div className="rounded-lg px-3 py-2 text-xs leading-relaxed" style={{ background: "rgba(30,37,53,0.03)", color: "rgba(30,37,53,0.65)", border: "1px solid rgba(30,37,53,0.06)", maxHeight: 72, overflow: "hidden" }}>
-                              {st.md_agreement_text}
+                          {agreementText && (
+                            <div
+                              className="rounded-lg px-3 py-2 text-xs leading-relaxed"
+                              style={{
+                                background: "rgba(30,37,53,0.03)",
+                                color: "rgba(30,37,53,0.65)",
+                                border: "1px solid rgba(30,37,53,0.06)",
+                                maxHeight: 72,
+                                overflow: "hidden",
+                              }}
+                            >
+                              {agreementText}
                             </div>
                           )}
-                          {/* Protocol docs */}
+                          {(signedPdfUrl || getMdContractUrl(contractMeta)) && (
+                            <div>
+                              <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: "rgba(30,37,53,0.45)" }}>
+                                MD Contract
+                              </p>
+                              {signedPdfUrl ? (
+                                <a
+                                  href={signedPdfUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  download={getSignedMdContractFileName(contractMeta, sub.signed_by_name)}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all hover:brightness-95"
+                                  style={{ background: "rgba(123,142,200,0.12)", color: "#7B8EC8", border: "1px solid rgba(123,142,200,0.25)" }}
+                                >
+                                  <FileText className="w-3 h-3" />
+                                  {contractLabel} — signed by {sub.signed_by_name || "you"}
+                                </a>
+                              ) : null}
+                            </div>
+                          )}
                           {(() => {
                             const tiers = st?.coverage_tiers || [];
                             const tierNum = sub.coverage_tier || 1;
                             const tierDef = tiers.find(t => t.tier_number === tierNum);
-                            const docs = tiers.length > 0 ? (tierDef?.protocol_document_urls || []) : (st?.protocol_document_urls || []);
+                            const docs = filterProtocolDocuments(
+                              tiers.length > 0 ? (tierDef?.protocol_document_urls || []) : (st?.protocol_document_urls || [])
+                            );
                             return docs.length > 0 ? (
                               <div>
                                 <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: "rgba(30,37,53,0.45)" }}>Protocol Documents</p>
@@ -1719,7 +1888,6 @@ export default function ProviderCredentialsCoverage() {
                               </div>
                             ) : null;
                           })()}
-                          {/* Signed by */}
                           {sub.signed_by_name && (
                             <div className="flex items-center gap-2 text-xs" style={{ color: "rgba(30,37,53,0.5)" }}>
                               <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#C8E63C" }} />
@@ -1737,54 +1905,33 @@ export default function ProviderCredentialsCoverage() {
 
           {/* Certification Documents */}
           <GlassCard>
-            <div className="px-6 py-5 border-b flex items-center gap-2" style={{ borderColor: "rgba(30,37,53,0.08)" }}>
-              <Award className="w-4 h-4" style={{ color: "#FA6F30" }} />
-              <p className="font-bold text-sm" style={{ color: "#1e2535" }}>Certification Documents</p>
+            <div className="px-6 pt-5 pb-3" style={{ borderBottom: "1px solid rgba(30,37,53,0.06)" }}>
+              <div style={{ borderLeft: "2px solid rgba(30,37,53,0.15)", paddingLeft: 12 }}>
+                <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.35)", letterSpacing: "0.18em" }}>Certification Documents</p>
+              </div>
             </div>
             <div className="px-6 py-5">
               {activeCerts.length === 0 ? (
                 <div className="text-center py-6">
-                  <Award className="w-8 h-8 mx-auto mb-2" style={{ color: "rgba(30,37,53,0.2)" }} />
                   <p className="text-sm font-semibold" style={{ color: "#1e2535" }}>No certification documents yet</p>
                 </div>
               ) : (
-                <div className="space-y-2">
-                  {activeCerts.map((c) => {
+                <div className="divide-y" style={{ borderTop: "1px solid rgba(30,37,53,0.06)", borderBottom: "1px solid rgba(30,37,53,0.06)" }}>
+                  {activeCerts.map(c => {
                     const canViewCertificate = hasCertificateDocument(c);
                     return (
-                    <div key={c.id} className="flex items-center gap-3 px-4 py-3 rounded-xl" style={{ background: "rgba(255,255,255,0.7)", border: "1px solid rgba(30,37,53,0.08)" }}>
-                      <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: "rgba(200,230,60,0.15)" }}>
-                        <Award className="w-4 h-4" style={{ color: "#4a6b10" }} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="font-semibold text-sm truncate" style={{ color: "#1e2535" }}>{c.certification_name}</p>
-                        <p className="text-xs" style={{ color: "rgba(30,37,53,0.5)" }}>
-                          {c.service_type_name && `${c.service_type_name} · `}
-                          {c.issued_by && `Issued by ${c.issued_by}`}
-                          {c.issued_at && ` · ${format(new Date(c.issued_at), "MMM d, yyyy")}`}
-                        </p>
+                    <div key={c.id} className="py-3 flex items-baseline justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold" style={{ color: "#1e2535", fontFamily: "'DM Serif Display', serif", fontStyle: "italic" }}>{c.certification_name}</p>
+                        <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.4)" }}>{c.service_type_name && `${c.service_type_name} · `}{c.issued_by && `Issued by ${c.issued_by}`}{c.issued_at && ` · ${format(new Date(c.issued_at), "MMM d, yyyy")}`}</p>
                       </div>
                       {canViewCertificate ? (
                         <div className="flex items-center gap-2 flex-shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => openCertificateDocument(c)}
-                            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-all hover:brightness-95"
-                            style={{ background: "rgba(123,142,200,0.12)", color: "#7B8EC8", border: "1px solid rgba(123,142,200,0.25)" }}
-                          >
-                            <ExternalLink className="w-3 h-3" /> View
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => downloadCertificateDocument(c, `${c.certification_name || "certificate"}.pdf`)}
-                            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-all hover:brightness-95"
-                            style={{ background: "rgba(123,142,200,0.12)", color: "#7B8EC8", border: "1px solid rgba(123,142,200,0.25)" }}
-                          >
-                            <Download className="w-3 h-3" /> PDF
-                          </button>
+                          <button type="button" onClick={() => openCertificateDocument(c)} className="text-xs font-semibold hover:underline" style={{ color: "rgba(30,37,53,0.4)" }}>View</button>
+                          <button type="button" onClick={() => downloadCertificateDocument(c, `${c.certification_name || "certificate"}.pdf`)} className="text-xs font-semibold hover:underline" style={{ color: "rgba(30,37,53,0.4)" }}>PDF</button>
                         </div>
                       ) : (
-                        <span className="text-xs" style={{ color: "rgba(30,37,53,0.35)" }}>No file</span>
+                        <span className="text-xs flex-shrink-0" style={{ color: "rgba(30,37,53,0.25)" }}>No file</span>
                       )}
                     </div>
                     );
@@ -1796,9 +1943,10 @@ export default function ProviderCredentialsCoverage() {
 
           {/* License Documents */}
           <GlassCard>
-            <div className="px-6 py-5 border-b flex items-center gap-2" style={{ borderColor: "rgba(30,37,53,0.08)" }}>
-              <FileText className="w-4 h-4" style={{ color: "#7B8EC8" }} />
-              <p className="font-bold text-sm" style={{ color: "#1e2535" }}>License Documents</p>
+            <div className="px-6 pt-5 pb-3" style={{ borderBottom: "1px solid rgba(30,37,53,0.06)" }}>
+              <div style={{ borderLeft: "2px solid rgba(30,37,53,0.15)", paddingLeft: 12 }}>
+                <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.35)", letterSpacing: "0.18em" }}>License Documents</p>
+              </div>
             </div>
             <div className="px-6 py-5">
               {licenses.filter(l => l.document_url).length === 0 ? (
@@ -1839,7 +1987,7 @@ export default function ProviderCredentialsCoverage() {
       {/* Add License */}
       <Dialog open={licenseOpen} onOpenChange={(open) => {
         setLicenseOpen(open);
-        if (!open) setLicenseExpiryError("");
+        if (!open) { setLicenseExpiryError(""); setLicenseDocumentError(""); }
       }}>
         <DialogContent>
           <DialogHeader><DialogTitle>Add Professional License</DialogTitle></DialogHeader>
@@ -1878,17 +2026,25 @@ export default function ProviderCredentialsCoverage() {
                 {licenseExpiryError && <p className="text-xs text-red-500 mt-1">{licenseExpiryError}</p>}
               </div>
             </div>
-            <label className="flex items-center gap-2 cursor-pointer border-2 border-dashed rounded-xl p-4 hover:bg-slate-50 transition-colors">
-              <Upload className="w-4 h-4 text-slate-400" />
-              <span className="text-sm text-slate-500">{uploading ? "Uploading..." : licenseForm.document_url ? "Document uploaded ✓" : "Upload document (PDF, JPG, PNG)"}</span>
-              <input type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png" onChange={uploadLicenseFile} />
-            </label>
+            <div>
+              <Label className="text-sm font-medium mb-1.5 block">
+                License Document *
+              </Label>
+              <label className={`flex items-center gap-2 cursor-pointer border-2 border-dashed rounded-xl p-4 hover:bg-slate-50 transition-colors ${licenseDocumentError ? "border-red-400 bg-red-50" : licenseForm.document_url ? "border-green-400 bg-green-50" : ""}`}>
+                <Upload className={`w-4 h-4 ${licenseDocumentError ? "text-red-400" : "text-slate-400"}`} />
+                <span className={`text-sm ${licenseDocumentError ? "text-red-500" : licenseForm.document_url ? "text-green-700" : "text-slate-500"}`}>
+                  {uploading ? "Uploading..." : licenseForm.document_url ? "Document uploaded ✓" : "Upload document (PDF, JPG, PNG)"}
+                </span>
+                <input type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png" onChange={(e) => { setLicenseDocumentError(""); uploadLicenseFile(e); }} />
+              </label>
+              {licenseDocumentError && <p className="text-xs text-red-500 mt-1">{licenseDocumentError}</p>}
+            </div>
             <div className="flex gap-2 justify-end">
               <Button variant="outline" onClick={() => setLicenseOpen(false)}>Cancel</Button>
               <Button
                 style={{ background: "#FA6F30", color: "#fff" }}
                 onClick={handleSubmitLicense}
-                disabled={!licenseForm.license_number || createLicense.isPending || uploading || isExpiredLicenseDate(licenseForm.expiration_date)}
+                disabled={!licenseForm.license_number || !licenseForm.document_url || createLicense.isPending || uploading || isExpiredLicenseDate(licenseForm.expiration_date)}
               >
                 {createLicense.isPending ? "Submitting..." : "Submit License"}
               </Button>
@@ -1899,7 +2055,7 @@ export default function ProviderCredentialsCoverage() {
 
       {/* Apply for Coverage */}
       <Dialog open={activateDialog} onOpenChange={(v) => { if (!v) resetActivation(); setActivateDialog(v); }}>
-        <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className={`${step === 2 ? "max-w-4xl" : "max-w-xl"} max-h-[92vh] overflow-y-auto`}>
           <DialogHeader>
             <DialogTitle style={{ fontFamily: "'DM Serif Display', serif", fontSize: 20 }}>Apply for MD Board Coverage</DialogTitle>
           </DialogHeader>
@@ -1908,7 +2064,7 @@ export default function ProviderCredentialsCoverage() {
           {step === -1 && (
             <div className="space-y-4 pt-1">
               {/* Current status */}
-              <div className="rounded-xl p-4 space-y-2" style={{ background: "rgba(123,142,200,0.08)", border: "1px solid rgba(123,142,200,0.25)" }}>
+              <div className="rounded-xl p-4 space-y-3" style={{ background: "rgba(123,142,200,0.07)", border: "1px solid rgba(123,142,200,0.2)" }}>
                 <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "#7B8EC8" }}>Your Current Status</p>
                 <div className="grid grid-cols-3 gap-2">
                   {[
@@ -1916,30 +2072,33 @@ export default function ProviderCredentialsCoverage() {
                     { label: "Certification", ok: activeCerts.length > 0, value: activeCerts.length > 0 ? `${activeCerts.length} active` : pendingCerts.length > 0 ? "Under review" : "None yet" },
                     { label: "MD Coverage", ok: activeSubscriptions.length > 0, value: activeSubscriptions.length > 0 ? `${activeSubscriptions.length} active` : "Not applied" },
                   ].map(({ label, ok, value }) => (
-                    <div key={label} className="rounded-lg px-3 py-2.5 text-center" style={{ background: ok ? "rgba(200,230,60,0.12)" : "rgba(255,255,255,0.06)", border: `1px solid ${ok ? "rgba(200,230,60,0.3)" : "rgba(255,255,255,0.12)"}` }}>
-                      <p className="text-xs font-bold" style={{ color: ok ? "#C8E63C" : "rgba(255,255,255,0.4)" }}>{label}</p>
-                      <p className="text-xs mt-0.5 font-semibold" style={{ color: ok ? "#fff" : "rgba(255,255,255,0.5)" }}>{value}</p>
+                    <div key={label} className="rounded-lg px-3 py-3 text-center" style={{
+                      background: ok ? "rgba(90,122,0,0.08)" : "rgba(0,0,0,0.04)",
+                      border: `1px solid ${ok ? "rgba(90,122,0,0.2)" : "rgba(0,0,0,0.1)"}`,
+                    }}>
+                      <p className="text-xs font-semibold" style={{ color: ok ? "#4a6b00" : "rgba(0,0,0,0.45)" }}>{label}</p>
+                      <p className="text-xs mt-1 font-bold" style={{ color: ok ? "#2d4200" : "rgba(0,0,0,0.6)" }}>{value}</p>
                     </div>
                   ))}
                 </div>
               </div>
 
               {/* What is MD Coverage */}
-              <div className="rounded-xl p-4 space-y-3" style={{ background: "rgba(250,111,48,0.08)", border: "1px solid rgba(250,111,48,0.2)" }}>
+              <div className="rounded-xl p-4 space-y-3" style={{ background: "rgba(250,111,48,0.06)", border: "1px solid rgba(250,111,48,0.18)" }}>
                 <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "#FA6F30" }}>What is MD Board Coverage?</p>
-                <p className="text-sm leading-relaxed" style={{ color: "rgba(0,0,0,0.7)" }}>
+                <p className="text-sm leading-relaxed" style={{ color: "rgba(0,0,0,0.72)" }}>
                   NOVI maintains a Board of Medical Directors — licensed physicians who provide clinical oversight and legal supervision. When approved, NOVI assigns you a Board MD who signs your protocols. <strong>You don't find an MD yourself — we handle it.</strong>
                 </p>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-2 gap-x-4 gap-y-2.5">
                   {[
                     { icon: Shield, text: "Board MD auto-assigned to you" },
                     { icon: FileText, text: "Signed protocol documents included" },
                     { icon: ShieldCheck, text: "State compliance coverage" },
                     { icon: DollarSign, text: `$${FIRST_SERVICE_PRICE}/mo base · $${ADDON_SERVICE_PRICE}/mo per add-on · $${MAX_MONTHLY_CAP} cap` },
                   ].map(({ icon: Icon, text }, i) => (
-                    <div key={i} className="flex items-center gap-2 text-xs" style={{ color: "rgba(0,0,0,0.65)" }}>
-                      <Icon className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#FA6F30" }} />
-                      {text}
+                    <div key={i} className="flex items-start gap-2 text-sm" style={{ color: "rgba(0,0,0,0.68)" }}>
+                      <Icon className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: "#FA6F30" }} />
+                      <span>{text}</span>
                     </div>
                   ))}
                 </div>
@@ -1947,38 +2106,38 @@ export default function ProviderCredentialsCoverage() {
 
               {/* Two paths */}
               <div>
-                <p className="text-xs font-bold uppercase tracking-widest mb-2.5" style={{ color: "rgba(0,0,0,0.5)" }}>Two Paths to Coverage</p>
+                <p className="text-xs font-bold uppercase tracking-widest mb-2.5" style={{ color: "rgba(0,0,0,0.45)" }}>Two Paths to Coverage</p>
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="rounded-xl p-4 space-y-2" style={{ background: "rgba(200,230,60,0.08)", border: "1px solid rgba(200,230,60,0.25)" }}>
-                    <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: "rgba(200,230,60,0.2)" }}>
+                  <div className="rounded-xl p-4 space-y-2.5" style={{ background: "rgba(200,230,60,0.07)", border: "1px solid rgba(90,122,0,0.18)" }}>
+                    <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: "rgba(200,230,60,0.18)" }}>
                       <KeyRound className="w-4 h-4" style={{ color: "#5a7a20" }} />
                     </div>
                     <p className="font-bold text-sm" style={{ color: "#1e2535" }}>NOVI Class Code</p>
-                    <p className="text-xs leading-relaxed" style={{ color: "rgba(0,0,0,0.55)" }}>
-                      Attended a NOVI course? Enter the class code given by your instructor on the day of class to instantly verify your training.
+                    <p className="text-xs leading-relaxed" style={{ color: "rgba(0,0,0,0.58)" }}>
+                      Attended a NOVI course? Enter the class code from your instructor to instantly verify your training.
                     </p>
-                    <div className="text-xs font-semibold px-2 py-1 rounded-full inline-block" style={{ background: "rgba(200,230,60,0.2)", color: "#5a7a20" }}>Fastest path</div>
+                    <div className="text-xs font-semibold px-2.5 py-1 rounded-full inline-block" style={{ background: "rgba(200,230,60,0.22)", color: "#4a6b00" }}>Fastest path</div>
                   </div>
-                  <div className="rounded-xl p-4 space-y-2" style={{ background: "rgba(123,142,200,0.08)", border: "1px solid rgba(123,142,200,0.25)" }}>
-                    <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: "rgba(123,142,200,0.2)" }}>
-                      <Award className="w-4 h-4" style={{ color: "#7B8EC8" }} />
+                  <div className="rounded-xl p-4 space-y-2.5" style={{ background: "rgba(123,142,200,0.07)", border: "1px solid rgba(123,142,200,0.22)" }}>
+                    <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: "rgba(123,142,200,0.18)" }}>
+                      <Award className="w-4 h-4" style={{ color: "#5a6eaa" }} />
                     </div>
                     <p className="font-bold text-sm" style={{ color: "#1e2535" }}>External Certification</p>
-                    <p className="text-xs leading-relaxed" style={{ color: "rgba(0,0,0,0.55)" }}>
-                      Certified by another school? Submit your certificate and license for review. Our team will verify and approve within 1–3 business days.
+                    <p className="text-xs leading-relaxed" style={{ color: "rgba(0,0,0,0.58)" }}>
+                      Certified elsewhere? Submit your certificate for review. Our team verifies and approves within 1–3 business days.
                     </p>
-                    <div className="text-xs font-semibold px-2 py-1 rounded-full inline-block" style={{ background: "rgba(123,142,200,0.15)", color: "#7B8EC8" }}>1–3 day review</div>
+                    <div className="text-xs font-semibold px-2.5 py-1 rounded-full inline-block" style={{ background: "rgba(123,142,200,0.15)", color: "#5a6eaa" }}>1–3 day review</div>
                   </div>
                 </div>
               </div>
 
               {/* Requirement check */}
               {verifiedLicenses.length === 0 && (
-                <div className="rounded-xl px-4 py-3 flex items-start gap-3" style={{ background: "rgba(218,106,99,0.1)", border: "1px solid rgba(218,106,99,0.3)" }}>
-                  <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: "#DA6A63" }} />
+                <div className="rounded-xl px-4 py-3 flex items-start gap-3" style={{ background: "rgba(218,106,99,0.08)", border: "1px solid rgba(218,106,99,0.25)" }}>
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: "#c0544e" }} />
                   <div>
-                    <p className="text-sm font-bold" style={{ color: "#DA6A63" }}>License verification required first</p>
-                    <p className="text-xs mt-0.5" style={{ color: "rgba(0,0,0,0.55)" }}>You need a verified professional license before applying for MD coverage. Go to the Licenses tab to upload yours.</p>
+                    <p className="text-sm font-bold" style={{ color: "#c0544e" }}>License verification required first</p>
+                    <p className="text-xs mt-1 leading-relaxed" style={{ color: "rgba(0,0,0,0.58)" }}>You need a verified professional license before applying for MD coverage. Go to the Licenses tab to upload yours.</p>
                   </div>
                 </div>
               )}
@@ -1986,8 +2145,8 @@ export default function ProviderCredentialsCoverage() {
               <Button
                 onClick={() => setStep(0)}
                 disabled={verifiedLicenses.length === 0}
-                className="w-full font-bold"
-                style={{ background: verifiedLicenses.length > 0 ? "#FA6F30" : "rgba(0,0,0,0.1)", color: verifiedLicenses.length > 0 ? "#fff" : "rgba(0,0,0,0.35)" }}
+                className="w-full font-bold py-5"
+                style={{ background: verifiedLicenses.length > 0 ? "#FA6F30" : "rgba(0,0,0,0.08)", color: verifiedLicenses.length > 0 ? "#fff" : "rgba(0,0,0,0.3)" }}
               >
                 <Zap className="w-4 h-4 mr-2" />
                 Continue to Apply
@@ -2186,18 +2345,62 @@ export default function ProviderCredentialsCoverage() {
                 <div><p className="font-semibold text-slate-900">{selectedService?.name} — MD Board Coverage</p><p className="text-xs text-slate-500 mt-0.5">{alreadyActiveServices.length === 0 ? "First service" : "Add-on service"} · NOVI assigns a Board MD automatically</p></div>
                 <div className="text-right"><p className="text-2xl font-bold text-slate-900">${getMembershipPrice()}</p><p className="text-xs text-slate-400">/month</p></div>
               </div>
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 max-h-40 overflow-y-auto text-sm text-slate-700 leading-relaxed">
-                {selectedService?.md_agreement_text || `By signing below, I acknowledge that I have completed the required NOVI training for ${selectedService?.name}, agree to operate within the approved service scope and clinical protocols, and accept supervision by the NOVI Board of Medical Directors as required by my state's regulations.`}
-              </div>
-              <div>
-                <p className="text-xs font-semibold text-slate-600 mb-2 uppercase tracking-wide">Your Signature</p>
-                <div className="border-2 border-dashed border-slate-300 rounded-xl overflow-hidden bg-white relative">
-                  <canvas ref={canvasRef} width={520} height={120} className="w-full touch-none cursor-crosshair"
-                    onMouseDown={startDraw} onMouseMove={draw} onMouseUp={endDraw} onMouseLeave={endDraw}
-                    onTouchStart={startDraw} onTouchMove={draw} onTouchEnd={endDraw} />
-                  {!hasSigned && <p className="absolute inset-0 flex items-center justify-center text-slate-300 text-sm pointer-events-none">Sign here</p>}
+
+              <div className="rounded-xl border border-slate-200 overflow-hidden bg-white">
+                {selectedServiceContractUrl ? (
+                  <>
+                    <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-xs font-semibold text-slate-700 uppercase tracking-wide">1. Review agreement</p>
+                        <p className="text-xs text-slate-500 mt-0.5">Read the MD Board contract for {selectedService?.name || "this service"}.</p>
+                      </div>
+                      <a
+                        href={selectedServiceContractUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg flex-shrink-0 whitespace-nowrap"
+                        style={{ background: "rgba(123,142,200,0.12)", color: "#5a6fa8", border: "1px solid rgba(123,142,200,0.25)" }}
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" /> Open full PDF
+                      </a>
+                    </div>
+                    <div className="bg-slate-100">
+                      <iframe
+                        src={mdContractViewerUrl(selectedServiceContractUrl)}
+                        title={`${selectedService?.name || "Service"} MD Board Coverage Agreement`}
+                        className="w-full h-[min(42vh,360px)] min-h-[240px] bg-white block"
+                      />
+                    </div>
+                  </>
+                ) : selectedService?.md_agreement_text ? (
+                  <div className="px-4 py-4 bg-slate-50 border-b border-slate-200">
+                    <p className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-2">1. Review agreement</p>
+                    <div
+                      className="rounded-lg px-3 py-2 text-xs leading-relaxed max-h-48 overflow-y-auto"
+                      style={{ background: "rgba(255,255,255,0.9)", color: "rgba(30,37,53,0.75)", border: "1px solid rgba(30,37,53,0.08)" }}
+                    >
+                      {selectedService.md_agreement_text}
+                    </div>
+                  </div>
+                ) : null}
+                <div className="px-4 py-4 border-t border-slate-200 bg-white">
+                  <p className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-1">
+                    {selectedServiceContractUrl || selectedService?.md_agreement_text ? "2. Sign below" : "Sign below"}
+                  </p>
+                  <p className="text-xs text-slate-500 mb-3">
+                    {selectedServiceContractUrl
+                      ? "Your signature is placed on the last page of the MD Contract, directly after the agreement text."
+                      : "Your signature is saved with your MD Board coverage agreement. After activation, the signed agreement appears in Documents."}
+                  </p>
+                  <div className="border-2 border-dashed border-slate-300 rounded-xl overflow-hidden bg-white relative w-full">
+                    <canvas ref={canvasRef} className="block w-full touch-none cursor-crosshair"
+                      style={{ height: 120 }}
+                      onMouseDown={startDraw} onMouseMove={draw} onMouseUp={endDraw} onMouseLeave={endDraw}
+                      onTouchStart={startDraw} onTouchMove={draw} onTouchEnd={endDraw} />
+                    {!hasSigned && <p className="absolute inset-0 flex items-center justify-center text-slate-300 text-sm pointer-events-none">Sign here</p>}
+                  </div>
+                  <Button variant="ghost" size="sm" onClick={clearSignature} className="mt-1 text-slate-400 px-0"><RotateCcw className="w-3.5 h-3.5 mr-1" /> Clear signature</Button>
                 </div>
-                <Button variant="ghost" size="sm" onClick={clearSignature} className="mt-1 text-slate-400"><RotateCcw className="w-3.5 h-3.5 mr-1" /> Clear</Button>
               </div>
               <div className="flex items-center gap-2 text-xs text-slate-500 bg-slate-50 rounded-lg p-3">
                 <CheckCircle className="w-3.5 h-3.5 text-green-500 flex-shrink-0" />
@@ -2210,14 +2413,14 @@ export default function ProviderCredentialsCoverage() {
                 </p>
                 <ol className="text-[11px] text-slate-600 space-y-1 list-decimal list-inside leading-snug">
                   <li>We start your recurring monthly MD Board coverage (Stripe may open for payment when applicable).</li>
-                  <li>When checkout completes, your coverage subscription is set to active and your signature is stored.</li>
+                  <li>When checkout completes, your coverage subscription is set to active and a signed contract PDF is saved to your Documents tab.</li>
                   <li>NOVI assigns exactly one Board Medical Director for this service using supported-service matching and sequential round-robin. You do not pick a doctor.</li>
-                  <li>That doctor receives a notification and must approve before supervision is active. You will see pending status until then.</li>
+                  <li>NOVI assigns a Board Medical Director and supervision becomes <strong>active automatically</strong>. You and your MD receive a confirmation notification.</li>
                 </ol>
               </div>
-              {(activateMutation.isError || activateMutation.error) && (
+              {(activateError || activateMutation.isError || activateMutation.error) && (
                 <p className="text-xs text-red-600 whitespace-pre-wrap">
-                  {activateMutation.error?.message || "Could not start checkout. Check your connection or try again."}
+                  {activateError || activateMutation.error?.message || "Could not start checkout. Check your connection or try again."}
                 </p>
               )}
               <Button

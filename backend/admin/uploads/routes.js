@@ -1,6 +1,11 @@
 import { Router } from "express";
 import multer from "multer";
-import { uploadCourseCoverImage, uploadLicenseDocument, uploadPatientJourneySelfie } from "../supabaseStorage.js";
+import {
+  uploadCourseCoverImage,
+  uploadLicenseDocument,
+  uploadManufacturerLogo,
+  uploadPatientJourneySelfie,
+} from "../supabaseStorage.js";
 import { getMeFromAccessToken } from "../auth/service.js";
 
 const MAX_FILE_SIZE_BYTES = 2 * 1024 * 1024;
@@ -10,6 +15,66 @@ const MIME_TO_EXTENSION = {
   "image/png": "png",
   "image/webp": "webp"
 };
+
+const PATIENT_SELFIE_MAX_BYTES = 10 * 1024 * 1024;
+const PATIENT_SELFIE_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/heic",
+  "image/heif",
+]);
+const PATIENT_SELFIE_MIME_TO_EXT = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "image/heic": "heic",
+  "image/heif": "heif",
+};
+
+const uploadPatientSelfie = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: PATIENT_SELFIE_MAX_BYTES },
+  fileFilter: (_req, file, cb) => {
+    if (PATIENT_SELFIE_MIME_TYPES.has(file.mimetype)) {
+      return cb(null, true);
+    }
+    const name = String(file.originalname || "").toLowerCase();
+    if (/\.(jpe?g|png|webp|heic|heif)$/.test(name)) {
+      return cb(null, true);
+    }
+    const err = new Error("Only JPG, PNG, WEBP, HEIC, and HEIF images are allowed.");
+    err.statusCode = 400;
+    return cb(err);
+  },
+});
+
+const MANUFACTURER_LOGO_MAX_BYTES = 3 * 1024 * 1024;
+const MANUFACTURER_LOGO_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/svg+xml",
+]);
+const MANUFACTURER_LOGO_MIME_TO_EXT = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "image/svg+xml": "svg",
+};
+
+const uploadManufacturerLogoMulter = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MANUFACTURER_LOGO_MAX_BYTES },
+  fileFilter: (_req, file, cb) => {
+    if (!MANUFACTURER_LOGO_MIME_TYPES.has(file.mimetype)) {
+      const err = new Error("Only JPG, PNG, WEBP, and SVG images are allowed.");
+      err.statusCode = 400;
+      return cb(err);
+    }
+    return cb(null, true);
+  },
+});
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -94,7 +159,20 @@ function getBearerToken(req) {
   return raw.slice("Bearer ".length).trim() || null;
 }
 
-uploadsRouter.post("/patient-selfie", upload.single("file"), async (req, res, next) => {
+function inferPatientSelfieMime(file) {
+  if (file?.mimetype && PATIENT_SELFIE_MIME_TYPES.has(file.mimetype)) {
+    return file.mimetype;
+  }
+  const name = String(file?.originalname || "").toLowerCase();
+  if (name.endsWith(".heic")) return "image/heic";
+  if (name.endsWith(".heif")) return "image/heif";
+  if (name.endsWith(".png")) return "image/png";
+  if (name.endsWith(".webp")) return "image/webp";
+  if (/\.(jpe?g)$/.test(name)) return "image/jpeg";
+  return file?.mimetype || "";
+}
+
+uploadsRouter.post("/patient-selfie", uploadPatientSelfie.single("file"), async (req, res, next) => {
   try {
     const token = getBearerToken(req);
     if (!token) {
@@ -109,7 +187,14 @@ uploadsRouter.post("/patient-selfie", upload.single("file"), async (req, res, ne
       throw err;
     }
 
-    const extension = MIME_TO_EXTENSION[req.file.mimetype];
+    const resolvedMime = inferPatientSelfieMime(req.file);
+    if (!PATIENT_SELFIE_MIME_TYPES.has(resolvedMime)) {
+      const err = new Error("Only JPG, PNG, WEBP, HEIC, and HEIF images are allowed.");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const extension = PATIENT_SELFIE_MIME_TO_EXT[resolvedMime];
     if (!extension) {
       const err = new Error("Unsupported image format.");
       err.statusCode = 400;
@@ -118,7 +203,7 @@ uploadsRouter.post("/patient-selfie", upload.single("file"), async (req, res, ne
 
     const uploaded = await uploadPatientJourneySelfie({
       buffer: req.file.buffer,
-      mimeType: req.file.mimetype,
+      mimeType: resolvedMime,
       extension,
       patientId: me.id
     });
@@ -182,6 +267,45 @@ uploadsRouter.post("/license-photo", uploadLicense.single("file"), async (req, r
     });
 
     res.status(201).json(uploaded);
+  } catch (error) {
+    next(error);
+  }
+});
+
+uploadsRouter.post("/manufacturer-logo", uploadManufacturerLogoMulter.single("file"), async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) {
+      const err = new Error("Missing bearer token.");
+      err.statusCode = 401;
+      throw err;
+    }
+    await getMeFromAccessToken(token);
+
+    if (!req.file?.buffer) {
+      const err = new Error("Image file is required.");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const extension = MANUFACTURER_LOGO_MIME_TO_EXT[req.file.mimetype];
+    if (!extension) {
+      const err = new Error("Unsupported image format.");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const uploaded = await uploadManufacturerLogo({
+      buffer: req.file.buffer,
+      mimeType: req.file.mimetype,
+      extension,
+    });
+
+    res.status(201).json({
+      ...uploaded,
+      file_url: uploaded.file_url || uploaded.url,
+      url: uploaded.url || uploaded.file_url,
+    });
   } catch (error) {
     next(error);
   }

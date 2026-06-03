@@ -19,7 +19,18 @@ export default function AdminReviews() {
 
   const update = useMutation({
     mutationFn: ({ id, data }) => base44.entities.Review.update(id, data),
-    onSuccess: () => qc.invalidateQueries(["reviews"]),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["reviews"] });
+      qc.invalidateQueries({ queryKey: ["marketplace-catalog"] });
+    },
+  });
+
+  const deleteReview = useMutation({
+    mutationFn: (id) => base44.entities.Review.delete(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["reviews"] });
+      qc.invalidateQueries({ queryKey: ["marketplace-catalog"] });
+    },
   });
 
   const filtered = reviews.filter(r => !search || r.patient_name?.toLowerCase().includes(search.toLowerCase()) || r.comment?.toLowerCase().includes(search.toLowerCase()));
@@ -72,8 +83,13 @@ export default function AdminReviews() {
                         <Flag className="w-3.5 h-3.5 mr-1" /> Flag
                       </Button>
                     )}
-                    <Button size="sm" variant="outline" className="text-red-500"
-                      onClick={() => base44.entities.Review.delete(r.id).then(() => qc.invalidateQueries(["reviews"]))}>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-red-500"
+                      onClick={() => deleteReview.mutate(r.id)}
+                      disabled={deleteReview.isPending}
+                    >
                       Delete
                     </Button>
                   </div>

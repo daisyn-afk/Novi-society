@@ -1,10 +1,17 @@
 import { Router } from "express";
 import { query } from "../db.js";
 import { getMeFromAccessToken } from "../auth/service.js";
+import { hasAdminAccess, hasStaffModuleAccess } from "../auth/helpers.js";
 import { notifyAdminsOfPendingCourseCertIssuance } from "../certificationNotifications.js";
-import { withCourseEmailShell } from "../courseEmailShell.js";
+import { sendEmailFromTemplate } from "../emails/renderTemplate.js";
 import { listEligibleMedicalDirectorsForService } from "../mdEligibleDirectors.js";
 import { submitMdBoardCoverageAssignment } from "../mdAssignmentService.js";
+import {
+  attachCheckoutSessionToMdSubscription,
+  createPendingMdSubscriptionForCheckout,
+  ensureSignedContractForSubscription,
+  finalizeMdBoardCoverage,
+} from "../mdBillingService.js";
 import Stripe from "stripe";
 import {
   recordCheckoutInitiated,
@@ -13,18 +20,72 @@ import {
   recordStripeWebhookEvent,
   PAYMENT_FLOW
 } from "../payments/service.js";
+import {
+  createManufacturerApplication,
+  getManufacturerById
+} from "../manufacturers/repository.js";
+import {
+  resolveRepContactForProvider,
+  getProviderManufacturerRep,
+  isValidEmailFormat,
+} from "../manufacturers/providerManufacturerRepsRepository.js";
+import { createProviderGoogleMeetEvent } from "../manufacturers/googleCalendarService.js";
+import { getProviderGoogleConnection } from "../manufacturers/providerGoogleConnectionRepository.js";
+import {
+  addMinutesToLocalDateTime,
+  createProviderRepCall,
+  parseScheduledAt,
+} from "../manufacturers/providerRepCallsRepository.js";
+import { createManufacturerOrderRequest } from "../manufacturers/orderRequestsRepository.js";
+import {
+  notifyAdminsOfManufacturerApplication,
+  notifyRepOfManufacturerApplication,
+  notifyRepOfContactRequest,
+} from "../manufacturers/notifications.js";
+import { buildManufacturerApplicationPayload } from "../manufacturers/providerApplicationContext.js";
+import { validateBookingScope } from "../bookingValidation.js";
+import { sendAppointmentGfeInviteEmail, notifyPatientGfeInvite } from "../patientAppointmentEmails.js";
+import { handleQualiphyExamWebhook, resolveQualiphyWebhookUrl } from "../qualiphy/webhookHandler.js";
+import {
+  runCheckExpirations,
+  runComplianceChecks,
+} from "../compliance-logs/expirationService.js";
+import {
+  createAppointmentDepositCheckout,
+  processAppointmentCheckoutCompletedSession,
+} from "../appointments/paymentService.js";
+
+export { processAppointmentCheckoutCompletedSession };
 
 export const functionsRouter = Router();
 let certificationColumnsPromise = null;
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || "";
 const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET || "";
 const appBaseUrl = process.env.APP_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || "";
-const resendApiKey = process.env.RESEND_API_KEY || "";
-const resendFromEmail = process.env.RESEND_FROM_EMAIL || "NOVI Society Training <hello@novisociety.com>";
 const QUALIPHY_API_URL = "https://api.qualiphy.me/api/exam_invite";
 const stripe = stripeSecretKey ? new Stripe(stripeSecretKey) : null;
 let preOrderColumnsPromise = null;
 let coursePromoColumnsPromise = null;
+let appointmentColumnsPromise = null;
+
+async function getAppointmentColumnsSet() {
+  if (!appointmentColumnsPromise) {
+    appointmentColumnsPromise = query(
+      `select column_name
+       from information_schema.columns
+       where table_schema = 'public'
+         and table_name = 'appointments'`
+    )
+      .then((r) => new Set((r.rows || []).map((row) => String(row.column_name || "").toLowerCase())))
+      .catch(() => new Set());
+  }
+  return appointmentColumnsPromise;
+}
+
+async function hasAppointmentColumn(name) {
+  const cols = await getAppointmentColumnsSet();
+  return cols.has(String(name || "").toLowerCase());
+}
 
 async function getPreOrderColumnsSet() {
   if (!preOrderColumnsPromise) {
@@ -77,6 +138,67 @@ function splitNameParts(fullName) {
   const parts = clean.split(/\s+/).filter(Boolean);
   if (parts.length === 1) return { firstName: parts[0], lastName: "Model" };
   return { firstName: parts[0], lastName: parts.slice(1).join(" ") };
+}
+
+/** pg `date` columns often arrive as JS Date objects — never use String(date).slice(0, 10). */
+function normalizeDateOnly(value) {
+  if (value === null || value === undefined) return null;
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    const y = value.getUTCFullYear();
+    const m = String(value.getUTCMonth() + 1).padStart(2, "0");
+    const d = String(value.getUTCDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+  const str = String(value).trim();
+  if (!str) return null;
+  const match = str.match(/^(\d{4}-\d{2}-\d{2})/);
+  return match ? match[1] : null;
+}
+
+async function loadPatientGfeContact(patientId, patientEmail) {
+  const pid = String(patientId || "").trim();
+  const email = String(patientEmail || "").trim().toLowerCase();
+  let dob = null;
+  let phone = null;
+  let state = null;
+
+  if (pid) {
+    const { rows } = await query(
+      `select pp.date_of_birth, pp.phone, pp.state
+         from public.users u
+         left join public.patient_profiles pp on pp.user_id = u.id
+        where u.auth_user_id::text = $1 or u.id::text = $1
+        limit 1`,
+      [pid]
+    );
+    const row = rows[0] || {};
+    dob = normalizeDateOnly(row.date_of_birth);
+    phone = String(row.phone || "").trim() || null;
+    state = String(row.state || "").trim() || null;
+  }
+
+  if ((!dob || !phone) && email) {
+    const hasPreOrderDob = await hasPreOrderColumn("date_of_birth");
+    if (hasPreOrderDob) {
+      const { rows: preRows } = await query(
+        `select date_of_birth, phone
+           from public.pre_orders
+          where lower(customer_email) = $1
+            and date_of_birth is not null
+          order by created_at desc
+          limit 1`,
+        [email]
+      );
+      const pre = preRows[0];
+      if (pre) {
+        if (!dob) dob = normalizeDateOnly(pre.date_of_birth);
+        if (!phone) phone = String(pre.phone || "").trim() || null;
+      }
+    }
+  }
+
+  return { dob, phone, state };
 }
 
 async function resolveQualiphyExamIdForCourse({ courseId, treatmentType }) {
@@ -163,6 +285,158 @@ async function resolveQualiphyExamIdForCourse({ courseId, treatmentType }) {
   return candidates[0].examIds[0];
 }
 
+async function resolveQualiphyExamIdForAppointment({ serviceTypeId, serviceName, qualiphyExamIds }) {
+  const fromJoin = normalizeExamIds(qualiphyExamIds);
+  if (fromJoin.length > 0) return fromJoin[0];
+  const stId = String(serviceTypeId || "").trim();
+  if (stId) {
+    const { rows } = await query(
+      `select qualiphy_exam_ids from public.service_type where id = $1 limit 1`,
+      [stId]
+    );
+    const ids = normalizeExamIds(rows[0]?.qualiphy_exam_ids);
+    if (ids.length > 0) return ids[0];
+  }
+  const service = String(serviceName || "").trim();
+  if (service) {
+    const { rows } = await query(
+      `select qualiphy_exam_ids
+         from public.service_type
+        where lower(trim(name)) = lower(trim($1))
+          and requires_gfe = true
+        limit 1`,
+      [service]
+    );
+    const ids = normalizeExamIds(rows[0]?.qualiphy_exam_ids);
+    if (ids.length > 0) return ids[0];
+  }
+  return null;
+}
+
+async function resolveTeleStateForAppointment({ appointment, patientState }) {
+  const patientAbbr = extractUsStateAbbr(patientState);
+  if (patientAbbr) return patientAbbr;
+  const rawPatient = String(patientState || "").trim().toUpperCase();
+  if (/^[A-Z]{2}$/.test(rawPatient)) return rawPatient;
+
+  const providerId = String(appointment?.provider_id || "").trim();
+  if (providerId) {
+    const { rows } = await query(
+      `select pp.state
+         from public.users u
+         left join public.provider_profiles pp on pp.user_id = u.id
+        where u.auth_user_id::text = $1 or u.id::text = $1
+        limit 1`,
+      [providerId]
+    );
+    const providerAbbr = extractUsStateAbbr(rows[0]?.state);
+    if (providerAbbr) return providerAbbr;
+  }
+  return null;
+}
+
+function parseQualiphyInviteResponse(invitePayload) {
+  const meetingUrl = String(
+    invitePayload?.meeting_url ||
+    invitePayload?.url ||
+    invitePayload?.exam_invite_url ||
+    invitePayload?.gfe_url ||
+    invitePayload?.data?.meeting_url ||
+    invitePayload?.data?.url ||
+    invitePayload?.data?.exam_invite_url ||
+    ""
+  ).trim();
+  const meetingUuid = String(invitePayload?.meeting_uuid || invitePayload?.data?.meeting_uuid || "").trim();
+  const patientExams = Array.isArray(invitePayload?.patient_exams)
+    ? invitePayload.patient_exams
+    : Array.isArray(invitePayload?.data?.patient_exams)
+      ? invitePayload.data.patient_exams
+      : [];
+  const patientExamId = patientExams[0]?.patient_exam_id != null
+    ? String(patientExams[0].patient_exam_id)
+    : "";
+  return { meetingUrl, meetingUuid, patientExamId };
+}
+
+async function requestQualiphyExamInvite(inviteFields) {
+  const qualiphyApiKey = process.env.QUALIPHY_API_KEY || "";
+  const qualiphyClinicId = process.env.QUALIPHY_CLINIC_ID || "";
+  if (!qualiphyApiKey) {
+    const err = new Error("QUALIPHY_API_KEY is not configured.");
+    err.statusCode = 500;
+    throw err;
+  }
+
+  const qualiphyWebhookUrl = resolveQualiphyWebhookUrl();
+  const invitePayloadBody = {
+    api_key: qualiphyApiKey,
+    ...inviteFields,
+  };
+  if (qualiphyWebhookUrl) {
+    invitePayloadBody.webhook_url = qualiphyWebhookUrl;
+  } else {
+    // eslint-disable-next-line no-console
+    console.warn(
+      "[qualiphy] No webhook URL — exam completion will not update appointments. " +
+        "Set QUALIPHY_WEBHOOK_URL or APP_BASE_URL to a public HTTPS origin."
+    );
+  }
+  if (qualiphyClinicId) invitePayloadBody.clinic_id = qualiphyClinicId;
+
+  const sendInvite = async (payload) => {
+    const response = await fetch(QUALIPHY_API_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${qualiphyApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+    const responsePayload = await response.json().catch(() => ({}));
+    return { response, responsePayload };
+  };
+
+  let { response: inviteRes, responsePayload: invitePayload } = await sendInvite(invitePayloadBody);
+  let upstreamHttpCode = Number(invitePayload?.http_code || 0);
+  let upstreamFailed = !inviteRes.ok || (Number.isFinite(upstreamHttpCode) && upstreamHttpCode >= 400);
+
+  const upstreamErrorTextInitial = String(
+    invitePayload?.error_message || invitePayload?.message || invitePayload?.error || ""
+  ).toLowerCase();
+  const looksLikeClinicNotFound =
+    upstreamErrorTextInitial.includes("clinic") && upstreamErrorTextInitial.includes("not found");
+
+  if (Boolean(invitePayloadBody?.clinic_id) && (upstreamFailed || looksLikeClinicNotFound)) {
+    const fallbackPayload = { ...invitePayloadBody };
+    delete fallbackPayload.clinic_id;
+    ({ response: inviteRes, responsePayload: invitePayload } = await sendInvite(fallbackPayload));
+    upstreamHttpCode = Number(invitePayload?.http_code || 0);
+    upstreamFailed = !inviteRes.ok || (Number.isFinite(upstreamHttpCode) && upstreamHttpCode >= 400);
+  }
+
+  if (upstreamFailed) {
+    const upstreamError =
+      invitePayload?.error_message || invitePayload?.message || invitePayload?.error || "Qualiphy invite request failed.";
+    const err = new Error(upstreamError);
+    err.statusCode = 502;
+    throw err;
+  }
+
+  const { meetingUrl, meetingUuid, patientExamId } = parseQualiphyInviteResponse(invitePayload);
+
+  if (!meetingUrl) {
+    const err = new Error("Qualiphy did not return a GFE link.");
+    err.statusCode = 502;
+    throw err;
+  }
+  if (meetingUrl.includes("/ModelBookingLookup")) {
+    const err = new Error("Invalid GFE link returned. Qualiphy did not return an exam invite URL.");
+    err.statusCode = 502;
+    throw err;
+  }
+  return { meetingUrl, meetingUuid, patientExamId, webhookUrl: qualiphyWebhookUrl || null };
+}
+
 function toCurrencyCents(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return 0;
@@ -237,32 +511,22 @@ function treatmentLabel(treatmentType) {
   return "Botox + Filler";
 }
 
-async function sendResendEmail({ to, subject, html }) {
-  if (!resendApiKey) {
-    const err = new Error("RESEND_API_KEY is not configured.");
-    err.statusCode = 500;
-    throw err;
-  }
-  const result = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${resendApiKey}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      from: resendFromEmail,
-      to: [to],
-      subject,
-      html
-    })
-  });
-  const payload = await result.json().catch(() => ({}));
+/**
+ * Dispatch a model-training email through the central templateRegistry.
+ * Throws on hard failure so route handlers surface a 500 with the resend error.
+ */
+async function sendModelEmail(templateKey, vars) {
+  const result = await sendEmailFromTemplate(templateKey, vars);
   if (!result.ok) {
-    const err = new Error(payload?.message || "Email send failed");
+    const err = new Error(
+      typeof result.error === "string" && result.error
+        ? result.error
+        : "Email send failed"
+    );
     err.statusCode = 500;
     throw err;
   }
-  return payload;
+  return result;
 }
 
 
@@ -324,14 +588,29 @@ export async function processModelCheckoutCompletedSession(session) {
   );
 
   try {
-    const htmlBody = withCourseEmailShell({
-      title: "You're Booked!",
-      contentHtml: `<p style="color:#1e2535;font-size:15px;margin:0 0 16px;">Hi <strong>${row.customer_name || "there"}</strong>,</p><p style="color:rgba(30,37,53,0.7);font-size:14px;line-height:1.7;margin:0;">Your model training booking has been confirmed for ${fmtDateLocal(row.course_date)}${row.model_time_slot ? ` at ${fmtTimeLabel(row.model_time_slot)}` : ""}.</p>`
-    });
-    await sendResendEmail({
+    const formattedDate = fmtDateLocal(row.course_date);
+    await sendModelEmail("model_booking_confirmed", {
       to: row.customer_email,
-      subject: `Your Model Training Booking is Confirmed - ${fmtDateLocal(row.course_date)}`,
-      html: htmlBody
+      first_name: String(row.customer_name || "there").split(/\s+/)[0],
+      course_title: row.course_title || "NOVI Training Course",
+      course_date_label: formattedDate,
+      time_label: row.model_time_slot ? fmtTimeLabel(row.model_time_slot) : "",
+      treatment_label: treatmentLabel(row.treatment_type),
+      details: [
+        row.course_title ? { label: "Course", value: row.course_title } : null,
+        { label: "Date", value: formattedDate },
+        row.model_time_slot ? { label: "Time", value: fmtTimeLabel(row.model_time_slot) } : null,
+        row.treatment_type ? { label: "Treatment", value: treatmentLabel(row.treatment_type) } : null,
+      ].filter(Boolean),
+      summary_lines: [
+        "Good Faith Exam (link sent separately)",
+        row.treatment_type === "tox"
+          ? "20 Units of Botox"
+          : row.treatment_type === "filler"
+            ? "1 Syringe of Filler"
+            : "20 units of Botox or 1 syringe of Filler",
+        "Supervised by a licensed Medical Director",
+      ],
     });
     await query(
       `update public.pre_orders
@@ -351,6 +630,88 @@ function getBearerToken(req) {
   if (!raw.startsWith("Bearer ")) return null;
   return raw.slice("Bearer ".length).trim() || null;
 }
+
+async function requireAdminOrStaffModelSignups(req, res, next) {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ error: "Missing bearer token." });
+    const me = await getMeFromAccessToken(token);
+    if (hasAdminAccess(me?.role) || hasStaffModuleAccess(me, "AdminModelSignups")) {
+      req.me = me;
+      return next();
+    }
+    return res.status(403).json({ error: "Forbidden." });
+  } catch (error) {
+    return res.status(error?.statusCode || 401).json({ error: error?.message || "Unauthorized." });
+  }
+}
+
+async function requireAdminOrStaffCompliance(req, res, next) {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ error: "Missing bearer token." });
+    const me = await getMeFromAccessToken(token);
+    if (hasAdminAccess(me?.role) || hasStaffModuleAccess(me, "AdminCompliance")) {
+      req.me = me;
+      return next();
+    }
+    return res.status(403).json({ error: "Forbidden." });
+  } catch (error) {
+    return res.status(error?.statusCode || 401).json({ error: error?.message || "Unauthorized." });
+  }
+}
+
+async function requireCronOrAdminCompliance(req, res, next) {
+  const cronSecret = String(process.env.CRON_SECRET || "").trim();
+  if (cronSecret) {
+    const auth = String(req.headers.authorization || "").trim();
+    if (auth === `Bearer ${cronSecret}`) return next();
+  }
+  return requireAdminOrStaffCompliance(req, res, next);
+}
+
+functionsRouter.post("/validateBookingScope", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ eligible: false, reason: "Missing bearer token." });
+    await getMeFromAccessToken(token);
+
+    const body = req.body || {};
+    const providerId = String(body.provider_id || body.providerId || "").trim();
+    const service = String(body.service || "").trim();
+    const referralCode = String(body.referral_code || body.referralCode || "").trim();
+    const validation = await validateBookingScope({
+      providerId,
+      service,
+      referral_code: referralCode || undefined,
+    });
+    return res.json(validation);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// Backward-compatible alias used by some older clients.
+functionsRouter.post("/validateScopeEligibility", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ eligible: false, reason: "Missing bearer token." });
+    await getMeFromAccessToken(token);
+
+    const body = req.body || {};
+    const providerId = String(body.provider_id || body.providerId || "").trim();
+    const service = String(body.service || "").trim();
+    const referralCode = String(body.referral_code || body.referralCode || "").trim();
+    const validation = await validateBookingScope({
+      providerId,
+      service,
+      referral_code: referralCode || undefined,
+    });
+    return res.json(validation);
+  } catch (error) {
+    return next(error);
+  }
+});
 
 function parseClassDateTime(dateValue, timeValue, fallbackHour, fallbackMinute) {
   if (!dateValue) return null;
@@ -519,8 +880,34 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
       return res.status(400).json({ success: false, error: "service_type_id is required." });
     }
 
+    const signatureData = body.signature_data != null ? String(body.signature_data) : null;
+
+    if (String(me.role || "").trim().toLowerCase() !== "provider") {
+      return res.status(403).json({ success: false, error: "Only providers can activate MD coverage." });
+    }
+
+    if (!signatureData || !/^data:image\/(png|jpeg|jpg);base64,/i.test(signatureData)) {
+      return res.status(400).json({
+        success: false,
+        error: "Please sign the MD agreement on the signature pad before continuing.",
+      });
+    }
+
     if (amountCents <= 0) {
-      return res.json({ success: true });
+      const result = await finalizeMdBoardCoverage({
+        providerId: me.id,
+        providerEmail: me.email,
+        providerName: me.full_name,
+        serviceTypeId,
+        serviceTypeName,
+        enrollmentId: enrollmentId || null,
+        signatureData,
+        signedByName: me.full_name,
+      });
+      if (!result.ok) {
+        return res.status(400).json({ success: false, error: result.error || "Unable to activate MD coverage." });
+      }
+      return res.json({ success: true, ...result });
     }
 
     if (!stripe) {
@@ -530,10 +917,27 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
       });
     }
 
+    const pending = await createPendingMdSubscriptionForCheckout({
+      providerId: me.id,
+      providerEmail: me.email,
+      providerName: me.full_name,
+      serviceTypeId,
+      serviceTypeName,
+      enrollmentId: enrollmentId || null,
+      signatureData,
+      signedByName: me.full_name,
+    });
+
+    const signedContractUrl = await ensureSignedContractForSubscription(pending, {
+      signatureData,
+      signedByName: me.full_name,
+    });
+
     const base = String(appBaseUrl || "http://localhost:5173").replace(/\/$/, "");
     const successParams = new URLSearchParams({
       md_payment_status: "success",
-      service_type_id: serviceTypeId
+      service_type_id: serviceTypeId,
+      tab: "documents",
     });
     if (enrollmentId) successParams.set("enrollment_id", enrollmentId);
     const successUrl = `${base}/ProviderCredentialsCoverage?${successParams.toString()}`;
@@ -547,6 +951,7 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
       cancel_url: cancelUrl,
       metadata: {
         checkout_type: "md_board_coverage",
+        md_subscription_id: String(pending.id || ""),
         provider_auth_user_id: String(me.id || ""),
         service_type_id: serviceTypeId,
         enrollment_id: enrollmentId || ""
@@ -554,6 +959,7 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
       subscription_data: {
         metadata: {
           checkout_type: "md_board_coverage",
+          md_subscription_id: String(pending.id || ""),
           provider_auth_user_id: String(me.id || ""),
           service_type_id: serviceTypeId,
           enrollment_id: enrollmentId || ""
@@ -575,27 +981,52 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
       ]
     });
 
+    await attachCheckoutSessionToMdSubscription(pending.id, checkoutSession.id);
+
     const url = checkoutSession?.url;
     if (!url) {
       return res.status(500).json({ success: false, error: "Checkout session did not return a URL." });
     }
-    return res.json({ success: true, url });
+    return res.json({
+      success: true,
+      url,
+      signed_contract_url: signedContractUrl || pending.signed_contract_url || null,
+      md_subscription_id: pending.id,
+      service_type_id: serviceTypeId,
+      service_type_name: serviceTypeName,
+    });
   } catch (error) {
     return next(error);
   }
 });
 
-/** Placeholder: cancel flow can extend to Stripe + DB when subscription ids are stored. */
+/** Provider cancel: DB + admin email only. Stripe must be cancelled manually in dashboard. */
 functionsRouter.post("/cancelMDSubscription", async (req, res, next) => {
   try {
     const token = getBearerToken(req);
     if (!token) return res.status(401).json({ success: false, error: "Missing bearer token." });
-    await getMeFromAccessToken(token);
+    const me = await getMeFromAccessToken(token);
+    const role = String(me.role || "").toLowerCase();
+    if (role !== "provider" && !hasAdminAccess(me.role)) {
+      return res.status(403).json({ success: false, error: "Forbidden." });
+    }
     const subscriptionId = String(req.body?.subscription_id || "").trim();
     if (!subscriptionId) {
       return res.status(400).json({ success: false, error: "subscription_id is required." });
     }
-    return res.json({ success: true });
+    const { requestProviderMdSubscriptionCancel } = await import(
+      "../mdSubscriptionProviderCancel.js"
+    );
+    const result = await requestProviderMdSubscriptionCancel({
+      subscriptionId,
+      providerId: me.id,
+      reason: req.body?.reason || null,
+      notes: req.body?.notes || null,
+    });
+    if (!result.success) {
+      return res.status(result.error === "Forbidden." ? 403 : 400).json(result);
+    }
+    return res.json(result);
   } catch (error) {
     return next(error);
   }
@@ -642,6 +1073,41 @@ functionsRouter.post("/pickMedicalDirectorForService", async (req, res, next) =>
       eligible_count: n,
       service_type_id: serviceTypeId,
     });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+/**
+ * Provider-only: activate MD subscription + run assignment (Stripe return backup or paid webhook gap).
+ */
+functionsRouter.post("/finalizeMdBoardCoverage", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ success: false, error: "Missing bearer token." });
+    const me = await getMeFromAccessToken(token);
+    if (String(me.role || "").trim().toLowerCase() !== "provider") {
+      return res.status(403).json({ success: false, error: "Only providers can finalize MD coverage." });
+    }
+    const body = req.body || {};
+    const serviceTypeId = String(body.service_type_id || "").trim();
+    if (!serviceTypeId) {
+      return res.status(400).json({ success: false, error: "service_type_id is required." });
+    }
+    const result = await finalizeMdBoardCoverage({
+      providerId: me.id,
+      providerEmail: me.email,
+      providerName: me.full_name,
+      serviceTypeId,
+      serviceTypeName: String(body.service_type_name || "").trim(),
+      enrollmentId: body.enrollment_id != null ? String(body.enrollment_id).trim() : null,
+      signatureData: body.signature_data != null ? String(body.signature_data) : null,
+      signedByName: me.full_name,
+    });
+    if (!result.ok) {
+      return res.status(400).json({ success: false, error: result.error || "Unable to activate MD coverage." });
+    }
+    return res.json({ success: true, ...result });
   } catch (error) {
     return next(error);
   }
@@ -1204,13 +1670,28 @@ functionsRouter.post("/createModelCheckout", async (req, res, next) => {
           payment_status: "succeeded"
         }
       );
-      await sendResendEmail({
+      await sendModelEmail("model_booking_confirmed", {
         to: customerEmail,
-        subject: `Your Model Training Booking is Confirmed - ${fmtDateLocal(courseDate)}`,
-        html: withCourseEmailShell({
-          title: "You're Booked!",
-          contentHtml: `<p style="color:#1e2535;font-size:15px;margin:0 0 24px;">Hi <strong>${customerName}</strong>,</p><p style="color:rgba(30,37,53,0.7);font-size:14px;line-height:1.7;margin:0;">Your model training booking has been confirmed.</p>`
-        })
+        first_name: String(customerName || "there").split(/\s+/)[0],
+        course_title: course.title || "NOVI Training Course",
+        course_date_label: fmtDateLocal(courseDate),
+        time_label: timeSlot ? fmtTimeLabel(timeSlot) : "",
+        treatment_label: treatmentLabel(treatmentType),
+        details: [
+          { label: "Course", value: course.title || "NOVI Training Course" },
+          { label: "Date", value: fmtDateLocal(courseDate) },
+          timeSlot ? { label: "Time", value: fmtTimeLabel(timeSlot) } : null,
+          { label: "Treatment", value: treatmentLabel(treatmentType) },
+        ].filter(Boolean),
+        summary_lines: [
+          "Good Faith Exam (link sent separately)",
+          treatmentType === "tox"
+            ? "20 Units of Botox"
+            : treatmentType === "filler"
+              ? "1 Syringe of Filler"
+              : "20 units of Botox or 1 syringe of Filler",
+          "Supervised by a licensed Medical Director",
+        ],
       });
       return res.status(201).json({ free: true, pre_order_id: preOrderId, waitlist_auto: isWaitlist });
     }
@@ -1354,37 +1835,34 @@ functionsRouter.post("/modelCheckoutWebhook", async (req, res, next) => {
   }
 });
 
-functionsRouter.post("/sendModelConfirmationEmail", async (req, res, next) => {
+functionsRouter.post("/sendModelConfirmationEmail", requireAdminOrStaffModelSignups, async (req, res, next) => {
   try {
     const { customer_email, customer_name, course_date, time_slot, treatment_type, course_title } = req.body || {};
     if (!customer_email || !customer_name || !course_date) return res.status(400).json({ error: "Missing required fields" });
     const formattedDate = fmtDateLocal(course_date);
-    const subject = `Your Model Training Booking is Confirmed - ${formattedDate}`;
-    const htmlBody = withCourseEmailShell({
-      title: "You're Booked!",
-      contentHtml: `
-      <p style="color:#1e2535;font-size:15px;margin:0 0 24px;">Hi <strong>${customer_name}</strong>,</p>
-      <p style="color:rgba(30,37,53,0.7);font-size:14px;line-height:1.7;margin:0 0 24px;">Your model training booking has been confirmed! Here's a summary of your session:</p>
-      <div style="background:#f9f8f6;border-radius:12px;padding:20px;margin-bottom:24px;">
-        <table style="width:100%;border-collapse:collapse;">
-          <tr><td style="padding:8px 0;color:rgba(30,37,53,0.55);font-size:13px;width:40%;">Course</td><td style="padding:8px 0;color:#1e2535;font-size:13px;font-weight:600;">${course_title || "NOVI Training Course"}</td></tr>
-          <tr><td style="padding:8px 0;color:rgba(30,37,53,0.55);font-size:13px;">Date</td><td style="padding:8px 0;color:#1e2535;font-size:13px;font-weight:600;">${formattedDate}</td></tr>
-          <tr><td style="padding:8px 0;color:rgba(30,37,53,0.55);font-size:13px;">Time</td><td style="padding:8px 0;color:#1e2535;font-size:13px;font-weight:600;">${fmtTimeLabel(time_slot)}</td></tr>
-          <tr><td style="padding:8px 0;color:rgba(30,37,53,0.55);font-size:13px;">Treatment</td><td style="padding:8px 0;color:#1e2535;font-size:13px;font-weight:600;">${treatmentLabel(treatment_type)}</td></tr>
-        </table>
-      </div>
-      <div style="background:rgba(200,230,60,0.1);border:1px solid rgba(200,230,60,0.3);border-radius:12px;padding:16px;margin-bottom:24px;">
-        <p style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:#5a7a20;margin:0 0 8px;">What's Included</p>
-        <ul style="margin:0;padding-left:18px;color:rgba(30,37,53,0.7);font-size:13px;line-height:1.8;">
-          <li>Good Faith Exam (link sent separately)</li>
-          <li>${treatment_type === "tox" ? "20 Units of Botox" : treatment_type === "filler" ? "1 Syringe of Filler" : "20 units of Botox or 1 syringe of Filler"}</li>
-          <li>Supervised by a licensed Medical Director</li>
-        </ul>
-      </div>
-      <p style="color:rgba(30,37,53,0.6);font-size:13px;line-height:1.7;margin:0 0 24px;"><strong>Important:</strong> You'll receive your Good Faith Exam (GFE) link via a separate email. Please complete it before your session date.</p>
-      <p style="color:rgba(30,37,53,0.5);font-size:12px;margin:0;">Questions? Email us at <a href="mailto:hello@novisociety.com" style="color:#2D6B7F;">hello@novisociety.com</a></p>`
+    await sendModelEmail("model_booking_confirmed", {
+      to: customer_email,
+      first_name: String(customer_name || "there").split(/\s+/)[0],
+      course_title: course_title || "NOVI Training Course",
+      course_date_label: formattedDate,
+      time_label: time_slot ? fmtTimeLabel(time_slot) : "",
+      treatment_label: treatmentLabel(treatment_type),
+      details: [
+        { label: "Course", value: course_title || "NOVI Training Course" },
+        { label: "Date", value: formattedDate },
+        time_slot ? { label: "Time", value: fmtTimeLabel(time_slot) } : null,
+        { label: "Treatment", value: treatmentLabel(treatment_type) },
+      ].filter(Boolean),
+      summary_lines: [
+        "Good Faith Exam (link sent separately)",
+        treatment_type === "tox"
+          ? "20 Units of Botox"
+          : treatment_type === "filler"
+            ? "1 Syringe of Filler"
+            : "20 units of Botox or 1 syringe of Filler",
+        "Supervised by a licensed Medical Director",
+      ],
     });
-    await sendResendEmail({ to: customer_email, subject, html: htmlBody });
     await query(`update public.pre_orders set confirmation_email_sent = true, confirmation_email_sent_at = now(), updated_at = now() where lower(customer_email) = lower($1) and course_date::date = $2::date and order_type = 'model'`, [customer_email, String(course_date).slice(0, 10)]);
     return res.json({ success: true });
   } catch (error) {
@@ -1392,52 +1870,52 @@ functionsRouter.post("/sendModelConfirmationEmail", async (req, res, next) => {
   }
 });
 
-functionsRouter.post("/sendModelGFEEmail", async (req, res, next) => {
+functionsRouter.post("/sendModelGFEEmail", requireAdminOrStaffModelSignups, async (req, res, next) => {
   try {
     const { customer_email, customer_name, gfe_url } = req.body || {};
     if (!customer_email || !gfe_url) return res.status(400).json({ error: "customer_email and gfe_url required" });
     const firstName = String(customer_name || "there").split(" ")[0];
-    const htmlBody = withCourseEmailShell({
-      title: "Complete Your GFE",
-      contentHtml: `
-      <p style="color:#1e2535;font-size:15px;margin:0 0 16px;">Hi <strong>${firstName}</strong>,</p>
-      <p style="color:rgba(30,37,53,0.7);font-size:14px;line-height:1.7;margin:0 0 24px;">You're almost set! Before your training session, you need to complete a <strong>Good Faith Exam (GFE)</strong> - a quick virtual screening with a licensed medical provider. It takes about 5-10 minutes.</p>
-      <div style="text-align:center;margin:0 0 24px;"><a href="${gfe_url}" style="display:inline-block;background:#C8E63C;color:#1a2540;font-weight:700;font-size:15px;padding:14px 32px;border-radius:50px;text-decoration:none;">Complete My GFE -></a></div>
-      <div style="background:rgba(45,107,127,0.06);border:1px solid rgba(45,107,127,0.15);border-radius:12px;padding:16px;margin-bottom:24px;">
-        <p style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:#2D6B7F;margin:0 0 8px;">What to Expect</p>
-        <ul style="margin:0;padding-left:18px;color:rgba(30,37,53,0.7);font-size:13px;line-height:1.8;">
-          <li>Brief video call with a licensed provider</li><li>Review of your health history</li><li>Medical clearance for your treatment</li><li>Takes approximately 5-10 minutes</li>
-        </ul>
-      </div>
-      <p style="color:rgba(30,37,53,0.6);font-size:13px;line-height:1.7;margin:0 0 16px;"><strong>Please complete this before your session date.</strong> If you have any questions, reply to this email or contact us at <a href="mailto:hello@novisociety.com" style="color:#2D6B7F;">hello@novisociety.com</a>.</p>`
+    await sendModelEmail("model_gfe_invite", {
+      to: customer_email,
+      first_name: firstName,
+      gfe_url,
+      summary_lines: [
+        "Brief video call with a licensed provider",
+        "Review of your health history",
+        "Medical clearance for your treatment",
+        "Takes approximately 5-10 minutes",
+      ],
     });
-    await sendResendEmail({ to: customer_email, subject: "Complete Your Good Faith Exam - NOVI Society", html: htmlBody });
     return res.json({ success: true });
   } catch (error) {
     return next(error);
   }
 });
 
-functionsRouter.post("/sendModelReminderEmail", async (req, res, next) => {
+functionsRouter.post("/sendModelReminderEmail", requireAdminOrStaffModelSignups, async (req, res, next) => {
   try {
     const { customer_email, customer_name, course_date, time_slot, treatment_type } = req.body || {};
     if (!customer_email || !customer_name || !course_date || !time_slot) return res.status(400).json({ error: "Missing required fields" });
     const formattedDate = fmtDateLocal(course_date);
-    const html = withCourseEmailShell({
-      title: "Session Reminder",
-      contentHtml: `
-      <p style="color:#1e2535;font-size:15px;margin:0 0 16px;">Hello <strong>${customer_name}</strong>,</p>
-      <p style="color:rgba(30,37,53,0.7);font-size:14px;line-height:1.7;margin:0 0 20px;">Just a friendly reminder that your model training session is tomorrow.</p>
-      <div style="background:#f9f8f6;border-radius:12px;padding:16px;margin-bottom:20px;">
-        <p style="margin:0 0 8px;font-size:13px;color:#1e2535;"><strong>Date:</strong> ${formattedDate}</p>
-        <p style="margin:0 0 8px;font-size:13px;color:#1e2535;"><strong>Time:</strong> ${fmtTimeLabel(time_slot)}</p>
-        <p style="margin:0;font-size:13px;color:#1e2535;"><strong>Treatment:</strong> ${treatmentLabel(treatment_type)}</p>
-      </div>
-      <p style="color:rgba(30,37,53,0.7);font-size:13px;line-height:1.8;margin:0 0 16px;"><strong>Pre-Training Instructions:</strong><br>Arrive 15 minutes early<br>Wear comfortable clothing for treatment areas<br>Avoid alcohol and blood thinners 24 hours before session<br>Bring a valid photo ID<br>Keep your booking confirmation email handy</p>
-      <p style="color:rgba(30,37,53,0.7);font-size:13px;line-height:1.8;margin:0 0 16px;"><strong>What to Bring:</strong><br>Phone or camera (optional)<br>Water bottle and snacks</p>
-      <p style="color:rgba(30,37,53,0.6);font-size:13px;line-height:1.7;margin:0;">Questions or need to reschedule? Contact <a href="mailto:hello@novisociety.com" style="color:#2D6B7F;">hello@novisociety.com</a>.</p>`
+    await sendModelEmail("model_session_reminder", {
+      to: customer_email,
+      first_name: String(customer_name || "there").split(/\s+/)[0],
+      course_date_label: formattedDate,
+      time_label: fmtTimeLabel(time_slot),
+      treatment_label: treatmentLabel(treatment_type),
+      details: [
+        { label: "Date", value: formattedDate },
+        { label: "Time", value: fmtTimeLabel(time_slot) },
+        { label: "Treatment", value: treatmentLabel(treatment_type) },
+      ],
+      summary_lines: [
+        "Arrive 15 minutes early",
+        "Wear comfortable clothing for treatment areas",
+        "Avoid alcohol and blood thinners 24 hours before session",
+        "Bring a valid photo ID",
+        "Keep your booking confirmation handy",
+      ],
     });
-    await sendResendEmail({ to: customer_email, subject: `Reminder: Your Model Training Session is Tomorrow at ${fmtTimeLabel(time_slot)}`, html });
     await query(`update public.pre_orders set reminder_email_sent_at = now(), updated_at = now() where lower(customer_email) = lower($1) and course_date::date = $2::date and order_type='model'`, [customer_email, String(course_date).slice(0, 10)]);
     return res.json({ success: true });
   } catch (error) {
@@ -1445,22 +1923,23 @@ functionsRouter.post("/sendModelReminderEmail", async (req, res, next) => {
   }
 });
 
-functionsRouter.post("/sendModelPostTrainingEmail", async (req, res, next) => {
+functionsRouter.post("/sendModelPostTrainingEmail", requireAdminOrStaffModelSignups, async (req, res, next) => {
   try {
     const { customer_email, customer_name, treatment_type, course_title, pre_order_id } = req.body || {};
     if (!customer_email || !customer_name) return res.status(400).json({ error: "Missing required fields" });
     const treatmentName = treatment_type === "tox" ? "Botox" : treatment_type === "filler" ? "Dermal Fillers" : "Botox & Fillers";
-    const html = withCourseEmailShell({
-      title: "Continue Your Journey",
-      contentHtml: `
-      <p style="color:#1e2535;font-size:15px;margin:0 0 16px;">Hello <strong>${customer_name}</strong>,</p>
-      <p style="color:rgba(30,37,53,0.7);font-size:14px;line-height:1.7;margin:0 0 16px;">Thank you for being part of the ${course_title || "NOVI Training Course"}! We hope you had an amazing experience.</p>
-      <p style="color:rgba(30,37,53,0.7);font-size:14px;line-height:1.7;margin:0 0 16px;">Now it's your turn to experience professional aesthetic treatments as a patient.</p>
-      <p style="color:rgba(30,37,53,0.7);font-size:13px;line-height:1.8;margin:0 0 16px;"><strong>Next Steps:</strong><br>1) Sign up at <a href="https://www.novisociety.com/patient-signup" style="color:#2D6B7F;">novisociety.com/patient-signup</a><br>2) Build your aesthetic profile<br>3) Book your first ${treatmentName} treatment</p>
-      <p style="color:rgba(30,37,53,0.7);font-size:13px;line-height:1.8;margin:0 0 16px;"><strong>Special Perks for Training Models:</strong><br>15% off first treatment (code <strong>NOVIMODEL15</strong>)<br>Priority booking with instructors<br>Premium recovery tracking for 30 days</p>
-      <p style="color:rgba(30,37,53,0.6);font-size:13px;line-height:1.7;margin:0;">Have questions? Reply to this email or contact <a href="mailto:hello@novisociety.com" style="color:#2D6B7F;">hello@novisociety.com</a>.</p>`
+    await sendModelEmail("model_post_training", {
+      to: customer_email,
+      first_name: String(customer_name || "there").split(/\s+/)[0],
+      course_title: course_title || "NOVI Training Course",
+      treatment_label: treatmentName,
+      summary_lines: [
+        "Sign up at novisociety.com/patient-signup",
+        "Build your aesthetic profile",
+        `Book your first ${treatmentName} treatment`,
+        "Use code NOVIMODEL15 for 15% off your first treatment",
+      ],
     });
-    await sendResendEmail({ to: customer_email, subject: "Become a Real Patient: Continue Your Journey with NOVI Society", html });
     if (pre_order_id) {
       await query(`update public.pre_orders set post_training_email_sent = true, updated_at = now() where id = $1`, [pre_order_id]);
     }
@@ -1470,7 +1949,7 @@ functionsRouter.post("/sendModelPostTrainingEmail", async (req, res, next) => {
   }
 });
 
-functionsRouter.post("/sendModelReminderBatch", async (_req, res, next) => {
+functionsRouter.post("/sendModelReminderBatch", requireAdminOrStaffModelSignups, async (_req, res, next) => {
   try {
     const { rows } = await query(
       `select id, customer_email, customer_name, course_date, model_time_slot, treatment_type
@@ -1489,10 +1968,17 @@ functionsRouter.post("/sendModelReminderBatch", async (_req, res, next) => {
     let sent = 0;
     for (const row of rows) {
       try {
-        await sendResendEmail({
+        await sendModelEmail("model_session_reminder", {
           to: row.customer_email,
-          subject: `Reminder: Your Model Training Session is Tomorrow at ${fmtTimeLabel(row.model_time_slot)}`,
-          html: withCourseEmailShell({ title: "Session Reminder", contentHtml: `<p style="color:#1e2535;font-size:14px;">Hi <strong>${row.customer_name}</strong>, your session is tomorrow (${fmtDateLocal(row.course_date)} at ${fmtTimeLabel(row.model_time_slot)}).</p>` })
+          first_name: String(row.customer_name || "there").split(/\s+/)[0],
+          course_date_label: fmtDateLocal(row.course_date),
+          time_label: fmtTimeLabel(row.model_time_slot),
+          treatment_label: treatmentLabel(row.treatment_type),
+          details: [
+            { label: "Date", value: fmtDateLocal(row.course_date) },
+            { label: "Time", value: fmtTimeLabel(row.model_time_slot) },
+            { label: "Treatment", value: treatmentLabel(row.treatment_type) },
+          ],
         });
         await query(`update public.pre_orders set reminder_email_sent_at = now(), updated_at = now() where id = $1`, [row.id]);
         sent += 1;
@@ -1506,7 +1992,7 @@ functionsRouter.post("/sendModelReminderBatch", async (_req, res, next) => {
   }
 });
 
-functionsRouter.post("/sendModelGFEReminderBatch", async (_req, res, next) => {
+functionsRouter.post("/sendModelGFEReminderBatch", requireAdminOrStaffModelSignups, async (_req, res, next) => {
   try {
     const hasMeetingUrl = await hasPreOrderColumn("gfe_meeting_url");
     const hasGfeStatus = await hasPreOrderColumn("gfe_status");
@@ -1530,14 +2016,10 @@ functionsRouter.post("/sendModelGFEReminderBatch", async (_req, res, next) => {
     let sent = 0;
     for (const row of rows) {
       try {
-        const html = withCourseEmailShell({
-          title: "GFE Reminder",
-          contentHtml: `<p style="color:#1e2535;font-size:15px;margin:0 0 12px;">Hi <strong>${row.customer_name || "there"}</strong>,</p><p style="color:rgba(30,37,53,0.7);font-size:14px;line-height:1.7;margin:0 0 18px;">Friendly reminder to complete your Good Faith Exam before class.</p><p style="margin:0;"><a href="${row.gfe_meeting_url}" style="display:inline-block;background:#C8E63C;color:#1a2540;font-weight:700;font-size:14px;padding:12px 24px;border-radius:999px;text-decoration:none;">Complete GFE</a></p>`
-        });
-        await sendResendEmail({
+        await sendModelEmail("model_gfe_reminder", {
           to: row.customer_email,
-          subject: "Reminder: Complete Your Good Faith Exam - NOVI Society",
-          html
+          first_name: String(row.customer_name || "there").split(/\s+/)[0],
+          gfe_url: row.gfe_meeting_url,
         });
         await query(`update public.pre_orders set gfe_reminder_sent_at = now(), updated_at = now() where id = $1`, [row.id]);
         sent += 1;
@@ -1551,7 +2033,7 @@ functionsRouter.post("/sendModelGFEReminderBatch", async (_req, res, next) => {
   }
 });
 
-functionsRouter.post("/sendModelPostTrainingBatch", async (_req, res, next) => {
+functionsRouter.post("/sendModelPostTrainingBatch", requireAdminOrStaffModelSignups, async (_req, res, next) => {
   try {
     const { rows } = await query(
       `select id, customer_email, customer_name, treatment_type, course_title
@@ -1564,10 +2046,21 @@ functionsRouter.post("/sendModelPostTrainingBatch", async (_req, res, next) => {
     let sent = 0;
     for (const row of rows) {
       try {
-        await sendResendEmail({
+        const treatmentName = row.treatment_type === "tox"
+          ? "Botox"
+          : row.treatment_type === "filler"
+            ? "Dermal Fillers"
+            : "Botox & Fillers";
+        await sendModelEmail("model_post_training", {
           to: row.customer_email,
-          subject: "Become a Real Patient: Continue Your Journey with NOVI Society",
-          html: withCourseEmailShell({ title: "Continue Your Journey", contentHtml: `<p style="color:#1e2535;font-size:14px;">Hi <strong>${row.customer_name}</strong>, thanks for being part of ${row.course_title || "NOVI Training Course"}.</p>` })
+          first_name: String(row.customer_name || "there").split(/\s+/)[0],
+          course_title: row.course_title || "NOVI Training Course",
+          treatment_label: treatmentName,
+          summary_lines: [
+            "Sign up at novisociety.com/patient-signup",
+            "Build your aesthetic profile",
+            `Book your first ${treatmentName} treatment`,
+          ],
         });
         await query(`update public.pre_orders set post_training_email_sent = true, updated_at = now() where id = $1`, [row.id]);
         sent += 1;
@@ -1581,7 +2074,7 @@ functionsRouter.post("/sendModelPostTrainingBatch", async (_req, res, next) => {
   }
 });
 
-functionsRouter.post("/sendModelGFE", async (req, res, next) => {
+functionsRouter.post("/sendModelGFE", requireAdminOrStaffModelSignups, async (req, res, next) => {
   try {
     const { customer_name, customer_email, phone, pre_order_id, course_id, treatment_type, date_of_birth } = req.body || {};
     if (!customer_email) return res.status(400).json({ error: "customer_email is required" });
@@ -1645,7 +2138,7 @@ functionsRouter.post("/sendModelGFE", async (req, res, next) => {
     if (!firstName || !lastName) {
       return res.status(400).json({ error: "Customer first and last name are required to generate GFE invite." });
     }
-    const qualiphyWebhookUrl = String(process.env.QUALIPHY_WEBHOOK_URL || "").trim();
+    const qualiphyWebhookUrl = resolveQualiphyWebhookUrl();
     const invitePayloadBody = {
       api_key: qualiphyApiKey,
       exams: [Number(qualiphyExamId)],
@@ -1659,6 +2152,9 @@ functionsRouter.post("/sendModelGFE", async (req, res, next) => {
     };
     if (qualiphyWebhookUrl) {
       invitePayloadBody.webhook_url = qualiphyWebhookUrl;
+    } else {
+      // eslint-disable-next-line no-console
+      console.warn("[sendModelGFE] No Qualiphy webhook URL configured; GFE completion will not auto-update.");
     }
     if (qualiphyClinicId) {
       invitePayloadBody.clinic_id = qualiphyClinicId;
@@ -1766,6 +2262,193 @@ functionsRouter.post("/sendModelGFE", async (req, res, next) => {
   }
 });
 
+functionsRouter.post("/createAppointmentPayment", async (req, res, next) => {
+  try {
+    const body = req.body || {};
+    const appointmentId = String(body.appointment_id || "").trim();
+    const clientTimestamp =
+      req.get("x-novi-client-timestamp") || body.client_timestamp || null;
+    const result = await createAppointmentDepositCheckout({
+      token: getBearerToken(req),
+      appointmentId,
+      body,
+      tracking: {
+        clientTimestamp,
+        sourceOrigin: req.get("origin") || req.get("referer") || null,
+        requestIp: (() => {
+          const forwarded = req.get("x-forwarded-for");
+          if (forwarded) return String(forwarded).split(",")[0].trim();
+          return req.ip || req.socket?.remoteAddress || null;
+        })(),
+        userAgent: req.get("user-agent") || null,
+      },
+    });
+    return res.json(result);
+  } catch (error) {
+    if (error?.statusCode) {
+      return res.status(error.statusCode).json({ error: error.message, sessionUrl: null });
+    }
+    return next(error);
+  }
+});
+
+/** Qualiphy exam completion callback (set QUALIPHY_WEBHOOK_URL to your public URL + /functions/qualiphyWebhook). */
+functionsRouter.post("/qualiphyWebhook", handleQualiphyExamWebhook);
+
+functionsRouter.post("/sendQualiphyGFE", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ success: false, error: "Missing bearer token." });
+    const me = await getMeFromAccessToken(token);
+    const appointmentId = String(req.body?.appointment_id || "").trim();
+    if (!appointmentId) {
+      return res.status(400).json({ success: false, error: "appointment_id is required." });
+    }
+
+    const { rows: apptRows } = await query(
+      `select a.*,
+              st.name as service_type_name,
+              st.qualiphy_exam_ids,
+              coalesce(st.requires_gfe, false) as requires_gfe,
+              coalesce(nullif(trim(a.patient_email), ''), u.email) as resolved_patient_email,
+              coalesce(nullif(trim(a.patient_name), ''), u.full_name) as resolved_patient_name,
+              pp.phone as patient_phone,
+              pp.state as patient_state,
+              pp.date_of_birth as patient_dob
+         from public.appointments a
+         left join public.service_type st on st.id::text = a.service_type_id::text
+         left join public.users u on u.auth_user_id::text = a.patient_id or u.id::text = a.patient_id
+         left join public.patient_profiles pp on pp.user_id = u.id
+        where a.id = $1
+        limit 1`,
+      [appointmentId]
+    );
+    const appt = apptRows[0];
+    if (!appt) return res.status(404).json({ success: false, error: "Appointment not found." });
+
+    const isOwner = String(appt.provider_id || "") === String(me.id || "");
+    if (!isOwner && !hasAdminAccess(me.role)) {
+      return res.status(403).json({ success: false, error: "Forbidden." });
+    }
+    if (appt.requires_gfe !== true) {
+      return res.status(400).json({ success: false, error: "This service does not require a Good Faith Exam." });
+    }
+
+    const qualiphyExamId = await resolveQualiphyExamIdForAppointment({
+      serviceTypeId: appt.service_type_id,
+      serviceName: appt.service || appt.service_type_name,
+      qualiphyExamIds: appt.qualiphy_exam_ids,
+    });
+    if (!qualiphyExamId) {
+      return res.status(400).json({
+        success: false,
+        error: "No Qualiphy exam ID found for this service. Add qualiphy_exam_ids on the service type in admin.",
+      });
+    }
+
+    const patientEmail = String(appt.resolved_patient_email || "").trim();
+    if (!patientEmail) {
+      return res.status(400).json({ success: false, error: "Patient email is required to send a GFE invite." });
+    }
+
+    const { firstName, lastName } = splitNameParts(appt.resolved_patient_name);
+    if (!firstName || !lastName) {
+      return res.status(400).json({ success: false, error: "Patient name is required to send a GFE invite." });
+    }
+
+    let dob = normalizeDateOnly(appt.patient_dob);
+    let patientPhone = String(appt.patient_phone || "").trim();
+    let patientState = appt.patient_state;
+
+    if (!dob || patientPhone.replace(/\D/g, "").length < 10) {
+      const contact = await loadPatientGfeContact(appt.patient_id, patientEmail);
+      if (!dob) dob = contact.dob;
+      if (!patientPhone && contact.phone) patientPhone = contact.phone;
+      if (!patientState && contact.state) patientState = contact.state;
+    }
+
+    if (!dob) {
+      return res.status(400).json({
+        success: false,
+        error: "Patient date of birth is required. Ask the patient to complete their profile before sending GFE.",
+      });
+    }
+
+    const digitsPhone = String(patientPhone || "").replace(/\D/g, "");
+    if (digitsPhone.length < 10) {
+      return res.status(400).json({
+        success: false,
+        error: "Patient phone number is required. Ask the patient to complete their profile before sending GFE.",
+      });
+    }
+    const normalizedPhone = digitsPhone.length === 10 ? `+1${digitsPhone}` : `+${digitsPhone}`;
+    const tele_state = (await resolveTeleStateForAppointment({ appointment: appt, patientState })) || "TX";
+
+    const invite = await requestQualiphyExamInvite({
+      exams: [Number(qualiphyExamId)],
+      first_name: firstName,
+      last_name: lastName,
+      email: patientEmail,
+      dob,
+      phone_number: normalizedPhone,
+      tele_state,
+      additional_data: JSON.stringify({ source: "novi_appointment", appointment_id: appt.id }),
+    });
+
+    const setParts = [
+      "gfe_status = 'pending'",
+      "gfe_meeting_url = $2",
+      "gfe_exam_url = null",
+      "gfe_sent_at = now()",
+      "gfe_initiated_at = coalesce(gfe_initiated_at, now())",
+      "updated_at = now()",
+    ];
+    const updateParams = [appointmentId, invite.meetingUrl];
+    if (invite.meetingUuid && (await hasAppointmentColumn("qualiphy_meeting_uuid"))) {
+      updateParams.push(invite.meetingUuid);
+      setParts.push(`qualiphy_meeting_uuid = $${updateParams.length}`);
+    }
+    if (invite.patientExamId && (await hasAppointmentColumn("qualiphy_patient_exam_id"))) {
+      updateParams.push(invite.patientExamId);
+      setParts.push(`qualiphy_patient_exam_id = $${updateParams.length}`);
+    }
+    await query(
+      `update public.appointments set ${setParts.join(", ")} where id = $1`,
+      updateParams
+    );
+
+    await sendAppointmentGfeInviteEmail({
+      to: patientEmail,
+      patientName: appt.resolved_patient_name,
+      providerName: appt.provider_name,
+      serviceLabel: appt.service || appt.service_type_name,
+      appointmentDate: appt.appointment_date,
+      appointmentTime: appt.appointment_time,
+      meetingUrl: invite.meetingUrl,
+    });
+
+    const notificationResult = await notifyPatientGfeInvite({
+      patientId: appt.patient_id,
+      patientEmail,
+      providerName: appt.provider_name,
+      serviceLabel: appt.service || appt.service_type_name,
+    });
+
+    return res.json({
+      success: true,
+      meeting_url: invite.meetingUrl,
+      webhook_configured: Boolean(invite.webhookUrl),
+      email_sent: true,
+      notification_sent: notificationResult.sent === true,
+    });
+  } catch (error) {
+    if (error?.statusCode) {
+      return res.status(error.statusCode).json({ success: false, error: error.message });
+    }
+    return next(error);
+  }
+});
+
 functionsRouter.post("/lookupModelBookings", async (req, res, next) => {
   try {
     const email = String(req.body?.email || "").trim().toLowerCase();
@@ -1833,7 +2516,7 @@ functionsRouter.post("/cancelModelBooking", async (req, res, next) => {
   }
 });
 
-functionsRouter.post("/promoteFromWaitlist", async (req, res, next) => {
+functionsRouter.post("/promoteFromWaitlist", requireAdminOrStaffModelSignups, async (req, res, next) => {
   try {
     const preOrderId = String(req.body?.pre_order_id || "").trim();
     const timeSlot = String(req.body?.time_slot || "").trim();
@@ -1852,26 +2535,22 @@ functionsRouter.post("/promoteFromWaitlist", async (req, res, next) => {
     const booking = rows[0];
     try {
       const formattedDate = fmtDateLocal(booking.course_date);
-      const htmlBody = withCourseEmailShell({
-        title: "You're Booked!",
-        contentHtml: `
-        <p style="color:#1e2535;font-size:15px;margin:0 0 24px;">Hi <strong>${booking.customer_name || "there"}</strong>,</p>
-        <p style="color:rgba(30,37,53,0.7);font-size:14px;line-height:1.7;margin:0 0 20px;">
-          Great news - a slot opened up and your waitlist booking is now confirmed.
-        </p>
-        <div style="background:#f9f8f6;border-radius:12px;padding:16px;margin-bottom:20px;">
-          <p style="margin:0 0 8px;font-size:13px;color:#1e2535;"><strong>Date:</strong> ${formattedDate}</p>
-          <p style="margin:0 0 8px;font-size:13px;color:#1e2535;"><strong>Time:</strong> ${fmtTimeLabel(booking.model_time_slot)}</p>
-          <p style="margin:0;font-size:13px;color:#1e2535;"><strong>Treatment:</strong> ${treatmentLabel(booking.treatment_type)}</p>
-        </div>
-        <p style="color:rgba(30,37,53,0.6);font-size:13px;line-height:1.7;margin:0;">
-          Please complete your Good Faith Exam before the session if you have not done so.
-        </p>`
-      });
-      await sendResendEmail({
+      await sendModelEmail("model_booking_confirmed", {
         to: booking.customer_email,
-        subject: `Your Model Training Booking is Confirmed - ${formattedDate}`,
-        html: htmlBody
+        first_name: String(booking.customer_name || "there").split(/\s+/)[0],
+        course_title: booking.course_title || "NOVI Training Course",
+        course_date_label: formattedDate,
+        time_label: booking.model_time_slot ? fmtTimeLabel(booking.model_time_slot) : "",
+        treatment_label: treatmentLabel(booking.treatment_type),
+        details: [
+          { label: "Date", value: formattedDate },
+          booking.model_time_slot ? { label: "Time", value: fmtTimeLabel(booking.model_time_slot) } : null,
+          { label: "Treatment", value: treatmentLabel(booking.treatment_type) },
+        ].filter(Boolean),
+        summary_lines: [
+          "Slot opened up — your waitlist booking is now confirmed",
+          "Complete your Good Faith Exam before the session if you have not done so",
+        ],
       });
       await query(
         `update public.pre_orders
@@ -1889,3 +2568,284 @@ functionsRouter.post("/promoteFromWaitlist", async (req, res, next) => {
     return next(error);
   }
 });
+
+functionsRouter.post("/sendManufacturerInquiry", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ ok: false, error: "Missing bearer token." });
+    const me = await getMeFromAccessToken(token);
+
+    const body = req.body || {};
+    const manufacturerId = String(body.manufacturer_id || "").trim();
+    if (!manufacturerId) {
+      return res.status(400).json({ ok: false, error: "manufacturer_id is required." });
+    }
+
+    const manufacturer = await getManufacturerById(manufacturerId);
+    if (!manufacturer) {
+      return res.status(404).json({ ok: false, error: "Manufacturer not found." });
+    }
+
+    const formData = body.form_data && typeof body.form_data === "object" ? body.form_data : {};
+    const enriched = await buildManufacturerApplicationPayload({ me, formData });
+
+    const application = await createManufacturerApplication({
+      manufacturer_id: manufacturerId,
+      manufacturer_name: manufacturer.name,
+      provider_id: me?.id || null,
+      provider_email: enriched.provider_email,
+      provider_name: enriched.provider_name,
+      practice_name: enriched.practice_name,
+      practice_address: enriched.practice_address,
+      practice_phone: enriched.practice_phone,
+      license_type: enriched.license_type,
+      license_number: enriched.license_number,
+      license_state: enriched.license_state,
+      supervising_physician_name: enriched.supervising_physician_name,
+      supervising_physician_email: enriched.supervising_physician_email,
+      additional_fields: enriched.additional_fields,
+    });
+
+    // Fire-and-forget notifications. Failures are logged inside the helpers
+    // and never block the submission flow.
+    Promise.allSettled([
+      notifyAdminsOfManufacturerApplication({ application, manufacturer }),
+      notifyRepOfManufacturerApplication({ application, manufacturer }),
+    ]).catch(() => {});
+
+    return res.status(201).json({ ok: true, application });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+functionsRouter.post("/sendRepContactEmail", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ ok: false, error: "Missing bearer token." });
+    const me = await getMeFromAccessToken(token);
+
+    const body = req.body || {};
+    const manufacturerId = String(body.manufacturer_id || "").trim();
+    if (!manufacturerId) {
+      return res.status(400).json({ ok: false, error: "manufacturer_id is required." });
+    }
+
+    const manufacturer = await getManufacturerById(manufacturerId);
+    if (!manufacturer) {
+      return res.status(404).json({ ok: false, error: "Manufacturer not found." });
+    }
+
+    const contactType = String(body.type || body.contact_type || "message").trim();
+    const repContact = await resolveRepContactForProvider({
+      providerId: me?.id,
+      manufacturerId,
+      manufacturer,
+    });
+
+    if (!repContact.rep_email) {
+      return res.status(400).json({
+        ok: false,
+        error: "No rep email on file. Save your rep contact info or ask admin to configure application routing.",
+      });
+    }
+
+    const orderRequest = await createManufacturerOrderRequest({
+      manufacturer_id: manufacturerId,
+      manufacturer_name: manufacturer.name,
+      provider_id: me?.id || null,
+      provider_email: me?.email || "",
+      provider_name: me?.full_name || "",
+      practice_name: body.practice_name || me?.full_name || "",
+      contact_type: contactType,
+      subject: body.subject || "",
+      message: body.message || "",
+      order_items: body.order_items || [],
+      rep_email: repContact.rep_email,
+    });
+
+    Promise.resolve(
+      notifyRepOfContactRequest({
+        orderRequest: {
+          ...orderRequest,
+          order_items: orderRequest.order_items?.length
+            ? orderRequest.order_items
+            : (body.order_items || []),
+        },
+        manufacturer,
+        providerEmail: me?.email || orderRequest.provider_email,
+        providerPhone: me?.phone || "",
+        savedRep: repContact,
+      })
+    ).catch((err) => {
+      console.error("[email] contact_request_notify_threw", {
+        order_request_id: orderRequest.id,
+        error_message: err?.message || String(err),
+      });
+    });
+
+    return res.status(201).json({ ok: true, order_request: orderRequest });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+functionsRouter.post("/scheduleRepCall", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ ok: false, error: "Missing bearer token." });
+    const me = await getMeFromAccessToken(token);
+
+    const body = req.body || {};
+    const manufacturerId = String(body.manufacturer_id || "").trim();
+    const date = String(body.scheduled_date || body.date || "").trim();
+    const time = String(body.scheduled_time || body.time || "").trim();
+    const timezone = String(body.timezone || "").trim();
+    const durationMinutes = Number(body.duration_minutes) || 30;
+    const topic = String(body.topic || "").trim();
+    const notes = String(body.notes || "").trim();
+
+    if (!manufacturerId) {
+      return res.status(400).json({ ok: false, error: "manufacturer_id is required." });
+    }
+    if (!date || !time || !timezone) {
+      return res.status(400).json({ ok: false, error: "scheduled_date, scheduled_time, and timezone are required." });
+    }
+    if (![15, 30, 45, 60].includes(durationMinutes)) {
+      return res.status(400).json({ ok: false, error: "duration_minutes must be 15, 30, 45, or 60." });
+    }
+
+    const manufacturer = await getManufacturerById(manufacturerId);
+    if (!manufacturer) {
+      return res.status(404).json({ ok: false, error: "Manufacturer not found." });
+    }
+
+    const savedRep = await getProviderManufacturerRep({
+      providerId: me?.id,
+      manufacturerId,
+    });
+
+    if (!savedRep?.rep_email) {
+      return res.status(400).json({
+        ok: false,
+        error: "Your rep email is not set. Add your rep's contact info before scheduling a call.",
+        code: "REP_EMAIL_NOT_SET",
+      });
+    }
+
+    const repEmail = String(savedRep.rep_email).trim().toLowerCase();
+    if (!isValidEmailFormat(repEmail)) {
+      return res.status(400).json({
+        ok: false,
+        error: "Rep email appears invalid. Please update your rep contact info.",
+        code: "REP_EMAIL_INVALID",
+      });
+    }
+
+    const providerEmail = String(me?.email || "").trim().toLowerCase();
+    if (!isValidEmailFormat(providerEmail)) {
+      return res.status(400).json({
+        ok: false,
+        error: "Your account email is invalid. Update your profile before scheduling.",
+        code: "PROVIDER_EMAIL_INVALID",
+      });
+    }
+
+    const calendarConnection = await getProviderGoogleConnection(me?.id);
+    if (!calendarConnection?.access_token) {
+      return res.status(400).json({
+        ok: false,
+        error: "Connect Google Calendar in your Profile settings before scheduling a call.",
+        code: "GOOGLE_CALENDAR_NOT_CONNECTED",
+      });
+    }
+    if (calendarConnection.google_email?.toLowerCase() !== providerEmail) {
+      return res.status(400).json({
+        ok: false,
+        error: "Connected Google account must match your NOVI email. Reconnect in Profile settings.",
+        code: "GOOGLE_EMAIL_MISMATCH",
+      });
+    }
+
+    const { scheduledAt, isFuture } = await parseScheduledAt({ date, time, timezone });
+    if (!isFuture) {
+      return res.status(400).json({ ok: false, error: "Scheduled time must be in the future." });
+    }
+
+    const startDateTime = `${date}T${time}:00`;
+    const endDateTime = addMinutesToLocalDateTime(date, time, durationMinutes);
+    const mfrName = manufacturer.name || "Supplier";
+    const providerName = me?.full_name || "NOVI Provider";
+    const repName = savedRep.rep_name || "Account Rep";
+    const summary = topic
+      ? `${mfrName} call: ${topic}`
+      : `NOVI Provider call — ${providerName} & ${mfrName}`;
+
+    const description = [
+      `Supplier: ${mfrName}`,
+      `Provider: ${providerName}`,
+      `Rep: ${repName}`,
+      topic ? `Topic: ${topic}` : null,
+      notes ? `Notes: ${notes}` : null,
+      "",
+      "Scheduled via NOVI Supplier Network.",
+    ]
+      .filter((line) => line !== null)
+      .join("\n");
+
+    const { eventId, meetLink } = await createProviderGoogleMeetEvent({
+      providerId: me?.id,
+      summary,
+      description,
+      startDateTime,
+      endDateTime,
+      timeZone: timezone,
+      attendeeEmails: [repEmail],
+    });
+
+    const call = await createProviderRepCall({
+      provider_id: me?.id,
+      manufacturer_id: manufacturerId,
+      manufacturer_name: mfrName,
+      rep_name: repName,
+      rep_email: repEmail,
+      provider_email: providerEmail,
+      provider_name: providerName,
+      scheduled_at: scheduledAt,
+      duration_minutes: durationMinutes,
+      timezone,
+      topic: topic || null,
+      notes: notes || null,
+      google_event_id: eventId,
+      meet_link: meetLink,
+      status: "scheduled",
+    });
+
+    return res.status(201).json({ ok: true, call, meet_link: meetLink });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+async function handleCheckExpirations(_req, res, next) {
+  try {
+    const result = await runCheckExpirations();
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function handleComplianceChecks(_req, res, next) {
+  try {
+    const result = await runComplianceChecks();
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+functionsRouter.post("/checkExpirations", requireCronOrAdminCompliance, handleCheckExpirations);
+functionsRouter.get("/checkExpirations", requireCronOrAdminCompliance, handleCheckExpirations);
+functionsRouter.post("/complianceChecks", requireCronOrAdminCompliance, handleComplianceChecks);
+functionsRouter.get("/complianceChecks", requireCronOrAdminCompliance, handleComplianceChecks);

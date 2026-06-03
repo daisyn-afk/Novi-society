@@ -35,18 +35,44 @@ function NoviAvatar() {
   );
 }
 
-function ScanDropzone({ onUpload }) {
+function getAiErrorMessage(error) {
+  const msg = String(error?.message || error || "");
+  if (/insufficient_quota|exceeded your current quota|credits are exhausted/i.test(msg)) {
+    return "Novi scan is temporarily unavailable — add API credits at platform.openai.com, then try again.";
+  }
+  if (/not configured.*OPENAI/i.test(msg)) {
+    return "Novi AI is not configured on the server yet. Please contact support.";
+  }
+  return "We couldn't analyze your photo right now. Please try again in a moment.";
+}
+
+function isAiConfigOrQuotaError(error) {
+  const msg = String(error?.message || "");
+  return /insufficient_quota|exceeded your current quota|credits are exhausted|not configured.*OPENAI/i.test(msg);
+}
+
+function ScanDropzone({ onUpload, onUploadError }) {
   const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
   const handleFile = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setUploading(true);
-    const { file_url } = await base44.integrations.Core.UploadFile({
-      file,
-      kind: "patient_journey_selfie",
-    });
-    setUploading(false);
-    onUpload(file_url);
+    setUploadError("");
+    try {
+      const { file_url } = await base44.integrations.Core.UploadFile({
+        file,
+        kind: "patient_journey_selfie",
+      });
+      onUpload(file_url);
+    } catch (err) {
+      const message = err?.message || "Upload failed. Please try again.";
+      setUploadError(message);
+      onUploadError?.(err);
+    } finally {
+      setUploading(false);
+      e.target.value = "";
+    }
   };
   return (
     <label className="block cursor-pointer">
@@ -66,6 +92,9 @@ function ScanDropzone({ onUpload }) {
         )}
       </div>
       <input type="file" accept="image/*" className="hidden" onChange={handleFile} />
+      {uploadError && (
+        <p className="text-xs text-red-600 mt-2 text-center">{uploadError}</p>
+      )}
     </label>
   );
 }
@@ -300,6 +329,11 @@ export default function PatientJourney() {
   const [subscriptionSuccess, setSubscriptionSuccess] = useState(false);
   const [showScanHistory, setShowScanHistory] = useState(false);
   const [viewingScanIndex, setViewingScanIndex] = useState(null);
+  const [showInlineScan, setShowInlineScan] = useState(false);
+  const [dashboardScanPhase, setDashboardScanPhase] = useState("idle");
+  const [dashboardScanError, setDashboardScanError] = useState("");
+  const [scanTabNonce, setScanTabNonce] = useState(0);
+  const scanPanelRef = useRef(null);
 
   const journeyChatInitialized = useRef(false);
 
@@ -470,11 +504,29 @@ export default function PatientJourney() {
     }
   }
 
+  function startNewScanFlow() {
+    setShowScanHistory(false);
+    setDashboardScanError("");
+    setShowInlineScan(true);
+    setScanTabNonce((n) => n + 1);
+    requestAnimationFrame(() => {
+      scanPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+  }
+
   async function handleScanUpload(fileUrl) {
-    setMessages(prev => prev.filter(m => m.type !== "scan_request"));
-    addMsg({ role: "user", type: "text", content: "Here's my photo!" });
-    await delay(300);
-    addMsg({ role: "ai", type: "scan_analyzing" });
+    const dashboardMode = showJourneyDashboard;
+
+    if (dashboardMode) {
+      setShowInlineScan(false);
+      setDashboardScanError("");
+      setDashboardScanPhase("analyzing");
+    } else {
+      setMessages(prev => prev.filter(m => m.type !== "scan_request"));
+      addMsg({ role: "user", type: "text", content: "Here's my photo!" });
+      await delay(300);
+      addMsg({ role: "ai", type: "scan_analyzing" });
+    }
 
     let analysis = {};
     try {
@@ -535,11 +587,30 @@ Analyze the photo and return:
           }
         }
       });
-    } catch(e) {
-      analysis = { overall_skin_health: "Good", concern_summary: "I wasn't able to fully analyze this image, but I can still help guide you!", detected_concerns: [], educational_suggestions: [] };
+    } catch (e) {
+      if (isAiConfigOrQuotaError(e)) {
+        if (dashboardMode) {
+          setDashboardScanPhase("error");
+          setDashboardScanError(getAiErrorMessage(e));
+          return;
+        }
+        setMessages(prev => prev.filter(m => m.type !== "scan_analyzing"));
+        addMsg({ role: "ai", type: "text", content: getAiErrorMessage(e) });
+        return;
+      }
+      analysis = {
+        overall_skin_health: "Good",
+        concern_summary: "I wasn't able to fully analyze this image, but I can still help guide you!",
+        detected_concerns: [],
+        educational_suggestions: [],
+      };
     }
 
-    setMessages(prev => prev.filter(m => m.type !== "scan_analyzing"));
+    if (dashboardMode) {
+      setDashboardScanPhase("idle");
+    } else {
+      setMessages(prev => prev.filter(m => m.type !== "scan_analyzing"));
+    }
 
     const scanData = { scan_url: fileUrl, scanned_at: new Date().toISOString(), ai_analysis: analysis, label: "Scan" };
 
@@ -559,6 +630,11 @@ Analyze the photo and return:
       setJourney(created);
     }
     qc.invalidateQueries(["patient-journey"]);
+
+    if (dashboardMode) {
+      setScanTabNonce((n) => n + 1);
+      return;
+    }
 
     addMsg({ role: "ai", type: "scan_result", analysis, scanUrl: fileUrl });
     await delay(1200);
@@ -724,16 +800,43 @@ Example: If they ask about "looking tired under my eyes" → mention that tear t
 
       <div className="flex-1 overflow-y-auto py-5 space-y-5 pr-1">
           {/* Full Journey Dashboard once patient has had a treatment */}
+        {showJourneyDashboard && dashboardScanPhase === "analyzing" && (
+          <div className="rounded-2xl px-5 py-4 flex items-center gap-3"
+            style={{ background: "#fff", border: "1px solid #e5e7eb" }}>
+            <div className="w-6 h-6 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+            <p className="text-sm text-gray-600">Analyzing your new scan…</p>
+          </div>
+        )}
+        {showJourneyDashboard && dashboardScanPhase === "error" && dashboardScanError && (
+          <div className="rounded-2xl px-4 py-3 text-sm"
+            style={{ background: "rgba(220,38,38,0.08)", border: "1px solid rgba(220,38,38,0.25)", color: "#991b1b" }}>
+            {dashboardScanError}
+          </div>
+        )}
+        {showJourneyDashboard && showInlineScan && (
+          <div ref={scanPanelRef} className="rounded-2xl p-4 space-y-3"
+            style={{ background: "#fff", border: "1px solid rgba(123,142,200,0.25)" }}>
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-medium text-gray-800">Upload your new photo for a fresh AI analysis</p>
+              <button type="button" onClick={() => setShowInlineScan(false)}
+                className="text-xs text-gray-400 hover:text-gray-600 px-2 py-1">
+                Cancel
+              </button>
+            </div>
+            <ScanDropzone
+              onUpload={handleScanUpload}
+              onUploadError={(err) => setDashboardScanError(err?.message || "Upload failed.")}
+            />
+          </div>
+        )}
         {showJourneyDashboard && journey && (
           <PatientJourneyDashboard
             journey={journey}
             appointments={myAppointments}
             isPremium={isPremium}
             onUpgrade={handleUpgrade}
-            onNewScan={() => {
-              setShowScanHistory(false);
-              addMsg({ role: "ai", type: "scan_request", content: "Upload your new photo for a fresh AI analysis:" });
-            }}
+            onNewScan={startNewScanFlow}
+            scanTabNonce={scanTabNonce}
           />
         )}
         {/* Chat flow for new patients not yet in treatment */}

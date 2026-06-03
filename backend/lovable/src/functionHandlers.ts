@@ -23,6 +23,7 @@ export const functionHandlers: Record<string, FunctionHandler> = {
   sendManufacturerInquiry: notImplemented("sendManufacturerInquiry"),
   sendQualiphyGFE: notImplemented("sendQualiphyGFE"),
   sendRepContactEmail: notImplemented("sendRepContactEmail"),
+  scheduleRepCall: notImplemented("scheduleRepCall"),
   stripeBillingPortal: notImplemented("stripeBillingPortal"),
   submitPreOrderRequest: notImplemented("submitPreOrderRequest"),
   validateBookingScope: notImplemented("validateBookingScope"),

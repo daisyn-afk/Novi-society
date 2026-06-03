@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { adminApiRequest } from "@/api/adminApiRequest";
 import { Button } from "@/components/ui/button";
@@ -6,24 +6,47 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Loader2 } from "lucide-react";
 
+function setsEqual(a, b) {
+  if (a.size !== b.size) return false;
+  for (const v of a) if (!b.has(v)) return false;
+  return true;
+}
+
 /** Services the MD supervises — drives round-robin auto-assignment eligibility. */
 export default function MDServiceOfferingsSection() {
   const qc = useQueryClient();
   const { data: mine, isLoading: mineLoading } = useQuery({
     queryKey: ["md-service-offerings-me"],
     queryFn: () => adminApiRequest("/admin/md-service-offerings/me", { method: "GET" }),
+    staleTime: 30_000,
   });
   const { data: serviceTypes = [], isLoading: typesLoading } = useQuery({
     queryKey: ["admin-service-types-md-offerings"],
     queryFn: () => adminApiRequest("/admin/service-types?is_active=true", { method: "GET" }),
+    staleTime: 60_000,
   });
 
-  const initialIds = useMemo(() => new Set(mine?.service_type_ids || []), [mine?.service_type_ids]);
-  const [selected, setSelected] = useState(() => new Set());
-  const [dirty, setDirty] = useState(false);
+  const savedIds = useMemo(
+    () => new Set((mine?.service_type_ids || []).map((id) => String(id))),
+    [mine?.service_type_ids]
+  );
 
-  const effectiveSelected = dirty ? selected : initialIds;
-  const allServicesWildcard = effectiveSelected.has("*");
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    if (mineLoading || hydrated) return;
+    setSelectedIds(new Set(savedIds));
+    setHydrated(true);
+  }, [mineLoading, hydrated, savedIds]);
+
+  useEffect(() => {
+    if (!hydrated || mineLoading) return;
+    setSelectedIds((prev) => (setsEqual(prev, savedIds) ? prev : new Set(savedIds)));
+  }, [savedIds, hydrated, mineLoading]);
+
+  const dirty = hydrated && !setsEqual(selectedIds, savedIds);
+  const allServicesWildcard = selectedIds.has("*");
 
   const saveMutation = useMutation({
     mutationFn: async (ids) =>
@@ -31,32 +54,40 @@ export default function MDServiceOfferingsSection() {
         method: "PUT",
         body: JSON.stringify({ service_type_ids: ids }),
       }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["md-service-offerings-me"] });
-      setDirty(false);
-      setSelected(new Set());
+    onSuccess: (data) => {
+      qc.setQueryData(["md-service-offerings-me"], data);
+      const next = new Set((data?.service_type_ids || []).map((id) => String(id)));
+      setSelectedIds(next);
     },
   });
 
-  const loading = mineLoading || typesLoading;
+  const loading = mineLoading || typesLoading || !hydrated;
+
+  function setSelection(next) {
+    setSelectedIds(next instanceof Set ? next : new Set(next));
+  }
 
   function toggle(id) {
-    setDirty(true);
-    setSelected((prev) => {
-      const base = dirty ? prev : new Set(initialIds);
-      const next = new Set(base);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+    const key = String(id || "");
+    if (!key) return;
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   }
 
   function handleSave() {
-    saveMutation.mutate([...effectiveSelected]);
+    saveMutation.mutate([...selectedIds].filter(Boolean));
   }
 
-  const sortedTypes = [...serviceTypes].sort((a, b) =>
-    String(a.name || a.id).localeCompare(String(b.name || b.id))
+  const sortedTypes = useMemo(
+    () =>
+      [...serviceTypes].sort((a, b) =>
+        String(a.name || a.id).localeCompare(String(b.name || b.id))
+      ),
+    [serviceTypes]
   );
 
   if (loading) {
@@ -74,10 +105,7 @@ export default function MDServiceOfferingsSection() {
           type="button"
           variant="outline"
           size="sm"
-          onClick={() => {
-            setDirty(true);
-            setSelected(new Set(["*"]));
-          }}
+          onClick={() => setSelection(["*"])}
         >
           All services
         </Button>
@@ -86,48 +114,54 @@ export default function MDServiceOfferingsSection() {
           variant="ghost"
           size="sm"
           className="text-slate-600"
-          onClick={() => {
-            setDirty(true);
-            setSelected(new Set());
-          }}
+          onClick={() => setSelection([])}
         >
           Clear
         </Button>
       </div>
 
       <div className="rounded-xl border border-slate-200 divide-y max-h-64 overflow-y-auto bg-white">
-        <label className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-slate-50" htmlFor="md-offer-wildcard">
-          <Checkbox
-            id="md-offer-wildcard"
-            checked={allServicesWildcard}
-            onCheckedChange={(checked) => {
-              setDirty(true);
-              setSelected(checked ? new Set(["*"]) : new Set());
-            }}
-          />
+        <div
+          role="button"
+          tabIndex={0}
+          className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-slate-50 select-none"
+          onClick={() => setSelection(allServicesWildcard ? [] : ["*"])}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setSelection(allServicesWildcard ? [] : ["*"]);
+            }
+          }}
+        >
+          <Checkbox checked={allServicesWildcard} className="pointer-events-none" />
           <span className="text-sm font-medium text-slate-900">All services</span>
-        </label>
+        </div>
         {!allServicesWildcard &&
           sortedTypes.map((st) => {
             const id = String(st.id || "");
+            const checked = selectedIds.has(id);
             return (
-              <label
+              <div
                 key={id}
-                className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-slate-50"
-                htmlFor={`md-offer-${id}`}
+                role="button"
+                tabIndex={0}
+                className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-slate-50 select-none"
+                onClick={() => toggle(id)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    toggle(id);
+                  }
+                }}
               >
-                <Checkbox
-                  id={`md-offer-${id}`}
-                  checked={effectiveSelected.has(id)}
-                  onCheckedChange={() => toggle(id)}
-                />
+                <Checkbox checked={checked} className="pointer-events-none" />
                 <div className="flex-1 min-w-0">
                   <span className="text-sm font-medium text-slate-900">{st.name || id}</span>
                   {st.category && (
                     <span className="text-xs text-slate-500 ml-2 capitalize">{st.category}</span>
                   )}
                 </div>
-              </label>
+              </div>
             );
           })}
       </div>
@@ -142,11 +176,11 @@ export default function MDServiceOfferingsSection() {
             "Save services"
           )}
         </Button>
-        {!dirty && (mine?.service_type_ids || []).length > 0 && (
+        {!dirty && savedIds.size > 0 && (
           <Label className="text-xs font-normal text-slate-500">
-            {(mine.service_type_ids || []).includes("*")
+            {savedIds.has("*")
               ? "All services selected."
-              : `${(mine.service_type_ids || []).length} service(s) saved.`}
+              : `${savedIds.size} service(s) saved.`}
           </Label>
         )}
       </div>

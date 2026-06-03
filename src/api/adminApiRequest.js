@@ -28,6 +28,7 @@ function resolveAdminApiBaseUrl() {
 
 const API_BASE_URL = resolveAdminApiBaseUrl();
 const ACCESS_TOKEN_KEY = "novi_auth_access_token";
+const REFRESH_TOKEN_KEY = "novi_auth_refresh_token";
 const API_REQUEST_TIMEOUT_MS = Number(import.meta.env.VITE_ADMIN_API_TIMEOUT_MS || 15000);
 
 // Prepend "/api" to paths under /admin/ or /webhooks/ so API calls do not
@@ -42,7 +43,49 @@ function toApiPath(path) {
   return path;
 }
 
-export async function adminApiRequest(path, options = {}) {
+async function tryRefreshAuthSession() {
+  if (typeof window === "undefined") return false;
+  const refreshToken = window.localStorage.getItem(REFRESH_TOKEN_KEY) || "";
+  if (!refreshToken) return false;
+
+  const response = await fetch(`${API_BASE_URL}${toApiPath("/admin/auth/refresh")}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ refresh_token: refreshToken }),
+  });
+
+  if (!response.ok) {
+    window.localStorage.removeItem(ACCESS_TOKEN_KEY);
+    window.localStorage.removeItem(REFRESH_TOKEN_KEY);
+    return false;
+  }
+
+  const result = await response.json().catch(() => null);
+  if (!result?.session?.access_token) {
+    window.localStorage.removeItem(ACCESS_TOKEN_KEY);
+    window.localStorage.removeItem(REFRESH_TOKEN_KEY);
+    return false;
+  }
+
+  window.localStorage.setItem(ACCESS_TOKEN_KEY, result.session.access_token);
+  if (result.session.refresh_token) {
+    window.localStorage.setItem(REFRESH_TOKEN_KEY, result.session.refresh_token);
+  }
+  return true;
+}
+
+function isAuthExpiredError(status, message) {
+  if (status !== 401) return false;
+  const m = String(message || "").toLowerCase();
+  return (
+    m.includes("expired") ||
+    m.includes("invalid jwt") ||
+    m.includes("invalid or expired token") ||
+    m.includes("missing bearer token")
+  );
+}
+
+export async function adminApiRequest(path, options = {}, retryOnAuthError = true) {
   const url = `${API_BASE_URL}${toApiPath(path)}`;
   const timeoutMs = Number(options.timeoutMs || API_REQUEST_TIMEOUT_MS);
   const headers = { ...(options.headers || {}) };
@@ -68,7 +111,7 @@ export async function adminApiRequest(path, options = {}) {
       options.signal && typeof AbortSignal.any === "function"
         ? AbortSignal.any([options.signal, timeoutSignal])
         : options.signal || timeoutSignal;
-    const { timeoutMs: _timeoutMs, ...fetchOptions } = options;
+    const { timeoutMs: _timeoutMs, retryOnAuthError: _retry, ...fetchOptions } = options;
     response = await fetch(url, {
       ...fetchOptions,
       headers,
@@ -99,6 +142,15 @@ export async function adminApiRequest(path, options = {}) {
     if (Array.isArray(body.details) && body.details.length > 0) {
       message = `${message}: ${body.details.join("; ")}`;
     }
+
+    if (retryOnAuthError && isAuthExpiredError(response.status, message)) {
+      const refreshed = await tryRefreshAuthSession();
+      if (refreshed) {
+        return adminApiRequest(path, options, false);
+      }
+      message = "Your session expired. Please log in again.";
+    }
+
     const error = new Error(message);
     error.details = body.details;
     error.status = response.status;

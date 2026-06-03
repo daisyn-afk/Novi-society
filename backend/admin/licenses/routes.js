@@ -1,13 +1,17 @@
 import { Router } from "express";
 import { createClient } from "@supabase/supabase-js";
 import { pool } from "../db.js";
-import { getMeFromAccessToken } from "../auth/service.js";
+import { hasAdminOrStaffModuleAccess, requireAuth } from "../auth/helpers.js";
+import { notifyAdminsOfLicenseSubmission } from "../adminNotifications.js";
+import { getProviderIdAliases } from "../mdSupervisedAccess.js";
+import { sendEmailFromTemplate } from "../emails/renderTemplate.js";
+import {
+  notifyProviderLicenseReinstated,
+  reinstateProviderAfterLicenseVerified,
+} from "./credentialReinstatement.js";
 
 export const licensesRouter = Router();
-const resendApiKey = process.env.RESEND_API_KEY;
-const resendFromEmail = process.env.RESEND_FROM_EMAIL || "NOVI Society <support@novisociety.com>";
-const appBaseUrl = process.env.APP_BASE_URL || "http://localhost:5173";
-const noviEmailLogoUrl = process.env.NOVI_EMAIL_LOGO_URL || `${appBaseUrl}/novi-email-logo.png`;
+licensesRouter.use(requireAuth);
 const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const supabaseAdmin = supabaseUrl && supabaseServiceRoleKey
@@ -15,12 +19,9 @@ const supabaseAdmin = supabaseUrl && supabaseServiceRoleKey
       auth: { persistSession: false, autoRefreshToken: false }
     })
   : null;
-let notificationTablePromise = null;
-let notificationColumnsByTablePromise = null;
 
-function hasAdminAccess(role) {
-  const normalized = String(role || "").trim().toLowerCase();
-  return normalized === "admin" || normalized === "super_admin" || normalized === "owner";
+function isMedicalDirectorRole(role) {
+  return String(role || "").trim().toLowerCase() === "medical_director";
 }
 
 function pickNameFromMetadata(meta = {}) {
@@ -57,23 +58,6 @@ async function resolveNameFromAuthByUserId(userId) {
   }
 }
 
-function getBearerToken(req) {
-  const raw = req.headers.authorization || "";
-  if (!raw.startsWith("Bearer ")) return null;
-  return raw.slice("Bearer ".length).trim() || null;
-}
-
-async function requireAuth(req) {
-  const token = getBearerToken(req);
-  if (!token) {
-    const err = new Error("Missing bearer token.");
-    err.statusCode = 401;
-    throw err;
-  }
-  const me = await getMeFromAccessToken(token);
-  return { me };
-}
-
 function mapLicenseRow(row) {
   const resolvedProviderEmail =
     String(row.provider_email_resolved || row.provider_email || "").trim() || null;
@@ -86,6 +70,46 @@ function mapLicenseRow(row) {
     created_date: row.created_at,
     updated_date: row.updated_at
   };
+}
+
+function toPermissionObject(rawPermissions) {
+  if (rawPermissions && typeof rawPermissions === "object" && !Array.isArray(rawPermissions)) {
+    return rawPermissions;
+  }
+  if (typeof rawPermissions === "string") {
+    try {
+      const parsed = JSON.parse(rawPermissions);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+    } catch {
+      // ignore malformed legacy payloads
+    }
+  }
+  return {};
+}
+
+function hasTruthyPermission(permissions, key) {
+  const value = permissions?.[key];
+  return value === true || value === "true" || value === 1 || value === "1";
+}
+
+async function resolveCanManageLicenses(me) {
+  if (hasAdminOrStaffModuleAccess(me, "AdminLicenses")) return true;
+  if (String(me?.role || "").trim().toLowerCase() !== "staff") return false;
+  const authUserId = String(me?.id || "").trim();
+  if (!authUserId) return false;
+  try {
+    const { rows } = await pool.query(
+      `select permissions
+       from public.users
+       where auth_user_id = $1
+       limit 1`,
+      [authUserId]
+    );
+    const permissions = toPermissionObject(rows?.[0]?.permissions);
+    return hasTruthyPermission(permissions, "AdminLicenses");
+  } catch {
+    return false;
+  }
 }
 
 async function fetchLicenseById(client, id) {
@@ -115,15 +139,6 @@ async function fetchLicenseById(client, id) {
   return rows[0] || null;
 }
 
-function escapeHtml(rawValue) {
-  return String(rawValue ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
 function resolveProviderFirstName(licenseRow) {
   const fromName = String(
     licenseRow?.provider_first_name ||
@@ -137,246 +152,38 @@ function resolveProviderFirstName(licenseRow) {
   return "Provider";
 }
 
-function buildLicenseDecisionEmailHtml({ providerFirstName, isApproved, rejectionReason }) {
-  const safeName = escapeHtml(providerFirstName || "Provider");
-  const safeReason = escapeHtml(rejectionReason || "");
-  const base = String(appBaseUrl || "").replace(/\/+$/, "");
-  const ctaUrl = `${base}/login?next=${encodeURIComponent("/ProviderCredentialsCoverage")}`;
-  const ctaMarkup = isApproved
-    ? `<p style="margin:0 0 32px">
-            <a href="${ctaUrl}" style="display:inline-block;background:#2D6B7F;color:#fff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:600;font-size:14px">
-              Apply for Coverage
-            </a>
-          </p>`
-    : "";
-  const contentBody = isApproved
-    ? `
-          <p style="margin:0 0 20px;font-size:16px;color:#374151;line-height:1.6">Your professional license has been verified by the NOVI admin team. ✓</p>
-          <p style="margin:0 0 20px;font-size:16px;color:#374151;line-height:1.6">You're now eligible to apply for MD Board Coverage, which lets you legally offer aesthetic services under NOVI's Board of Medical Directors.</p>
-          <p style="margin:0 0 12px;font-size:15px;font-weight:600;color:#111827">Your Next Steps:</p>
-          <ul style="margin:0 0 24px;padding-left:20px;color:#374151;font-size:15px;line-height:1.9">
-            <li>Enroll in a NOVI course or submit an external certification</li>
-            <li>Apply for MD Coverage for each service you want to offer</li>
-            <li>Get matched with a Board MD - NOVI handles the assignment</li>
-          </ul>
-          ${ctaMarkup}
-          <p style="margin:0 0 32px;font-size:15px;color:#374151;line-height:1.6">You're one step closer,<br/><strong>The NOVI Team</strong></p>
-      `
-    : `
-          <p style="margin:0 0 20px;font-size:16px;color:#374151;line-height:1.6">Your professional license submission has been reviewed by the NOVI admin team.</p>
-          <p style="margin:0 0 16px;font-size:16px;color:#374151;line-height:1.6"><strong>Status:</strong> Rejected</p>
-          <p style="margin:0 0 10px;font-size:15px;font-weight:600;color:#111827">Reason for rejection:</p>
-          <div style="background:#fff7f7;border:1px solid #fecaca;border-radius:10px;padding:14px 16px;margin:0 0 24px;color:#7f1d1d;font-size:14px;line-height:1.7">
-            ${safeReason}
-          </div>
-          <p style="margin:0 0 24px;font-size:15px;color:#374151;line-height:1.6">Please update and resubmit your license details in your provider dashboard.</p>
-          <p style="margin:0 0 32px;font-size:15px;color:#374151;line-height:1.6">The NOVI Team</p>
-      `;
-
-  return `
-<!DOCTYPE html>
-<html>
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
-<body style="margin:0;padding:0;background:#f5f3ef;font-family:'DM Sans',Helvetica,Arial,sans-serif">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f3ef;padding:40px 0">
-    <tr><td align="center">
-      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
-        <tr><td style="background:linear-gradient(135deg,#2D6B7F 0%,#7B8EC8 55%,#C8E63C 100%);padding:36px 40px;text-align:center;border-radius:16px 16px 0 0">
-          <img src="${noviEmailLogoUrl}" alt="NOVI Society" style="width:160px;height:auto" />
-        </td></tr>
-        <tr><td style="background:#fff;padding:48px 40px;border-radius:0 0 16px 16px">
-          <p style="margin:0 0 24px;font-size:16px;color:#374151;line-height:1.6">Hi ${safeName},</p>
-          ${contentBody}
-          <div style="border-top:1px solid #e5e7eb;padding-top:28px;margin-top:8px">
-            <p style="margin:0;font-size:15px;color:#374151">Best,<br><strong>The NOVI Society Team</strong></p>
-          </div>
-        </td></tr>
-        <tr><td style="padding:24px 40px;text-align:center">
-          <p style="margin:0;font-size:12px;color:#9ca3af">© 2026 NOVI Society LLC · 8109 Meadow Valley Dr, McKinney, TX 75071</p>
-          <p style="margin:4px 0 0;font-size:12px;color:#9ca3af"><a href="mailto:support@novisociety.com" style="color:#9ca3af">support@novisociety.com</a></p>
-        </td></tr>
-      </table>
-    </td></tr>
-  </table>
-</body>
-</html>`;
-}
-
 async function sendLicenseDecisionEmail({ providerEmail, providerFirstName, isApproved, rejectionReason }) {
   if (!providerEmail) return false;
-  if (!resendApiKey) {
-    // eslint-disable-next-line no-console
-    console.warn("[licenses] license decision email skipped: RESEND_API_KEY missing");
-    return false;
-  }
-
-  const subject = isApproved
-    ? "Your license has been verified — unlock MD coverage now"
-    : "Your license submission was rejected";
-  const html = buildLicenseDecisionEmailHtml({
-    providerFirstName,
-    isApproved,
-    rejectionReason
-  });
-
-  try {
-    const response = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${resendApiKey}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        from: resendFromEmail,
-        to: [providerEmail],
-        subject,
-        html
-      })
-    });
-    if (!response.ok) {
-      const bodyText = await response.text().catch(() => "");
-      // eslint-disable-next-line no-console
-      console.error("[licenses] decision email send failed:", response.status, bodyText);
-    }
-    return response.ok;
-  } catch (error) {
-    // eslint-disable-next-line no-console
-    console.error("[licenses] decision email request failed:", error);
-    return false;
-  }
-}
-
-async function getNotificationTableName() {
-  if (!notificationTablePromise) {
-    notificationTablePromise = pool.query(
-      `select table_name
-       from information_schema.tables
-       where table_schema = 'public'
-         and table_name in ('notification', 'notifications')
-       order by case when table_name = 'notification' then 0 else 1 end
-       limit 1`
-    ).then((r) => r.rows?.[0]?.table_name || null)
-      .catch(() => null);
-  }
-  return notificationTablePromise;
-}
-
-async function getNotificationTableColumnsByName() {
-  if (!notificationColumnsByTablePromise) {
-    notificationColumnsByTablePromise = (async () => {
-      const tableName = await getNotificationTableName();
-      if (!tableName) return { tableName: null, columns: new Set() };
-      const result = await pool.query(
-        `select column_name
-         from information_schema.columns
-         where table_schema = 'public'
-           and table_name = $1`,
-        [tableName]
-      );
-      return {
-        tableName,
-        columns: new Set((result.rows || []).map((row) => String(row.column_name || "").toLowerCase()))
-      };
-    })().catch(() => ({ tableName: null, columns: new Set() }));
-  }
-  return notificationColumnsByTablePromise;
-}
-
-async function listAdminRecipients() {
-  const { rows } = await pool.query(
-    `select auth_user_id, email, full_name, first_name
-     from public.users
-     where lower(coalesce(role, '')) in ('admin', 'super_admin', 'owner')
-       and nullif(trim(email), '') is not null`
-  );
-  return rows || [];
-}
-
-function buildAdminSubmissionEmailHtml({ adminName, title, summaryLines = [] }) {
-  const safeName = escapeHtml(adminName || "Admin");
-  const safeTitle = escapeHtml(title || "New provider submission");
-  const lines = summaryLines
-    .map((line) => `<li style="margin:0 0 8px">${escapeHtml(line)}</li>`)
-    .join("");
-  return `
-<!DOCTYPE html>
-<html>
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
-<body style="margin:0;padding:0;background:#f5f3ef;font-family:'DM Sans',Helvetica,Arial,sans-serif">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f3ef;padding:40px 0">
-    <tr><td align="center">
-      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
-        <tr><td style="background:linear-gradient(135deg,#2D6B7F 0%,#7B8EC8 55%,#C8E63C 100%);padding:36px 40px;text-align:center;border-radius:16px 16px 0 0">
-          <img src="${noviEmailLogoUrl}" alt="NOVI Society" style="width:160px;height:auto" />
-        </td></tr>
-        <tr><td style="background:#fff;padding:40px;border-radius:0 0 16px 16px">
-          <p style="margin:0 0 18px;font-size:16px;color:#374151">Hi ${safeName},</p>
-          <p style="margin:0 0 16px;font-size:16px;color:#374151"><strong>${safeTitle}</strong></p>
-          <ul style="margin:0 0 18px;padding-left:20px;color:#374151;font-size:14px;line-height:1.7">${lines}</ul>
-          <p style="margin:0;font-size:14px;color:#374151">Please review it in the admin portal.</p>
-        </td></tr>
-      </table>
-    </td></tr>
-  </table>
-</body>
-</html>`;
-}
-
-async function notifyAdminsOfLicenseSubmission({ providerName, providerEmail, licenseType, licenseNumber, licenseId }) {
-  const admins = await listAdminRecipients();
-  if (!admins.length) return;
-  const { tableName, columns } = await getNotificationTableColumnsByName();
-  for (const admin of admins) {
-    const adminUserId = String(admin?.auth_user_id || "").trim() || null;
-    const adminEmail = String(admin?.email || "").trim().toLowerCase() || null;
-    if (tableName && columns.size > 0) {
-      const valuesByColumn = {
-        user_id: adminUserId,
-        user_email: adminEmail,
-        type: "license_submitted",
-        message: `New license submitted by ${providerName || providerEmail || "a provider"} (${licenseType || "license"}).`,
-        link_page: `AdminLicenses?tab=licenses&focus_type=license&focus_id=${encodeURIComponent(String(licenseId || ""))}`
-      };
-      const insertColumns = Object.keys(valuesByColumn).filter((col) => columns.has(col));
-      if (insertColumns.length > 0) {
-        const placeholders = insertColumns.map((_, idx) => `$${idx + 1}`).join(", ");
-        const params = insertColumns.map((col) => valuesByColumn[col]);
-        await pool.query(
-          `insert into public.${tableName} (${insertColumns.join(", ")}) values (${placeholders})`,
-          params
-        ).catch(() => {});
+  const templateKey = isApproved ? "license_approved" : "license_rejected";
+  const vars = isApproved
+    ? {
+        to: providerEmail,
+        first_name: providerFirstName || "Provider",
+        summary_lines: [
+          "Enroll in a NOVI course or submit an external certification",
+          "Apply for MD Coverage for each service you want to offer",
+          "Get matched with a Board MD — NOVI handles the assignment",
+        ],
       }
-    }
-    if (resendApiKey && adminEmail) {
-      const html = buildAdminSubmissionEmailHtml({
-        adminName: admin?.first_name || admin?.full_name || "Admin",
-        title: "New license submission pending review",
-        summaryLines: [
-          `Provider: ${providerName || "Unknown Provider"}`,
-          `Email: ${providerEmail || "Not provided"}`,
-          `License: ${licenseType || "N/A"}${licenseNumber ? ` (${licenseNumber})` : ""}`
-        ]
-      });
-      await fetch("https://api.resend.com/emails", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${resendApiKey}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          from: resendFromEmail,
-          to: [adminEmail],
-          subject: "New license submission pending review",
-          html
-        })
-      }).catch(() => {});
-    }
+    : {
+        to: providerEmail,
+        first_name: providerFirstName || "Provider",
+        rejection_reason: rejectionReason || "",
+        rejection_title: "Reason for rejection",
+      };
+  const result = await sendEmailFromTemplate(templateKey, vars);
+  if (!result.ok) {
+    // eslint-disable-next-line no-console
+    console.error("[licenses] decision email send failed:", result.error);
+    return false;
   }
+  return true;
 }
 
 licensesRouter.get("/", async (req, res, next) => {
   try {
-    const { me } = await requireAuth(req);
+    const me = req.me || {};
+    const canManageLicenses = await resolveCanManageLicenses(me);
     const status = String(req.query?.status || "").trim();
     const providerId = String(req.query?.provider_id || "").trim();
     const providerEmail = String(req.query?.provider_email || "").trim();
@@ -388,21 +195,30 @@ licensesRouter.get("/", async (req, res, next) => {
       where.push(`l.status = $${params.length}`);
     }
     if (providerId) {
-      params.push(providerId);
-      where.push(`l.provider_id = $${params.length}`);
+      const { aliases } = await getProviderIdAliases(providerId);
+      params.push(aliases.length ? aliases : [providerId]);
+      where.push(`l.provider_id::text = any($${params.length}::text[])`);
     }
     if (providerEmail) {
       params.push(providerEmail.toLowerCase());
       where.push(`lower(l.provider_email) = $${params.length}`);
     }
-    if (!hasAdminAccess(me.role)) {
-      params.push(me.id);
-      const providerIdParam = `$${params.length}`;
-      params.push(String(me.email || "").toLowerCase());
-      const providerEmailParam = `$${params.length}`;
-      // Non-admin providers can only see their own licenses.
-      // Support legacy rows keyed by email even if provider_id is missing/mismatched.
-      where.push(`(l.provider_id = ${providerIdParam} or lower(l.provider_email) = ${providerEmailParam})`);
+    if (!canManageLicenses) {
+      if (isMedicalDirectorRole(me.role) && providerId) {
+        params.push(me.id);
+        where.push(`exists (
+          select 1 from public.medical_director_relationship r
+           where r.medical_director_id = $${params.length}
+             and r.provider_id::text = l.provider_id::text
+             and lower(coalesce(r.status, '')) = 'active'
+        )`);
+      } else {
+        params.push(me.id);
+        const providerIdParam = `$${params.length}`;
+        params.push(String(me.email || "").toLowerCase());
+        const providerEmailParam = `$${params.length}`;
+        where.push(`(l.provider_id = ${providerIdParam} or lower(l.provider_email) = ${providerEmailParam})`);
+      }
     }
 
     const sql = `select
@@ -456,10 +272,11 @@ licensesRouter.get("/", async (req, res, next) => {
 
 licensesRouter.post("/", async (req, res, next) => {
   try {
-    const { me } = await requireAuth(req);
+    const me = req.me || {};
+    const canManageLicenses = await resolveCanManageLicenses(me);
     const body = req.body || {};
-    const providerId = hasAdminAccess(me.role) && body.provider_id ? String(body.provider_id) : me.id;
-    const providerEmail = hasAdminAccess(me.role) && body.provider_email
+    const providerId = canManageLicenses && body.provider_id ? String(body.provider_id) : me.id;
+    const providerEmail = canManageLicenses && body.provider_email
       ? String(body.provider_email)
       : me.email || String(body.provider_email || "");
     const licenseType = String(body.license_type || "").trim();
@@ -499,7 +316,7 @@ licensesRouter.post("/", async (req, res, next) => {
         ]
       );
       const inserted = await fetchLicenseById(client, rows[0]?.id);
-      if (!hasAdminAccess(me.role)) {
+      if (!canManageLicenses) {
         const insertedMapped = mapLicenseRow(inserted || rows[0]);
         void notifyAdminsOfLicenseSubmission({
           providerName: insertedMapped.provider_name,
@@ -520,7 +337,8 @@ licensesRouter.post("/", async (req, res, next) => {
 
 licensesRouter.get("/:id", async (req, res, next) => {
   try {
-    const { me } = await requireAuth(req);
+    const me = req.me || {};
+    const canManageLicenses = await resolveCanManageLicenses(me);
     const id = String(req.params.id || "").trim();
     const client = await pool.connect();
     try {
@@ -530,7 +348,7 @@ licensesRouter.get("/:id", async (req, res, next) => {
         err.statusCode = 404;
         throw err;
       }
-      if (!hasAdminAccess(me.role) && row.provider_id !== me.id) {
+      if (!canManageLicenses && row.provider_id !== me.id) {
         const err = new Error("Forbidden.");
         err.statusCode = 403;
         throw err;
@@ -546,7 +364,8 @@ licensesRouter.get("/:id", async (req, res, next) => {
 
 licensesRouter.patch("/:id", async (req, res, next) => {
   try {
-    const { me } = await requireAuth(req);
+    const me = req.me || {};
+    const canManageLicenses = await resolveCanManageLicenses(me);
     const id = String(req.params.id || "").trim();
     if (!id) {
       const err = new Error("License id is required.");
@@ -562,7 +381,7 @@ licensesRouter.patch("/:id", async (req, res, next) => {
         err.statusCode = 404;
         throw err;
       }
-      if (!hasAdminAccess(me.role) && existing.provider_id !== me.id) {
+      if (!canManageLicenses && existing.provider_id !== me.id) {
         const err = new Error("Forbidden.");
         err.statusCode = 403;
         throw err;
@@ -575,7 +394,7 @@ licensesRouter.patch("/:id", async (req, res, next) => {
       const requestedRejectionReason = Object.prototype.hasOwnProperty.call(updates, "rejection_reason")
         ? String(updates.rejection_reason || "").trim()
         : "";
-      if (hasAdminAccess(me.role) && requestedStatus === "rejected" && !requestedRejectionReason) {
+      if (canManageLicenses && requestedStatus === "rejected" && !requestedRejectionReason) {
         const err = new Error("rejection_reason is required when rejecting a license.");
         err.statusCode = 400;
         throw err;
@@ -628,10 +447,10 @@ licensesRouter.patch("/:id", async (req, res, next) => {
         ]
       );
       const updated = rows[0];
-      const statusChangedByAdmin = hasAdminAccess(me.role) && existing.status !== updated.status;
+      const statusChangedByReviewer = canManageLicenses && existing.status !== updated.status;
       const isApproved = updated.status === "verified";
       const isRejected = updated.status === "rejected";
-      if (statusChangedByAdmin && (isApproved || isRejected)) {
+      if (statusChangedByReviewer && (isApproved || isRejected)) {
         const providerResult = await client.query(
           `select first_name, full_name, email
            from public.users
@@ -643,16 +462,44 @@ licensesRouter.patch("/:id", async (req, res, next) => {
         );
         const providerRow = providerResult.rows[0] || {};
         const providerEmail = updated.provider_email || providerRow.email || null;
-        void sendLicenseDecisionEmail({
-          providerEmail,
-          providerFirstName: resolveProviderFirstName({
-            provider_email: providerEmail,
-            provider_first_name: providerRow.first_name,
-            provider_name: providerRow.full_name
-          }),
-          isApproved,
-          rejectionReason: isRejected ? (updated.rejection_reason || requestedRejectionReason) : ""
+        const providerFirstName = resolveProviderFirstName({
+          provider_email: providerEmail,
+          provider_first_name: providerRow.first_name,
+          provider_name: providerRow.full_name,
         });
+
+        if (isRejected) {
+          void sendLicenseDecisionEmail({
+            providerEmail,
+            providerFirstName,
+            isApproved: false,
+            rejectionReason: updated.rejection_reason || requestedRejectionReason,
+          });
+        } else if (isApproved) {
+          const wasExpired = String(existing.status || "").toLowerCase() === "expired";
+          const reinstatement = await reinstateProviderAfterLicenseVerified({
+            providerId: updated.provider_id,
+          });
+          const isReinstatement =
+            wasExpired ||
+            reinstatement.resolved_logs > 0 ||
+            reinstatement.access_restored_count > 0;
+
+          if (isReinstatement) {
+            void notifyProviderLicenseReinstated({
+              providerId: updated.provider_id,
+              providerEmail,
+              providerFirstName,
+            });
+          } else {
+            void sendLicenseDecisionEmail({
+              providerEmail,
+              providerFirstName,
+              isApproved: true,
+              rejectionReason: "",
+            });
+          }
+        }
       }
       return res.json(mapLicenseRow(updated));
     } finally {

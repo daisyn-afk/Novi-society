@@ -93,6 +93,40 @@ export async function uploadPatientJourneySelfie({ buffer, mimeType, extension, 
   };
 }
 
+export async function uploadManufacturerLogo({ buffer, mimeType, extension }) {
+  const client = getSupabaseClient();
+  const cleanExt = (extension || "bin").replace(/^\./, "");
+  const objectPath = `manufacturer-logos/${Date.now()}-${randomUUID()}.${cleanExt}`;
+
+  const { error: uploadError } = await uploadWithRetry({
+    client,
+    bucket: SUPABASE_STORAGE_BUCKET,
+    objectPath,
+    buffer,
+    mimeType,
+  });
+
+  if (uploadError) {
+    const err = new Error(`Supabase upload failed: ${uploadError.message}`);
+    err.statusCode = 502;
+    throw err;
+  }
+
+  const { data } = client.storage.from(SUPABASE_STORAGE_BUCKET).getPublicUrl(objectPath);
+  if (!data?.publicUrl) {
+    const err = new Error("Supabase upload succeeded but public URL could not be generated.");
+    err.statusCode = 502;
+    throw err;
+  }
+
+  return {
+    bucket: SUPABASE_STORAGE_BUCKET,
+    path: objectPath,
+    url: data.publicUrl,
+    file_url: data.publicUrl,
+  };
+}
+
 export async function uploadLicenseDocument({ buffer, mimeType, extension }) {
   const client = getSupabaseClient();
   const cleanExt = (extension || "bin").replace(/^\./, "");
@@ -123,6 +157,50 @@ export async function uploadLicenseDocument({ buffer, mimeType, extension }) {
     bucket: SUPABASE_STORAGE_BUCKET,
     path: objectPath,
     url: data.publicUrl
+  };
+}
+
+export async function uploadMdSignedContract({
+  buffer,
+  mimeType = "application/pdf",
+  extension = "pdf",
+  providerId = "provider",
+  serviceTypeId = "service",
+  fileName = null,
+}) {
+  const client = getSupabaseClient();
+  const cleanExt = (extension || "pdf").replace(/^\./, "");
+  const safeProvider = String(providerId || "provider").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
+  const safeService = String(serviceTypeId || "service").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
+  const objectPath =
+    fileName ||
+    `md-signed-contracts/${safeProvider}/${safeService}/${Date.now()}-${randomUUID()}.${cleanExt}`;
+
+  const { error: uploadError } = await uploadWithRetry({
+    client,
+    bucket: SUPABASE_STORAGE_BUCKET,
+    objectPath,
+    buffer,
+    mimeType,
+  });
+
+  if (uploadError) {
+    const err = new Error(`Supabase upload failed: ${uploadError.message}`);
+    err.statusCode = 502;
+    throw err;
+  }
+
+  const { data } = client.storage.from(SUPABASE_STORAGE_BUCKET).getPublicUrl(objectPath);
+  if (!data?.publicUrl) {
+    const err = new Error("Supabase upload succeeded but public URL could not be generated.");
+    err.statusCode = 502;
+    throw err;
+  }
+
+  return {
+    bucket: SUPABASE_STORAGE_BUCKET,
+    path: objectPath,
+    url: data.publicUrl,
   };
 }
 

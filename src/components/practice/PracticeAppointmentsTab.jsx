@@ -1,17 +1,24 @@
-import { useState, useMemo } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
+import { appointmentsApi } from "@/api/appointmentsApi";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import MessageThread from "@/components/messaging/MessageThread";
+import MessageUnreadBadge from "@/components/messaging/MessageUnreadBadge";
+import { useAppointmentMessageUnread, unreadCountForThread } from "@/hooks/useAppointmentMessageUnread";
 import {
   Calendar, Clock, User, MessageSquare, CheckCircle, X, FileText,
   ShieldCheck, ChevronLeft, ChevronRight, LayoutList, LayoutGrid,
-  AlertCircle, DollarSign, Zap, Plus, Phone, Mail, Eye
+  AlertCircle, DollarSign, Zap, Plus, Phone, Mail, Eye, Stethoscope
 } from "lucide-react";
 import { format, isToday, isTomorrow, startOfWeek, addDays, isSameDay, parseISO, addWeeks, subWeeks } from "date-fns";
 import TreatmentDocumentDialog from "@/components/practice/TreatmentDocumentDialog.jsx";
 import GFEStatusBadge from "@/components/GFEStatusBadge";
+import { appointmentServiceLabel, formatAppointmentDate } from "@/lib/appointmentDisplay";
+import { appointmentGfeDisplayStatus, appointmentGfeLink } from "@/lib/appointmentGfe";
+import { useToast } from "@/components/ui/use-toast";
 
 const STATUS = {
   requested:  { bg: "rgba(251,191,36,0.18)", text: "#d97706", border: "rgba(251,191,36,0.45)", label: "Pending", dot: "#fbbf24" },
@@ -58,30 +65,37 @@ function StatCard({ icon: Icon, color, label, value, sub }) {
 // ── Mini appointment pill for calendar ────────────────────────────
 function CalApptPill({ appt, onClick }) {
   const sc = STATUS[appt.status] || STATUS.confirmed;
+  const serviceLabel = appointmentServiceLabel(appt);
   return (
     <button onClick={() => onClick(appt)}
       className="w-full text-left px-2 py-1 rounded-lg text-[11px] font-semibold truncate transition-all hover:opacity-80"
       style={{ background: sc.bg, color: sc.text, border: `1px solid ${sc.border}` }}>
       {appt.appointment_time ? `${appt.appointment_time} · ` : ""}{appt.patient_name?.split(" ")[0] || "Patient"}
-      <span className="font-normal ml-1 opacity-70 truncate">{appt.service}</span>
+      {serviceLabel ? <span className="font-normal ml-1 opacity-70 truncate">{serviceLabel}</span> : null}
     </button>
   );
 }
 
 // ── Appointment detail drawer content ────────────────────────────
-function ApptDetail({ appt, treatmentRecords, onConfirm, onCancel, onComplete, onNoShow, onSendGFE, gfeSending, onDoc, onClose }) {
+function ApptDetail({ appt, treatmentRecords, onConfirm, onCancel, onComplete, onNoShow, noShowPending, onSendGFE, gfeSending, gfeFeedback, onDoc, onMessage, messageUnreadCount, onClose }) {
   const sc = STATUS[appt.status] || STATUS.confirmed;
   const hasRecord = treatmentRecords.find(r => r.appointment_id === appt.id);
+  const serviceLabel = appointmentServiceLabel(appt);
+  const gfeStatus = appointmentGfeDisplayStatus(appt);
+  const gfeLink = appointmentGfeLink(appt);
   return (
     <div className="space-y-4">
       {/* Header */}
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="font-bold text-lg" style={{ fontFamily: "'DM Serif Display', serif", color: "#1e2535" }}>{appt.service}</p>
+          <p className="text-xs font-bold uppercase tracking-wider" style={{ color: "rgba(30,37,53,0.4)" }}>Appointment request</p>
+          <p className="font-bold text-lg mt-0.5" style={{ fontFamily: "'DM Serif Display', serif", color: "#1e2535" }}>
+            {appt.patient_name || "Patient"}
+          </p>
           <div className="flex items-center gap-2 mt-1 flex-wrap">
             <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full" style={{ background: sc.bg, color: sc.text, border: `1px solid ${sc.border}` }}>{sc.label}</span>
-            <GFEStatusBadge status={appt.gfe_status} examUrl={appt.gfe_exam_url} />
-            {isToday(parseISO(appt.appointment_date)) && (
+            <GFEStatusBadge status={gfeStatus} examUrl={gfeLink || undefined} />
+            {appt.appointment_date && isToday(parseISO(appt.appointment_date)) && (
               <span className="text-xs font-bold px-2.5 py-0.5 rounded-full" style={{ background: "rgba(200,230,60,0.2)", color: "#4a6b10" }}>TODAY</span>
             )}
           </div>
@@ -98,10 +112,21 @@ function ApptDetail({ appt, treatmentRecords, onConfirm, onCancel, onComplete, o
           </div>
           <div>
             <p className="font-semibold text-sm" style={{ color: "#1e2535" }}>{appt.patient_name || "Unknown Patient"}</p>
-            <p className="text-xs" style={{ color: "rgba(30,37,53,0.45)" }}>{appt.patient_email}</p>
+            {appt.patient_email && (
+              <p className="text-xs flex items-center gap-1 mt-0.5" style={{ color: "rgba(30,37,53,0.45)" }}>
+                <Mail className="w-3 h-3 flex-shrink-0" />{appt.patient_email}
+              </p>
+            )}
           </div>
         </div>
         <div className="grid grid-cols-2 gap-2 pt-1">
+          <div className="flex items-start gap-1.5 text-xs col-span-2" style={{ color: "rgba(30,37,53,0.55)" }}>
+            <Stethoscope className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+            <div>
+              <span className="font-semibold block" style={{ color: "#1e2535" }}>Service</span>
+              <span>{serviceLabel || "—"}</span>
+            </div>
+          </div>
           <div className="flex items-center gap-1.5 text-xs" style={{ color: "rgba(30,37,53,0.55)" }}>
             <Calendar className="w-3.5 h-3.5 flex-shrink-0" />
             {dateLabel(appt.appointment_date)}
@@ -132,6 +157,41 @@ function ApptDetail({ appt, treatmentRecords, onConfirm, onCancel, onComplete, o
         </div>
       )}
 
+      {appt.requires_gfe === true && (
+        <div className="px-3 py-2.5 rounded-xl text-xs space-y-1" style={{ background: "rgba(123,142,200,0.08)", border: "1px solid rgba(123,142,200,0.2)", color: "rgba(30,37,53,0.65)" }}>
+          <p className="font-bold" style={{ color: "#7B8EC8" }}>Good Faith Exam</p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <GFEStatusBadge status={gfeStatus} examUrl={gfeLink || undefined} size="md" />
+          </div>
+          {gfeStatus === "pending" && gfeLink && (
+            <p className="text-[11px] pt-1">
+              Patient invite sent
+              {appt.gfe_sent_at ? ` · ${format(new Date(appt.gfe_sent_at), "MMM d, h:mm a")}` : ""}.
+              {" "}
+              <a href={gfeLink} target="_blank" rel="noopener noreferrer" className="font-semibold underline" style={{ color: "#5b6fa8" }}>
+                Open exam link
+              </a>
+            </p>
+          )}
+          {gfeStatus === "approved" && appt.gfe_provider_name && (
+            <p className="text-[11px]">
+              Reviewed by {appt.gfe_provider_name}
+              {appt.gfe_completed_at ? ` · ${format(new Date(appt.gfe_completed_at), "MMM d, yyyy")}` : ""}
+            </p>
+          )}
+        </div>
+      )}
+
+      {appt.referral_code && (
+        <div className="px-3 py-2.5 rounded-xl text-xs" style={{ background: "rgba(168,85,247,0.08)", border: "1px solid rgba(168,85,247,0.2)", color: "rgba(30,37,53,0.65)" }}>
+          <span className="font-bold" style={{ color: "#7c3aed" }}>Referral code used: </span>
+          <span className="font-mono">{appt.referral_code}</span>
+          <p className="mt-1 text-[11px] not-italic" style={{ color: "rgba(30,37,53,0.5)" }}>
+            Remember to honor the referral discount when confirming this visit.
+          </p>
+        </div>
+      )}
+
       {/* Provider notes */}
       {appt.notes && (
         <div className="px-3 py-2.5 rounded-xl text-xs" style={{ background: "rgba(250,111,48,0.06)", border: "1px solid rgba(250,111,48,0.18)", color: "rgba(30,37,53,0.6)" }}>
@@ -142,14 +202,39 @@ function ApptDetail({ appt, treatmentRecords, onConfirm, onCancel, onComplete, o
 
       {/* Actions */}
       <div className="space-y-2">
+        {gfeFeedback?.id === appt.id && gfeFeedback.message && (
+          <div
+            className="px-3 py-2.5 rounded-xl text-xs"
+            style={
+              gfeFeedback.type === "success"
+                ? { background: "rgba(74,222,128,0.12)", border: "1px solid rgba(74,222,128,0.35)", color: "#166534" }
+                : { background: "rgba(254,226,226,0.85)", border: "1px solid rgba(220,38,38,0.35)", color: "#991b1b" }
+            }
+          >
+            {gfeFeedback.message}
+          </div>
+        )}
         {appt.status === "requested" && (
-          <div className="grid grid-cols-2 gap-2">
-            <Button className="w-full gap-1.5" style={{ background: "#FA6F30", color: "#fff" }} onClick={onConfirm}>
-              <CheckCircle className="w-4 h-4" />Confirm
+          <div className="flex flex-col gap-2">
+            <Button
+              className="w-full gap-1.5 h-auto min-h-10 py-2.5 whitespace-normal text-center leading-snug"
+              style={{ background: "#FA6F30", color: "#fff" }}
+              onClick={onConfirm}
+            >
+              <CheckCircle className="w-4 h-4 flex-shrink-0" />
+              Confirm &amp; Request Payment
             </Button>
             <Button className="w-full gap-1.5" variant="outline" onClick={onCancel}>
               <X className="w-4 h-4" />Decline
             </Button>
+          </div>
+        )}
+        {appt.status === "awaiting_payment" && (
+          <div
+            className="px-3 py-2.5 rounded-xl text-xs font-semibold text-center"
+            style={{ background: "rgba(200,230,60,0.15)", border: "1px solid rgba(200,230,60,0.35)", color: "#4a6b10" }}
+          >
+            Awaiting patient deposit{appt.deposit_amount ? ` ($${appt.deposit_amount})` : ""}
           </div>
         )}
         {appt.status === "confirmed" && (
@@ -163,10 +248,19 @@ function ApptDetail({ appt, treatmentRecords, onConfirm, onCancel, onComplete, o
           </div>
         )}
         <div className="grid grid-cols-2 gap-2">
-          {(["requested","confirmed"].includes(appt.status)) && (
+          <Button
+            className="w-full gap-1.5 relative"
+            variant="outline"
+            onClick={onMessage}
+          >
+            <MessageSquare className="w-4 h-4" />
+            Message Patient
+            <MessageUnreadBadge count={messageUnreadCount} />
+          </Button>
+          {(["requested", "awaiting_payment", "confirmed"].includes(appt.status)) && appt.requires_gfe === true && (
             <Button className="w-full gap-1.5" style={{ background: "rgba(123,142,200,0.12)", color: "#7B8EC8", border: "1px solid rgba(123,142,200,0.3)" }}
-              onClick={onSendGFE} disabled={gfeSending}>
-              <ShieldCheck className="w-4 h-4" />{gfeSending ? "Sending…" : appt.gfe_status === "pending" ? "Resend GFE" : "Send GFE"}
+              onClick={onSendGFE} disabled={gfeSending || gfeStatus === "approved"}>
+              <ShieldCheck className="w-4 h-4" />{gfeSending ? "Sending…" : gfeStatus === "pending" ? "Resend GFE" : "Send GFE"}
             </Button>
           )}
           <Button className="w-full gap-1.5" style={{ background: "rgba(250,111,48,0.1)", color: "#FA6F30", border: "1px solid rgba(250,111,48,0.3)" }}
@@ -175,8 +269,13 @@ function ApptDetail({ appt, treatmentRecords, onConfirm, onCancel, onComplete, o
           </Button>
         </div>
         {appt.status === "confirmed" && (
-          <Button className="w-full gap-1.5" variant="outline" onClick={onNoShow}>
-            No Show
+          <Button
+            className="w-full gap-1.5"
+            variant="outline"
+            onClick={onNoShow}
+            disabled={noShowPending}
+          >
+            {noShowPending ? "Updating…" : "No Show"}
           </Button>
         )}
       </div>
@@ -185,10 +284,16 @@ function ApptDetail({ appt, treatmentRecords, onConfirm, onCancel, onComplete, o
 }
 
 // ── Main Component ────────────────────────────────────────────────
-export default function PracticeAppointmentsTab({ appointments }) {
+export default function PracticeAppointmentsTab({
+  appointments,
+  initialFilter = "upcoming",
+  openMessageAppointmentId = null,
+  onOpenMessageHandled,
+}) {
   const qc = useQueryClient();
+  const { toast } = useToast();
   const [view, setView] = useState("list"); // "list" | "week"
-  const [filter, setFilter] = useState("upcoming");
+  const [filter, setFilter] = useState(initialFilter);
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date(), { weekStartsOn: 1 }));
   const [selectedAppt, setSelectedAppt] = useState(null);
   const [detailOpen, setDetailOpen] = useState(false);
@@ -199,7 +304,23 @@ export default function PracticeAppointmentsTab({ appointments }) {
   const [notesDialog, setNotesDialog] = useState({ open: false, appt: null });
   const [notesText, setNotesText] = useState("");
   const [docDialog, setDocDialog] = useState({ open: false, appt: null, existing: null });
+  const [completePrompt, setCompletePrompt] = useState({ open: false, appt: null });
   const [gfeSending, setGfeSending] = useState({});
+  const [gfeFeedback, setGfeFeedback] = useState({ id: null, type: null, message: "" });
+  const [msgDialog, setMsgDialog] = useState(null);
+  const { data: unreadSummary } = useAppointmentMessageUnread();
+
+  useEffect(() => {
+    if (initialFilter) setFilter(initialFilter);
+  }, [initialFilter]);
+
+  useEffect(() => {
+    const openId = String(openMessageAppointmentId || "").trim();
+    if (!openId) return;
+    const appt = (appointments || []).find((a) => String(a.id) === openId);
+    if (appt) setMsgDialog(appt);
+    onOpenMessageHandled?.();
+  }, [openMessageAppointmentId, appointments, onOpenMessageHandled]);
 
   const { data: treatmentRecords = [] } = useQuery({
     queryKey: ["treatment-records"],
@@ -209,22 +330,40 @@ export default function PracticeAppointmentsTab({ appointments }) {
     },
   });
 
-  const update = useMutation({
-    mutationFn: ({ id, data }) => base44.entities.Appointment.update(id, data),
-    onSuccess: () => qc.invalidateQueries(["my-appointments"]),
-  });
-
   const confirmAppt = useMutation({
-    mutationFn: ({ id }) => base44.entities.Appointment.update(id, {
-      status: "confirmed", confirmed_at: new Date().toISOString(),
-      ...(confirmTime ? { appointment_time: confirmTime } : {})
-    }),
-    onSuccess: () => { qc.invalidateQueries(["my-appointments"]); setConfirmDialog({ open: false, appt: null }); setConfirmTime(""); setDetailOpen(false); },
+    mutationFn: async ({ id }) => {
+      if (confirmTime) {
+        await appointmentsApi.update(id, { appointment_time: confirmTime });
+      }
+      await appointmentsApi.requestDeposit(id);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["my-appointments"] });
+      setConfirmDialog({ open: false, appt: null });
+      setConfirmTime("");
+      setDetailOpen(false);
+      setFilter("upcoming");
+      toast({
+        title: "Payment requested",
+        description: "The patient was notified to pay their deposit.",
+        duration: 6000,
+      });
+    },
+    onError: (err) => {
+      const msg = String(err?.message || "Could not request deposit payment.").replace(/^\[lovable-provider\]\s*\d+\s+/, "");
+      toast({ title: "Could not confirm", description: msg, variant: "destructive", duration: 8000 });
+    },
   });
 
   const cancelAppt = useMutation({
     mutationFn: ({ id }) => base44.entities.Appointment.update(id, { status: "cancelled", cancellation_reason: cancelReason }),
-    onSuccess: () => { qc.invalidateQueries(["my-appointments"]); setCancelDialog({ open: false, appt: null }); setCancelReason(""); setDetailOpen(false); },
+    onSuccess: () => {
+      qc.invalidateQueries(["my-appointments"]);
+      qc.invalidateQueries({ queryKey: ["my-notifications"] });
+      setCancelDialog({ open: false, appt: null });
+      setCancelReason("");
+      setDetailOpen(false);
+    },
   });
 
   const saveNotes = useMutation({
@@ -233,14 +372,129 @@ export default function PracticeAppointmentsTab({ appointments }) {
   });
 
   const sendGFE = async (appt) => {
-    setGfeSending(s => ({ ...s, [appt.id]: true }));
+    if (!appt?.id) return;
+    setGfeFeedback({ id: appt.id, type: null, message: "" });
+    setGfeSending((s) => ({ ...s, [appt.id]: true }));
     try {
       const res = await base44.functions.invoke("sendQualiphyGFE", { appointment_id: appt.id });
-      if (res.data?.success) qc.invalidateQueries(["my-appointments"]);
+      const data = res?.data || {};
+      if (data.success) {
+        const meetingUrl = String(data.meeting_url || "").trim();
+        setSelectedAppt((prev) =>
+          prev && prev.id === appt.id
+            ? {
+                ...prev,
+                gfe_status: "pending",
+                gfe_meeting_url: meetingUrl || prev.gfe_meeting_url,
+                gfe_exam_url: meetingUrl || prev.gfe_exam_url,
+                gfe_sent_at: new Date().toISOString(),
+              }
+            : prev
+        );
+        const emailed = data.email_sent !== false;
+        const notified = data.notification_sent !== false;
+        setGfeFeedback({
+          id: appt.id,
+          type: "success",
+          message: emailed
+            ? "GFE invite sent. The patient was emailed the exam link and notified in their NOVI account. Status shows as GFE Pending until they complete it."
+            : "GFE link created. Email could not be delivered — use Resend GFE to try again.",
+        });
+        void qc.invalidateQueries({ queryKey: ["my-appointments"] });
+        void qc.invalidateQueries({ queryKey: ["treatment-records"] });
+        void qc.invalidateQueries({ queryKey: ["my-notifications"] });
+        toast({
+          title: "GFE invite sent",
+          description: emailed && notified
+            ? "Patient emailed and notified in-app."
+            : emailed
+              ? "Patient emailed with the GFE link."
+              : "GFE created; check email configuration.",
+          duration: 6000,
+        });
+      } else {
+        const errMsg = data.error || "Unexpected response from server.";
+        setGfeFeedback({ id: appt.id, type: "error", message: errMsg });
+        toast({
+          title: "GFE not sent",
+          description: errMsg,
+          variant: "destructive",
+          duration: 8000,
+        });
+      }
+    } catch (err) {
+      const rawMsg = (err?.message || "Could not send GFE invite.").replace(/^\[lovable-provider\]\s*\d+\s+/, "");
+      const msg = /failed to fetch|fetch failed/i.test(rawMsg)
+        ? "Could not reach the GFE service right now. Please try again in a minute."
+        : rawMsg;
+      setGfeFeedback({ id: appt.id, type: "error", message: msg });
+      toast({
+        title: "GFE failed",
+        description: msg,
+        variant: "destructive",
+        duration: 10000,
+      });
     } finally {
-      setGfeSending(s => ({ ...s, [appt.id]: false }));
+      setGfeSending((s) => ({ ...s, [appt.id]: false }));
     }
   };
+
+  const markComplete = useMutation({
+    mutationFn: ({ id }) => base44.entities.Appointment.update(id, {
+      status: "completed",
+      completed_at: new Date().toISOString(),
+    }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["my-appointments"] });
+      setDetailOpen(false);
+    },
+  });
+
+  const markNoShow = useMutation({
+    mutationFn: ({ id }) => base44.entities.Appointment.update(id, { status: "no_show" }),
+    onMutate: async ({ id }) => {
+      await qc.cancelQueries({ queryKey: ["my-appointments"] });
+      const previous = qc.getQueryData(["my-appointments"]);
+      qc.setQueryData(["my-appointments"], (old) =>
+        Array.isArray(old)
+          ? old.map((a) => (a.id === id ? { ...a, status: "no_show" } : a))
+          : old
+      );
+      setDetailOpen(false);
+      setSelectedAppt(null);
+      return { previous };
+    },
+    onSuccess: (data) => {
+      const n = data?.patient_notifications || {};
+      const emailed = n.no_show_email === "sent";
+      const notified = n.no_show_notification === "sent";
+      toast({
+        title: "Marked as no-show",
+        description: emailed && notified
+          ? "Patient emailed and notified in-app to book again."
+          : emailed
+            ? "Patient emailed to book another appointment."
+            : notified
+              ? "Patient notified in-app (email could not be sent)."
+              : n.no_show_email === "failed"
+                ? "Status saved, but the no-show email could not be sent. Check RESEND configuration."
+                : "Status saved. Add a patient email on their account to send notifications.",
+      });
+      void qc.invalidateQueries({ queryKey: ["my-notifications"] });
+    },
+    onError: (err, _vars, context) => {
+      if (context?.previous) qc.setQueryData(["my-appointments"], context.previous);
+      const msg = String(err?.message || "Could not update appointment.").replace(/^\[lovable-provider\]\s*\d+\s+/, "");
+      toast({
+        title: "Update failed",
+        description: msg,
+        variant: "destructive",
+      });
+    },
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ["my-appointments"] });
+    },
+  });
 
   // Stats
   const todayAppts = appointments.filter(a => a.appointment_date && isToday(parseISO(a.appointment_date)));
@@ -268,10 +522,14 @@ export default function PracticeAppointmentsTab({ appointments }) {
     return (a.appointment_time || "").localeCompare(b.appointment_time || "");
   });
 
-  const openDetail = (appt) => { setSelectedAppt(appt); setDetailOpen(true); };
+  const openDetail = (appt) => {
+    setSelectedAppt(appt);
+    setGfeFeedback({ id: null, type: null, message: "" });
+    setDetailOpen(true);
+  };
 
   const tabs = [
-    { key: "upcoming", label: "Upcoming", count: appointments.filter(a => ["confirmed","requested"].includes(a.status)).length },
+    { key: "upcoming", label: "Upcoming", count: appointments.filter(a => ["confirmed","requested","awaiting_payment","awaiting_consent"].includes(a.status)).length },
     { key: "today", label: "Today", count: todayAppts.length },
     { key: "requests", label: "Requests", count: pendingReqs.length },
     { key: "completed", label: "Completed", count: null },
@@ -357,6 +615,14 @@ export default function PracticeAppointmentsTab({ appointments }) {
                   </p>
                   {appts.map(a => {
                     const sc = STATUS[a.status] || STATUS.confirmed;
+                    const serviceLabel = appointmentServiceLabel(a);
+                    const gfeStatus = appointmentGfeDisplayStatus(a);
+                    const gfeLink = appointmentGfeLink(a);
+                    const messageUnread = unreadCountForThread(unreadSummary, a.id);
+                    const openMessages = (e) => {
+                      e.stopPropagation();
+                      setMsgDialog(a);
+                    };
                     return (
                       <button key={a.id} onClick={() => openDetail(a)}
                         className="w-full text-left rounded-2xl mb-2 transition-all hover:shadow-md overflow-hidden"
@@ -380,11 +646,34 @@ export default function PracticeAppointmentsTab({ appointments }) {
                           {/* Patient + service */}
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 flex-wrap">
-                              <p className="font-bold text-sm" style={{ color: "#1e2535" }}>{a.patient_name || a.patient_email}</p>
+                              <p className="font-bold text-sm" style={{ color: "#1e2535" }}>{a.patient_name || a.patient_email || "Patient"}</p>
                               <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full" style={{ background: sc.bg, color: sc.text }}>{sc.label}</span>
-                              <GFEStatusBadge status={a.gfe_status} examUrl={a.gfe_exam_url} />
+                              <GFEStatusBadge status={gfeStatus} examUrl={gfeLink || undefined} />
+                              {messageUnread > 0 && (
+                                <span
+                                  className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+                                  style={{ background: "rgba(250,111,48,0.15)", color: "#FA6F30" }}
+                                >
+                                  New message
+                                </span>
+                              )}
                             </div>
-                            <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.5)" }}>{a.service}</p>
+                            {a.patient_email && (
+                              <p className="text-xs flex items-center gap-1 mt-0.5 truncate" style={{ color: "rgba(30,37,53,0.5)" }}>
+                                <Mail className="w-3 h-3 flex-shrink-0" />{a.patient_email}
+                              </p>
+                            )}
+                            {serviceLabel ? (
+                              <p className="text-xs mt-0.5 font-medium" style={{ color: "rgba(30,37,53,0.55)" }}>{serviceLabel}</p>
+                            ) : null}
+                            {a.status === "requested" && a.referral_code && (
+                              <p
+                                className="text-[11px] mt-1 font-medium"
+                                style={{ color: "#7c3aed" }}
+                              >
+                                Referral used: <span className="font-mono">{a.referral_code}</span>
+                              </p>
+                            )}
                             {a.patient_notes && (
                               <p className="text-xs mt-1 italic truncate" style={{ color: "rgba(30,37,53,0.4)" }}>"{a.patient_notes}"</p>
                             )}
@@ -398,23 +687,61 @@ export default function PracticeAppointmentsTab({ appointments }) {
                             </div>
                           )}
 
-                          {/* Quick action for pending */}
-                          {a.status === "requested" && (
-                            <div className="flex gap-1.5 flex-shrink-0" onClick={e => e.stopPropagation()}>
-                              <button onClick={e => { e.stopPropagation(); setConfirmDialog({ open: true, appt: a }); setConfirmTime(""); }}
-                                className="w-8 h-8 rounded-xl flex items-center justify-center transition-all hover:opacity-80"
-                                style={{ background: "rgba(200,230,60,0.2)", color: "#4a6b10", border: "1px solid rgba(200,230,60,0.4)" }}>
-                                <CheckCircle className="w-4 h-4" />
-                              </button>
-                              <button onClick={e => { e.stopPropagation(); setCancelDialog({ open: true, appt: a, isDecline: true }); }}
-                                className="w-8 h-8 rounded-xl flex items-center justify-center transition-all hover:opacity-80"
-                                style={{ background: "rgba(218,106,99,0.12)", color: "#DA6A63", border: "1px solid rgba(218,106,99,0.3)" }}>
-                                <X className="w-4 h-4" />
-                              </button>
-                            </div>
-                          )}
-
-                          <Eye className="w-4 h-4 flex-shrink-0 opacity-20" />
+                          <div className="flex gap-1.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              type="button"
+                              onClick={openMessages}
+                              title="Open messages"
+                              className="w-8 h-8 rounded-xl flex items-center justify-center relative transition-all hover:opacity-80"
+                              style={{
+                                background: messageUnread > 0 ? "rgba(250,111,48,0.12)" : "rgba(30,37,53,0.05)",
+                                color: messageUnread > 0 ? "#FA6F30" : "rgba(30,37,53,0.45)",
+                                border: messageUnread > 0 ? "1px solid rgba(250,111,48,0.35)" : "1px solid rgba(30,37,53,0.1)",
+                              }}
+                            >
+                              <MessageSquare className="w-4 h-4" />
+                              <MessageUnreadBadge count={messageUnread} />
+                            </button>
+                            {a.status === "requested" && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setConfirmDialog({ open: true, appt: a });
+                                    setConfirmTime("");
+                                  }}
+                                  className="w-8 h-8 rounded-xl flex items-center justify-center transition-all hover:opacity-80"
+                                  style={{ background: "rgba(200,230,60,0.2)", color: "#4a6b10", border: "1px solid rgba(200,230,60,0.4)" }}
+                                >
+                                  <CheckCircle className="w-4 h-4" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setCancelDialog({ open: true, appt: a, isDecline: true });
+                                  }}
+                                  className="w-8 h-8 rounded-xl flex items-center justify-center transition-all hover:opacity-80"
+                                  style={{ background: "rgba(218,106,99,0.12)", color: "#DA6A63", border: "1px solid rgba(218,106,99,0.3)" }}
+                                >
+                                  <X className="w-4 h-4" />
+                                </button>
+                              </>
+                            )}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openDetail(a);
+                              }}
+                              title="View details"
+                              className="w-8 h-8 rounded-xl flex items-center justify-center transition-all hover:opacity-80"
+                              style={{ background: "rgba(30,37,53,0.05)", color: "rgba(30,37,53,0.45)", border: "1px solid rgba(30,37,53,0.1)" }}
+                            >
+                              <Eye className="w-4 h-4" />
+                            </button>
+                          </div>
                         </div>
                       </button>
                     );
@@ -491,22 +818,43 @@ export default function PracticeAppointmentsTab({ appointments }) {
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
         <DialogContent className="max-w-md">
           {selectedAppt && (
+            <>
+            <DialogHeader className="sr-only">
+              <DialogTitle>
+                {appointmentServiceLabel(selectedAppt) || "Appointment"} — {selectedAppt.patient_name || "Patient"}
+              </DialogTitle>
+            </DialogHeader>
             <ApptDetail
               appt={selectedAppt}
               treatmentRecords={treatmentRecords}
               gfeSending={!!gfeSending[selectedAppt?.id]}
+              gfeFeedback={gfeFeedback}
               onClose={() => setDetailOpen(false)}
               onConfirm={() => { setConfirmDialog({ open: true, appt: selectedAppt }); setDetailOpen(false); }}
               onCancel={() => { setCancelDialog({ open: true, appt: selectedAppt, isDecline: selectedAppt.status === "requested" }); setDetailOpen(false); }}
-              onComplete={() => update.mutate({ id: selectedAppt.id, data: { status: "completed", completed_at: new Date().toISOString() } })}
-              onNoShow={() => update.mutate({ id: selectedAppt.id, data: { status: "no_show" } })}
+              onComplete={() => {
+                markComplete.mutate(
+                  { id: selectedAppt.id },
+                  {
+                    onSuccess: () => setCompletePrompt({ open: true, appt: selectedAppt }),
+                  }
+                );
+              }}
+              onNoShow={() => markNoShow.mutate({ id: selectedAppt.id })}
+              noShowPending={markNoShow.isPending}
               onSendGFE={() => sendGFE(selectedAppt)}
               onDoc={() => {
                 const existing = treatmentRecords.find(r => r.appointment_id === selectedAppt.id);
                 setDocDialog({ open: true, appt: selectedAppt, existing: existing || null });
                 setDetailOpen(false);
               }}
+              onMessage={() => {
+                setMsgDialog(selectedAppt);
+                setDetailOpen(false);
+              }}
+              messageUnreadCount={unreadCountForThread(unreadSummary, selectedAppt?.id)}
             />
+            </>
           )}
         </DialogContent>
       </Dialog>
@@ -514,9 +862,12 @@ export default function PracticeAppointmentsTab({ appointments }) {
       {/* ── Confirm dialog ── */}
       <Dialog open={confirmDialog.open} onOpenChange={v => setConfirmDialog(d => ({ ...d, open: v }))}>
         <DialogContent className="max-w-sm">
-          <DialogHeader><DialogTitle style={{ fontFamily: "'DM Serif Display', serif" }}>Confirm Appointment</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle style={{ fontFamily: "'DM Serif Display', serif" }}>Confirm & Request Payment</DialogTitle></DialogHeader>
           <div className="space-y-3 pt-1">
-            <p className="text-sm" style={{ color: "rgba(30,37,53,0.6)" }}>{confirmDialog.appt?.service} · {confirmDialog.appt?.patient_name} · {confirmDialog.appt?.appointment_date}</p>
+            <p className="text-sm" style={{ color: "rgba(30,37,53,0.6)" }}>{appointmentServiceLabel(confirmDialog.appt)} · {confirmDialog.appt?.patient_name} · {formatAppointmentDate(confirmDialog.appt?.appointment_date)}</p>
+            <p className="text-xs rounded-xl px-3 py-2" style={{ background: "rgba(250,111,48,0.08)", color: "rgba(30,37,53,0.65)" }}>
+              The patient will receive a notification to pay their booking deposit before the appointment is fully confirmed.
+            </p>
             <div>
               <label className="text-xs font-semibold mb-1.5 block" style={{ color: "rgba(30,37,53,0.55)" }}>Set appointment time (optional)</label>
               <input type="time" className="w-full border rounded-xl px-3 py-2.5 text-sm outline-none" value={confirmTime} onChange={e => setConfirmTime(e.target.value)}
@@ -526,7 +877,7 @@ export default function PracticeAppointmentsTab({ appointments }) {
               <Button variant="outline" className="flex-1" onClick={() => setConfirmDialog({ open: false, appt: null })}>Back</Button>
               <Button className="flex-1 gap-1.5" style={{ background: "#FA6F30", color: "#fff" }}
                 onClick={() => confirmAppt.mutate({ id: confirmDialog.appt?.id })} disabled={confirmAppt.isPending}>
-                <CheckCircle className="w-4 h-4" />Confirm
+                <CheckCircle className="w-4 h-4" />{confirmAppt.isPending ? "Sending…" : "Send Payment Link"}
               </Button>
             </div>
           </div>
@@ -538,7 +889,7 @@ export default function PracticeAppointmentsTab({ appointments }) {
         <DialogContent className="max-w-sm">
           <DialogHeader><DialogTitle style={{ fontFamily: "'DM Serif Display', serif" }}>{cancelDialog.isDecline ? "Decline Request" : "Cancel Appointment"}</DialogTitle></DialogHeader>
           <div className="space-y-3 pt-1">
-            <p className="text-sm" style={{ color: "rgba(30,37,53,0.6)" }}>{cancelDialog.appt?.service} · {cancelDialog.appt?.patient_name}</p>
+            <p className="text-sm" style={{ color: "rgba(30,37,53,0.6)" }}>{appointmentServiceLabel(cancelDialog.appt)} · {cancelDialog.appt?.patient_name}</p>
             <Textarea placeholder="Reason (optional)…" rows={3} value={cancelReason} onChange={e => setCancelReason(e.target.value)} />
             <div className="flex gap-2">
               <Button variant="outline" className="flex-1" onClick={() => setCancelDialog({ open: false, appt: null })}>Back</Button>
@@ -548,6 +899,48 @@ export default function PracticeAppointmentsTab({ appointments }) {
               </Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Mark complete → document prompt ── */}
+      <Dialog open={completePrompt.open} onOpenChange={(v) => !v && setCompletePrompt({ open: false, appt: null })}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle style={{ fontFamily: "'DM Serif Display', serif" }}>Treatment Complete</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm" style={{ color: "rgba(30,37,53,0.65)" }}>
+            Would you like to document this treatment now? Your MD requires a record for every completed session.
+          </p>
+          <div className="flex gap-2 justify-end pt-2">
+            <Button variant="outline" onClick={() => setCompletePrompt({ open: false, appt: null })}>Later</Button>
+            <Button
+              style={{ background: "#FA6F30", color: "#fff" }}
+              onClick={() => {
+                const appt = completePrompt.appt;
+                const existing = treatmentRecords.find((r) => r.appointment_id === appt?.id);
+                setCompletePrompt({ open: false, appt: null });
+                setDocDialog({ open: true, appt, existing: existing || null });
+              }}
+            >
+              Document Now
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!msgDialog} onOpenChange={() => setMsgDialog(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Message {msgDialog?.patient_name || "Patient"}</DialogTitle>
+          </DialogHeader>
+          {msgDialog && (
+            <MessageThread
+              appointmentId={msgDialog.id}
+              recipientId={msgDialog.patient_id}
+              recipientName={msgDialog.patient_name}
+              recipientEmail={msgDialog.patient_email}
+            />
+          )}
         </DialogContent>
       </Dialog>
 

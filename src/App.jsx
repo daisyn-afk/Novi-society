@@ -52,6 +52,15 @@ const LayoutWrapper = ({ children, currentPageName }) => Layout ?
   <Layout currentPageName={currentPageName}>{children}</Layout>
   : <>{children}</>;
 
+/**
+ * RequireRoleRoute
+ *
+ * Role-based access guard. Provider Locked vs Active dashboard gating is
+ * NOT handled here — `<ProviderDashboard />` itself renders the locked or
+ * active view based on `useProviderDashboardState`. Centralizing the lock
+ * decision inside the page avoids redirect loops and keeps the route guard
+ * focused on a single concern (role/permission).
+ */
 const RequireRoleRoute = ({ pageKey, children }) => {
   const { data: user, isLoading } = useQuery({
     queryKey: ["me"],
@@ -67,7 +76,7 @@ const RequireRoleRoute = ({ pageKey, children }) => {
     );
   }
 
-  if (!isPageAllowedForRole(pageKey, user?.role)) {
+  if (!isPageAllowedForRole(pageKey, user?.role, user?.permissions)) {
     return <Forbidden />;
   }
 
@@ -75,7 +84,7 @@ const RequireRoleRoute = ({ pageKey, children }) => {
 };
 
 const AdminEntryRoute = () => {
-  const { data: user, isLoading } = useQuery({
+  const { data: user, isLoading, isError } = useQuery({
     queryKey: ["me"],
     queryFn: () => base44.auth.me(),
     retry: false,
@@ -87,6 +96,10 @@ const AdminEntryRoute = () => {
         <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin"></div>
       </div>
     );
+  }
+
+  if (isError || !user) {
+    return <Login />;
   }
 
   if (normalizeRole(user?.role) !== "admin") {
@@ -116,6 +129,7 @@ const AuthenticatedApp = () => {
     "/thank-you",
     "/request-information",
     "/login",
+    "/admin",
     "/signup",
     "/set-password",
     "/PrivacyPolicy",
@@ -169,7 +183,7 @@ const AuthenticatedApp = () => {
               <MainPage />
             </LayoutWrapper>
           ) : (
-            <Navigate to="/NoviLanding" replace />
+            <Navigate to="/LandingPage" replace />
           )
         }
       />
@@ -300,7 +314,12 @@ const AuthenticatedApp = () => {
         }
       />
       <Route path="/admin/courses" element={<RequireRoleRoute pageKey="admincourses"><Navigate to="/admincourses" replace /></RequireRoleRoute>} />
-      <Route path="/admin/users" element={<RequireRoleRoute pageKey="AdminProviders"><Navigate to="/AdminProviders" replace /></RequireRoleRoute>} />
+      <Route path="/admin/users" element={<RequireRoleRoute pageKey="AdminUsers"><Navigate to="/AdminUsers" replace /></RequireRoleRoute>} />
+      <Route path="/StaffPreOrders" element={<RequireRoleRoute pageKey="AdminPreOrders"><Navigate to="/AdminPreOrders" replace /></RequireRoleRoute>} />
+      <Route path="/StaffEnrollments" element={<RequireRoleRoute pageKey="AdminEnrollments"><Navigate to="/AdminEnrollments" replace /></RequireRoleRoute>} />
+      <Route path="/StaffProviders" element={<RequireRoleRoute pageKey="AdminProviders"><Navigate to="/AdminProviders" replace /></RequireRoleRoute>} />
+      <Route path="/StaffCompliance" element={<RequireRoleRoute pageKey="AdminCompliance"><Navigate to="/AdminCompliance" replace /></RequireRoleRoute>} />
+      <Route path="/StaffModelSignups" element={<RequireRoleRoute pageKey="AdminModelSignups"><Navigate to="/AdminModelSignups" replace /></RequireRoleRoute>} />
       {Object.entries(Pages).map(([path, Page]) => (
         <Route
           key={path}

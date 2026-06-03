@@ -77,8 +77,44 @@ export const ALLOWED_PAGES_BY_ROLE: Record<string, Set<string>> = {
     "PatientProfile",
     "PatientOnboarding",
   ]),
-  staff: new Set(["AdminDashboard", "AdminEnrollments", "AdminProviders", "AdminModelSignups"]),
+  staff: new Set([
+    "AdminDashboard",
+    "AdminUsers",
+    "AdminPreOrders",
+    "admincourses",
+    "AdminEnrollments",
+    "AdminProviders",
+    "AdminLicenses",
+    "AdminServiceTypes",
+    "AdminPromoCodes",
+    "AdminManufacturers",
+    "AdminEmailTemplates",
+    "AdminLaunchPad",
+    "AdminWizardConfig",
+    "AdminCompliance",
+    "AdminModelSignups",
+  ]),
 };
+
+// Canonical list of modules that can be individually granted to staff users.
+// AdminDashboard is always granted as the baseline landing page.
+// These modules mirror the admin sidebar options.
+export const STAFF_MODULE_CATALOG: Array<{ key: string; label: string; group: string }> = [
+  { key: "AdminUsers",          label: "Users",                      group: "Core" },
+  { key: "AdminPreOrders",      label: "Pre-Order Applications",     group: "Operations" },
+  { key: "admincourses",        label: "Courses",                    group: "Operations" },
+  { key: "AdminEnrollments",    label: "Enrollments",                group: "Operations" },
+  { key: "AdminProviders",      label: "Providers",                  group: "Operations" },
+  { key: "AdminLicenses",       label: "Licenses & Certifications",  group: "Operations" },
+  { key: "AdminServiceTypes",   label: "Service Types",              group: "Configuration" },
+  { key: "AdminPromoCodes",     label: "Promo Codes",                group: "Growth" },
+  { key: "AdminManufacturers",  label: "Manufacturer Marketplace",   group: "Growth" },
+  { key: "AdminEmailTemplates", label: "Email Automation",           group: "Growth" },
+  { key: "AdminLaunchPad",      label: "Growth Studio Editor",       group: "Growth" },
+  { key: "AdminWizardConfig",   label: "Wizard Configuration",       group: "Configuration" },
+  { key: "AdminCompliance",     label: "Compliance & Reviews",       group: "Compliance" },
+  { key: "AdminModelSignups",   label: "Model sign-ups",             group: "Operations" },
+];
 
 export const SHARED_AUTH_PAGES = new Set([
   "Onboarding",
@@ -92,6 +128,24 @@ export const SHARED_AUTH_PAGES = new Set([
   "SMSTerms",
   "ContactUs",
 ]);
+
+const LEGACY_STAFF_PERMISSION_ALIASES: Record<string, string[]> = {
+  AdminDashboard: ["StaffDashboard"],
+  AdminPreOrders: ["StaffPreOrders"],
+  AdminEnrollments: ["StaffEnrollments"],
+  AdminProviders: ["StaffProviders"],
+  AdminCompliance: ["StaffCompliance"],
+  AdminModelSignups: ["StaffModelSignups"],
+};
+
+export function hasStaffModulePermission(
+  pageName: string,
+  permissions?: Record<string, boolean> | null
+) {
+  if (permissions?.[pageName] === true) return true;
+  const aliases = LEGACY_STAFF_PERMISSION_ALIASES[pageName] || [];
+  return aliases.some((legacy) => permissions?.[legacy] === true);
+}
 
 export function normalizeRole(role?: string | null) {
   if (!role) return null;
@@ -108,12 +162,23 @@ export function getDashboardPathForRole(role?: string | null) {
   return createPageUrl(getDashboardPageForRole(role));
 }
 
-export function isPageAllowedForRole(pageName: string, role?: string | null) {
+export function isPageAllowedForRole(
+  pageName: string,
+  role?: string | null,
+  permissions?: Record<string, boolean> | null
+) {
   const normalizedRole = normalizeRole(role);
   if (!normalizedRole) {
     return SHARED_AUTH_PAGES.has(pageName);
   }
   if (SHARED_AUTH_PAGES.has(pageName)) return true;
+
+  if (normalizedRole === "staff") {
+    if (pageName === "AdminDashboard") return true;
+    if (!ALLOWED_PAGES_BY_ROLE.staff.has(pageName)) return false;
+    return hasStaffModulePermission(pageName, permissions);
+  }
+
   const allowedPages = ALLOWED_PAGES_BY_ROLE[normalizedRole];
   return allowedPages ? allowedPages.has(pageName) : false;
 }

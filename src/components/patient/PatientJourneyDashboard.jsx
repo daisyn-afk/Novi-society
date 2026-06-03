@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { createPageUrl } from "@/utils";
@@ -43,9 +43,20 @@ function RecoveryRing({ score }) {
   );
 }
 
-export default function PatientJourneyDashboard({ journey, appointments, isPremium, onUpgrade, onNewScan }) {
+export default function PatientJourneyDashboard({
+  journey,
+  appointments,
+  isPremium,
+  onUpgrade,
+  onNewScan,
+  scanTabNonce = 0,
+}) {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState("overview");
+
+  useEffect(() => {
+    if (scanTabNonce > 0) setActiveTab("scan");
+  }, [scanTabNonce]);
 
   const { data: user } = useQuery({
     queryKey: ["me"],

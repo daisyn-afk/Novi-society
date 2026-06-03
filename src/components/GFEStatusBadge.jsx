@@ -1,4 +1,4 @@
-import { ShieldCheck, Clock, XCircle, AlertCircle, Minus } from "lucide-react";
+import { ShieldCheck, Clock, XCircle, AlertCircle, Minus, Send } from "lucide-react";
 
 const GFE_CONFIG = {
   approved: {
@@ -14,6 +14,13 @@ const GFE_CONFIG = {
     bg: "rgba(251,191,36,0.15)",
     color: "#d97706",
     border: "rgba(251,191,36,0.35)",
+  },
+  not_sent: {
+    icon: Send,
+    label: "GFE Not Sent",
+    bg: "rgba(123,142,200,0.12)",
+    color: "#5b6fa8",
+    border: "rgba(123,142,200,0.35)",
   },
   deferred: {
     icon: XCircle,
@@ -55,9 +62,9 @@ export default function GFEStatusBadge({ status, examUrl, size = "sm" }) {
     </span>
   );
 
-  if (examUrl && status === "approved") {
+  if (examUrl && (status === "approved" || status === "pending")) {
     return (
-      <a href={examUrl} target="_blank" rel="noopener noreferrer" title="View GFE document">
+      <a href={examUrl} target="_blank" rel="noopener noreferrer" title={status === "approved" ? "View GFE results" : "Open GFE exam link"}>
         {badge}
       </a>
     );

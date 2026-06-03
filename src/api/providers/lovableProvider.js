@@ -109,6 +109,33 @@ function clearAuthSession() {
   window.localStorage.removeItem(REFRESH_TOKEN_KEY);
 }
 
+function sortEntityRows(rows, sortSpec = "") {
+  if (!sortSpec || !Array.isArray(rows)) return rows || [];
+  const desc = sortSpec.startsWith("-");
+  const rawField = desc ? sortSpec.slice(1) : sortSpec;
+  const dateFieldMap = { created_date: "created_at", updated_date: "updated_at" };
+  const field = dateFieldMap[rawField] || rawField;
+  return [...rows].sort((a, b) => {
+    const av = a[field] ?? "";
+    const bv = b[field] ?? "";
+    if (av < bv) return desc ? 1 : -1;
+    if (av > bv) return desc ? -1 : 1;
+    return 0;
+  });
+}
+
+function buildEntityQuery(filters = {}, limit) {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters || {})) {
+    if (value != null && String(value).trim() !== "") {
+      params.set(key, String(value));
+    }
+  }
+  if (limit) params.set("limit", String(limit));
+  const qs = params.toString();
+  return qs ? `?${qs}` : "";
+}
+
 function parseRecoveryHash(rawHash) {
   const source = typeof rawHash === "string" ? rawHash : "";
   const hash = source.startsWith("#") ? source.slice(1) : source;
@@ -194,6 +221,195 @@ export function createLovableProviderClient() {
   const entityProxy = new Proxy({}, {
     get: (_, entityName) => {
       const name = String(entityName);
+      if (name === "EmailTemplate") {
+        return {
+          list: (_sort = "") => authRequest("/admin/email-templates", { method: "GET" }),
+          filter: (_filters = {}, _sort = "") =>
+            authRequest("/admin/email-templates", { method: "GET" }),
+          get: (key) =>
+            authRequest(`/admin/email-templates/${encodeURIComponent(String(key || ""))}`, {
+              method: "GET",
+            }),
+          update: (key, payload) =>
+            authRequest(`/admin/email-templates/${encodeURIComponent(String(key || ""))}`, {
+              method: "PUT",
+              body: JSON.stringify(payload || {}),
+            }),
+          create: (payload = {}) => {
+            const key = String(payload.template_key || "").trim();
+            if (!key) {
+              return Promise.reject(
+                new Error("EmailTemplate.create requires payload.template_key matching a registered template.")
+              );
+            }
+            return authRequest(`/admin/email-templates/${encodeURIComponent(key)}`, {
+              method: "PUT",
+              body: JSON.stringify(payload || {}),
+            });
+          },
+          delete: (key) =>
+            authRequest(`/admin/email-templates/${encodeURIComponent(String(key || ""))}`, {
+              method: "DELETE",
+            }),
+          setActive: (key, isActive) =>
+            authRequest(`/admin/email-templates/${encodeURIComponent(String(key || ""))}/active`, {
+              method: "PATCH",
+              body: JSON.stringify({ is_active: Boolean(isActive) }),
+            }),
+          preview: (key, payload = {}) =>
+            authRequest(`/admin/email-templates/${encodeURIComponent(String(key || ""))}/preview`, {
+              method: "POST",
+              body: JSON.stringify(payload || {}),
+            }),
+          categories: () => authRequest("/admin/email-templates/categories", { method: "GET" }),
+          placeholders: () => authRequest("/admin/email-templates/placeholders", { method: "GET" }),
+        };
+      }
+      if (name === "Manufacturer") {
+        return {
+          list: () => authRequest("/admin/manufacturers", { method: "GET" }),
+          get: (id) => authRequest(`/admin/manufacturers/${encodeURIComponent(id)}`, { method: "GET" }),
+          create: (payload) => authRequest("/admin/manufacturers", {
+            method: "POST",
+            body: JSON.stringify(payload || {})
+          }),
+          update: (id, payload) => authRequest(`/admin/manufacturers/${encodeURIComponent(id)}`, {
+            method: "PUT",
+            body: JSON.stringify(payload || {})
+          }),
+          delete: (id) => authRequest(`/admin/manufacturers/${encodeURIComponent(id)}`, { method: "DELETE" }),
+          filter: (filters = {}) => {
+            const params = new URLSearchParams();
+            if (Object.hasOwn(filters, "is_active")) {
+              params.set("is_active", String(Boolean(filters.is_active)));
+            }
+            if (Object.hasOwn(filters, "is_featured")) {
+              params.set("is_featured", String(Boolean(filters.is_featured)));
+            }
+            if (filters.category) {
+              params.set("category", String(filters.category));
+            }
+            const qs = params.toString();
+            return authRequest(`/admin/manufacturers${qs ? `?${qs}` : ""}`, { method: "GET" });
+          }
+        };
+      }
+      if (name === "ManufacturerApplication") {
+        const buildQuery = (filters = {}, sort = "-submitted_at") => {
+          const params = new URLSearchParams();
+          if (filters.provider_id) params.set("provider_id", String(filters.provider_id));
+          if (filters.manufacturer_id) params.set("manufacturer_id", String(filters.manufacturer_id));
+          if (filters.status) params.set("status", String(filters.status));
+          if (sort) params.set("sort", String(sort));
+          const qs = params.toString();
+          return qs ? `?${qs}` : "";
+        };
+        return {
+          list: (sort = "-submitted_at") =>
+            authRequest(`/admin/manufacturer-applications${buildQuery({}, sort)}`, { method: "GET" }),
+          filter: (filters = {}, sort = "-submitted_at") =>
+            authRequest(`/admin/manufacturer-applications${buildQuery(filters, sort)}`, { method: "GET" }),
+          get: (id) =>
+            authRequest(`/admin/manufacturer-applications/${encodeURIComponent(id)}`, { method: "GET" }),
+          update: (id, payload) =>
+            authRequest(`/admin/manufacturer-applications/${encodeURIComponent(id)}`, {
+              method: "PATCH",
+              body: JSON.stringify(payload || {})
+            }),
+          create: createNotImplementedMethod(
+            "entities.ManufacturerApplication.create (use functions.invoke('sendManufacturerInquiry') instead)"
+          ),
+          delete: createNotImplementedMethod("entities.ManufacturerApplication.delete")
+        };
+      }
+      if (name === "ProviderInventory") {
+        const buildInventoryQuery = (filters = {}) => {
+          const params = new URLSearchParams();
+          if (filters.provider_id) params.set("provider_id", String(filters.provider_id));
+          if (filters.manufacturer_id) params.set("manufacturer_id", String(filters.manufacturer_id));
+          const qs = params.toString();
+          return qs ? `?${qs}` : "";
+        };
+        return {
+          list: (_sort = "-created_date") =>
+            authRequest(`/admin/manufacturer-order-requests/inventory-lines${buildInventoryQuery({})}`, { method: "GET" }),
+          filter: (filters = {}, _sort = "-created_date") =>
+            authRequest(`/admin/manufacturer-order-requests/inventory-lines${buildInventoryQuery(filters)}`, { method: "GET" }),
+          get: createNotImplementedMethod("entities.ProviderInventory.get"),
+          create: createNotImplementedMethod("entities.ProviderInventory.create"),
+          update: createNotImplementedMethod("entities.ProviderInventory.update"),
+          delete: createNotImplementedMethod("entities.ProviderInventory.delete"),
+        };
+      }
+      if (name === "ProviderManufacturerRep") {
+        const buildRepQuery = (filters = {}) => {
+          const params = new URLSearchParams();
+          if (filters.manufacturer_id) params.set("manufacturer_id", String(filters.manufacturer_id));
+          if (filters.provider_id) params.set("provider_id", String(filters.provider_id));
+          const qs = params.toString();
+          return qs ? `?${qs}` : "";
+        };
+        return {
+          list: () => authRequest("/admin/provider-manufacturer-reps", { method: "GET" }),
+          filter: (filters = {}) =>
+            authRequest(`/admin/provider-manufacturer-reps${buildRepQuery(filters)}`, { method: "GET" }),
+          lookup: (filters = {}) =>
+            authRequest(`/admin/provider-manufacturer-reps/lookup${buildRepQuery(filters)}`, { method: "GET" }),
+          upsert: (payload) =>
+            authRequest("/admin/provider-manufacturer-reps", {
+              method: "PUT",
+              body: JSON.stringify(payload || {}),
+            }),
+          get: createNotImplementedMethod("entities.ProviderManufacturerRep.get"),
+          create: createNotImplementedMethod("entities.ProviderManufacturerRep.create (use upsert instead)"),
+          update: createNotImplementedMethod("entities.ProviderManufacturerRep.update (use upsert instead)"),
+          delete: createNotImplementedMethod("entities.ProviderManufacturerRep.delete"),
+        };
+      }
+      if (name === "ProviderRepCall") {
+        const buildCallQuery = (filters = {}) => {
+          const params = new URLSearchParams();
+          if (filters.manufacturer_id) params.set("manufacturer_id", String(filters.manufacturer_id));
+          if (filters.provider_id) params.set("provider_id", String(filters.provider_id));
+          if (filters.upcoming) params.set("upcoming", "true");
+          const qs = params.toString();
+          return qs ? `?${qs}` : "";
+        };
+        return {
+          list: () => authRequest("/admin/provider-rep-calls?upcoming=true", { method: "GET" }),
+          filter: (filters = {}) =>
+            authRequest(`/admin/provider-rep-calls${buildCallQuery(filters)}`, { method: "GET" }),
+          get: createNotImplementedMethod("entities.ProviderRepCall.get"),
+          create: createNotImplementedMethod(
+            "entities.ProviderRepCall.create (use functions.invoke('scheduleRepCall') instead)"
+          ),
+          update: createNotImplementedMethod("entities.ProviderRepCall.update"),
+          delete: createNotImplementedMethod("entities.ProviderRepCall.delete"),
+        };
+      }
+      if (name === "ManufacturerOrderRequest") {
+        const buildQuery = (filters = {}, sort = "-created_at") => {
+          const params = new URLSearchParams();
+          if (filters.provider_id) params.set("provider_id", String(filters.provider_id));
+          if (filters.manufacturer_id) params.set("manufacturer_id", String(filters.manufacturer_id));
+          if (filters.contact_type) params.set("contact_type", String(filters.contact_type));
+          if (sort) params.set("sort", String(sort));
+          const qs = params.toString();
+          return qs ? `?${qs}` : "";
+        };
+        return {
+          list: (sort = "-created_at") =>
+            authRequest(`/admin/manufacturer-order-requests${buildQuery({}, sort)}`, { method: "GET" }),
+          filter: (filters = {}, sort = "-created_at") =>
+            authRequest(`/admin/manufacturer-order-requests${buildQuery(filters, sort)}`, { method: "GET" }),
+          get: createNotImplementedMethod("entities.ManufacturerOrderRequest.get"),
+          create: createNotImplementedMethod(
+            "entities.ManufacturerOrderRequest.create (use functions.invoke('sendRepContactEmail') instead)"
+          ),
+          update: createNotImplementedMethod("entities.ManufacturerOrderRequest.update"),
+          delete: createNotImplementedMethod("entities.ManufacturerOrderRequest.delete"),
+        };
+      }
       if (name === "ServiceType") {
         return {
           list: () => authRequest("/admin/service-types", { method: "GET" }),
@@ -254,6 +470,8 @@ export function createLovableProviderClient() {
             const params = new URLSearchParams({ limit: String(limit || 200) });
             const emailParam = String(opts?.customer_email || "").trim();
             if (emailParam) params.set("customer_email", emailParam);
+            const orderTypeParam = String(opts?.order_type || "").trim();
+            if (orderTypeParam) params.set("order_type", orderTypeParam);
             return authRequest(`/admin/pre-orders?${params.toString()}`, { method: "GET" });
           },
           get: (id) => requestJson(`/admin/checkout/pre-order?id=${encodeURIComponent(id)}`, { method: "GET" }),
@@ -327,27 +545,16 @@ export function createLovableProviderClient() {
         return {
           list: () => authRequest("/admin/certifications", { method: "GET" }),
           filter: async (filters = {}) => {
-            const all = await authRequest("/admin/certifications", { method: "GET" });
+            const params = new URLSearchParams();
             const providerId = filters?.provider_id ? String(filters.provider_id) : "";
-            const providerEmail = filters?.provider_email ? String(filters.provider_email).toLowerCase() : "";
-            const status = filters?.status ? String(filters.status).toLowerCase() : "";
-            return (all || []).filter((row) => {
-              if (providerId || providerEmail) {
-                const rowProviderId = String(row?.provider_id || "");
-                const rowProviderEmail = String(row?.provider_email || "").toLowerCase();
-                const idMatch = providerId && rowProviderId === providerId;
-                const emailMatch = providerEmail && rowProviderEmail === providerEmail;
-                if (providerId && providerEmail) {
-                  if (!idMatch && !emailMatch) return false;
-                } else if (providerId && !idMatch) {
-                  return false;
-                } else if (providerEmail && !emailMatch) {
-                  return false;
-                }
-              }
-              if (status && String(row?.status || "").toLowerCase() !== status) return false;
-              return true;
-            });
+            const providerEmail = filters?.provider_email ? String(filters.provider_email) : "";
+            const status = filters?.status ? String(filters.status) : "";
+            if (providerId) params.set("provider_id", providerId);
+            if (providerEmail) params.set("provider_email", providerEmail);
+            if (status) params.set("status", status);
+            const qs = params.toString();
+            const rows = await authRequest(`/admin/certifications${qs ? `?${qs}` : ""}`, { method: "GET" });
+            return rows || [];
           },
           get: (id) => authRequest(`/admin/certifications/${encodeURIComponent(id)}`, { method: "GET" }),
           create: (payload) => authRequest("/admin/certifications", {
@@ -511,9 +718,14 @@ export function createLovableProviderClient() {
         return {
           list: () => authRequest("/admin/md-subscriptions", { method: "GET" }),
           filter: async (filters = {}) => {
+            const params = new URLSearchParams();
             const pid = String(filters?.provider_id || "").trim();
-            const qs = pid ? `?provider_id=${encodeURIComponent(pid)}` : "";
-            return authRequest(`/admin/md-subscriptions${qs}`, { method: "GET" });
+            if (pid) params.set("provider_id", pid);
+            if (Object.hasOwn(filters, "status") && filters.status) {
+              params.set("status", String(filters.status));
+            }
+            const qs = params.toString();
+            return authRequest(`/admin/md-subscriptions${qs ? `?${qs}` : ""}`, { method: "GET" });
           },
           create: (payload) =>
             authRequest("/admin/md-subscriptions", { method: "POST", body: JSON.stringify(payload || {}) }),
@@ -525,10 +737,23 @@ export function createLovableProviderClient() {
       if (name === "MedicalDirectorRelationship") {
         return {
           list: () => authRequest("/admin/md-relationships", { method: "GET" }),
+          getSupervisedProvider: (providerId) =>
+            authRequest(
+              `/admin/md-relationships/supervised-provider?provider_id=${encodeURIComponent(String(providerId || ""))}`,
+              { method: "GET" }
+            ),
           filter: async (filters = {}) => {
             const pid = String(filters?.provider_id || "").trim();
             const qs = pid ? `?provider_id=${encodeURIComponent(pid)}` : "";
-            return authRequest(`/admin/md-relationships${qs}`, { method: "GET" });
+            const rows = await authRequest(`/admin/md-relationships${qs}`, { method: "GET" });
+            const list = Array.isArray(rows) ? rows : [];
+            const mdId = String(filters?.medical_director_id || "").trim();
+            const status = String(filters?.status || "").trim().toLowerCase();
+            return list.filter((row) => {
+              if (mdId && String(row.medical_director_id || "") !== mdId) return false;
+              if (status && String(row.status || "").toLowerCase() !== status) return false;
+              return true;
+            });
           },
           create: (payload) =>
             authRequest("/admin/md-relationships", { method: "POST", body: JSON.stringify(payload || {}) }),
@@ -542,13 +767,127 @@ export function createLovableProviderClient() {
         };
       }
       if (name === "Appointment") {
+        const fetchAppointments = async (filters = {}, sort = "", limit) => {
+          const qs = buildEntityQuery(filters, limit);
+          const rows = await authRequest(`/admin/appointments${qs}`, { method: "GET" });
+          return sortEntityRows(Array.isArray(rows) ? rows : [], sort);
+        };
         return {
-          list: async () => [],
-          filter: async () => [],
+          list: (sort, limit) => fetchAppointments({}, sort, limit),
+          filter: fetchAppointments,
+          create: (payload) =>
+            authRequest("/admin/appointments", { method: "POST", body: JSON.stringify(payload || {}) }),
+          update: (id, payload) =>
+            authRequest(`/admin/appointments/${encodeURIComponent(id)}`, {
+              method: "PATCH",
+              body: JSON.stringify(payload || {}),
+            }),
           get: createNotImplementedMethod("entities.Appointment.get"),
-          create: createNotImplementedMethod("entities.Appointment.create"),
-          update: createNotImplementedMethod("entities.Appointment.update"),
           delete: createNotImplementedMethod("entities.Appointment.delete")
+        };
+      }
+      if (name === "TreatmentRecord") {
+        const fetchTreatmentRecords = async (filters = {}, sort = "", limit) => {
+          const qs = buildEntityQuery(filters, limit);
+          const rows = await authRequest(`/admin/treatment-records${qs}`, { method: "GET" });
+          return sortEntityRows(Array.isArray(rows) ? rows : [], sort);
+        };
+        return {
+          list: (sort, limit) => fetchTreatmentRecords({}, sort, limit),
+          filter: fetchTreatmentRecords,
+          create: (payload) =>
+            authRequest("/admin/treatment-records", { method: "POST", body: JSON.stringify(payload || {}) }),
+          update: (id, payload) =>
+            authRequest(`/admin/treatment-records/${encodeURIComponent(id)}`, {
+              method: "PATCH",
+              body: JSON.stringify(payload || {}),
+            }),
+          get: createNotImplementedMethod("entities.TreatmentRecord.get"),
+          delete: createNotImplementedMethod("entities.TreatmentRecord.delete")
+        };
+      }
+      if (name === "Review") {
+        const fetchReviews = async (filters = {}, sort = "", limit) => {
+          const params = new URLSearchParams();
+          if (Object.hasOwn(filters, "provider_id") && filters.provider_id) {
+            params.set("provider_id", String(filters.provider_id));
+          }
+          if (Object.hasOwn(filters, "patient_id") && filters.patient_id) {
+            params.set("patient_id", String(filters.patient_id));
+          }
+          if (Object.hasOwn(filters, "is_verified")) {
+            params.set("is_verified", String(Boolean(filters.is_verified)));
+          }
+          const lim = limit || 200;
+          params.set("limit", String(lim));
+          const qs = params.toString();
+          const rows = await authRequest(`/admin/reviews${qs ? `?${qs}` : ""}`, { method: "GET" });
+          return sortEntityRows(Array.isArray(rows) ? rows : [], sort);
+        };
+        return {
+          list: (sort, limit) => fetchReviews({}, sort, limit),
+          filter: fetchReviews,
+          create: (payload) =>
+            authRequest("/admin/reviews", { method: "POST", body: JSON.stringify(payload || {}) }),
+          update: (id, payload) =>
+            authRequest(`/admin/reviews/${encodeURIComponent(id)}`, {
+              method: "PATCH",
+              body: JSON.stringify(payload || {}),
+            }),
+          get: createNotImplementedMethod("entities.Review.get"),
+          delete: (id) =>
+            authRequest(`/admin/reviews/${encodeURIComponent(id)}`, { method: "DELETE" }),
+        };
+      }
+      if (name === "Message") {
+        return {
+          list: createNotImplementedMethod("entities.Message.list"),
+          get: createNotImplementedMethod("entities.Message.get"),
+          create: (payload) =>
+            authRequest("/admin/appointment-messages", {
+              method: "POST",
+              body: JSON.stringify({
+                thread_id: payload?.thread_id || payload?.appointment_id,
+                appointment_id: payload?.appointment_id || payload?.thread_id,
+                recipient_id: payload?.recipient_id,
+                recipient_name: payload?.recipient_name,
+                recipient_email: payload?.recipient_email,
+                message: payload?.message,
+                sender_name: payload?.sender_name,
+                sender_role: payload?.sender_role,
+              }),
+            }),
+          update: createNotImplementedMethod("entities.Message.update"),
+          delete: createNotImplementedMethod("entities.Message.delete"),
+          filter: async (filters = {}, _sort = "", _limit = 200) => {
+            const threadId = String(filters?.thread_id || filters?.appointment_id || "").trim();
+            if (!threadId) return [];
+            return authRequest(
+              `/admin/appointment-messages?thread_id=${encodeURIComponent(threadId)}`,
+              { method: "GET" }
+            );
+          },
+        };
+      }
+      if (name === "ComplianceLog") {
+        const fetchComplianceLogs = async (filters = {}, sort = "", limit) => {
+          const qs = buildEntityQuery(filters, limit || 200);
+          const rows = await authRequest(`/admin/compliance-logs${qs}`, { method: "GET" });
+          return sortEntityRows(Array.isArray(rows) ? rows : [], sort);
+        };
+        return {
+          list: (sort, limit) => fetchComplianceLogs({}, sort, limit),
+          filter: fetchComplianceLogs,
+          create: (payload) =>
+            authRequest("/admin/compliance-logs", { method: "POST", body: JSON.stringify(payload || {}) }),
+          update: (id, payload) =>
+            authRequest(`/admin/compliance-logs/${encodeURIComponent(id)}`, {
+              method: "PATCH",
+              body: JSON.stringify(payload || {}),
+            }),
+          get: createNotImplementedMethod("entities.ComplianceLog.get"),
+          delete: (id) =>
+            authRequest(`/admin/compliance-logs/${encodeURIComponent(id)}`, { method: "DELETE" }),
         };
       }
       if (name === "PatientJourney") {
@@ -656,6 +995,13 @@ export function createLovableProviderClient() {
       }
     },
     entities: entityProxy,
+    marketplace: {
+      getCatalog: () => authRequest("/admin/marketplace/providers", { method: "GET" }),
+      getProvider: (providerId) =>
+        authRequest(`/admin/marketplace/providers?provider_id=${encodeURIComponent(String(providerId || ""))}`, {
+          method: "GET",
+        }),
+    },
     appLogs: {
       logUserInApp: async () => ({ ok: true })
     },
@@ -669,6 +1015,7 @@ export function createLovableProviderClient() {
           "createModelCheckout",
           "createCheckoutSession",
           "createCourseCheckout",
+          "createAppointmentPayment",
         ]);
         const isPaymentFn = PAYMENT_FUNCTIONS.has(functionName);
         const clientTimestamp = isPaymentFn ? new Date().toISOString() : null;
@@ -749,7 +1096,13 @@ export function createLovableProviderClient() {
           const formData = new FormData();
           formData.append("file", file);
           const uploadPath =
-            kind === "patient_journey_selfie" ? "/admin/uploads/patient-selfie" : "/admin/uploads/license-photo";
+            kind === "patient_journey_selfie"
+              ? "/admin/uploads/patient-selfie"
+              : kind === "manufacturer_logo"
+                ? "/admin/uploads/manufacturer-logo"
+                : kind === "manufacturer_contract"
+                  ? "/admin/uploads/md-document"
+                  : "/admin/uploads/license-photo";
           const response = await fetch(`${ADMIN_API_BASE_URL}${toApiPath(uploadPath)}`, {
             method: "POST",
             headers: token ? { Authorization: `Bearer ${token}` } : {},

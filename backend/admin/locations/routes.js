@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { requireAdminOrStaffWithModule } from "../auth/helpers.js";
 import { createLocation, listLocations } from "./repository.js";
 
 function sanitizeText(value, maxLength = 255) {
@@ -34,6 +35,7 @@ function validateLocationInput(body) {
 }
 
 export const locationsRouter = Router();
+locationsRouter.use(requireAdminOrStaffWithModule("admincourses"));
 
 locationsRouter.get("/", async (req, res, next) => {
   try {

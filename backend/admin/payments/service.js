@@ -13,6 +13,7 @@ import { pool, query } from "../db.js";
 const COURSE_FLOW = "course";
 const MODEL_FLOW = "model";
 const SERVICE_FLOW = "service";
+const APPOINTMENT_FLOW = "appointment";
 
 let trackingTablesAvailablePromise = null;
 
@@ -932,5 +933,6 @@ export const recordPreOrderInitiated = safeRunner(async (input, client = null) =
 export const PAYMENT_FLOW = Object.freeze({
   COURSE: COURSE_FLOW,
   MODEL: MODEL_FLOW,
-  SERVICE: SERVICE_FLOW
+  SERVICE: SERVICE_FLOW,
+  APPOINTMENT: APPOINTMENT_FLOW
 });

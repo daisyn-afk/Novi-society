@@ -18,23 +18,43 @@ const STATUS_STYLE = {
   changes_requested: { bg: "bg-orange-100", text: "text-orange-700", label: "Changes Requested" },
 };
 
-export default function TreatmentRecordsReview() {
+function canMdActOnRecord(record) {
+  return String(record?.status || "") === "submitted";
+}
+
+function isAwaitingProviderResubmit(record) {
+  const status = String(record?.status || "");
+  return status === "flagged" || status === "changes_requested";
+}
+
+function isResubmittedRecord(record) {
+  return (
+    String(record?.status || "") === "submitted" &&
+    Boolean(String(record?.md_review_notes || "").trim()) &&
+    !record?.md_reviewed_at
+  );
+}
+
+export default function TreatmentRecordsReview({ providerId = null }) {
   const qc = useQueryClient();
   const [expanded, setExpanded] = useState(null);
   const [reviewDialog, setReviewDialog] = useState({ open: false, record: null, action: null });
   const [reviewNote, setReviewNote] = useState("");
+  const [statusFilter, setStatusFilter] = useState("submitted");
 
   const { data: records = [], isLoading } = useQuery({
-    queryKey: ["md-treatment-records"],
-    queryFn: async () => {
-      const me = await base44.auth.me();
-      // Get providers under this MD
-      const rels = await base44.entities.MedicalDirectorRelationship.filter({ medical_director_id: me.id, status: "active" });
-      const providerIds = rels.map(r => r.provider_id);
-      if (!providerIds.length) return [];
-      const all = await base44.entities.TreatmentRecord.list("-created_date", 200);
-      return all.filter(r => providerIds.includes(r.provider_id));
-    },
+    queryKey: ["md-treatment-records", providerId],
+    queryFn: () =>
+      base44.entities.TreatmentRecord.filter(
+        providerId ? { provider_id: providerId } : {},
+        "-created_date",
+        200
+      ),
+  });
+
+  const displayed = records.filter((r) => {
+    if (statusFilter === "all") return true;
+    return r.status === statusFilter;
   });
 
   const review = useMutation({
@@ -46,22 +66,10 @@ export default function TreatmentRecordsReview() {
         md_reviewed_by: me.full_name || me.email,
         md_reviewed_at: new Date().toISOString(),
       });
-      // Notify the provider
-      const msgMap = {
-        approved: `Your treatment record for ${record.service} (${record.patient_name}) has been approved by your MD.`,
-        flagged: `Your treatment record for ${record.service} (${record.patient_name}) has been flagged by your MD. Notes: ${notes}`,
-        changes_requested: `Your MD has requested changes to your treatment record for ${record.service} (${record.patient_name}). Notes: ${notes}`,
-      };
-      await base44.entities.Notification.create({
-        user_id: record.provider_id,
-        user_email: record.provider_email,
-        type: "general",
-        message: msgMap[status] || `Your treatment record status has been updated to: ${status}`,
-        link_page: "ProviderPractice",
-      });
     },
     onSuccess: () => {
-      qc.invalidateQueries(["md-treatment-records"]);
+      qc.invalidateQueries({ queryKey: ["md-treatment-records"] });
+      qc.invalidateQueries({ queryKey: ["my-notifications"] });
       setReviewDialog({ open: false, record: null, action: null });
       setReviewNote("");
     },
@@ -70,7 +78,7 @@ export default function TreatmentRecordsReview() {
   const pendingCount = records.filter(r => r.status === "submitted").length;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 min-w-0 max-w-full overflow-x-hidden">
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-lg font-semibold" style={{ fontFamily: "'DM Serif Display', serif", color: "#243257" }}>Treatment Records</h3>
@@ -78,18 +86,35 @@ export default function TreatmentRecordsReview() {
         </div>
       </div>
 
-      {/* Filter tabs */}
-      {["submitted", "all"].map(f => null)}
+      <div className="flex gap-2 flex-wrap">
+        {[
+          { key: "submitted", label: "Pending Review" },
+          { key: "all", label: "All" },
+          { key: "flagged", label: "Flagged" },
+          { key: "changes_requested", label: "Changes Requested" },
+        ].map((f) => (
+          <button
+            key={f.key}
+            type="button"
+            onClick={() => setStatusFilter(f.key)}
+            className={`text-xs font-semibold px-3 py-1.5 rounded-full transition-all ${
+              statusFilter === f.key ? "bg-slate-800 text-white" : "bg-slate-100 text-slate-600"
+            }`}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
 
       {isLoading ? (
         <div className="space-y-2">{[1,2].map(i => <Card key={i} className="h-16 animate-pulse" style={{ background: "rgba(198,190,168,0.2)" }} />)}</div>
-      ) : records.length === 0 ? (
+      ) : displayed.length === 0 ? (
         <div className="text-center py-10" style={{ color: "#9a8f7e" }}>
           <p className="text-sm">No treatment records from your providers yet.</p>
         </div>
       ) : (
         <div className="space-y-2">
-          {records.map(r => {
+          {displayed.map(r => {
             const ss = STATUS_STYLE[r.status] || STATUS_STYLE.draft;
             const isOpen = expanded === r.id;
             return (
@@ -97,38 +122,54 @@ export default function TreatmentRecordsReview() {
                 border: r.status === "submitted" ? "1.5px solid rgba(250,111,48,0.35)" : "1px solid rgba(198,190,168,0.4)"
               }}>
                 <CardContent className="pt-3 pb-3">
-                  <button className="w-full flex items-center gap-3 text-left" onClick={() => setExpanded(isOpen ? null : r.id)}>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-semibold text-sm" style={{ color: "#243257" }}>{r.service}</span>
-                        <Badge className={`text-xs border-0 ${ss.bg} ${ss.text}`}>{ss.label}</Badge>
-                        {r.adverse_reaction && (
-                          <Badge className="text-xs border-0 bg-red-100 text-red-600 flex items-center gap-1">
-                            <AlertTriangle className="w-3 h-3" />Adverse Reaction
-                          </Badge>
-                        )}
-                        <GFEStatusBadge status={r.gfe_status} examUrl={r.gfe_exam_url} />
+                  <div className="space-y-3 min-w-0">
+                    <button
+                      type="button"
+                      className="w-full flex items-start gap-2 text-left min-w-0"
+                      onClick={() => setExpanded(isOpen ? null : r.id)}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-semibold text-sm break-words" style={{ color: "#243257" }}>{r.service}</span>
+                          <Badge className={`text-xs border-0 ${ss.bg} ${ss.text}`}>{ss.label}</Badge>
+                          {isResubmittedRecord(r) && (
+                            <Badge className="text-xs border-0 bg-blue-100 text-blue-700">Resubmitted</Badge>
+                          )}
+                          {isAwaitingProviderResubmit(r) && (
+                            <Badge className="text-xs border-0 bg-slate-100 text-slate-600">Awaiting provider resubmission</Badge>
+                          )}
+                          {r.adverse_reaction && (
+                            <Badge className="text-xs border-0 bg-red-100 text-red-600 flex items-center gap-1">
+                              <AlertTriangle className="w-3 h-3" />Adverse Reaction
+                            </Badge>
+                          )}
+                          <GFEStatusBadge status={r.gfe_status} examUrl={r.gfe_exam_url} />
+                        </div>
+                        <p className="text-xs mt-0.5 break-words" style={{ color: "#6B7DB3" }}>
+                          {r.provider_name} → {r.patient_name} · {r.treatment_date ? format(new Date(r.treatment_date), "MMM d, yyyy") : ""}
+                        </p>
                       </div>
-                      <p className="text-xs mt-0.5" style={{ color: "#6B7DB3" }}>
-                        {r.provider_name} → {r.patient_name} · {r.treatment_date ? format(new Date(r.treatment_date), "MMM d, yyyy") : ""}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      {r.status === "submitted" && (
-                        <>
-                          <Button size="sm" style={{ background: "#FA6F30", color: "#fff" }}
-                            onClick={e => { e.stopPropagation(); setReviewDialog({ open: true, record: r, action: "approve" }); }}>
-                            <CheckCircle className="w-3.5 h-3.5 mr-1" />Approve
-                          </Button>
-                          <Button size="sm" variant="outline" className="text-orange-600 border-orange-200"
-                            onClick={e => { e.stopPropagation(); setReviewDialog({ open: true, record: r, action: "flag" }); }}>
-                            <Flag className="w-3.5 h-3.5 mr-1" />Flag
-                          </Button>
-                        </>
-                      )}
-                      {isOpen ? <ChevronUp className="w-4 h-4" style={{ color: "#C6BEA8" }} /> : <ChevronDown className="w-4 h-4" style={{ color: "#C6BEA8" }} />}
-                    </div>
-                  </button>
+                      <div className="shrink-0 pt-0.5">
+                        {isOpen ? <ChevronUp className="w-4 h-4" style={{ color: "#C6BEA8" }} /> : <ChevronDown className="w-4 h-4" style={{ color: "#C6BEA8" }} />}
+                      </div>
+                    </button>
+
+                    {canMdActOnRecord(r) && (
+                      <div className="flex flex-wrap gap-2">
+                        <Button size="sm" className="h-8 px-2.5 text-xs shrink-0" style={{ background: "#FA6F30", color: "#fff" }}
+                          onClick={() => setReviewDialog({ open: true, record: r, action: "approve" })}>
+                          <CheckCircle className="w-3.5 h-3.5 mr-1" />Approve
+                        </Button>
+                        <Button size="sm" variant="outline" className="h-8 px-2.5 text-xs text-orange-600 border-orange-200 shrink-0"
+                          onClick={() => setReviewDialog({ open: true, record: r, action: "flag" })}>
+                          <Flag className="w-3.5 h-3.5 mr-1" />Flag
+                        </Button>
+                        <Button size="sm" variant="outline" className="h-8 px-2.5 text-xs text-blue-700 border-blue-200 shrink-0"
+                          onClick={() => setReviewDialog({ open: true, record: r, action: "changes_requested" })}>
+                          <MessageSquare className="w-3.5 h-3.5 mr-1" />Request Changes
+                        </Button>
+                      </div>
+                    )}
 
                   {isOpen && (
                     <div className="mt-3 pt-3 space-y-4" style={{ borderTop: "1px solid rgba(198,190,168,0.3)" }}>
@@ -233,8 +274,8 @@ export default function TreatmentRecordsReview() {
                         </div>
                       )}
 
-                      {r.status === "submitted" && (
-                        <div className="flex gap-2">
+                      {canMdActOnRecord(r) && (
+                        <div className="flex flex-wrap gap-2">
                           <Button size="sm" style={{ background: "#FA6F30", color: "#fff" }}
                             onClick={() => setReviewDialog({ open: true, record: r, action: "approve" })}>
                             <CheckCircle className="w-3.5 h-3.5 mr-1" />Approve
@@ -251,6 +292,7 @@ export default function TreatmentRecordsReview() {
                       )}
                     </div>
                   )}
+                  </div>
                 </CardContent>
               </Card>
             );

@@ -7,10 +7,10 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   LayoutDashboard, BookOpen, Award, FileText, Users,
   Calendar, Star, ShieldCheck, ClipboardList, Settings, Layers,
-  Menu, X, LogOut, User, Lock, Stethoscope, Sparkles, Clock, AlertTriangle, ShoppingBag, Mail, Rocket, TicketPercent, MessageSquare
+  Menu, X, LogOut, User, Stethoscope, Sparkles, Clock, AlertTriangle, ShoppingBag, Mail, Rocket, TicketPercent, MessageSquare
 } from "lucide-react";
 import { useProviderAccess } from "@/components/useProviderAccess";
-import { providerOnboardingApi } from "@/api/providerOnboardingApi";
+import { useProviderDashboardState } from "@/hooks/useProviderDashboardState";
 import { mdMessagesApi } from "@/api/mdMessagesApi";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import NotificationBell from "@/components/NotificationBell";
@@ -22,7 +22,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { normalizeRole } from "@/lib/routeAccessPolicy";
+import { hasStaffModulePermission, normalizeRole, SHARED_AUTH_PAGES } from "@/lib/routeAccessPolicy";
+import ProviderNextStepBar from "@/components/launchpad/ProviderNextStepBar";
+import { useLaunchRoadmapStats } from "@/components/launchpad/useLaunchRoadmapStats";
 
 const navByRole = {
   admin: [
@@ -45,7 +47,6 @@ const navByRole = {
   provider: [
     { label: "Dashboard", icon: LayoutDashboard, page: "ProviderDashboard" },
     { label: "Courses & Enrollments", icon: BookOpen, page: "ProviderEnrollments" },
-    { label: "Class Attendance", icon: Clock, page: "ProviderCodeRedemption" },
     { label: "My Credentials & Coverage", icon: ShieldCheck, page: "ProviderCredentialsCoverage" },
     { label: "Supplier Marketplace", icon: ShoppingBag, page: "ProviderMarketplace" },
     { label: "Growth Studio", icon: Rocket, page: "ProviderLaunchPad" },
@@ -70,37 +71,36 @@ const navByRole = {
     { label: "Profile", icon: User, page: "PatientProfile" },
   ],
   staff: [
-    { label: "Dashboard", icon: LayoutDashboard, page: "AdminDashboard" },
-    { label: "Enrollments", icon: ClipboardList, page: "AdminEnrollments" },
-    { label: "Providers", icon: Users, page: "AdminProviders" },
+    { label: "Dashboard",              icon: LayoutDashboard, page: "AdminDashboard"   },
+    { label: "Users",                  icon: Users,           page: "AdminUsers"        },
+    { label: "Pre-Order Applications", icon: ClipboardList,   page: "AdminPreOrders"    },
+    { label: "Courses",                icon: BookOpen,        page: "admincourses"      },
+    { label: "Enrollments",            icon: ClipboardList,   page: "AdminEnrollments"  },
+    { label: "Providers",              icon: Users,           page: "AdminProviders"    },
+    { label: "Licenses & Certifications", icon: FileText,     page: "AdminLicenses"     },
+    { label: "Service Types",          icon: Settings,        page: "AdminServiceTypes" },
+    { label: "Promo Codes",            icon: TicketPercent,   page: "AdminPromoCodes"   },
+    { label: "Manufacturer Marketplace", icon: ShoppingBag,   page: "AdminManufacturers"},
+    { label: "Email Automation",       icon: Mail,            page: "AdminEmailTemplates"},
+    { label: "Growth Studio Editor",   icon: Rocket,          page: "AdminLaunchPad"    },
+    { label: "Wizard Configuration",   icon: Settings,        page: "AdminWizardConfig" },
+    { label: "Compliance & Reviews",   icon: ShieldCheck,     page: "AdminCompliance"   },
+    { label: "Model sign-ups",         icon: Users,           page: "AdminModelSignups" },
   ],
 };
 
 const BARE_PAGES = ["Onboarding", "ProviderGettingStarted", "LandingPage", "ProviderApplication", "NoviLanding", "ModelSignup", "ModelBookingLookup", "PrivacyPolicy", "TermsAndConditions", "RefundPolicy", "SMSTerms", "ContactUs"];
-const PROVIDER_FREE_PAGES = ["ProviderDashboard", "CourseCatalog", "ProviderProfile", "ProviderGettingStarted"];
 
 export default function Layout({ children, currentPageName }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { status: providerAccessStatus } = useProviderAccess();
+  const providerDashboardState = useProviderDashboardState();
 
   const { data: user, isSuccess } = useQuery({
     queryKey: ["me"],
     queryFn: () => base44.auth.me(),
-    retry: false,
-  });
-
-  const { data: providerBasicOnboarding } = useQuery({
-    queryKey: ["provider-basic-onboarding"],
-    queryFn: async () => {
-      try {
-        return await providerOnboardingApi.getMe();
-      } catch {
-        return null;
-      }
-    },
-    enabled: isSuccess && normalizeRole(user?.role || "") === "provider",
     retry: false,
   });
 
@@ -111,14 +111,61 @@ export default function Layout({ children, currentPageName }) {
     }
   }, [isSuccess, user, currentPageName]);
 
-  const role = normalizeRole(user?.role || "provider");
+  const role = normalizeRole(user?.role);
+
+  // Patient onboarding gate: a freshly-registered patient must complete the
+  // 6-step PatientOnboarding flow before they can access any other patient
+  // page. Shared auth pages (legal, landing) remain open so they can still
+  // read policies or log out. The gate is frontend-only — it's UX flow
+  // enforcement, not security; sensitive data is already protected by auth.
+  const isPatient = role === "patient";
+  const patientGateExemptPages = currentPageName === "PatientOnboarding"
+    || currentPageName === "Onboarding"
+    || SHARED_AUTH_PAGES.has(currentPageName);
+
+  const { data: patientOnboardingState, isLoading: isPatientGateLoading } = useQuery({
+    queryKey: ["patient-onboarding-gate", user?.id],
+    queryFn: async () => {
+      const journeys = await base44.entities.PatientJourney.filter({ patient_id: user.id });
+      const journey = journeys?.[0] || null;
+      return {
+        hasJourney: Boolean(journey),
+        completed: Boolean(journey?.onboarding_completed),
+      };
+    },
+    enabled: isSuccess && isPatient && !!user?.id,
+    staleTime: 60_000,
+    retry: 1,
+  });
+
+  const patientNeedsOnboarding =
+    isPatient
+    && !patientGateExemptPages
+    && patientOnboardingState
+    && !patientOnboardingState.completed;
+
+  useEffect(() => {
+    if (patientNeedsOnboarding) {
+      navigate(createPageUrl("PatientOnboarding"));
+    }
+  }, [patientNeedsOnboarding]);
+
   const navRole = role;
-  const navItems = navByRole[navRole] || navByRole.provider;
+  const navItems = navRole === "staff"
+    ? navByRole.staff.filter(({ page }) =>
+        page === "AdminDashboard" || hasStaffModulePermission(page, user?.permissions)
+      )
+    : (navByRole[navRole] || []);
+
   const isProviderUserReady = role === "provider" && Boolean(user?.id || user?.email);
 
   // Sidebar unread message badge — shared query key ["msg-threads"] with messaging pages.
   // Polling at 5s keeps the badge live without hammering the API.
   const isMessagingRole = role === "provider" || role === "medical_director";
+  const showProviderNextStepBar = isProviderUserReady;
+  const { stats: launchRoadmapStats, isLoading: launchRoadmapLoading } = useLaunchRoadmapStats({
+    enabled: showProviderNextStepBar,
+  });
   const { data: sidebarUnreadCount = 0 } = useQuery({
     queryKey: ["msg-threads"],
     queryFn: () => mdMessagesApi.getThreads(),
@@ -133,62 +180,6 @@ export default function Layout({ children, currentPageName }) {
       ),
   });
 
-  const { data: providerEnrollments = [] } = useQuery({
-    queryKey: ["my-enrollments"],
-    queryFn: async () => {
-      const me = await queryClient.ensureQueryData({
-        queryKey: ["me"],
-        queryFn: () => base44.auth.me(),
-        staleTime: 30_000,
-      });
-      const [byProviderIdResult, byEmailResult, preOrdersResult] = await Promise.allSettled([
-        me?.id ? base44.entities.Enrollment.filter({ provider_id: me.id }) : Promise.resolve([]),
-        me?.email ? base44.entities.Enrollment.filter({ provider_email: me.email }) : Promise.resolve([]),
-        me?.email
-          ? base44.entities.PreOrder.list("-created_date", 500, { customer_email: me.email })
-          : Promise.resolve([]),
-      ]);
-      const byProviderId = byProviderIdResult.status === "fulfilled" ? (byProviderIdResult.value || []) : [];
-      const byEmail = byEmailResult.status === "fulfilled" ? (byEmailResult.value || []) : [];
-      const preOrders = preOrdersResult.status === "fulfilled" ? (preOrdersResult.value || []) : [];
-      const email = String(me?.email || "").trim().toLowerCase();
-      const derivedFromPreOrders = email
-        ? preOrders
-            .filter((p) => p?.order_type === "course")
-            .filter((p) => Boolean(p?.course_id))
-            .filter((p) => ["paid", "confirmed", "completed"].includes(String(p?.status || "").toLowerCase()))
-            .filter((p) => String(p?.customer_email || "").trim().toLowerCase() === email)
-            .map((p) => ({
-              id: `preorder-${p.id}`,
-              pre_order_id: p.id,
-              course_id: p.course_id,
-              provider_id: me?.id || null,
-              provider_email: p.customer_email,
-              provider_name: p.customer_name,
-              status: p.status === "completed" ? "confirmed" : p.status,
-              created_date: p.created_date,
-            }))
-        : [];
-      return Array.from(new Map([...(byProviderId || []), ...(byEmail || []), ...derivedFromPreOrders].map((row) => [row.pre_order_id || row.id, row])).values());
-    },
-    enabled: isProviderUserReady,
-    staleTime: 30_000,
-  });
-
-  const { data: providerCerts = [] } = useQuery({
-    queryKey: ["my-certs"],
-    queryFn: async () => {
-      const me = await queryClient.ensureQueryData({
-        queryKey: ["me"],
-        queryFn: () => base44.auth.me(),
-        staleTime: 30_000,
-      });
-      return base44.entities.Certification.filter({ provider_id: me.id });
-    },
-    enabled: isProviderUserReady,
-  });
-
-  const isProviderUnlocked = true;
 
   const handleLogout = async () => {
     try {
@@ -202,6 +193,18 @@ export default function Layout({ children, currentPageName }) {
 
   if (BARE_PAGES.includes(currentPageName)) {
     return <div>{children}</div>;
+  }
+
+  // While we're determining whether a patient has completed onboarding,
+  // suppress rendering of the protected page to avoid a flash before the
+  // redirect lands. The exempt pages (PatientOnboarding, legal, landing)
+  // render normally — they're allowed regardless of gate state.
+  if (isPatient && !patientGateExemptPages && (isPatientGateLoading || patientNeedsOnboarding)) {
+    return (
+      <div className="min-h-screen flex items-center justify-center" style={{ background: "linear-gradient(150deg, #ede9fb 0%, #f5f2ff 40%, #eaf5c8 75%, #C8E63C 100%)" }}>
+        <div className="w-6 h-6 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
   }
 
   const isActive = (page) => currentPageName === page;
@@ -355,7 +358,9 @@ export default function Layout({ children, currentPageName }) {
         {/* Role pill */}
         <div className="relative z-10 px-5 pt-4 pb-2">
           <span className="novi-role-pill">{roleLabel}</span>
-          {providerBasicOnboarding?.has_completed_basic === false && (
+          {role === "provider" &&
+            !providerDashboardState.isLoading &&
+            !providerDashboardState.hasCompletedBasic && (
             <div className="mt-2">
               <span
                 className="text-[8px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-full inline-block"
@@ -370,7 +375,6 @@ export default function Layout({ children, currentPageName }) {
         {/* Nav */}
         <nav className="relative z-10 flex-1 px-3 py-1 overflow-y-auto space-y-0.5">
           {navItems.map(({ label, icon: Icon, page }) => {
-            const isLocked = !isProviderUnlocked && !PROVIDER_FREE_PAGES.includes(page);
             const active = isActive(page);
             const isMessagesPage = page === "MDMessaging" || page === "ProviderMessaging";
             const showUnreadBadge = isMessagesPage && sidebarUnreadCount > 0;
@@ -379,7 +383,7 @@ export default function Layout({ children, currentPageName }) {
                 key={page}
                 to={createPageUrl(page)}
                 onClick={() => setSidebarOpen(false)}
-                className={`novi-nav-item${active ? " active" : ""}${isLocked ? " locked" : ""}`}
+                className={`novi-nav-item${active ? " active" : ""}`}
               >
                 <Icon className="w-[15px] h-[15px] flex-shrink-0" style={{ opacity: active ? 0.9 : 0.6 }} />
                 <span className="flex-1">{label}</span>
@@ -391,7 +395,6 @@ export default function Layout({ children, currentPageName }) {
                     {sidebarUnreadCount > 99 ? "99+" : sidebarUnreadCount}
                   </span>
                 )}
-                {isLocked && <Lock className="w-3 h-3 opacity-30 flex-shrink-0" />}
               </Link>
             );
           })}
@@ -474,6 +477,9 @@ export default function Layout({ children, currentPageName }) {
 
         {/* Page content */}
         <main className="flex-1 p-5 lg:p-7 overflow-auto" style={{ background: "transparent", minHeight: 0 }}>
+          {showProviderNextStepBar && !launchRoadmapLoading && (
+            <ProviderNextStepBar stats={launchRoadmapStats} />
+          )}
           {/* Contextual status banners for providers */}
           {role === "provider" && providerAccessStatus === "pending" && (
             <div className="flex items-center gap-3 px-4 py-3 rounded-2xl mb-5" style={{ background: "rgba(250,111,48,0.15)", border: "1px solid rgba(250,111,48,0.4)" }}>

@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
-import { Users, ShieldCheck, AlertTriangle, ChevronRight, Clock, CheckCircle2 } from "lucide-react";
+import { Users, ShieldCheck, AlertTriangle, ChevronRight, CheckCircle2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { format } from "date-fns";
@@ -17,15 +17,11 @@ export default function MDDashboard() {
   });
 
   const { data: complianceLogs = [] } = useQuery({
-    queryKey: ["compliance-logs"],
-    queryFn: async () => {
-      const user = await base44.auth.me();
-      return base44.entities.ComplianceLog.filter({ medical_director_id: user.id }, "-created_date");
-    },
+    queryKey: ["md-compliance-logs"],
+    queryFn: () => base44.entities.ComplianceLog.list("-created_date", 4),
   });
 
   const activeRelationships = relationships.filter(r => r.status === "active");
-  const pendingRelationships = relationships.filter(r => r.status === "pending");
   const pendingActions = complianceLogs.filter(l => l.action_required && !l.resolved_at);
 
   const glassCard = {
@@ -47,25 +43,10 @@ export default function MDDashboard() {
         <p style={{ color: "rgba(30,37,53,0.6)", fontSize: 13, marginTop: 4 }}>Supervision overview and compliance status</p>
       </div>
 
-      {/* Pending approvals alert */}
-      {pendingRelationships.length > 0 && (
-        <Link to={createPageUrl("MDProviderRelationships")}>
-          <div className="flex items-center gap-3 px-5 py-4 rounded-2xl cursor-pointer hover:opacity-90 transition-opacity" style={{ background: "rgba(250,111,48,0.2)", border: "1px solid rgba(250,111,48,0.4)" }}>
-            <AlertTriangle className="w-5 h-5 flex-shrink-0" style={{ color: "#FA6F30" }} />
-            <div className="flex-1">
-              <p className="font-semibold text-white text-sm">{pendingRelationships.length} provider{pendingRelationships.length > 1 ? "s" : ""} awaiting your approval</p>
-              <p className="text-xs" style={{ color: "rgba(255,255,255,0.6)" }}>Review and approve supervision requests</p>
-            </div>
-            <ChevronRight className="w-4 h-4 flex-shrink-0" style={{ color: "rgba(255,255,255,0.5)" }} />
-          </div>
-        </Link>
-      )}
-
       {/* Stats */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-2 gap-4">
         {[
           { label: "Active Providers", value: activeRelationships.length, icon: Users, color: "#7B8EC8" },
-          { label: "Pending Approvals", value: pendingRelationships.length, icon: Clock, color: "#FA6F30" },
           { label: "Compliance Actions", value: pendingActions.length, icon: AlertTriangle, color: "#DA6A63" },
         ].map(({ label, value, icon: Icon, color }) => (
           <div key={label} className="px-5 py-5 text-center" style={glassCard}>

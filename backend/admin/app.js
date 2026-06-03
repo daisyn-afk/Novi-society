@@ -38,7 +38,21 @@ const { mdProfileRouter } = await import("./md-profile/routes.js");
 const { functionsRouter } = await import("./functions/routes.js");
 const { patientJourneyRouter } = await import("./patient-journey/routes.js");
 const { integrationsRouter } = await import("./integrations/routes.js");
+const { manufacturersRouter, manufacturerApplicationsRouter } = await import("./manufacturers/routes.js");
+const { manufacturerOrderRequestsRouter } = await import("./manufacturers/orderRequestsRoutes.js");
+const { providerManufacturerRepsRouter } = await import("./manufacturers/providerManufacturerRepsRoutes.js");
+const { providerRepCallsRouter } = await import("./manufacturers/providerRepCallsRoutes.js");
+const { googleCalendarRouter } = await import("./manufacturers/googleCalendarRoutes.js");
+const { gmailRouter } = await import("./manufacturers/gmailRoutes.js");
 const { mdMessagesRouter } = await import("./md-messages/routes.js");
+const { appointmentMessagesRouter } = await import("./appointment-messages/routes.js");
+const { marketplaceRouter } = await import("./marketplace/routes.js");
+const { appointmentsRouter } = await import("./appointments/routes.js");
+const { treatmentRecordsRouter } = await import("./treatment-records/routes.js");
+const { reviewsRouter } = await import("./reviews/routes.js");
+const { complianceLogsRouter } = await import("./compliance-logs/routes.js");
+const { launchRoadmapRouter } = await import("./launch-roadmap/routes.js");
+const { emailTemplatesRouter } = await import("./email-templates/routes.js");
 
 export function createAdminApp() {
   const app = express();
@@ -78,7 +92,22 @@ export function createAdminApp() {
   app.use("/admin/md-profile", mdProfileRouter);
   app.use("/admin/patient-journey", patientJourneyRouter);
   app.use("/admin/integrations", integrationsRouter);
+  app.use("/admin/manufacturers", manufacturersRouter);
+  app.use("/admin/manufacturer-applications", manufacturerApplicationsRouter);
+  app.use("/admin/manufacturer-order-requests", manufacturerOrderRequestsRouter);
+  app.use("/admin/provider-manufacturer-reps", providerManufacturerRepsRouter);
+  app.use("/admin/provider-rep-calls", providerRepCallsRouter);
+  app.use("/admin/integrations/google-calendar", googleCalendarRouter);
+  app.use("/admin/integrations/gmail", gmailRouter);
   app.use("/admin/md-messages", mdMessagesRouter);
+  app.use("/admin/appointment-messages", appointmentMessagesRouter);
+  app.use("/admin/marketplace", marketplaceRouter);
+  app.use("/admin/appointments", appointmentsRouter);
+  app.use("/admin/treatment-records", treatmentRecordsRouter);
+  app.use("/admin/reviews", reviewsRouter);
+  app.use("/admin/compliance-logs", complianceLogsRouter);
+  app.use("/admin/launch-roadmap", launchRoadmapRouter);
+  app.use("/admin/email-templates", emailTemplatesRouter);
   app.use("/functions", functionsRouter);
 
   app.use((error, _req, res, _next) => {

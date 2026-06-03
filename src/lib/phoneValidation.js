@@ -3,6 +3,22 @@ export function digitsFromPhone(phone) {
   return String(phone || "").replace(/\D/g, "");
 }
 
+/** Format typed input as US phone: (555) 123-4567 */
+export function formatUsPhoneInput(phone) {
+  const digits = digitsFromPhone(phone).slice(0, 11);
+  const normalized =
+    digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits.slice(0, 10);
+
+  const area = normalized.slice(0, 3);
+  const exchange = normalized.slice(3, 6);
+  const line = normalized.slice(6, 10);
+
+  if (!area) return "";
+  if (normalized.length <= 3) return `(${area}`;
+  if (normalized.length <= 6) return `(${area}) ${exchange}`;
+  return `(${area}) ${line ? `${exchange}-${line}` : exchange}`;
+}
+
 /**
  * US NANP phone: 10 digits; optional leading country code 1.
  * Area code and exchange cannot start with 0 or 1.

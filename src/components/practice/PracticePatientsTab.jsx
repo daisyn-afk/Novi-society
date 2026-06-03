@@ -1,7 +1,19 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
-import { Users, Search, Sparkles, Heart, ChevronRight } from "lucide-react";
+import { Users, Search, Sparkles, Heart, ChevronRight, AlertTriangle } from "lucide-react";
+
+function recordMatchesPatient(record, patient) {
+  if (patient.id && record.patient_id === patient.id) return true;
+  if (patient.email && record.patient_email === patient.email) return true;
+  return false;
+}
+
+function patientNeedsMdAttention(records, patient) {
+  return records.some(
+    (r) => recordMatchesPatient(r, patient) && ["flagged", "changes_requested"].includes(r.status)
+  );
+}
 import PatientDetailModal from "@/components/practice/PatientDetailModal.jsx";
 
 const GlassCard = ({ children, onClick }) => (
@@ -11,17 +23,19 @@ const GlassCard = ({ children, onClick }) => (
   </div>
 );
 
-export default function PracticePatientsTab({ patients, appointments }) {
+export default function PracticePatientsTab({ patients, appointments, treatmentRecords: treatmentRecordsProp }) {
   const [search, setSearch] = useState("");
   const [selectedPatient, setSelectedPatient] = useState(null);
 
-  const { data: treatmentRecords = [] } = useQuery({
+  const { data: treatmentRecordsQuery = [] } = useQuery({
     queryKey: ["treatment-records"],
     queryFn: async () => {
       const me = await base44.auth.me();
       return base44.entities.TreatmentRecord.filter({ provider_id: me.id }, "-created_date");
     },
+    enabled: !treatmentRecordsProp,
   });
+  const treatmentRecords = treatmentRecordsProp ?? treatmentRecordsQuery;
 
   const { data: patientJourneys = [] } = useQuery({
     queryKey: ["patient-journeys-provider"],
@@ -29,9 +43,15 @@ export default function PracticePatientsTab({ patients, appointments }) {
     enabled: patients.length > 0,
   });
 
-  const filtered = patients.filter(p =>
-    !search || (p.name || p.email || "").toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = patients
+    .filter(p => !search || (p.name || p.email || "").toLowerCase().includes(search.toLowerCase()))
+    .sort((a, b) => {
+      const aUrgent = patientNeedsMdAttention(treatmentRecords, a);
+      const bUrgent = patientNeedsMdAttention(treatmentRecords, b);
+      if (aUrgent && !bUrgent) return -1;
+      if (!aUrgent && bUrgent) return 1;
+      return 0;
+    });
 
   const selectedJourney = selectedPatient
     ? patientJourneys.find(j => j.patient_id === selectedPatient.id)
@@ -42,7 +62,7 @@ export default function PracticePatientsTab({ patients, appointments }) {
     : [];
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 min-w-0 max-w-full overflow-x-hidden">
       {/* NOVI Premium upsell banner */}
       <div className="rounded-2xl p-4 flex items-start gap-3" style={{ background: "linear-gradient(135deg, rgba(200,230,60,0.12) 0%, rgba(123,142,200,0.1) 100%)", border: "1px solid rgba(200,230,60,0.35)" }}>
         <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: "rgba(200,230,60,0.2)" }}>
@@ -80,12 +100,14 @@ export default function PracticePatientsTab({ patients, appointments }) {
             const key = p.id || p.email;
             const journey = patientJourneys.find(j => j.patient_id === p.id);
             const isPremium = journey?.tier === "premium" && journey?.subscription_status === "active";
-            const patientRecords = treatmentRecords.filter(r => r.patient_id === p.id);
+            const patientRecords = treatmentRecords.filter(r => recordMatchesPatient(r, p));
             const completedAppts = p.appointments.filter(a => a.status === "completed");
+            const mdAttention = patientNeedsMdAttention(treatmentRecords, p);
+            const flaggedCount = patientRecords.filter(r => ["flagged", "changes_requested"].includes(r.status)).length;
 
             return (
               <GlassCard key={key} onClick={() => setSelectedPatient(p)}>
-                <div className="p-4 flex items-center gap-3">
+                <div className="p-4 flex items-center gap-3" style={mdAttention ? { borderLeft: "3px solid #DA6A63" } : undefined}>
                   {/* Avatar */}
                   <div className="relative flex-shrink-0">
                     <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold text-white"
@@ -107,16 +129,21 @@ export default function PracticePatientsTab({ patients, appointments }) {
                           <Sparkles className="w-2.5 h-2.5" />NOVI+
                         </span>
                       )}
+                      {mdAttention && (
+                        <span className="text-xs font-bold px-1.5 py-0.5 rounded-full flex-shrink-0 flex items-center gap-1" style={{ background: "rgba(218,106,99,0.15)", color: "#DA6A63", border: "1px solid rgba(218,106,99,0.35)" }}>
+                          <AlertTriangle className="w-2.5 h-2.5" />{flaggedCount} MD issue{flaggedCount !== 1 ? "s" : ""}
+                        </span>
+                      )}
                     </div>
                     <p className="text-xs truncate" style={{ color: "rgba(30,37,53,0.5)" }}>{p.email}</p>
                   </div>
 
-                  <div className="flex items-center gap-3 flex-shrink-0">
-                    <div className="text-right hidden sm:block">
-                      <p className="text-xs font-semibold" style={{ color: "#1e2535" }}>{completedAppts.length} treatment{completedAppts.length !== 1 ? "s" : ""}</p>
-                      <p className="text-xs" style={{ color: "rgba(30,37,53,0.45)" }}>{patientRecords.length} documented</p>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <div className="text-right">
+                      <p className="text-xs font-semibold whitespace-nowrap" style={{ color: "#1e2535" }}>{completedAppts.length} treatment{completedAppts.length !== 1 ? "s" : ""}</p>
+                      <p className="text-xs whitespace-nowrap" style={{ color: "rgba(30,37,53,0.45)" }}>{patientRecords.length} documented</p>
                     </div>
-                    <ChevronRight className="w-4 h-4" style={{ color: "rgba(30,37,53,0.3)" }} />
+                    <ChevronRight className="w-4 h-4 flex-shrink-0" style={{ color: "rgba(30,37,53,0.3)" }} />
                   </div>
                 </div>
               </GlassCard>

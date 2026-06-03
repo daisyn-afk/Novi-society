@@ -2,16 +2,6 @@ import { pool, query } from "./db.js";
 import { notifyMdOfAutoAssignment } from "./certificationNotifications.js";
 import { listEligibleMedicalDirectorsForService } from "./mdEligibleDirectors.js";
 
-function supervisionNote(serviceTypeName, serviceTypeId) {
-  const label = String(serviceTypeName || serviceTypeId || "service").trim();
-  return [
-    "Auto-assigned by NOVI (assignment engine).",
-    `Coverage service: ${label}.`,
-    "Sequential round-robin among MDs who offer this service; provider does not choose a medical director.",
-    "State-based filtering can be enabled with MD_ASSIGNMENT_STATE_MATCHING=1 once MD state licenses are populated.",
-  ].join(" ");
-}
-
 /**
  * @param {import('pg').PoolClient|null} client
  * @param {string} providerId
@@ -50,7 +40,7 @@ async function isMdStillEligibleForService(client, mdId, serviceTypeId, provider
 }
 
 /**
- * Round-robin pick + pending relationship + coverage request + MD notification.
+ * Round-robin pick + active relationship + coverage request + MD/provider notifications.
  * Runs in a single DB transaction (pointer + inserts).
  *
  * @param {object} p
@@ -72,7 +62,7 @@ export async function submitMdBoardCoverageAssignment(p) {
   }
 
   const { rows: pendingDup } = await query(
-    `select id, medical_director_id
+    `select id, medical_director_id, medical_director_email, medical_director_name
      from public.medical_director_relationship
      where provider_id = $1
        and coalesce(service_type_id, '') = $2
@@ -81,11 +71,28 @@ export async function submitMdBoardCoverageAssignment(p) {
     [providerId, serviceTypeId]
   );
   if (pendingDup?.[0]) {
+    const relId = String(pendingDup[0].id);
+    await query(
+      `update public.medical_director_relationship
+          set status = 'active',
+              start_date = coalesce(start_date, current_date),
+              updated_at = now()
+        where id = $1::uuid`,
+      [relId]
+    );
+    await query(
+      `update public.md_coverage_request
+          set status = 'active', updated_at = now()
+        where medical_director_relationship_id = $1::uuid`,
+      [relId]
+    ).catch(() => {});
     return {
       ok: true,
-      pending_existing: true,
-      relationship_id: String(pendingDup[0].id),
+      auto_activated_pending: true,
+      relationship_id: relId,
       medical_director_id: String(pendingDup[0].medical_director_id || ""),
+      medical_director_email: String(pendingDup[0].medical_director_email || ""),
+      medical_director_name: String(pendingDup[0].medical_director_name || ""),
     };
   }
 
@@ -137,13 +144,12 @@ export async function submitMdBoardCoverageAssignment(p) {
     const idx = (seq - 1) % n;
     const chosen = eligible[idx];
 
-    const note = supervisionNote(serviceTypeName, serviceTypeId);
     const { rows: relRows } = await client.query(
       `insert into public.medical_director_relationship (
         provider_id, provider_email, provider_name,
         medical_director_id, medical_director_email, medical_director_name,
         status, start_date, supervision_notes, service_type_id
-      ) values ($1, $2, $3, $4, $5, $6, $7, null, $8, $9)
+      ) values ($1, $2, $3, $4, $5, $6, 'active', current_date, null, $7)
       returning id`,
       [
         providerId,
@@ -152,8 +158,6 @@ export async function submitMdBoardCoverageAssignment(p) {
         chosen.id,
         chosen.email || null,
         chosen.full_name || chosen.email || null,
-        "pending",
-        note,
         serviceTypeId,
       ]
     );
@@ -173,7 +177,7 @@ export async function submitMdBoardCoverageAssignment(p) {
         chosen.id,
         chosen.email || null,
         chosen.full_name || chosen.email || null,
-        "pending_md_approval",
+        "active",
         "service_match_round_robin",
         seq,
         idx,
@@ -188,6 +192,7 @@ export async function submitMdBoardCoverageAssignment(p) {
       medicalDirectorId: chosen.id,
       medicalDirectorEmail: chosen.email,
       medicalDirectorName: chosen.full_name || chosen.email,
+      providerId,
       providerName: p.providerName,
       providerEmail: p.providerEmail,
       serviceTypeName: serviceTypeName || serviceTypeId,

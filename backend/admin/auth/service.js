@@ -1,10 +1,17 @@
 import { createClient } from "@supabase/supabase-js";
 import { pool } from "../db.js";
 import {
+  buildProviderMetadataUpdates,
+  mapProviderProfileToMeExtras,
+  normalizeProviderProfileUpdates,
+} from "./providerProfileFields.js";
+import { getProviderLaunchChecklist, upsertProviderLaunchChecklist } from "../launch-roadmap/repository.js";
+import {
   ensureProviderUserRecord,
   getUserPasswordSetupByAuthUserId,
   isPasswordResetLinkConsumed,
-  markPasswordResetCompleted
+  markPasswordResetCompleted,
+  syncUserRecordOnPasswordSetup
 } from "../users/passwordSetup.js";
 
 const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -95,7 +102,7 @@ function ensureAuthClients() {
 
 function normalizeRole(role) {
   const value = String(role || "provider").trim().toLowerCase();
-  if (["provider", "patient", "medical_director", "admin"].includes(value)) return value;
+  if (["provider", "patient", "medical_director", "admin", "staff"].includes(value)) return value;
   return "provider";
 }
 
@@ -219,7 +226,7 @@ async function getUserRowByAuthUserId(authUserId) {
   const client = await pool.connect();
   try {
     const { rows } = await client.query(
-      `select id, auth_user_id, email, first_name, last_name, full_name, role, is_active, created_at, updated_at
+      `select id, auth_user_id, email, first_name, last_name, full_name, role, is_active, permissions, created_at, updated_at
        from public.users
        where auth_user_id = $1
        limit 1`,
@@ -251,11 +258,15 @@ async function getProviderProfileByUserId(userId) {
 let _patientProfilesTableEnsurePromise = null;
 async function ensurePatientProfilesTable() {
   if (patientProfilesTableEnsured) return;
-  // Singleton promise prevents concurrent initializations (race condition)
+  // Singleton promise prevents concurrent initializations within a single
+  // runtime. We also take a DB advisory lock to serialize across serverless
+  // instances sharing the same Postgres.
   if (!_patientProfilesTableEnsurePromise) {
     _patientProfilesTableEnsurePromise = (async () => {
       const client = await pool.connect();
       try {
+        await client.query("begin");
+        await client.query("select pg_advisory_xact_lock(hashtext('ensure_patient_profiles_table_v1'))");
         await client.query(`
           create table if not exists public.patient_profiles (
             id uuid primary key default gen_random_uuid(),
@@ -303,11 +314,22 @@ async function ensurePatientProfilesTable() {
             end if;
           end $$;
         `);
+        await client.query("commit");
         patientProfilesTableEnsured = true;
+      } catch (error) {
+        try {
+          await client.query("rollback");
+        } catch {
+          // no-op: rollback best effort
+        }
+        throw error;
       } finally {
         client.release();
       }
-    })();
+    })().finally(() => {
+      // Allow retries after a failure.
+      _patientProfilesTableEnsurePromise = null;
+    });
   }
   await _patientProfilesTableEnsurePromise;
 }
@@ -416,12 +438,21 @@ async function upsertProviderProfile({ userId, updates }) {
   const hasState = Object.prototype.hasOwnProperty.call(updates || {}, "state");
   const hasZip = Object.prototype.hasOwnProperty.call(updates || {}, "zip");
   const hasOnboardingCompleted = Object.prototype.hasOwnProperty.call(updates || {}, "onboarding_completed");
-  const metadataFieldKeys = ["bio", "phone", "specialty", "avatar_url", "website_url", "instagram_handle"];
-  const metadataUpdates = {};
-  for (const key of metadataFieldKeys) {
-    if (Object.prototype.hasOwnProperty.call(updates || {}, key)) {
-      metadataUpdates[key] = normalizeNullableText(updates[key]);
-    }
+  const metadataUpdates = buildProviderMetadataUpdates(updates);
+  if (Object.prototype.hasOwnProperty.call(updates || {}, "referral_code")) {
+    metadataUpdates.referral_code = normalizeNullableText(updates.referral_code);
+  }
+  if (Object.prototype.hasOwnProperty.call(updates || {}, "referral_discount")) {
+    metadataUpdates.referral_discount = updates.referral_discount ?? null;
+  }
+  if (Object.prototype.hasOwnProperty.call(updates || {}, "referral_program_active")) {
+    metadataUpdates.referral_program_active = Boolean(updates.referral_program_active);
+  }
+  if (Object.prototype.hasOwnProperty.call(updates || {}, "brand_logo_url")) {
+    metadataUpdates.brand_logo_url = normalizeNullableText(updates.brand_logo_url);
+  }
+  if (Object.prototype.hasOwnProperty.call(updates || {}, "years_experience")) {
+    metadataUpdates.years_experience = updates.years_experience ?? null;
   }
   const hasMetadataUpdates = Object.keys(metadataUpdates).length > 0;
   const hasProviderProfileUpdates =
@@ -582,13 +613,17 @@ export async function login(payload) {
 
   const authUserId = data?.user?.id || null;
   const profile = await getUserRowByAuthUserId(authUserId);
+  const resolvedRole = profile?.role || data?.user?.user_metadata?.role || "provider";
 
   return {
     session: data.session || null,
     user: {
       id: authUserId,
       email: data?.user?.email || email,
-      role: profile?.role || data?.user?.user_metadata?.role || "provider",
+      role: resolvedRole,
+      permissions: resolvedRole === "staff" && profile?.permissions
+        ? (typeof profile.permissions === "object" ? profile.permissions : null)
+        : null,
       first_name: profile?.first_name || data?.user?.user_metadata?.first_name || null,
       last_name: profile?.last_name || data?.user?.user_metadata?.last_name || null,
       full_name: profile?.full_name || data?.user?.user_metadata?.full_name || null
@@ -643,10 +678,14 @@ export async function getMeFromAccessToken(accessToken) {
     const providerMetadata = providerProfile?.metadata && typeof providerProfile.metadata === "object"
       ? providerProfile.metadata
       : {};
+    const staffPermissions = resolvedRole === "staff" && profile?.permissions
+      ? (typeof profile.permissions === "object" ? profile.permissions : null)
+      : null;
     return {
       id: data.user.id,
       email: data.user.email,
       role: resolvedRole,
+      permissions: staffPermissions,
       first_name: profile?.first_name || metaName.firstName || null,
       last_name: profile?.last_name || metaName.lastName || null,
       full_name: profile?.full_name || metaName.fullName || null,
@@ -665,6 +704,19 @@ export async function getMeFromAccessToken(accessToken) {
       avatar_url: normalizeNullableText(providerMetadata.avatar_url),
       website_url: normalizeNullableText(providerMetadata.website_url),
       instagram_handle: normalizeNullableText(providerMetadata.instagram_handle),
+      ...(resolvedRole === "provider" ? mapProviderProfileToMeExtras(providerProfile) : {}),
+      ...(resolvedRole === "provider"
+        ? {
+            years_experience: providerMetadata.years_experience ?? null,
+            referral_program_active: Boolean(providerMetadata.referral_program_active),
+            referral_code: normalizeNullableText(providerMetadata.referral_code),
+            referral_discount: providerMetadata.referral_discount ?? null,
+            brand_logo_url: normalizeNullableText(providerMetadata.brand_logo_url),
+          }
+        : {}),
+      launch_checklist: resolvedRole === "provider"
+        ? await getProviderLaunchChecklist(data.user.id)
+        : {},
       date_of_birth: normalizeDateOnly(patientProfile?.date_of_birth),
       gender: normalizeNullableText(patientProfile?.gender),
       allergies: normalizeNullableText(patientProfile?.allergies),
@@ -719,12 +771,16 @@ export async function refreshSession(refreshToken) {
   }
 
   const profile = await getUserRowByAuthUserId(data.user.id);
+  const resolvedRole = profile?.role || data.user.user_metadata?.role || "provider";
   return {
     session: data.session,
     user: {
       id: data.user.id,
       email: data.user.email,
-      role: profile?.role || data.user.user_metadata?.role || "provider",
+      role: resolvedRole,
+      permissions: resolvedRole === "staff" && profile?.permissions
+        ? (typeof profile.permissions === "object" ? profile.permissions : null)
+        : null,
       first_name: profile?.first_name || data.user.user_metadata?.first_name || null,
       last_name: profile?.last_name || data.user.user_metadata?.last_name || null,
       full_name: profile?.full_name || data.user.user_metadata?.full_name || null
@@ -819,7 +875,7 @@ export async function setPasswordWithAccessToken({ accessToken, refreshToken, pa
   const userEmail = updatedData?.user?.email || sessionData.user.email;
   const metaName = readNameFromAuthUser(sessionData.user || {});
 
-  await ensureProviderUserRecord({
+  await syncUserRecordOnPasswordSetup({
     authUserId,
     email: userEmail,
     firstName: metaName.firstName,
@@ -829,11 +885,19 @@ export async function setPasswordWithAccessToken({ accessToken, refreshToken, pa
   await markPasswordResetCompleted(authUserId, userEmail);
 
   const profile = await getUserRowByAuthUserId(authUserId);
+  const resolvedRole =
+    profile?.role ||
+    updatedData?.user?.user_metadata?.role ||
+    sessionData.user.user_metadata?.role ||
+    "provider";
   return {
     user: {
       id: authUserId,
       email: updatedData?.user?.email || sessionData.user.email,
-      role: profile?.role || updatedData?.user?.user_metadata?.role || sessionData.user.user_metadata?.role || "provider",
+      role: resolvedRole,
+      permissions: resolvedRole === "staff" && profile?.permissions
+        ? (typeof profile.permissions === "object" ? profile.permissions : null)
+        : null,
       first_name: profile?.first_name || updatedData?.user?.user_metadata?.first_name || sessionData.user.user_metadata?.first_name || null,
       last_name: profile?.last_name || updatedData?.user?.user_metadata?.last_name || sessionData.user.user_metadata?.last_name || null,
       full_name: profile?.full_name || updatedData?.user?.user_metadata?.full_name || sessionData.user.user_metadata?.full_name || null
@@ -845,35 +909,40 @@ export async function updateMe({ accessToken, updates }) {
   ensureAuthClients();
   const me = await getMeFromAccessToken(accessToken);
   let userRow = await getUserRowByAuthUserId(me.id);
-  const role = updates?.role ? normalizeRole(updates.role) : null;
-  const firstName = Object.prototype.hasOwnProperty.call(updates || {}, "first_name")
-    ? String(updates.first_name || "").trim() || null
+  // Strip `role` — role changes must go through /admin/users (admin-only endpoint).
+  // Accepting a caller-supplied role here would allow any user to self-escalate.
+  const { role: _droppedRole, ...safeUpdates } = updates || {};
+  const sessionRole = String(me.role || "").trim().toLowerCase();
+  const firstName = Object.prototype.hasOwnProperty.call(safeUpdates, "first_name")
+    ? String(safeUpdates.first_name || "").trim() || null
     : me.first_name;
-  const lastName = Object.prototype.hasOwnProperty.call(updates || {}, "last_name")
-    ? String(updates.last_name || "").trim() || null
+  const lastName = Object.prototype.hasOwnProperty.call(safeUpdates, "last_name")
+    ? String(safeUpdates.last_name || "").trim() || null
     : me.last_name;
-  const nextRole = role || me.role || "provider";
 
   const client = await pool.connect();
   try {
+    // Role is intentionally excluded from this UPDATE — it is read-only through
+    // the self-service endpoint. Role changes go through POST/PUT /admin/users only.
     const { rows } = await client.query(
       `update public.users
        set first_name = $2,
            last_name = $3,
            full_name = $4,
-           role = $5,
            updated_at = now()
        where auth_user_id = $1
        returning id, auth_user_id, email, first_name, last_name, full_name, role, is_active, created_at, updated_at`,
-      [me.id, firstName, lastName, fullName(firstName, lastName), nextRole]
+      [me.id, firstName, lastName, fullName(firstName, lastName)]
     );
     if (!rows[0]) {
+      // Brand-new users without a DB row (edge case): upsert preserves any existing
+      // role via coalesce, defaulting to the session role only on first insert.
       userRow = await upsertUserRow({
         authUserId: me.id,
         email: me.email,
         firstName,
         lastName,
-        role: nextRole
+        role: me.role || "provider"
       });
     } else {
       userRow = rows[0];
@@ -882,11 +951,36 @@ export async function updateMe({ accessToken, updates }) {
     client.release();
   }
 
-  if (nextRole === "provider" && userRow?.id) {
-    await upsertProviderProfile({ userId: userRow.id, updates });
+  if (sessionRole === "provider" && userRow?.id) {
+    await upsertProviderProfile({
+      userId: userRow.id,
+      updates: normalizeProviderProfileUpdates(updates),
+    });
   }
-  if (nextRole === "patient" && userRow?.id) {
-    await upsertPatientProfile({ userId: userRow.id, updates });
+  if (userRow?.id) {
+    const patientProfileFields = [
+      "phone",
+      "city",
+      "state",
+      "date_of_birth",
+      "gender",
+      "allergies",
+      "current_medications",
+      "medical_conditions",
+      "health_notes",
+      "emergency_contact_name",
+      "emergency_contact_phone",
+    ];
+    const hasPatientProfileUpdates = patientProfileFields.some((key) =>
+      Object.prototype.hasOwnProperty.call(updates || {}, key)
+    );
+    if (sessionRole === "patient" || hasPatientProfileUpdates) {
+      await upsertPatientProfile({ userId: userRow.id, updates: safeUpdates });
+    }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(updates || {}, "launch_checklist")) {
+    await upsertProviderLaunchChecklist(me.id, updates.launch_checklist);
   }
 
   return getMeFromAccessToken(accessToken);

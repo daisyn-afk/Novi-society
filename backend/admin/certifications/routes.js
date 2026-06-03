@@ -1,24 +1,17 @@
 import { Router } from "express";
 import { pool, query } from "../db.js";
-import { getMeFromAccessToken } from "../auth/service.js";
+import { hasAdminOrStaffModuleAccess, requireAuth } from "../auth/helpers.js";
 import { notifyProviderOfCourseCertificateIssuance } from "../certificationNotifications.js";
+import { notifyAdminsOfCertificationSubmission } from "../adminNotifications.js";
+import {
+  getProviderIdAliases,
+  isMedicalDirectorRole,
+  mdHasActiveSupervisionOf,
+} from "../mdSupervisedAccess.js";
+import { sendEmailFromTemplate } from "../emails/renderTemplate.js";
 
 export const certificationsRouter = Router();
-const appBaseUrl = process.env.APP_BASE_URL || "http://localhost:5173";
-const resendApiKey = process.env.RESEND_API_KEY || "";
-const resendFromEmail = process.env.RESEND_FROM_EMAIL || "NOVI Society <support@novisociety.com>";
-const noviEmailLogoUrl = process.env.NOVI_EMAIL_LOGO_URL || `${appBaseUrl}/novi-email-logo.png`;
-
-function getBearerToken(req) {
-  const raw = req.headers.authorization || "";
-  if (!raw.startsWith("Bearer ")) return null;
-  return raw.slice("Bearer ".length).trim() || null;
-}
-
-function hasAdminAccess(role) {
-  const normalized = String(role || "").trim().toLowerCase();
-  return normalized === "admin" || normalized === "super_admin" || normalized === "owner";
-}
+certificationsRouter.use(requireAuth);
 
 function resolveNameFromUser(user) {
   const full = String(user?.full_name || "").trim();
@@ -40,17 +33,6 @@ function appendSubmitterAuditNote(existingNotes, me) {
     );
   }
   return parts.filter(Boolean).join("\n");
-}
-
-async function requireAuth(req) {
-  const token = getBearerToken(req);
-  if (!token) {
-    const err = new Error("Missing bearer token.");
-    err.statusCode = 401;
-    throw err;
-  }
-  const me = await getMeFromAccessToken(token);
-  return { me };
 }
 
 async function getProviderOwnershipAliases(me) {
@@ -116,10 +98,48 @@ function providerOwnsCertification(row, ownership) {
   return idMatch || emailMatch;
 }
 
+function toPermissionObject(rawPermissions) {
+  if (rawPermissions && typeof rawPermissions === "object" && !Array.isArray(rawPermissions)) {
+    return rawPermissions;
+  }
+  if (typeof rawPermissions === "string") {
+    try {
+      const parsed = JSON.parse(rawPermissions);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+    } catch {
+      // ignore malformed legacy payloads
+    }
+  }
+  return {};
+}
+
+function hasTruthyPermission(permissions, key) {
+  const value = permissions?.[key];
+  return value === true || value === "true" || value === 1 || value === "1";
+}
+
+async function resolveCanManageCertifications(me) {
+  if (hasAdminOrStaffModuleAccess(me, "AdminLicenses")) return true;
+  if (String(me?.role || "").trim().toLowerCase() !== "staff") return false;
+  const authUserId = String(me?.id || "").trim();
+  if (!authUserId) return false;
+  try {
+    const { rows } = await query(
+      `select permissions
+       from public.users
+       where auth_user_id = $1
+       limit 1`,
+      [authUserId]
+    );
+    const permissions = toPermissionObject(rows?.[0]?.permissions);
+    return hasTruthyPermission(permissions, "AdminLicenses");
+  } catch {
+    return false;
+  }
+}
+
 let certColumnsPromise = null;
 let ensureCertColumnsPromise = null;
-let notificationTablePromise = null;
-let notificationColumnsByTablePromise = null;
 async function ensureCertificationWriteColumns() {
   if (!ensureCertColumnsPromise) {
     ensureCertColumnsPromise = (async () => {
@@ -167,15 +187,6 @@ async function getCertificationColumns() {
   return certColumnsPromise;
 }
 
-function escapeHtml(rawValue) {
-  return String(rawValue ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
 function resolveProviderFirstName({ providerName, providerEmail }) {
   const fromName = String(providerName || "").trim();
   if (fromName) return fromName.split(/\s+/)[0];
@@ -201,121 +212,6 @@ function resolveCertificationDocumentUrl(cert) {
   return null;
 }
 
-function buildCertificationRejectionEmailHtml({
-  providerFirstName,
-  certificationName,
-  serviceTypeName,
-  rejectionReason
-}) {
-  const safeName = escapeHtml(providerFirstName || "Provider");
-  const safeCertificationName = escapeHtml(certificationName || "certification");
-  const safeServiceTypeName = escapeHtml(serviceTypeName || "this service");
-  const safeRejectionReason = escapeHtml(rejectionReason || "No reason provided.");
-  const base = String(appBaseUrl || "").replace(/\/+$/, "");
-  const reviewUrl = `${base}/login?next=${encodeURIComponent("/ProviderCredentialsCoverage")}`;
-
-  return `
-<!DOCTYPE html>
-<html>
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
-<body style="margin:0;padding:0;background:#f5f3ef;font-family:'DM Sans',Helvetica,Arial,sans-serif">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f3ef;padding:40px 0">
-    <tr><td align="center">
-      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
-        <tr><td style="background:linear-gradient(135deg,#2D6B7F 0%,#7B8EC8 55%,#C8E63C 100%);padding:36px 40px;text-align:center;border-radius:16px 16px 0 0">
-          <img src="${noviEmailLogoUrl}" alt="NOVI Society" style="width:160px;height:auto" />
-        </td></tr>
-        <tr><td style="background:#fff;padding:48px 40px;border-radius:0 0 16px 16px">
-          <p style="margin:0 0 24px;font-size:16px;color:#374151;line-height:1.6">Hi ${safeName},</p>
-          <p style="margin:0 0 20px;font-size:16px;color:#374151;line-height:1.6">Your external certification submission has been reviewed by the NOVI admin team.</p>
-          <p style="margin:0 0 16px;font-size:16px;color:#374151;line-height:1.6"><strong>Status:</strong> <span style="color:#dc2626;font-weight:700">Rejected</span></p>
-          <div style="background:#f9f8f6;border-radius:12px;padding:20px;margin:0 0 24px;border:1px solid rgba(0,0,0,0.07)">
-            <p style="margin:0 0 8px;font-size:14px;color:#6b7280"><strong>Certification</strong></p>
-            <p style="margin:0 0 8px;font-size:15px;color:#111827">${safeCertificationName}</p>
-            <p style="margin:0;font-size:14px;color:#6b7280"><strong>Service</strong>: ${safeServiceTypeName}</p>
-          </div>
-          <div style="background:#fef2f2;border-radius:12px;padding:16px;margin:0 0 24px;border:1px solid #fecaca">
-            <p style="margin:0 0 6px;font-size:13px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#b91c1c">Reason for Rejection</p>
-            <p style="margin:0;font-size:15px;line-height:1.6;color:#b91c1c;font-weight:600">${safeRejectionReason}</p>
-          </div>
-          <p style="margin:0 0 24px;font-size:15px;color:#374151;line-height:1.6">Please review your Credentials & Coverage page and resubmit when ready.</p>
-          <p style="margin:0 0 32px">
-            <a href="${reviewUrl}" style="display:inline-block;background:#2D6B7F;color:#fff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:600;font-size:14px">
-              Review Credentials
-            </a>
-          </p>
-          <div style="border-top:1px solid #e5e7eb;padding-top:28px;margin-top:8px">
-            <p style="margin:0;font-size:15px;color:#374151">Best,<br><strong>The NOVI Society Team</strong></p>
-          </div>
-        </td></tr>
-        <tr><td style="padding:24px 40px;text-align:center">
-          <p style="margin:0;font-size:12px;color:#9ca3af">© ${new Date().getFullYear()} NOVI Society LLC · 8109 Meadow Valley Dr, McKinney, TX 75071</p>
-          <p style="margin:4px 0 0;font-size:12px;color:#9ca3af"><a href="mailto:support@novisociety.com" style="color:#9ca3af">support@novisociety.com</a></p>
-        </td></tr>
-      </table>
-    </td></tr>
-  </table>
-</body>
-</html>`;
-}
-
-function buildCertificationApprovedEmailHtml({
-  providerFirstName,
-  certificationName,
-  serviceTypeName,
-  certificateNumber
-}) {
-  const safeName = escapeHtml(providerFirstName || "Provider");
-  const safeCertificationName = escapeHtml(certificationName || "certification");
-  const safeServiceTypeName = escapeHtml(serviceTypeName || "this service");
-  const safeCertificateNumber = escapeHtml(certificateNumber || "N/A");
-  const base = String(appBaseUrl || "").replace(/\/+$/, "");
-  const coverageUrl = `${base}/login?next=${encodeURIComponent("/ProviderCredentialsCoverage")}`;
-
-  return `
-<!DOCTYPE html>
-<html>
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
-<body style="margin:0;padding:0;background:#f5f3ef;font-family:'DM Sans',Helvetica,Arial,sans-serif">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f3ef;padding:40px 0">
-    <tr><td align="center">
-      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
-        <tr><td style="background:linear-gradient(135deg,#2D6B7F 0%,#7B8EC8 55%,#C8E63C 100%);padding:36px 40px;text-align:center;border-radius:16px 16px 0 0">
-          <img src="${noviEmailLogoUrl}" alt="NOVI Society" style="width:160px;height:auto" />
-        </td></tr>
-        <tr><td style="background:#fff;padding:48px 40px;border-radius:0 0 16px 16px">
-          <p style="margin:0 0 24px;font-size:16px;color:#374151;line-height:1.6">Hi ${safeName},</p>
-          <p style="margin:0 0 20px;font-size:16px;color:#374151;line-height:1.6">Welcome to NOVI Society - we're excited to have you with us.</p>
-          <p style="margin:0 0 24px;font-size:16px;color:#374151;line-height:1.6">Your external certification for <strong>${safeCertificationName}</strong> has been successfully approved.</p>
-          <div style="background:#f9f8f6;border-radius:12px;padding:24px;margin-bottom:32px;border:1px solid rgba(0,0,0,0.07)">
-            <p style="margin:0 0 12px;font-size:13px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#2D6B7F">Certification Details</p>
-            <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
-              <tr><td style="padding:6px 0;color:#6b7280;font-size:14px;width:140px"><strong>Certification</strong></td><td style="padding:6px 0;font-size:14px;color:#111827">${safeCertificationName}</td></tr>
-              <tr><td style="padding:6px 0;color:#6b7280;font-size:14px"><strong>Service</strong></td><td style="padding:6px 0;font-size:14px;color:#111827">${safeServiceTypeName}</td></tr>
-              <tr><td style="padding:6px 0;color:#6b7280;font-size:14px"><strong>Certificate #</strong></td><td style="padding:6px 0;font-size:14px;color:#111827">${safeCertificateNumber}</td></tr>
-            </table>
-          </div>
-          <p style="margin:0 0 16px;font-size:15px;color:#374151;line-height:1.6">You're now ready for the next step. Complete your MD Coverage application for this service to begin offering it on NOVI.</p>
-          <p style="margin:0 0 32px">
-            <a href="${coverageUrl}" style="display:inline-block;background:#2D6B7F;color:#fff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:600;font-size:14px">
-              Apply for MD Coverage
-            </a>
-          </p>
-          <div style="border-top:1px solid #e5e7eb;padding-top:28px;margin-top:8px">
-            <p style="margin:0;font-size:15px;color:#374151">Best,<br><strong>The NOVI Society Team</strong></p>
-          </div>
-        </td></tr>
-        <tr><td style="padding:24px 40px;text-align:center">
-          <p style="margin:0;font-size:12px;color:#9ca3af">© ${new Date().getFullYear()} NOVI Society LLC · 8109 Meadow Valley Dr, McKinney, TX 75071</p>
-          <p style="margin:4px 0 0;font-size:12px;color:#9ca3af"><a href="mailto:support@novisociety.com" style="color:#9ca3af">support@novisociety.com</a></p>
-        </td></tr>
-      </table>
-    </td></tr>
-  </table>
-</body>
-</html>`;
-}
-
 async function sendCertificationRejectedEmail({
   providerEmail,
   providerFirstName,
@@ -324,42 +220,24 @@ async function sendCertificationRejectedEmail({
   rejectionReason
 }) {
   if (!providerEmail) return false;
-  if (!resendApiKey) {
-    // eslint-disable-next-line no-console
-    console.warn("[certifications] rejection email skipped: RESEND_API_KEY missing");
-    return false;
-  }
-  const html = buildCertificationRejectionEmailHtml({
-    providerFirstName,
-    certificationName,
-    serviceTypeName,
-    rejectionReason
+  const result = await sendEmailFromTemplate("certification_rejected", {
+    to: providerEmail,
+    first_name: providerFirstName || "Provider",
+    certification_name: certificationName || "certification",
+    service_name: serviceTypeName || "this service",
+    rejection_reason: rejectionReason || "No reason provided.",
+    rejection_title: "Reason for rejection",
+    details: [
+      { label: "Certification", value: certificationName || "—" },
+      { label: "Service", value: serviceTypeName || "—" },
+    ],
   });
-  try {
-    const result = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${resendApiKey}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        from: resendFromEmail,
-        to: [providerEmail],
-        subject: "Your NOVI Society certification has been rejected",
-        html
-      })
-    });
-    if (!result.ok) {
-      const bodyText = await result.text().catch(() => "");
-      // eslint-disable-next-line no-console
-      console.error("[certifications] rejection email send failed:", result.status, bodyText);
-    }
-    return result.ok;
-  } catch (error) {
+  if (!result.ok) {
     // eslint-disable-next-line no-console
-    console.error("[certifications] rejection email request failed:", error);
+    console.error("[certifications] rejection email send failed:", result.error);
     return false;
   }
+  return true;
 }
 
 async function sendCertificationApprovedEmail({
@@ -370,42 +248,24 @@ async function sendCertificationApprovedEmail({
   certificateNumber
 }) {
   if (!providerEmail) return false;
-  if (!resendApiKey) {
-    // eslint-disable-next-line no-console
-    console.warn("[certifications] approval email skipped: RESEND_API_KEY missing");
-    return false;
-  }
-  const html = buildCertificationApprovedEmailHtml({
-    providerFirstName,
-    certificationName,
-    serviceTypeName,
-    certificateNumber
+  const result = await sendEmailFromTemplate("certification_approved", {
+    to: providerEmail,
+    first_name: providerFirstName || "Provider",
+    certification_name: certificationName || "certification",
+    service_name: serviceTypeName || "this service",
+    certificate_number: certificateNumber || "N/A",
+    details: [
+      { label: "Certification", value: certificationName || "—" },
+      { label: "Service", value: serviceTypeName || "—" },
+      { label: "Certificate #", value: certificateNumber || "N/A" },
+    ],
   });
-  try {
-    const result = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${resendApiKey}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        from: resendFromEmail,
-        to: [providerEmail],
-        subject: "Your NOVI certification has been approved",
-        html
-      })
-    });
-    if (!result.ok) {
-      const bodyText = await result.text().catch(() => "");
-      // eslint-disable-next-line no-console
-      console.error("[certifications] approval email send failed:", result.status, bodyText);
-    }
-    return result.ok;
-  } catch (error) {
+  if (!result.ok) {
     // eslint-disable-next-line no-console
-    console.error("[certifications] approval email request failed:", error);
+    console.error("[certifications] approval email send failed:", result.error);
     return false;
   }
+  return true;
 }
 
 async function resolveNotificationRecipient({ providerId, providerEmail }) {
@@ -434,6 +294,9 @@ async function resolveNotificationRecipient({ providerId, providerEmail }) {
     };
   }
 }
+
+let notificationTablePromise = null;
+let notificationColumnsByTablePromise = null;
 
 async function getNotificationTableName() {
   if (!notificationTablePromise) {
@@ -540,105 +403,6 @@ async function createCertificationApprovedNotification({
   }
 }
 
-async function listAdminRecipients() {
-  const { rows } = await query(
-    `select auth_user_id, email, full_name, first_name
-     from public.users
-     where lower(coalesce(role, '')) in ('admin', 'super_admin', 'owner')
-       and nullif(trim(email), '') is not null`
-  );
-  return rows || [];
-}
-
-function buildAdminSubmissionEmailHtml({ adminName, title, summaryLines = [] }) {
-  const safeName = escapeHtml(adminName || "Admin");
-  const safeTitle = escapeHtml(title || "New provider submission");
-  const lines = summaryLines
-    .map((line) => `<li style="margin:0 0 8px">${escapeHtml(line)}</li>`)
-    .join("");
-  return `
-<!DOCTYPE html>
-<html>
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
-<body style="margin:0;padding:0;background:#f5f3ef;font-family:'DM Sans',Helvetica,Arial,sans-serif">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f3ef;padding:40px 0">
-    <tr><td align="center">
-      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
-        <tr><td style="background:linear-gradient(135deg,#2D6B7F 0%,#7B8EC8 55%,#C8E63C 100%);padding:36px 40px;text-align:center;border-radius:16px 16px 0 0">
-          <img src="${noviEmailLogoUrl}" alt="NOVI Society" style="width:160px;height:auto" />
-        </td></tr>
-        <tr><td style="background:#fff;padding:40px;border-radius:0 0 16px 16px">
-          <p style="margin:0 0 18px;font-size:16px;color:#374151">Hi ${safeName},</p>
-          <p style="margin:0 0 16px;font-size:16px;color:#374151"><strong>${safeTitle}</strong></p>
-          <ul style="margin:0 0 18px;padding-left:20px;color:#374151;font-size:14px;line-height:1.7">${lines}</ul>
-          <p style="margin:0;font-size:14px;color:#374151">Please review it in the admin portal.</p>
-        </td></tr>
-      </table>
-    </td></tr>
-  </table>
-</body>
-</html>`;
-}
-
-async function notifyAdminsOfCertificationSubmission({
-  providerName,
-  providerEmail,
-  certificationName,
-  serviceTypeName,
-  certificationId
-}) {
-  const admins = await listAdminRecipients();
-  if (!admins.length) return;
-  const { tableName, columns } = await getNotificationTableColumnsByName();
-  for (const admin of admins) {
-    const adminUserId = String(admin?.auth_user_id || "").trim() || null;
-    const adminEmail = String(admin?.email || "").trim().toLowerCase() || null;
-    if (tableName && columns.size > 0) {
-      const valuesByColumn = {
-        user_id: adminUserId,
-        user_email: adminEmail,
-        type: "cert_submitted",
-        message: `New certification submitted by ${providerName || providerEmail || "a provider"} (${certificationName || "certification"}).`,
-        link_page: `AdminLicenses?tab=certifications&focus_type=certification&focus_id=${encodeURIComponent(String(certificationId || ""))}`
-      };
-      const insertColumns = Object.keys(valuesByColumn).filter((col) => columns.has(col));
-      if (insertColumns.length > 0) {
-        const placeholders = insertColumns.map((_, idx) => `$${idx + 1}`).join(", ");
-        const params = insertColumns.map((col) => valuesByColumn[col]);
-        await query(
-          `insert into public.${tableName} (${insertColumns.join(", ")}) values (${placeholders})`,
-          params
-        ).catch(() => {});
-      }
-    }
-    if (resendApiKey && adminEmail) {
-      const html = buildAdminSubmissionEmailHtml({
-        adminName: admin?.first_name || admin?.full_name || "Admin",
-        title: "New certification submission pending review",
-        summaryLines: [
-          `Provider: ${providerName || "Unknown Provider"}`,
-          `Email: ${providerEmail || "Not provided"}`,
-          `Certification: ${certificationName || "N/A"}`,
-          `Service: ${serviceTypeName || "N/A"}`
-        ]
-      });
-      await fetch("https://api.resend.com/emails", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${resendApiKey}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          from: resendFromEmail,
-          to: [adminEmail],
-          subject: "New certification submission pending review",
-          html
-        })
-      }).catch(() => {});
-    }
-  }
-}
-
 async function resolveTemplateCourseIdForServiceType(serviceTypeId) {
   const id = String(serviceTypeId || "").trim();
   if (!id) return null;
@@ -653,6 +417,13 @@ async function resolveTemplateCourseIdForServiceType(serviceTypeId) {
   return rows?.[0]?.id || null;
 }
 
+function isComplianceCertification(body) {
+  const category = String(body?.category || "").trim().toLowerCase();
+  if (category === "compliance") return true;
+  const label = `${body?.certification_name || body?.cert_name || ""} ${body?.issued_by || ""}`;
+  return /cpr|bls|basic life support/i.test(label);
+}
+
 function isAdminIssuedCourseCertification(body, canSetAnyProvider) {
   if (!canSetAnyProvider) return false;
   return Boolean(String(body?.enrollment_id || "").trim() || String(body?.course_id || "").trim());
@@ -660,7 +431,8 @@ function isAdminIssuedCourseCertification(body, canSetAnyProvider) {
 
 certificationsRouter.get("/", async (req, res, next) => {
   try {
-    const { me } = await requireAuth(req);
+    const me = req.me || {};
+    const canManageCertifications = await resolveCanManageCertifications(me);
     const columns = await getCertificationColumns();
     const where = [];
     const params = [];
@@ -668,21 +440,68 @@ certificationsRouter.get("/", async (req, res, next) => {
     const hasProviderId = columns.has("provider_id");
     const hasProviderEmail = columns.has("provider_email");
     const hasCreatedBy = columns.has("created_by");
+    const providerIdFilter = String(req.query?.provider_id || "").trim();
+    const statusFilter = String(req.query?.status || "").trim().toLowerCase();
 
-    if (!hasAdminAccess(me.role)) {
-      const ownership = await getProviderOwnershipAliases(me);
-      const ownershipChecks = [];
-      if (hasProviderId && ownership.aliases.size > 0) {
-        params.push(Array.from(ownership.aliases));
-        ownershipChecks.push(`${certAlias}.provider_id::text = any($${params.length}::text[])`);
+    if (!canManageCertifications) {
+      if (isMedicalDirectorRole(me.role) && providerIdFilter) {
+        const allowed = await mdHasActiveSupervisionOf(me, providerIdFilter);
+        if (!allowed) {
+          return res.status(403).json({ error: "Forbidden." });
+        }
+        const { aliases, email } = await getProviderIdAliases(providerIdFilter);
+        const supervisedChecks = [];
+        if (hasProviderId && aliases.length) {
+          params.push(aliases);
+          supervisedChecks.push(`${certAlias}.provider_id::text = any($${params.length}::text[])`);
+        }
+        if (hasProviderEmail && email) {
+          params.push(email);
+          supervisedChecks.push(`lower(coalesce(${certAlias}.provider_email, '')) = $${params.length}`);
+        }
+        if (supervisedChecks.length) {
+          where.push(`(${supervisedChecks.join(" or ")})`);
+        } else {
+          where.push("false");
+        }
+      } else if (isMedicalDirectorRole(me.role) && !providerIdFilter) {
+        const { rows: rels } = await query(
+          `select provider_id from public.medical_director_relationship
+           where medical_director_id = $1 and lower(coalesce(status, '')) = 'active'`,
+          [me.id]
+        );
+        const supervisedIds = [...new Set((rels || []).map((r) => String(r.provider_id || "").trim()).filter(Boolean))];
+        if (!supervisedIds.length) {
+          return res.json([]);
+        }
+        if (hasProviderId) {
+          params.push(supervisedIds);
+          where.push(`${certAlias}.provider_id::text = any($${params.length}::text[])`);
+        }
+      } else {
+        const ownership = await getProviderOwnershipAliases(me);
+        const ownershipChecks = [];
+        if (hasProviderId && ownership.aliases.size > 0) {
+          params.push(Array.from(ownership.aliases));
+          ownershipChecks.push(`${certAlias}.provider_id::text = any($${params.length}::text[])`);
+        }
+        if (hasProviderEmail && ownership.authEmail) {
+          params.push(ownership.authEmail);
+          ownershipChecks.push(`lower(coalesce(${certAlias}.provider_email, '')) = $${params.length}`);
+        }
+        if (ownershipChecks.length > 0) {
+          where.push(`(${ownershipChecks.join(" or ")})`);
+        }
       }
-      if (hasProviderEmail && ownership.authEmail) {
-        params.push(ownership.authEmail);
-        ownershipChecks.push(`lower(coalesce(${certAlias}.provider_email, '')) = $${params.length}`);
-      }
-      if (ownershipChecks.length > 0) {
-        where.push(`(${ownershipChecks.join(" or ")})`);
-      }
+    } else if (providerIdFilter && hasProviderId) {
+      const { aliases } = await getProviderIdAliases(providerIdFilter);
+      params.push(aliases.length ? aliases : [providerIdFilter]);
+      where.push(`${certAlias}.provider_id::text = any($${params.length}::text[])`);
+    }
+
+    if (statusFilter) {
+      params.push(statusFilter);
+      where.push(`lower(coalesce(${certAlias}.status, '')) = $${params.length}`);
     }
 
     const hasProviderName = columns.has("provider_name");
@@ -748,16 +567,22 @@ certificationsRouter.get("/", async (req, res, next) => {
 
 certificationsRouter.post("/", async (req, res, next) => {
   try {
-    const { me } = await requireAuth(req);
+    const me = req.me || {};
     const body = req.body || {};
     const columns = await getCertificationColumns();
-    const canSetAnyProvider = hasAdminAccess(me.role);
+    const canSetAnyProvider = hasAdminOrStaffModuleAccess(me, "AdminLicenses");
     const adminIssuedCourseCertification = isAdminIssuedCourseCertification(body, canSetAnyProvider);
+    const complianceCertification = isComplianceCertification(body);
     let resolvedTemplateCourseId = body.template_course_id || null;
     if (columns.has("template_course_id") && !resolvedTemplateCourseId) {
       resolvedTemplateCourseId = await resolveTemplateCourseIdForServiceType(body.service_type_id);
     }
-    if (columns.has("template_course_id") && !resolvedTemplateCourseId && !adminIssuedCourseCertification) {
+    if (
+      columns.has("template_course_id") &&
+      !resolvedTemplateCourseId &&
+      !adminIssuedCourseCertification &&
+      !complianceCertification
+    ) {
       const err = new Error("No linked template course found for this service type. Ask admin to link the service type to a template course.");
       err.statusCode = 400;
       throw err;
@@ -857,7 +682,7 @@ certificationsRouter.post("/", async (req, res, next) => {
         await query(`update public.certification set ${setClause} where id = $1`, values);
       }
     }
-    if (!hasAdminAccess(me.role)) {
+    if (!canSetAnyProvider) {
       void notifyAdminsOfCertificationSubmission({
         providerName: created?.provider_name || valuesByColumn.provider_name,
         providerEmail: created?.provider_email || valuesByColumn.provider_email,
@@ -899,7 +724,8 @@ certificationsRouter.post("/", async (req, res, next) => {
 
 certificationsRouter.get("/:id", async (req, res, next) => {
   try {
-    const { me } = await requireAuth(req);
+    const me = req.me || {};
+    const canManageCertifications = await resolveCanManageCertifications(me);
     const id = String(req.params.id || "").trim();
     const { rows } = await query(`select * from public.certification where id = $1 limit 1`, [id]);
     const row = rows[0];
@@ -908,7 +734,7 @@ certificationsRouter.get("/:id", async (req, res, next) => {
       err.statusCode = 404;
       throw err;
     }
-    if (!hasAdminAccess(me.role)) {
+    if (!canManageCertifications) {
       const ownership = await getProviderOwnershipAliases(me);
       if (!providerOwnsCertification(row, ownership)) {
         const err = new Error("Forbidden.");
@@ -924,7 +750,8 @@ certificationsRouter.get("/:id", async (req, res, next) => {
 
 certificationsRouter.patch("/:id", async (req, res, next) => {
   try {
-    const { me } = await requireAuth(req);
+    const me = req.me || {};
+    const canManageCertifications = await resolveCanManageCertifications(me);
     const id = String(req.params.id || "").trim();
     if (!id) {
       const err = new Error("Certification id is required.");
@@ -939,7 +766,7 @@ certificationsRouter.patch("/:id", async (req, res, next) => {
       err.statusCode = 404;
       throw err;
     }
-    if (!hasAdminAccess(me.role)) {
+    if (!canManageCertifications) {
       const ownership = await getProviderOwnershipAliases(me);
       if (!providerOwnsCertification(existing, ownership)) {
         const err = new Error("Forbidden.");
@@ -949,7 +776,7 @@ certificationsRouter.patch("/:id", async (req, res, next) => {
     }
 
     const updates = { ...(req.body || {}) };
-    if (hasAdminAccess(me.role)) {
+    if (canManageCertifications) {
       const prevStatus = String(existing?.status || "").toLowerCase();
       const nextStatusRaw = updates.status != null ? updates.status : existing?.status;
       const nextStatus = String(nextStatusRaw || "").toLowerCase();
@@ -992,10 +819,10 @@ certificationsRouter.patch("/:id", async (req, res, next) => {
     const hadCertificateDocument = Boolean(resolveCertificationDocumentUrl(existing));
     const hasCertificateDocument = Boolean(resolveCertificationDocumentUrl(updated));
     const courseCertificateDocumentAdded = issuedCourseCert && !hadCertificateDocument && hasCertificateDocument;
-    if (hasAdminAccess(me.role) && courseCertificateDocumentAdded) {
+    if (canManageCertifications && courseCertificateDocumentAdded) {
       void notifyProviderOfCourseCertificateIssuance(updated);
     }
-    const changedStatus = hasAdminAccess(me.role) && String(existing?.status || "") !== String(updated?.status || "");
+    const changedStatus = canManageCertifications && String(existing?.status || "") !== String(updated?.status || "");
     const isApproved = String(updated?.status || "").toLowerCase() === "active";
     const isRejected = String(updated?.status || "").toLowerCase() === "revoked";
     const wasPending = String(existing?.status || "").toLowerCase() === "pending";

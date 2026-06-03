@@ -1,6 +1,11 @@
-import { useState, useEffect } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState, useEffect, useMemo } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
+import {
+  buildInventoryProductOptions,
+  getInventoryProductSelectValue,
+  sanitizeProductsUsed,
+} from "@/lib/supplierUsage";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,10 +18,18 @@ import AftercarePlanDialog from "./AftercarePlanDialog";
 
 const COMMON_AREAS = ["Forehead", "Glabella", "Crow's Feet", "Lip", "Chin", "Jawline", "Cheeks", "Neck", "Nasolabial Folds", "Marionette Lines"];
 
+const EMPTY_PRODUCT = {
+  product_name: "",
+  batch_lot: "",
+  amount: "",
+  manufacturer_id: "",
+  manufacturer_name: "",
+};
+
 export default function TreatmentDocumentDialog({ open, onClose, appointment, existingRecord }) {
   const qc = useQueryClient();
   const [form, setForm] = useState({});
-  const [products, setProducts] = useState([{ product_name: "", batch_lot: "", amount: "" }]);
+  const [products, setProducts] = useState([{ ...EMPTY_PRODUCT }]);
   const [areas, setAreas] = useState([]);
   const [beforePhotos, setBeforePhotos] = useState([]);
   const [afterPhotos, setAfterPhotos] = useState([]);
@@ -24,6 +37,29 @@ export default function TreatmentDocumentDialog({ open, onClose, appointment, ex
   const [showAftercarePlan, setShowAftercarePlan] = useState(false);
   const [savedRecord, setSavedRecord] = useState(null);
   const [patientJourney, setPatientJourney] = useState(null);
+
+  const { data: inventory = [] } = useQuery({
+    queryKey: ["my-inventory"],
+    queryFn: async () => {
+      const u = await base44.auth.me();
+      return base44.entities.ProviderInventory.filter({ provider_id: u.id }, "-created_date");
+    },
+    enabled: open,
+  });
+
+  const inventoryOptions = useMemo(
+    () => buildInventoryProductOptions(inventory),
+    [inventory]
+  );
+
+  const inventoryBySupplier = useMemo(() => {
+    return inventoryOptions.reduce((acc, option) => {
+      const label = option.manufacturer_name || "Supplier";
+      if (!acc[label]) acc[label] = [];
+      acc[label].push(option);
+      return acc;
+    }, {});
+  }, [inventoryOptions]);
 
   // Check if patient is premium (has PatientJourney)
   useEffect(() => {
@@ -50,13 +86,17 @@ export default function TreatmentDocumentDialog({ open, onClose, appointment, ex
         adverse_reaction: existingRecord.adverse_reaction || false,
         adverse_reaction_notes: existingRecord.adverse_reaction_notes || "",
       });
-      setProducts(existingRecord.products_used?.length ? existingRecord.products_used : [{ product_name: "", batch_lot: "", amount: "" }]);
+      setProducts(
+        existingRecord.products_used?.length
+          ? existingRecord.products_used.map((product) => ({ ...EMPTY_PRODUCT, ...product }))
+          : [{ ...EMPTY_PRODUCT }]
+      );
       setAreas(existingRecord.areas_treated || []);
       setBeforePhotos(existingRecord.before_photo_urls || []);
       setAfterPhotos(existingRecord.after_photo_urls || []);
     } else if (appointment) {
       setForm({ units_used: "", units_label: "units", clinical_notes: "", adverse_reaction: false, adverse_reaction_notes: "" });
-      setProducts([{ product_name: "", batch_lot: "", amount: "" }]);
+      setProducts([{ ...EMPTY_PRODUCT }]);
       setAreas([]);
       setBeforePhotos([]);
       setAfterPhotos([]);
@@ -69,6 +109,39 @@ export default function TreatmentDocumentDialog({ open, onClose, appointment, ex
     setAreas(prev => prev.includes(area) ? prev.filter(a => a !== area) : [...prev, area]);
   };
 
+  const updateProduct = (index, patch) => {
+    setProducts((prev) => prev.map((item, i) => (i === index ? { ...item, ...patch } : item)));
+  };
+
+  const handleProductSelect = (index, value) => {
+    if (value === "__other__") {
+      updateProduct(index, {
+        product_name: "",
+        manufacturer_id: "",
+        manufacturer_name: "",
+      });
+      return;
+    }
+
+    if (!value) {
+      updateProduct(index, {
+        product_name: "",
+        manufacturer_id: "",
+        manufacturer_name: "",
+      });
+      return;
+    }
+
+    const option = inventoryOptions.find((item) => item.key === value);
+    if (!option) return;
+
+    updateProduct(index, {
+      product_name: option.product_name,
+      manufacturer_id: option.manufacturer_id,
+      manufacturer_name: option.manufacturer_name,
+    });
+  };
+
   const uploadPhoto = async (file, type) => {
     setUploading(u => ({ ...u, [type]: true }));
     const { file_url } = await base44.integrations.Core.UploadFile({ file });
@@ -76,6 +149,9 @@ export default function TreatmentDocumentDialog({ open, onClose, appointment, ex
     else setAfterPhotos(p => [...p, file_url]);
     setUploading(u => ({ ...u, [type]: false }));
   };
+
+  const isResubmitMode =
+    existingRecord?.status === "flagged" || existingRecord?.status === "changes_requested";
 
   const save = useMutation({
     mutationFn: async (status) => {
@@ -91,15 +167,22 @@ export default function TreatmentDocumentDialog({ open, onClose, appointment, ex
         service: appointment.service,
         treatment_date: appointment.appointment_date,
         areas_treated: areas,
-        products_used: products.filter(p => p.product_name),
+        products_used: sanitizeProductsUsed(products),
         before_photo_urls: beforePhotos,
         after_photo_urls: afterPhotos,
+        gfe_status: appointment.gfe_status || null,
+        gfe_exam_url: appointment.gfe_exam_url || null,
         status,
         ...form,
       };
       let record;
       if (existingRecord) {
-        record = await base44.entities.TreatmentRecord.update(existingRecord.id, payload);
+        const updatePayload = { ...payload };
+        if (status === "submitted" && isResubmitMode) {
+          updatePayload.md_reviewed_by = null;
+          updatePayload.md_reviewed_at = null;
+        }
+        record = await base44.entities.TreatmentRecord.update(existingRecord.id, updatePayload);
       } else {
         record = await base44.entities.TreatmentRecord.create(payload);
       }
@@ -110,7 +193,11 @@ export default function TreatmentDocumentDialog({ open, onClose, appointment, ex
       return record;
     },
     onSuccess: (record) => {
-      qc.invalidateQueries(["treatment-records"]);
+      qc.invalidateQueries({ queryKey: ["treatment-records"] });
+      qc.invalidateQueries({ queryKey: ["md-treatment-records"] });
+      qc.invalidateQueries({ queryKey: ["my-appointments"] });
+      qc.invalidateQueries({ queryKey: ["my-treatment-records-mktplace"] });
+      qc.invalidateQueries({ queryKey: ["my-treatment-records-spend"] });
       // Only show aftercare dialog for premium patients
       if (patientJourney) {
         setSavedRecord(record);
@@ -128,7 +215,7 @@ export default function TreatmentDocumentDialog({ open, onClose, appointment, ex
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle style={{ fontFamily: "'DM Serif Display', serif", color: "#243257" }}>
-            Document Treatment
+            {isResubmitMode ? "Update & Resubmit Treatment Record" : "Document Treatment"}
           </DialogTitle>
         </DialogHeader>
 
@@ -196,25 +283,82 @@ export default function TreatmentDocumentDialog({ open, onClose, appointment, ex
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <Label className="text-xs font-semibold uppercase tracking-widest" style={{ color: "#DA6A63" }}>Products Used</Label>
-              <button type="button" onClick={() => setProducts(p => [...p, { product_name: "", batch_lot: "", amount: "" }])}
+              <button type="button" onClick={() => setProducts(p => [...p, { ...EMPTY_PRODUCT }])}
                 className="text-xs flex items-center gap-1" style={{ color: "#FA6F30" }}>
                 <Plus className="w-3 h-3" /> Add Product
               </button>
             </div>
-            {products.map((p, i) => (
-              <div key={i} className="grid grid-cols-3 gap-2 items-start">
-                <Input placeholder="Product name" className="text-sm h-8" value={p.product_name} onChange={e => setProducts(prev => prev.map((x, j) => j === i ? { ...x, product_name: e.target.value } : x))} />
-                <Input placeholder="Batch/Lot #" className="text-sm h-8" value={p.batch_lot} onChange={e => setProducts(prev => prev.map((x, j) => j === i ? { ...x, batch_lot: e.target.value } : x))} />
-                <div className="flex gap-1">
-                  <Input placeholder="Amount" className="text-sm h-8" value={p.amount} onChange={e => setProducts(prev => prev.map((x, j) => j === i ? { ...x, amount: e.target.value } : x))} />
-                  {products.length > 1 && (
-                    <button type="button" onClick={() => setProducts(prev => prev.filter((_, j) => j !== i))} className="text-red-400 hover:text-red-600">
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  )}
+            {inventoryOptions.length === 0 && (
+              <p className="text-xs" style={{ color: "#9a8f7e" }}>
+                Place orders through the Supplier Network to pick products from your inventory here.
+              </p>
+            )}
+            {products.map((p, i) => {
+              const selectValue = getInventoryProductSelectValue(p, inventoryOptions);
+              const showManualName = inventoryOptions.length === 0 || selectValue === "__other__";
+
+              return (
+                <div key={i} className="space-y-2">
+                  <div className="grid grid-cols-3 gap-2 items-start">
+                    <div className="space-y-1.5">
+                      {inventoryOptions.length > 0 ? (
+                        <select
+                          value={selectValue}
+                          onChange={(e) => handleProductSelect(i, e.target.value)}
+                          className="w-full px-2 py-1.5 rounded-md text-sm h-8 outline-none"
+                          style={{ background: "#fff", border: "1px solid rgba(198,190,168,0.6)", color: "#243257" }}
+                        >
+                          <option value="">Select product...</option>
+                          {Object.entries(inventoryBySupplier).map(([supplierName, options]) => (
+                            <optgroup key={supplierName} label={supplierName}>
+                              {options.map((option) => (
+                                <option key={option.key} value={option.key}>
+                                  {option.product_name}
+                                </option>
+                              ))}
+                            </optgroup>
+                          ))}
+                          <option value="__other__">Other (type below)</option>
+                        </select>
+                      ) : (
+                        <Input
+                          placeholder="Product name"
+                          className="text-sm h-8"
+                          value={p.product_name}
+                          onChange={(e) => updateProduct(i, { product_name: e.target.value })}
+                        />
+                      )}
+                      {showManualName && inventoryOptions.length > 0 && (
+                        <Input
+                          placeholder="Product name"
+                          className="text-sm h-8"
+                          value={p.product_name}
+                          onChange={(e) => updateProduct(i, {
+                            product_name: e.target.value,
+                            manufacturer_id: "",
+                            manufacturer_name: "",
+                          })}
+                        />
+                      )}
+                      {p.manufacturer_name && !showManualName && (
+                        <p className="text-[10px] truncate" style={{ color: "#9a8f7e" }}>
+                          {p.manufacturer_name}
+                        </p>
+                      )}
+                    </div>
+                    <Input placeholder="Batch/Lot #" className="text-sm h-8" value={p.batch_lot} onChange={e => updateProduct(i, { batch_lot: e.target.value })} />
+                    <div className="flex gap-1">
+                      <Input placeholder="Amount" className="text-sm h-8" value={p.amount} onChange={e => updateProduct(i, { amount: e.target.value })} />
+                      {products.length > 1 && (
+                        <button type="button" onClick={() => setProducts(prev => prev.filter((_, j) => j !== i))} className="text-red-400 hover:text-red-600">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {/* Clinical Notes */}

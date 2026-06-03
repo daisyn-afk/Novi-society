@@ -7,6 +7,7 @@ import { Users } from "lucide-react";
 import { format } from "date-fns";
 
 const statusColor = { pending: "bg-yellow-100 text-yellow-700", active: "bg-green-100 text-green-700", suspended: "bg-red-100 text-red-700", terminated: "bg-slate-100 text-slate-600" };
+const statusLabel = { pending: "Active", active: "Active", suspended: "Suspended", terminated: "Terminated" };
 
 export default function MDProviders() {
   const { data: relationships = [], isLoading } = useQuery({
@@ -45,7 +46,7 @@ export default function MDProviders() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-semibold text-slate-900">{r.provider_name}</span>
-                      <Badge className={statusColor[r.status]}>{r.status}</Badge>
+                      <Badge className={statusColor[r.status]}>{statusLabel[r.status] || r.status}</Badge>
                     </div>
                     <p className="text-sm text-slate-500">{r.provider_email}</p>
                     <div className="flex gap-3 text-xs text-slate-400 mt-1">

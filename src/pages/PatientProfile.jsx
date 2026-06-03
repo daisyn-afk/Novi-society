@@ -8,11 +8,15 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Save, CheckCircle, User, Phone, Heart, AlertTriangle, XCircle } from "lucide-react";
+import { formatUsPhoneInput, usPhoneValidationError } from "@/lib/phoneValidation";
 
 export default function PatientProfile() {
   const queryClient = useQueryClient();
   const { data: me, refetch } = useQuery({ queryKey: ["me"], queryFn: () => base44.auth.me() });
   const [form, setForm] = useState({});
+  const [errors, setErrors] = useState({});
+  const [submitAttempted, setSubmitAttempted] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
   const [banner, setBanner] = useState(null); // { type: "success" | "error", message: string }
 
   const glassCardStyle = {
@@ -21,8 +25,17 @@ export default function PatientProfile() {
     border: "1px solid rgba(123,142,200,0.2)",
     boxShadow: "0 2px 16px rgba(30,37,53,0.07)",
   };
-  const inputClassName = "bg-white border-slate-300 text-slate-900 placeholder:text-slate-500 focus-visible:ring-[#7B8EC8] focus-visible:border-[#7B8EC8] disabled:bg-slate-100 disabled:text-slate-500";
+  const inputClassName = "bg-white border-slate-300 text-slate-900 placeholder:text-slate-500 focus-visible:ring-[#7B8EC8] focus-visible:border-[#7B8EC8] disabled:bg-white disabled:text-slate-900 disabled:opacity-100";
+  const selectTriggerClassName = `${inputClassName} data-[disabled]:opacity-100 data-[disabled]:text-slate-900 data-[disabled]:bg-white`;
   const labelClassName = "text-xs font-semibold mb-1.5 block text-slate-700";
+  const requiredFieldKeys = new Set([
+    "phone",
+    "city",
+    "state",
+    "date_of_birth",
+    "emergency_contact_name",
+    "emergency_contact_phone",
+  ]);
 
   useEffect(() => {
     if (me) setForm({
@@ -40,11 +53,62 @@ export default function PatientProfile() {
     });
   }, [me]);
 
+  const isAtLeast18 = (dateValue) => {
+    if (!dateValue) return false;
+    const dob = new Date(`${dateValue}T00:00:00`);
+    if (Number.isNaN(dob.getTime())) return false;
+
+    const today = new Date();
+    let age = today.getFullYear() - dob.getFullYear();
+    const monthDiff = today.getMonth() - dob.getMonth();
+    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < dob.getDate())) {
+      age -= 1;
+    }
+    return age >= 18;
+  };
+
+  const validateForm = (data) => {
+    const nextErrors = {};
+    const requiredMessage = "This field is required";
+
+    if (!data.phone?.trim()) {
+      nextErrors.phone = requiredMessage;
+    } else {
+      const phoneError = usPhoneValidationError(data.phone, { required: true });
+      if (phoneError) nextErrors.phone = phoneError;
+    }
+
+    if (!data.city?.trim()) nextErrors.city = requiredMessage;
+    if (!data.state?.trim()) nextErrors.state = requiredMessage;
+
+    if (!data.date_of_birth?.trim()) {
+      nextErrors.date_of_birth = requiredMessage;
+    } else if (!isAtLeast18(data.date_of_birth)) {
+      nextErrors.date_of_birth = "You must be at least 18 years old";
+    }
+
+    if (!data.emergency_contact_name?.trim()) {
+      nextErrors.emergency_contact_name = requiredMessage;
+    }
+
+    if (!data.emergency_contact_phone?.trim()) {
+      nextErrors.emergency_contact_phone = requiredMessage;
+    } else {
+      const emergencyPhoneError = usPhoneValidationError(data.emergency_contact_phone, { required: true });
+      if (emergencyPhoneError) nextErrors.emergency_contact_phone = emergencyPhoneError;
+    }
+
+    return nextErrors;
+  };
+
   const save = useMutation({
     mutationFn: () => base44.auth.updateMe(form),
     onSuccess: (updatedMe) => {
       queryClient.setQueryData(["me"], updatedMe);
       refetch();
+      setErrors({});
+      setSubmitAttempted(false);
+      setIsEditing(false);
       setBanner({ type: "success", message: "Profile saved successfully." });
       setTimeout(() => setBanner(null), 4000);
       setTimeout(() => save.reset(), 1250);
@@ -56,9 +120,36 @@ export default function PatientProfile() {
   });
 
   const initials = me?.full_name?.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase() || "P";
+  const maxDob = new Date(new Date().setFullYear(new Date().getFullYear() - 18)).toISOString().split("T")[0];
+
+  const handleSave = () => {
+    setSubmitAttempted(true);
+    const validationErrors = validateForm(form);
+    setErrors(validationErrors);
+    if (Object.keys(validationErrors).length > 0) return;
+    save.mutate();
+  };
+
+  const handleEdit = () => {
+    setIsEditing(true);
+    setSubmitAttempted(false);
+    setErrors({});
+    save.reset();
+  };
+
+  const handleFieldChange = (key, value) => {
+    const normalizedValue = (key === "phone" || key === "emergency_contact_phone")
+      ? formatUsPhoneInput(value)
+      : value;
+    const nextForm = { ...form, [key]: normalizedValue };
+    setForm(nextForm);
+    if (submitAttempted) {
+      setErrors(validateForm(nextForm));
+    }
+  };
 
   return (
-    <div className="max-w-2xl space-y-6">
+    <div className="max-w-2xl mx-auto space-y-6">
       {/* Header */}
       <div>
         <p className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: "rgba(218,106,99,0.9)" }}>Patient</p>
@@ -100,7 +191,7 @@ export default function PatientProfile() {
         {
           title: "Contact Info", icon: Phone,
           fields: [
-            { label: "Phone", key: "phone", type: "tel", placeholder: "+1 (555) 000-0000" },
+            { label: "Phone", key: "phone", type: "tel", placeholder: "(555) 123-4567" },
             { label: "City", key: "city", placeholder: "Austin" },
             { label: "State", key: "state", placeholder: "TX" },
           ]
@@ -125,7 +216,7 @@ export default function PatientProfile() {
           title: "Emergency Contact", icon: AlertTriangle,
           fields: [
             { label: "Name", key: "emergency_contact_name", placeholder: "Full name" },
-            { label: "Phone", key: "emergency_contact_phone", type: "tel", placeholder: "+1 (555) 000-0000" },
+            { label: "Phone", key: "emergency_contact_phone", type: "tel", placeholder: "(555) 123-4567" },
           ]
         },
       ].map(section => (
@@ -138,18 +229,22 @@ export default function PatientProfile() {
           <div className="p-6 grid gap-4" style={{ gridTemplateColumns: section.fields.length > 2 ? "1fr" : "repeat(auto-fit, minmax(180px, 1fr))" }}>
             {section.fields.map(f => (
               <div key={f.key}>
-                <Label className={labelClassName}>{f.label}</Label>
+                <Label className={labelClassName}>
+                  {f.label}
+                  {requiredFieldKeys.has(f.key) ? " *" : ""}
+                </Label>
                 {f.type === "textarea" ? (
                   <Textarea
                     value={form[f.key] || ""}
-                    onChange={e => setForm({ ...form, [f.key]: e.target.value })}
+                    onChange={e => handleFieldChange(f.key, e.target.value)}
                     placeholder={f.placeholder}
                     rows={2}
+                    disabled={!isEditing}
                     className={inputClassName}
                   />
                 ) : f.type === "select" ? (
-                  <Select value={form[f.key] || ""} onValueChange={v => setForm({ ...form, [f.key]: v })}>
-                    <SelectTrigger className={inputClassName}><SelectValue placeholder="Select..." /></SelectTrigger>
+                  <Select value={form[f.key] || ""} onValueChange={v => handleFieldChange(f.key, v)} disabled={!isEditing}>
+                    <SelectTrigger className={selectTriggerClassName}><SelectValue placeholder="Select..." /></SelectTrigger>
                     <SelectContent>
                       {f.options.map(o => (
                         <SelectItem key={o} value={o} className="capitalize">{o.replace(/_/g, " ")}</SelectItem>
@@ -160,10 +255,15 @@ export default function PatientProfile() {
                   <Input
                     type={f.type || "text"}
                     value={form[f.key] || ""}
-                    onChange={e => setForm({ ...form, [f.key]: e.target.value })}
+                    onChange={e => handleFieldChange(f.key, e.target.value)}
                     placeholder={f.placeholder}
+                    max={f.key === "date_of_birth" ? maxDob : undefined}
+                    disabled={!isEditing}
                     className={inputClassName}
                   />
+                )}
+                {isEditing && errors[f.key] && (
+                  <p className="text-xs text-red-600 mt-1">{errors[f.key]}</p>
                 )}
               </div>
             ))}
@@ -171,22 +271,36 @@ export default function PatientProfile() {
         </div>
       ))}
 
-      <Button
-        className="w-full h-12 font-bold text-base rounded-2xl"
-        style={{
-          background: save.isSuccess ? "#16a34a" : "#FA6F30",
-          color: "#fff",
-          transition: "background 0.3s"
-        }}
-        onClick={() => save.mutate()}
-        disabled={save.isPending}
-      >
-        {save.isPending
-          ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2 inline-block" /> Saving...</>
-          : save.isSuccess
-            ? <><CheckCircle className="w-4 h-4 mr-2 inline" /> Saved!</>
-            : <><Save className="w-4 h-4 mr-2 inline" /> Save Profile</>}
-      </Button>
+      {isEditing ? (
+        <Button
+          className="w-full h-12 font-bold text-base rounded-2xl"
+          style={{
+            background: save.isSuccess ? "#16a34a" : "#FA6F30",
+            color: "#fff",
+            transition: "background 0.3s"
+          }}
+          onClick={handleSave}
+          disabled={save.isPending}
+        >
+          {save.isPending
+            ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2 inline-block" /> Saving...</>
+            : save.isSuccess
+              ? <><CheckCircle className="w-4 h-4 mr-2 inline" /> Saved!</>
+              : <><Save className="w-4 h-4 mr-2 inline" /> Save Profile</>}
+        </Button>
+      ) : (
+        <Button
+          className="w-full h-12 font-bold text-base rounded-2xl"
+          style={{
+            background: "#243257",
+            color: "#fff",
+            transition: "background 0.3s"
+          }}
+          onClick={handleEdit}
+        >
+          Edit Profile
+        </Button>
+      )}
     </div>
   );
 }
