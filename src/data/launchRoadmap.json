@@ -13,6 +13,7 @@
           "label": "License Verified by NOVI Admin",
           "desc": "Prerequisite for MD coverage. Upload your RN, NP, PA, or MD license for admin verification.",
           "priority": 10,
+          "playbook": "license_verified",
           "autoCheck": "license_verified",
           "navigate_to": "ProviderCredentialsCoverage",
           "navigate_params": "?tab=licenses"
@@ -40,77 +41,45 @@
           "label": "Bloodborne Pathogens Training",
           "desc": "OSHA legal requirement. Upload your bloodborne pathogens training certificate.",
           "priority": 40,
+          "playbook": "bloodborne",
           "autoCheck": "bloodborne",
           "navigate_to": "ProviderPractice",
-          "navigate_params": "?tab=profile&step=bloodborne",
-          "link": "https://www.redcross.org/take-a-class/program-aed/online-only/bloodborne-pathogens-training",
-          "linkLabel": "Take Red Cross bloodborne pathogens training →"
+          "navigate_params": "?tab=profile&step=bloodborne"
         },
         {
           "id": "llc",
           "label": "Form an LLC",
           "desc": "Asset protection. Keeps your personal money separate from your business.",
           "priority": 50,
-          "links": [
-            {
-              "url": "https://www.zenbusiness.com",
-              "label": "Form your LLC with ZenBusiness →"
-            },
-            {
-              "url": "https://www.legalzoom.com",
-              "label": "Form your LLC with LegalZoom →"
-            }
-          ]
+          "playbook": "llc"
         },
         {
           "id": "ein",
           "label": "Get EIN (Free)",
           "desc": "Business banking requirement. Free 5-minute IRS form.",
           "priority": 60,
-          "link": "https://www.irs.gov/businesses/small-businesses-self-employed/apply-for-an-employer-identification-number-ein-online",
-          "linkLabel": "Get your EIN from the IRS →"
+          "playbook": "ein"
         },
         {
           "id": "banking",
           "label": "Open Business Bank Account",
           "desc": "Clean financials. Never mix personal and business money.",
           "priority": 70,
-          "links": [
-            {
-              "url": "https://mercury.com",
-              "label": "Open a free account with Mercury →"
-            },
-            {
-              "url": "https://relayfi.com",
-              "label": "Open a free account with Relay →"
-            }
-          ]
+          "playbook": "banking"
         },
         {
           "id": "insurance",
           "label": "Malpractice Insurance",
-          "desc": "$30–50/mo, critical coverage. Non-negotiable before treating patients.",
+          "desc": "Professional liability coverage through CM&F — required before treating patients.",
           "priority": 80,
-          "links": [
-            {
-              "url": "https://www.hiscox.com",
-              "label": "Get a quote from Hiscox →"
-            },
-            {
-              "url": "https://www.cmfgroup.com",
-              "label": "Get a quote from CM&F Group →"
-            },
-            {
-              "url": "https://www.nextinsurance.com",
-              "label": "Get a quote from NEXT Insurance →"
-            }
-          ]
+          "playbook": "insurance"
         },
         {
           "id": "md_insurance",
           "label": "Add MD to Insurance Policy",
           "desc": "Required by most MDs. Contact your insurer to add your supervising MD to your malpractice policy.",
-          "priority": 90
+          "priority": 90,
+          "playbook": "md_insurance"
         }
       ]
     },
