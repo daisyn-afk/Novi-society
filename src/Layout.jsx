@@ -22,7 +22,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { hasStaffModulePermission, normalizeRole } from "@/lib/routeAccessPolicy";
+import { hasStaffModulePermission, normalizeRole, SHARED_AUTH_PAGES } from "@/lib/routeAccessPolicy";
 import ProviderNextStepBar from "@/components/launchpad/ProviderNextStepBar";
 import { useLaunchRoadmapStats } from "@/components/launchpad/useLaunchRoadmapStats";
 
@@ -112,6 +112,44 @@ export default function Layout({ children, currentPageName }) {
   }, [isSuccess, user, currentPageName]);
 
   const role = normalizeRole(user?.role);
+
+  // Patient onboarding gate: a freshly-registered patient must complete the
+  // 6-step PatientOnboarding flow before they can access any other patient
+  // page. Shared auth pages (legal, landing) remain open so they can still
+  // read policies or log out. The gate is frontend-only — it's UX flow
+  // enforcement, not security; sensitive data is already protected by auth.
+  const isPatient = role === "patient";
+  const patientGateExemptPages = currentPageName === "PatientOnboarding"
+    || currentPageName === "Onboarding"
+    || SHARED_AUTH_PAGES.has(currentPageName);
+
+  const { data: patientOnboardingState, isLoading: isPatientGateLoading } = useQuery({
+    queryKey: ["patient-onboarding-gate", user?.id],
+    queryFn: async () => {
+      const journeys = await base44.entities.PatientJourney.filter({ patient_id: user.id });
+      const journey = journeys?.[0] || null;
+      return {
+        hasJourney: Boolean(journey),
+        completed: Boolean(journey?.onboarding_completed),
+      };
+    },
+    enabled: isSuccess && isPatient && !!user?.id,
+    staleTime: 60_000,
+    retry: 1,
+  });
+
+  const patientNeedsOnboarding =
+    isPatient
+    && !patientGateExemptPages
+    && patientOnboardingState
+    && !patientOnboardingState.completed;
+
+  useEffect(() => {
+    if (patientNeedsOnboarding) {
+      navigate(createPageUrl("PatientOnboarding"));
+    }
+  }, [patientNeedsOnboarding]);
+
   const navRole = role;
   const navItems = navRole === "staff"
     ? navByRole.staff.filter(({ page }) =>
@@ -155,6 +193,18 @@ export default function Layout({ children, currentPageName }) {
 
   if (BARE_PAGES.includes(currentPageName)) {
     return <div>{children}</div>;
+  }
+
+  // While we're determining whether a patient has completed onboarding,
+  // suppress rendering of the protected page to avoid a flash before the
+  // redirect lands. The exempt pages (PatientOnboarding, legal, landing)
+  // render normally — they're allowed regardless of gate state.
+  if (isPatient && !patientGateExemptPages && (isPatientGateLoading || patientNeedsOnboarding)) {
+    return (
+      <div className="min-h-screen flex items-center justify-center" style={{ background: "linear-gradient(150deg, #ede9fb 0%, #f5f2ff 40%, #eaf5c8 75%, #C8E63C 100%)" }}>
+        <div className="w-6 h-6 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
   }
 
   const isActive = (page) => currentPageName === page;
