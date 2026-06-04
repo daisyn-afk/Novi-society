@@ -1,7 +1,7 @@
 import Stripe from "stripe";
 import { query } from "./db.js";
 import { insertAppNotification } from "./certificationNotifications.js";
-import { monthlyFeeForNewMdService } from "./mdMembershipPricing.js";
+import { monthlyFeeForNewMdService, resolveMdCoverageMonthlyFee } from "./mdMembershipPricing.js";
 import { submitMdBoardCoverageAssignment } from "./mdAssignmentService.js";
 import { attachSignedContractToSubscription, getServiceTypeContractInfo } from "./mdContractPdfService.js";
 import { getProviderIdAliases } from "./mdSupervisedAccess.js";
@@ -276,18 +276,21 @@ export async function createPendingMdSubscriptionForCheckout({
     return updated;
   }
 
+  const activeOtherCount = (
+    await query(
+      `select id from public.md_subscription
+       where provider_id = $1 and lower(status) = 'active' and service_type_id <> $2`,
+      [pid, stId]
+    )
+  ).rows.length;
   const fee =
     monthlyFee != null && Number.isFinite(Number(monthlyFee))
       ? Number(monthlyFee)
-      : monthlyFeeForNewMdService(
-          (
-            await query(
-              `select id from public.md_subscription
-               where provider_id = $1 and lower(status) = 'active' and service_type_id <> $2`,
-              [pid, stId]
-            )
-          ).rows.length
-        );
+      : resolveMdCoverageMonthlyFee({
+          providerId: pid,
+          providerEmail,
+          activeServiceCountBeforeAdd: activeOtherCount,
+        });
 
   const nowIso = new Date().toISOString();
   const { rows } = await query(
@@ -518,7 +521,11 @@ export async function finalizeMdBoardCoverage({
       [pid, stId]
     )
   ).rows.length;
-  const monthlyFee = monthlyFeeForNewMdService(activeOtherCount);
+  const monthlyFee = resolveMdCoverageMonthlyFee({
+    providerId: pid,
+    providerEmail,
+    activeServiceCountBeforeAdd: activeOtherCount,
+  });
   const nowIso = new Date().toISOString();
 
   if (!row || (status !== "pending" && status !== "active")) {

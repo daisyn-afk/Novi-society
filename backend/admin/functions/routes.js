@@ -12,6 +12,11 @@ import {
   ensureSignedContractForSubscription,
   finalizeMdBoardCoverage,
 } from "../mdBillingService.js";
+import {
+  isAllowlistedMdCoverageTestProvider,
+  isMdCoverageTestPricingEnabled,
+  resolveMdCoverageMonthlyFee,
+} from "../mdMembershipPricing.js";
 import Stripe from "stripe";
 import {
   recordCheckoutInitiated,
@@ -866,15 +871,6 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
     const serviceTypeId = String(body.service_type_id || "").trim();
     const serviceTypeName = String(body.service_type_name || "MD Board Coverage").trim() || "MD Board Coverage";
     const enrollmentId = body.enrollment_id != null ? String(body.enrollment_id).trim() : "";
-    const amountPrimary = body.amount;
-    const amountAlt = body.prorated_amount;
-    const amountRaw =
-      amountPrimary !== undefined && amountPrimary !== null && String(amountPrimary) !== ""
-        ? amountPrimary
-        : amountAlt;
-    const amountUsd = Number(amountRaw);
-    const safeUsd = Number.isFinite(amountUsd) && amountUsd >= 0 ? amountUsd : 0;
-    const amountCents = Math.round(safeUsd * 100);
 
     if (!serviceTypeId) {
       return res.status(400).json({ success: false, error: "service_type_id is required." });
@@ -891,6 +887,31 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
         success: false,
         error: "Please sign the MD agreement on the signature pad before continuing.",
       });
+    }
+
+    const { rows: activeOtherRows } = await query(
+      `select id from public.md_subscription
+       where provider_id = $1
+         and lower(coalesce(status, '')) = 'active'
+         and coalesce(service_type_id::text, '') <> $2`,
+      [me.id, serviceTypeId]
+    );
+    const activeOtherCount = activeOtherRows?.length || 0;
+    const monthlyFeeUsd = resolveMdCoverageMonthlyFee({
+      providerId: me.id,
+      providerEmail: me.email,
+      activeServiceCountBeforeAdd: activeOtherCount,
+    });
+    const amountCents = Math.round(monthlyFeeUsd * 100);
+
+    if (
+      isMdCoverageTestPricingEnabled() &&
+      isAllowlistedMdCoverageTestProvider(me.id, me.email)
+    ) {
+      // eslint-disable-next-line no-console
+      console.info(
+        `[md-coverage] test pricing applied for ${me.email}: $${monthlyFeeUsd}/mo (client sent amount=${body.amount})`
+      );
     }
 
     if (amountCents <= 0) {
@@ -926,6 +947,7 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
       enrollmentId: enrollmentId || null,
       signatureData,
       signedByName: me.full_name,
+      monthlyFee: monthlyFeeUsd,
     });
 
     const signedContractUrl = await ensureSignedContractForSubscription(pending, {
@@ -994,6 +1016,7 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
       md_subscription_id: pending.id,
       service_type_id: serviceTypeId,
       service_type_name: serviceTypeName,
+      checkout_amount_usd: monthlyFeeUsd,
     });
   } catch (error) {
     return next(error);
