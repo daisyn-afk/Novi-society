@@ -311,6 +311,21 @@ export default function PracticeAppointmentsTab({
 }) {
   const qc = useQueryClient();
   const { toast } = useToast();
+
+  useEffect(() => {
+    void qc.prefetchQuery({
+      queryKey: ["me"],
+      queryFn: () => base44.auth.me(),
+      staleTime: 10 * 60 * 1000,
+    });
+  }, [qc]);
+
+  const { data: me } = useQuery({
+    queryKey: ["me"],
+    queryFn: () => base44.auth.me(),
+    staleTime: 10 * 60 * 1000,
+  });
+
   const [view, setView] = useState("list"); // "list" | "week"
   const [filter, setFilter] = useState(initialFilter);
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date(), { weekStartsOn: 1 }));
@@ -929,6 +944,7 @@ export default function PracticeAppointmentsTab({
         onClose={() => setDocDialog({ open: false, appt: null, existing: null })}
         appointment={docDialog.appt}
         existingRecord={docDialog.existing}
+        providerMe={me}
       />
     </div>
   );
