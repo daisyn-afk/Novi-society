@@ -658,6 +658,7 @@ export default function ProviderPractice() {
         <PracticeAppointmentsTab
           appointments={appointments}
           initialFilter={appointmentsPanelFilter}
+          defaultBookingDeposit={me?.booking_deposit}
         />
       </PanelModal>
 

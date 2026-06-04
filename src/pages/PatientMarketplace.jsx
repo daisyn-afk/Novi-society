@@ -740,15 +740,11 @@ function ProviderProfilePanel({ provider, mdServices, certs, rating, reviewCount
               <p className="text-sm leading-relaxed">
                 <span className="text-slate-500">Consultation </span>
                 <strong className="text-slate-900 font-semibold">${provider.consultation_fee}</strong>
-                {provider.booking_deposit != null && provider.booking_deposit !== "" ? (
+                {Number(provider.booking_deposit) > 0 && (
                   <span className="text-slate-500">
                     {" "}
-                    · Deposit <strong style={{ color: "#7B8EC8" }}>${provider.booking_deposit}</strong>
-                  </span>
-                ) : (
-                  <span className="text-slate-500">
-                    {" "}
-                    · Deposit <strong style={{ color: "#7B8EC8" }}>$50</strong>
+                    · Booking deposit <strong style={{ color: "#7B8EC8" }}>${provider.booking_deposit}</strong>
+                    <span className="font-normal"> (due after provider confirms)</span>
                   </span>
                 )}
               </p>

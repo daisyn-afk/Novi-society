@@ -127,10 +127,26 @@ export async function uploadManufacturerLogo({ buffer, mimeType, extension }) {
   };
 }
 
-export async function uploadLicenseDocument({ buffer, mimeType, extension }) {
+function safeStorageFileName(originalName, fallbackExt = "bin") {
+  const raw = String(originalName || "").trim();
+  const base = raw
+    ? raw.replace(/[/\\?%*:|"<>]/g, "_").replace(/\s+/g, "-")
+    : `document.${fallbackExt}`;
+  return base.slice(0, 160) || `document.${fallbackExt}`;
+}
+
+export async function uploadLicenseDocument({
+  buffer,
+  mimeType,
+  extension,
+  folder = "license-photos",
+  originalFileName = null,
+}) {
   const client = getSupabaseClient();
   const cleanExt = (extension || "bin").replace(/^\./, "");
-  const objectPath = `license-photos/${Date.now()}-${randomUUID()}.${cleanExt}`;
+  const fileLabel = safeStorageFileName(originalFileName, cleanExt);
+  const hasExtension = /\.[a-z0-9]+$/i.test(fileLabel);
+  const objectPath = `${folder}/${Date.now()}-${hasExtension ? fileLabel : `${fileLabel}.${cleanExt}`}`;
 
   const { error: uploadError } = await uploadWithRetry({
     client,

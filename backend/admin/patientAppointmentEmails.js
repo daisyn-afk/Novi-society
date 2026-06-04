@@ -144,7 +144,7 @@ export async function notifyPatientGfeInvite({
 
   const provider = String(providerName || "Your provider").trim();
   const service = String(serviceLabel || "your appointment").trim();
-  const message = `${provider} sent you a Good Faith Exam link for ${service}. Complete it before your visit.`;
+  const message = `${provider} sent you a Good Faith Exam for ${service}. Open Appointments in NOVI to complete it.`;
 
   return insertInAppNotification({
     userId: pid,

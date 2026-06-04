@@ -6,6 +6,11 @@ import {
   isMedicalDirectorRole,
   mdHasActiveSupervisionOf,
 } from "../mdSupervisedAccess.js";
+import { getGlobalMdContractUrl, isUsableMdContractUrl } from "../lib/globalMdContract.js";
+import {
+  filterProtocolDocuments,
+  resolveProtocolDocumentsForSubscription,
+} from "../lib/mdSubscriptionProtocolDocs.js";
 import { enrichMdSubscriptionMonthlyFees, monthlyFeeForNewMdService } from "../mdMembershipPricing.js";
 import { ensureSignedContractForSubscription, finalizeMdBoardCoverage } from "../mdBillingService.js";
 
@@ -29,9 +34,10 @@ async function respondWithSubscriptions(res, rows) {
     ),
   ];
   const contractByServiceId = new Map();
+  let globalMdContractUrl = "";
   if (serviceTypeIds.length) {
     const { rows: serviceTypes } = await query(
-      `select id, name, md_contract_url, md_agreement_text
+      `select id, name, md_contract_url, md_agreement_text, protocol_document_urls, coverage_tiers
          from public.service_type
         where id::text = any($1::text[])`,
       [serviceTypeIds]
@@ -40,13 +46,20 @@ async function respondWithSubscriptions(res, rows) {
       contractByServiceId.set(String(st.id), st);
     }
   }
+  globalMdContractUrl = await getGlobalMdContractUrl();
   const sanitized = (rows || []).map((row) => {
     const { signature_data: _sig, ...rest } = row || {};
     const st = contractByServiceId.get(String(row?.service_type_id || ""));
+    const mdContractUrl = isUsableMdContractUrl(st?.md_contract_url)
+      ? st.md_contract_url
+      : globalMdContractUrl || null;
+    const protocolDocs = resolveProtocolDocumentsForSubscription(row, st);
+    const snapshotDocs = filterProtocolDocuments(row?.protocol_document_urls);
     return {
       ...rest,
-      md_contract_url: st?.md_contract_url || null,
+      md_contract_url: mdContractUrl,
       md_agreement_text: st?.md_agreement_text || null,
+      protocol_document_urls: snapshotDocs.length ? snapshotDocs : protocolDocs,
     };
   });
   return res.json(enrichMdSubscriptionMonthlyFees(sanitized));

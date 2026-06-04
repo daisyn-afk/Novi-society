@@ -417,18 +417,6 @@ async function resolveTemplateCourseIdForServiceType(serviceTypeId) {
   return rows?.[0]?.id || null;
 }
 
-function isComplianceCertification(body) {
-  const category = String(body?.category || "").trim().toLowerCase();
-  if (category === "compliance") return true;
-  const label = `${body?.certification_name || body?.cert_name || ""} ${body?.issued_by || ""}`;
-  return /cpr|bls|basic life support/i.test(label);
-}
-
-function isAdminIssuedCourseCertification(body, canSetAnyProvider) {
-  if (!canSetAnyProvider) return false;
-  return Boolean(String(body?.enrollment_id || "").trim() || String(body?.course_id || "").trim());
-}
-
 certificationsRouter.get("/", async (req, res, next) => {
   try {
     const me = req.me || {};
@@ -571,21 +559,11 @@ certificationsRouter.post("/", async (req, res, next) => {
     const body = req.body || {};
     const columns = await getCertificationColumns();
     const canSetAnyProvider = hasAdminOrStaffModuleAccess(me, "AdminLicenses");
-    const adminIssuedCourseCertification = isAdminIssuedCourseCertification(body, canSetAnyProvider);
-    const complianceCertification = isComplianceCertification(body);
     let resolvedTemplateCourseId = body.template_course_id || null;
+    // Link to a template course when one exists for the service type; optional otherwise
+    // (external certs and services without a NOVI course do not require template_course_id).
     if (columns.has("template_course_id") && !resolvedTemplateCourseId) {
       resolvedTemplateCourseId = await resolveTemplateCourseIdForServiceType(body.service_type_id);
-    }
-    if (
-      columns.has("template_course_id") &&
-      !resolvedTemplateCourseId &&
-      !adminIssuedCourseCertification &&
-      !complianceCertification
-    ) {
-      const err = new Error("No linked template course found for this service type. Ask admin to link the service type to a template course.");
-      err.statusCode = 400;
-      throw err;
     }
     const submitterName = resolveNameFromUser(me);
     const submitterEmail = String(me?.email || "").trim() || null;

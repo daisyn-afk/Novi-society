@@ -5,6 +5,22 @@ import { resolveQualiphyWebhookUrl } from "./config.js";
 export { resolveQualiphyWebhookUrl };
 
 let appointmentColumnsPromise = null;
+let preOrderColumnsPromise = null;
+
+async function hasPreOrderColumn(name) {
+  if (!preOrderColumnsPromise) {
+    preOrderColumnsPromise = query(
+      `select column_name
+         from information_schema.columns
+        where table_schema = 'public'
+          and table_name = 'pre_orders'`
+    )
+      .then((r) => new Set((r.rows || []).map((row) => String(row.column_name || "").toLowerCase())))
+      .catch(() => new Set());
+  }
+  const cols = await preOrderColumnsPromise;
+  return cols.has(String(name || "").toLowerCase());
+}
 
 async function hasAppointmentColumn(name) {
   if (!appointmentColumnsPromise) {
@@ -188,6 +204,8 @@ async function updatePreOrderFromQualiphy({
   examUrl,
   providerName,
   patientEmail,
+  meetingUuid,
+  patientExamId,
 }) {
   const id = String(preOrderId || "").trim();
   if (!id) return { updated: false, reason: "missing_pre_order_id" };
@@ -199,10 +217,20 @@ async function updatePreOrderFromQualiphy({
     setParts.push(`${col} = $${params.length}`);
   };
 
-  add("gfe_status", gfeStatus);
-  if (examUrl) add("gfe_meeting_url", examUrl);
-  if (gfeStatus === "approved") add("gfe_completed_at", new Date().toISOString());
-  if (providerName) add("gfe_provider_name", providerName);
+  if (await hasPreOrderColumn("gfe_status")) add("gfe_status", gfeStatus);
+  if (examUrl && (await hasPreOrderColumn("gfe_meeting_url"))) add("gfe_meeting_url", examUrl);
+  if (gfeStatus === "approved" && (await hasPreOrderColumn("gfe_completed_at"))) {
+    add("gfe_completed_at", new Date().toISOString());
+  }
+  if (providerName && (await hasPreOrderColumn("gfe_provider_name"))) {
+    add("gfe_provider_name", providerName);
+  }
+  if (meetingUuid && (await hasPreOrderColumn("qualiphy_meeting_uuid"))) {
+    add("qualiphy_meeting_uuid", meetingUuid);
+  }
+  if (patientExamId && (await hasPreOrderColumn("qualiphy_patient_exam_id"))) {
+    add("qualiphy_patient_exam_id", patientExamId);
+  }
 
   await query(
     `update public.pre_orders set ${setParts.join(", ")} where id = $1`,
@@ -261,6 +289,62 @@ async function findPendingAppointmentByEmail(patientEmail) {
   return rows[0]?.id || null;
 }
 
+async function findPreOrderIdByQualiphyIds({ meetingUuid, patientExamId }) {
+  const uuid = String(meetingUuid || "").trim();
+  const examId = String(patientExamId || "").trim();
+  if (uuid && (await hasPreOrderColumn("qualiphy_meeting_uuid"))) {
+    const { rows } = await query(
+      `select id from public.pre_orders
+        where qualiphy_meeting_uuid = $1
+        order by gfe_initiated_at desc nulls last, created_at desc
+        limit 1`,
+      [uuid]
+    );
+    if (rows[0]?.id) return rows[0].id;
+  }
+  if (examId && (await hasPreOrderColumn("qualiphy_patient_exam_id"))) {
+    const { rows } = await query(
+      `select id from public.pre_orders
+        where qualiphy_patient_exam_id = $1
+        order by gfe_initiated_at desc nulls last, created_at desc
+        limit 1`,
+      [examId]
+    );
+    if (rows[0]?.id) return rows[0].id;
+  }
+  return null;
+}
+
+async function findPendingPreOrderByEmail(patientEmail) {
+  const email = String(patientEmail || "").trim().toLowerCase();
+  if (!email) return null;
+  const { rows } = await query(
+    `select id from public.pre_orders
+      where lower(coalesce(customer_email, '')) = $1
+        and lower(coalesce(order_type, '')) = 'model'
+        and coalesce(gfe_status, 'not_available') in ('pending', 'not_sent', 'not_available')
+        and gfe_completed_at is null
+      order by gfe_initiated_at desc nulls last, created_at desc
+      limit 1`,
+    [email]
+  );
+  return rows[0]?.id || null;
+}
+
+async function resolveModelPreOrderId({ additional, meetingUuid, patientExamId, patientEmail }) {
+  const fromAdditional = String(additional?.pre_order_id || "").trim();
+  if (fromAdditional) return fromAdditional;
+
+  const fromIds = await findPreOrderIdByQualiphyIds({ meetingUuid, patientExamId });
+  if (fromIds) return fromIds;
+
+  if (additional?.source === "novi_model_signup" || additional?.source === "model_signup") {
+    return findPendingPreOrderByEmail(patientEmail);
+  }
+
+  return findPendingPreOrderByEmail(patientEmail);
+}
+
 /**
  * Qualiphy POST callback when a patient completes (or updates) an exam.
  * @see https://api-docs.qualiphy.me/docs/api/exam-webhook
@@ -287,10 +371,39 @@ export async function handleQualiphyExamWebhook(req, res, next) {
 
     let result = { received: true, handled: false };
 
-    let appointmentId = String(additional.appointment_id || "").trim() || null;
     const meetingUuid = String(body.meeting_uuid || "").trim();
     const patientExamId = String(body.patient_exam_id || "").trim();
+    const isModelSignup =
+      additional.source === "novi_model_signup" || additional.source === "model_signup";
 
+    // Model signups: update pre_orders first (do not route to a patient appointment by email).
+    if (isModelSignup || additional.pre_order_id) {
+      const preOrderId = await resolveModelPreOrderId({
+        additional,
+        meetingUuid,
+        patientExamId,
+        patientEmail,
+      });
+      if (preOrderId) {
+        result = {
+          ...result,
+          ...(await updatePreOrderFromQualiphy({
+            preOrderId,
+            gfeStatus,
+            examUrl,
+            providerName,
+            patientEmail,
+            meetingUuid,
+            patientExamId,
+          })),
+          handled: true,
+          matched_by: "model_pre_order",
+        };
+        return res.status(200).json(result);
+      }
+    }
+
+    let appointmentId = String(additional.appointment_id || "").trim() || null;
     if (!appointmentId) {
       appointmentId = await findAppointmentIdByQualiphyIds({ meetingUuid, patientExamId });
     }
@@ -309,20 +422,36 @@ export async function handleQualiphyExamWebhook(req, res, next) {
           patientExamId,
         })),
         handled: true,
+        matched_by: "appointment",
       };
-    } else if (additional.pre_order_id || additional.source === "novi_model_signup") {
+      return res.status(200).json(result);
+    }
+
+    const preOrderId = await resolveModelPreOrderId({
+      additional,
+      meetingUuid,
+      patientExamId,
+      patientEmail,
+    });
+    if (preOrderId) {
       result = {
         ...result,
         ...(await updatePreOrderFromQualiphy({
-          preOrderId: additional.pre_order_id,
+          preOrderId,
           gfeStatus,
           examUrl,
           providerName,
           patientEmail,
+          meetingUuid,
+          patientExamId,
         })),
         handled: true,
+        matched_by: "pre_order_fallback",
       };
-    } else if (patientEmail) {
+      return res.status(200).json(result);
+    }
+
+    if (patientEmail) {
       const fallbackId = await findPendingAppointmentByEmail(patientEmail);
       if (fallbackId) {
         result = {

@@ -24,6 +24,18 @@ export function formatAppointmentDate(dateValue, pattern = "EEE, MMM d, yyyy") {
  * Resolves the human-readable service label for an appointment row.
  * Falls back to joined service_type name when `service` is missing on legacy rows.
  */
+/** Practice Profile booking_deposit: empty or 0 means no deposit required. */
+export function profileBookingDepositAmount(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+export function providerConfirmActionLabel(bookingDeposit) {
+  return profileBookingDepositAmount(bookingDeposit) > 0
+    ? "Confirm & Request Deposit"
+    : "Confirm Appointment";
+}
+
 export function appointmentServiceLabel(appt) {
   if (!appt) return "";
   const direct = String(appt.service || "").trim();

@@ -46,6 +46,7 @@ import { buildManufacturerApplicationPayload } from "../manufacturers/providerAp
 import { validateBookingScope } from "../bookingValidation.js";
 import { sendAppointmentGfeInviteEmail, notifyPatientGfeInvite } from "../patientAppointmentEmails.js";
 import { handleQualiphyExamWebhook, resolveQualiphyWebhookUrl } from "../qualiphy/webhookHandler.js";
+import { buildAppointmentGfeRedirectUrls } from "../qualiphy/config.js";
 import {
   runCheckExpirations,
   runComplianceChecks,
@@ -358,7 +359,7 @@ function parseQualiphyInviteResponse(invitePayload) {
   return { meetingUrl, meetingUuid, patientExamId };
 }
 
-async function requestQualiphyExamInvite(inviteFields) {
+async function requestQualiphyExamInvite(inviteFields, qualiphyRedirectUrls = null) {
   const qualiphyApiKey = process.env.QUALIPHY_API_KEY || "";
   const qualiphyClinicId = process.env.QUALIPHY_CLINIC_ID || "";
   if (!qualiphyApiKey) {
@@ -372,6 +373,12 @@ async function requestQualiphyExamInvite(inviteFields) {
     api_key: qualiphyApiKey,
     ...inviteFields,
   };
+  if (qualiphyRedirectUrls && typeof qualiphyRedirectUrls === "object") {
+    for (const key of ["redirect_approve", "redirect_reject", "redirect_na", "redirect_missed"]) {
+      const value = String(qualiphyRedirectUrls[key] || "").trim();
+      if (value) invitePayloadBody[key] = value;
+    }
+  }
   if (qualiphyWebhookUrl) {
     invitePayloadBody.webhook_url = qualiphyWebhookUrl;
   } else {
@@ -643,6 +650,73 @@ async function requireAdminOrStaffModelSignups(req, res, next) {
     return res.status(403).json({ error: "Forbidden." });
   } catch (error) {
     return res.status(error?.statusCode || 401).json({ error: error?.message || "Unauthorized." });
+  }
+}
+
+function isModelPreOrderEligibleForPublicGfe(row) {
+  if (!row || String(row.order_type || "").toLowerCase() !== "model") return false;
+  const status = String(row.status || "").toLowerCase();
+  const paymentStatus = String(row.payment_status || "").toLowerCase();
+  if (["cancelled", "rejected"].includes(status)) return false;
+  if (["paid", "confirmed", "completed"].includes(status)) return true;
+  if (["completed", "succeeded", "paid"].includes(paymentStatus)) return true;
+  if (row.paid_at) return true;
+  // Stripe success redirect can beat the webhook — allow a short pending window for the matching signup.
+  if (status === "pending" && row.created_at) {
+    const ageMs = Date.now() - new Date(row.created_at).getTime();
+    if (ageMs >= 0 && ageMs < 2 * 60 * 60 * 1000) return true;
+  }
+  return false;
+}
+
+async function loadModelPreOrderForPublicGfe({ pre_order_id, customer_email }) {
+  const id = String(pre_order_id || "").trim();
+  const email = String(customer_email || "").trim().toLowerCase();
+  if (!id || !email) return null;
+  const { rows } = await query(
+    `select id, order_type, status, payment_status, paid_at, created_at,
+            customer_email, customer_name, phone, course_id, treatment_type, date_of_birth
+     from public.pre_orders
+     where id = $1
+     limit 1`,
+    [id]
+  );
+  const row = rows[0];
+  if (!row) return null;
+  if (String(row.customer_email || "").trim().toLowerCase() !== email) return null;
+  if (!isModelPreOrderEligibleForPublicGfe(row)) return null;
+  return row;
+}
+
+/** Admin/staff, or model who just paid (pre_order_id + email on the booking). */
+async function requireAdminOrStaffModelSignupsOrPaidModel(req, res, next) {
+  try {
+    const token = getBearerToken(req);
+    if (token) {
+      try {
+        const me = await getMeFromAccessToken(token);
+        if (hasAdminAccess(me?.role) || hasStaffModuleAccess(me, "AdminModelSignups")) {
+          req.me = me;
+          return next();
+        }
+      } catch {
+        /* fall through to paid-model check */
+      }
+    }
+    const body = req.body || {};
+    const preOrder = await loadModelPreOrderForPublicGfe({
+      pre_order_id: body.pre_order_id,
+      customer_email: body.customer_email,
+    });
+    if (!preOrder) {
+      return res.status(403).json({
+        error: "Unable to verify this booking. Use the same email you paid with and try again in a moment.",
+      });
+    }
+    req.modelPreOrder = preOrder;
+    return next();
+  } catch (error) {
+    return res.status(error?.statusCode || 500).json({ error: error?.message || "Request failed." });
   }
 }
 
@@ -1870,7 +1944,7 @@ functionsRouter.post("/sendModelConfirmationEmail", requireAdminOrStaffModelSign
   }
 });
 
-functionsRouter.post("/sendModelGFEEmail", requireAdminOrStaffModelSignups, async (req, res, next) => {
+functionsRouter.post("/sendModelGFEEmail", requireAdminOrStaffModelSignupsOrPaidModel, async (req, res, next) => {
   try {
     const { customer_email, customer_name, gfe_url } = req.body || {};
     if (!customer_email || !gfe_url) return res.status(400).json({ error: "customer_email and gfe_url required" });
@@ -2074,9 +2148,10 @@ functionsRouter.post("/sendModelPostTrainingBatch", requireAdminOrStaffModelSign
   }
 });
 
-functionsRouter.post("/sendModelGFE", requireAdminOrStaffModelSignups, async (req, res, next) => {
+functionsRouter.post("/sendModelGFE", requireAdminOrStaffModelSignupsOrPaidModel, async (req, res, next) => {
   try {
-    const { customer_name, customer_email, phone, pre_order_id, course_id, treatment_type, date_of_birth } = req.body || {};
+    const { customer_name, customer_email, phone, pre_order_id, course_id, treatment_type, date_of_birth, send_email } =
+      req.body || {};
     if (!customer_email) return res.status(400).json({ error: "customer_email is required" });
     const qualiphyApiKey = process.env.QUALIPHY_API_KEY || "";
     const qualiphyClinicId = process.env.QUALIPHY_CLINIC_ID || "";
@@ -2215,16 +2290,7 @@ functionsRouter.post("/sendModelGFE", requireAdminOrStaffModelSignups, async (re
         retried_without_clinic: retriedWithoutClinic
       });
     }
-    const meetingUrl = String(
-      invitePayload?.meeting_url ||
-      invitePayload?.url ||
-      invitePayload?.exam_invite_url ||
-      invitePayload?.gfe_url ||
-      invitePayload?.data?.meeting_url ||
-      invitePayload?.data?.url ||
-      invitePayload?.data?.exam_invite_url ||
-      ""
-    ).trim();
+    const { meetingUrl, meetingUuid, patientExamId } = parseQualiphyInviteResponse(invitePayload);
     if (!meetingUrl) {
       return res.status(502).json({
         error: "Qualiphy did not return a GFE link.",
@@ -2239,15 +2305,26 @@ functionsRouter.post("/sendModelGFE", requireAdminOrStaffModelSignups, async (re
         upstream_payload: invitePayload
       });
     }
-    if (pre_order_id) {
+    const resolvedPreOrderId = pre_order_id || req.modelPreOrder?.id || null;
+    if (resolvedPreOrderId) {
       const hasGfeStatus = await hasPreOrderColumn("gfe_status");
       const hasMeetingUrl = await hasPreOrderColumn("gfe_meeting_url");
+      const hasQualiphyUuid = await hasPreOrderColumn("qualiphy_meeting_uuid");
+      const hasQualiphyExamId = await hasPreOrderColumn("qualiphy_patient_exam_id");
       const setClauses = ["gfe_initiated_at = now()", "updated_at = now()"];
-      const args = [pre_order_id];
+      const args = [resolvedPreOrderId];
       if (hasGfeStatus) setClauses.push("gfe_status = 'pending'");
       if (hasMeetingUrl) {
         args.push(meetingUrl);
         setClauses.push(`gfe_meeting_url = $${args.length}`);
+      }
+      if (hasQualiphyUuid && meetingUuid) {
+        args.push(meetingUuid);
+        setClauses.push(`qualiphy_meeting_uuid = $${args.length}`);
+      }
+      if (hasQualiphyExamId && patientExamId) {
+        args.push(patientExamId);
+        setClauses.push(`qualiphy_patient_exam_id = $${args.length}`);
       }
       await query(
         `update public.pre_orders
@@ -2256,7 +2333,25 @@ functionsRouter.post("/sendModelGFE", requireAdminOrStaffModelSignups, async (re
         args
       );
     }
-    return res.json({ success: true, meeting_url: meetingUrl });
+
+    let email_sent = false;
+    if (send_email !== false && customer_email) {
+      const firstName = String(customer_name || "there").split(" ")[0];
+      await sendModelEmail("model_gfe_invite", {
+        to: customer_email,
+        first_name: firstName,
+        gfe_url: meetingUrl,
+        summary_lines: [
+          "Brief video call with a licensed provider",
+          "Review of your health history",
+          "Medical clearance for your treatment",
+          "Takes approximately 5-10 minutes",
+        ],
+      });
+      email_sent = true;
+    }
+
+    return res.json({ success: true, meeting_url: meetingUrl, email_sent });
   } catch (error) {
     return next(error);
   }
@@ -2384,16 +2479,19 @@ functionsRouter.post("/sendQualiphyGFE", async (req, res, next) => {
     const normalizedPhone = digitsPhone.length === 10 ? `+1${digitsPhone}` : `+${digitsPhone}`;
     const tele_state = (await resolveTeleStateForAppointment({ appointment: appt, patientState })) || "TX";
 
-    const invite = await requestQualiphyExamInvite({
-      exams: [Number(qualiphyExamId)],
-      first_name: firstName,
-      last_name: lastName,
-      email: patientEmail,
-      dob,
-      phone_number: normalizedPhone,
-      tele_state,
-      additional_data: JSON.stringify({ source: "novi_appointment", appointment_id: appt.id }),
-    });
+    const invite = await requestQualiphyExamInvite(
+      {
+        exams: [Number(qualiphyExamId)],
+        first_name: firstName,
+        last_name: lastName,
+        email: patientEmail,
+        dob,
+        phone_number: normalizedPhone,
+        tele_state,
+        additional_data: JSON.stringify({ source: "novi_appointment", appointment_id: appt.id }),
+      },
+      buildAppointmentGfeRedirectUrls(appt.id)
+    );
 
     const setParts = [
       "gfe_status = 'pending'",

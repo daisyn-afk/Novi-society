@@ -341,8 +341,10 @@ export default function PracticeProfileTab({
             </div>
             <div>
               <FieldLabel><DollarSign className="w-3.5 h-3.5" /> Booking Deposit ($)</FieldLabel>
-              <GlassInput type="number" placeholder="e.g. 50 (default $50 if empty)" value={form.booking_deposit || ""} onChange={e => f("booking_deposit", e.target.value)} />
-              <p className="text-xs mt-1 text-gray-400">Flat amount charged via Stripe to hold the appointment</p>
+              <GlassInput type="number" min="0" placeholder="Leave empty for no deposit" value={form.booking_deposit || ""} onChange={e => f("booking_deposit", e.target.value)} />
+              <p className="text-xs mt-1 text-gray-400">
+                Optional. If set, patients pay this via Stripe after you confirm their request (not at booking). Treatment is billed separately after the visit.
+              </p>
             </div>
             <div>
               <FieldLabel><Clock className="w-3.5 h-3.5" /> Cancellation Window (hours)</FieldLabel>

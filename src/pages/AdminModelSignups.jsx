@@ -60,6 +60,16 @@ export default function AdminModelSignups() {
       const list = Array.isArray(rows) ? rows : [];
       return list.filter((row) => String(row?.order_type || "").toLowerCase() === "model");
     },
+    refetchInterval: (query) => {
+      const rows = query.state.data;
+      if (!Array.isArray(rows)) return false;
+      const hasPendingGfe = rows.some(
+        (row) =>
+          ["pending", "not_available", "not_sent", null, undefined, ""].includes(row?.gfe_status) &&
+          !row?.gfe_completed_at
+      );
+      return hasPendingGfe ? 30_000 : false;
+    },
   });
 
   const {
