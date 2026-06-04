@@ -156,6 +156,37 @@ export default function FoundationStepPlaybook({
         </Section>
       )}
 
+      {playbook.infoLists?.map((list) =>
+        list.items?.length ? (
+          <Section key={list.title} title={list.title} defaultOpen={list.defaultOpen ?? false}>
+            <ul className="space-y-1 text-sm list-disc pl-4" style={{ color: "rgba(30,37,53,0.65)" }}>
+              {list.items.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </Section>
+        ) : null
+      )}
+
+      {playbook.categories?.length > 0 && (
+        <Section title="Marketplace categories" defaultOpen={false}>
+          <div className="space-y-3">
+            {playbook.categories.map((cat) => (
+              <div key={cat.group}>
+                <p className="text-xs font-bold mb-1" style={{ color: "rgba(30,37,53,0.5)" }}>
+                  {cat.group}
+                </p>
+                <ul className="text-sm list-disc pl-4" style={{ color: "rgba(30,37,53,0.6)" }}>
+                  {cat.items.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+
       {playbook.npInstructions?.length > 0 && (
         <Section title="Nurse practitioners" defaultOpen={false}>
           <ul className="space-y-1 text-sm list-disc pl-4" style={{ color: "rgba(30,37,53,0.65)" }}>

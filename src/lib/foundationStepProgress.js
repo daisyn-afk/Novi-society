@@ -57,6 +57,12 @@ export function resolvePlaybookDisplayStatus(step, ctx = {}) {
     if (pending) return { key: "under_review", label: "Under Review" };
   }
 
+  // Auto-detected steps surface their state via the card's completed badge,
+  // not a status pill, so there is no standalone status to display here.
+  if (playbook.statusSource === "auto") return null;
+
+  if (!playbook.statusOptions?.length) return null;
+
   const externalKey = checklist[getStepExternalStatusKey(stepId)];
   if (externalKey && playbook.futureStatusSource === "webhook") {
     const ext = playbook.statusOptions.find((o) => o.key === externalKey);
@@ -80,6 +86,13 @@ export function isPlaybookStepComplete(step, autoChecks, manualChecklist, ctx = 
 
   if (playbook.statusSource === "cert" && step.autoCheck) {
     return !!autoChecks[step.autoCheck];
+  }
+
+  // Auto steps stay driven by their autoCheck (with a manual override fallback)
+  // so adding a playbook never breaks existing auto-completion.
+  if (playbook.statusSource === "auto") {
+    if (step.autoCheck && autoChecks[step.autoCheck]) return true;
+    return manualChecklist[stepId] === true;
   }
 
   if (manualChecklist[stepId] === true) return true;
