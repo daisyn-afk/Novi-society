@@ -720,6 +720,7 @@ export default function ProviderPractice() {
         onClose={() => { setDocDialog({ open: false, appt: null, existing: null }); qc.invalidateQueries(["treatment-records"]); }}
         appointment={docDialog.appt}
         existingRecord={docDialog.existing}
+        providerMe={me}
       />
 
       <PanelModal open={activePanel === "performance"} onClose={closePanel} title="Performance">

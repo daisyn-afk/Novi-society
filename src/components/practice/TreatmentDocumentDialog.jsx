@@ -13,11 +13,27 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
+import { useToast } from "@/components/ui/use-toast";
 import { Plus, Trash2, Upload, CheckCircle, AlertTriangle } from "lucide-react";
 import AftercarePlanDialog from "./AftercarePlanDialog";
 import TreatmentCheckoutDialog from "./TreatmentCheckoutDialog";
-
-const COMMON_AREAS = ["Forehead", "Glabella", "Crow's Feet", "Lip", "Chin", "Jawline", "Cheeks", "Neck", "Nasolabial Folds", "Marionette Lines"];
+import AreasTreatedField from "./AreasTreatedField";
+import {
+  areasForInjectableOffering,
+  buildAutoInvoiceChargeModes,
+  calculateCombinedInjectableTotal,
+  calculateTreatmentTotal,
+  combinedInjectableAreaSuggestions,
+  combinedInjectableLogFormConfig,
+  defaultUnitLabelForMenu,
+  formatUsd,
+  billingQuantitiesForForm,
+  getCombinedInjectableMenus,
+  isCombinedInjectableLog,
+  logTreatmentFormConfig,
+  resolveOfferingForAppointment,
+  serializeBillingQuantities,
+} from "@/lib/treatmentPricing";
 
 const EMPTY_PRODUCT = {
   product_name: "",
@@ -27,8 +43,19 @@ const EMPTY_PRODUCT = {
   manufacturer_name: "",
 };
 
-export default function TreatmentDocumentDialog({ open, onClose, appointment, existingRecord }) {
+export default function TreatmentDocumentDialog({
+  open,
+  onClose,
+  appointment,
+  existingRecord,
+  providerMe: providerMeProp = null,
+}) {
   const qc = useQueryClient();
+  const { toast } = useToast();
+  const treatmentAlreadyPaid =
+    String(appointment?.treatment_payment_status || "").toLowerCase() === "paid";
+  const treatmentAwaitingPayment =
+    String(appointment?.treatment_payment_status || "").toLowerCase() === "awaiting_payment";
   const [form, setForm] = useState({});
   const [products, setProducts] = useState([{ ...EMPTY_PRODUCT }]);
   const [areas, setAreas] = useState([]);
@@ -39,15 +66,34 @@ export default function TreatmentDocumentDialog({ open, onClose, appointment, ex
   const [showCheckout, setShowCheckout] = useState(false);
   const [savedRecord, setSavedRecord] = useState(null);
   const [patientJourney, setPatientJourney] = useState(null);
-  const [providerProfile, setProviderProfile] = useState(null);
+
+  const { data: me, isPending: mePending, isFetching: meFetching } = useQuery({
+    queryKey: ["me"],
+    queryFn: () => base44.auth.me(),
+    enabled: open,
+    staleTime: 10 * 60 * 1000,
+    placeholderData: () => providerMeProp ?? qc.getQueryData(["me"]),
+    initialData: providerMeProp ?? undefined,
+  });
+
+  const providerProfile = me ?? providerMeProp ?? null;
+  const menuLoading = open && !providerProfile && (mePending || meFetching);
+
+  useEffect(() => {
+    if (open) {
+      void qc.prefetchQuery({
+        queryKey: ["me"],
+        queryFn: () => base44.auth.me(),
+        staleTime: 10 * 60 * 1000,
+      });
+    }
+  }, [open, qc]);
 
   const { data: inventory = [] } = useQuery({
-    queryKey: ["my-inventory"],
-    queryFn: async () => {
-      const u = await base44.auth.me();
-      return base44.entities.ProviderInventory.filter({ provider_id: u.id }, "-created_date");
-    },
-    enabled: open,
+    queryKey: ["my-inventory", providerProfile?.id],
+    queryFn: () =>
+      base44.entities.ProviderInventory.filter({ provider_id: providerProfile.id }, "-created_date"),
+    enabled: open && Boolean(providerProfile?.id),
   });
 
   const inventoryOptions = useMemo(
@@ -64,35 +110,123 @@ export default function TreatmentDocumentDialog({ open, onClose, appointment, ex
     }, {});
   }, [inventoryOptions]);
 
+  const offerings = providerProfile?.service_offerings_v2 || {};
+  const combinedBundle = useMemo(
+    () => getCombinedInjectableMenus(offerings, appointment?.service_type_id),
+    [offerings, appointment?.service_type_id]
+  );
+  const isCombinedInjectable = useMemo(
+    () => isCombinedInjectableLog(offerings, appointment?.service_type_id),
+    [offerings, appointment?.service_type_id]
+  );
+
+  const menuOffering = useMemo(() => {
+    if (isCombinedInjectable) return null;
+    return resolveOfferingForAppointment({
+      serviceLabel: appointment?.service,
+      serviceTypeId: appointment?.service_type_id,
+      serviceTypeName: appointment?.service_type_name,
+      offerings,
+      unitsLabel: form.units_label,
+      unitsUsed: form.units_used,
+    });
+  }, [
+    appointment?.service,
+    appointment?.service_type_id,
+    appointment?.service_type_name,
+    offerings,
+    isCombinedInjectable,
+    form.units_label,
+    form.units_used,
+  ]);
+
+  const logForm = useMemo(() => {
+    if (isCombinedInjectable) return combinedInjectableLogFormConfig();
+    return logTreatmentFormConfig(menuOffering?.data?.pricing_model || "", appointment?.service);
+  }, [isCombinedInjectable, menuOffering?.data?.pricing_model, appointment?.service]);
+
+  const areaSuggestions = useMemo(() => {
+    if (isCombinedInjectable) {
+      return combinedInjectableAreaSuggestions(offerings, appointment?.service_type_id);
+    }
+    return areasForInjectableOffering(menuOffering);
+  }, [isCombinedInjectable, offerings, appointment?.service_type_id, menuOffering]);
+
+  const liveEstimate = useMemo(() => {
+    if (isCombinedInjectable && combinedBundle) {
+      return calculateCombinedInjectableTotal({
+        toxOffering: combinedBundle.tox.data,
+        fillerOffering: combinedBundle.filler.data,
+        unitsUsed: form.units_used,
+        syringesUsed: form.syringes_used,
+        areasTreated: areas,
+      });
+    }
+    if (!menuOffering?.data) return null;
+    const menuHint = menuOffering.data.pricing_model || "";
+    const chargeModes = buildAutoInvoiceChargeModes({
+      menuPricingHint: menuHint,
+      capabilities: logForm,
+      unitsUsed: form.units_used,
+      areasTreated: areas,
+    });
+    return calculateTreatmentTotal({
+      offering: menuOffering.data,
+      pricingModel: menuOffering.pricingModel,
+      unitsUsed: form.units_used,
+      areasTreated: areas,
+      chargeModes,
+    });
+  }, [
+    isCombinedInjectable,
+    combinedBundle,
+    menuOffering,
+    logForm,
+    form.units_used,
+    form.syringes_used,
+    areas,
+  ]);
+
   useEffect(() => {
-    const loadContext = async () => {
-      if (!open) return;
-      try {
-        const me = await base44.auth.me();
-        setProviderProfile(me);
-      } catch {
-        setProviderProfile(null);
-      }
-      if (!appointment?.patient_id) {
-        setPatientJourney(null);
-        return;
-      }
-      try {
-        const journeys = await base44.entities.PatientJourney.filter({ patient_id: appointment.patient_id });
-        setPatientJourney(journeys[0] || null);
-      } catch {
-        setPatientJourney(null);
-      }
+    if (!open || !menuOffering || existingRecord) return;
+    const defaultLabel = defaultUnitLabelForMenu(
+      menuOffering?.pricingModel,
+      menuOffering?.data?.pricing_model || ""
+    );
+    setForm((prev) =>
+      prev.units_label === defaultLabel ? prev : { ...prev, units_label: defaultLabel }
+    );
+  }, [open, menuOffering?.key, menuOffering?.pricingModel, menuOffering?.data?.pricing_model, existingRecord]);
+
+  useEffect(() => {
+    if (!open || !appointment?.patient_id) {
+      if (!open) setPatientJourney(null);
+      return;
+    }
+    let cancelled = false;
+    base44.entities.PatientJourney.filter({ patient_id: appointment.patient_id })
+      .then((journeys) => {
+        if (!cancelled) setPatientJourney(journeys[0] || null);
+      })
+      .catch(() => {
+        if (!cancelled) setPatientJourney(null);
+      });
+    return () => {
+      cancelled = true;
     };
-    loadContext();
   }, [appointment?.patient_id, open]);
 
   // Autofill from appointment
   useEffect(() => {
     if (!open) return;
     if (existingRecord) {
+      const billing = billingQuantitiesForForm(
+        existingRecord.units_used || "",
+        isCombinedInjectableLog(offerings, appointment?.service_type_id)
+      );
       setForm({
-        units_used: existingRecord.units_used || "",
+        units_used: billing.units_used,
+        syringes_used: billing.syringes_used,
         units_label: existingRecord.units_label || "units",
         clinical_notes: existingRecord.clinical_notes || "",
         adverse_reaction: existingRecord.adverse_reaction || false,
@@ -107,19 +241,22 @@ export default function TreatmentDocumentDialog({ open, onClose, appointment, ex
       setBeforePhotos(existingRecord.before_photo_urls || []);
       setAfterPhotos(existingRecord.after_photo_urls || []);
     } else if (appointment) {
-      setForm({ units_used: "", units_label: "units", clinical_notes: "", adverse_reaction: false, adverse_reaction_notes: "" });
+      setForm({
+        units_used: "",
+        syringes_used: "",
+        units_label: "units",
+        clinical_notes: "",
+        adverse_reaction: false,
+        adverse_reaction_notes: "",
+      });
       setProducts([{ ...EMPTY_PRODUCT }]);
       setAreas([]);
       setBeforePhotos([]);
       setAfterPhotos([]);
     }
-  }, [open, appointment, existingRecord]);
+  }, [open, appointment, existingRecord, offerings]);
 
   const f = (key, val) => setForm(prev => ({ ...prev, [key]: val }));
-
-  const toggleArea = (area) => {
-    setAreas(prev => prev.includes(area) ? prev.filter(a => a !== area) : [...prev, area]);
-  };
 
   const updateProduct = (index, patch) => {
     setProducts((prev) => prev.map((item, i) => (i === index ? { ...item, ...patch } : item)));
@@ -168,6 +305,12 @@ export default function TreatmentDocumentDialog({ open, onClose, appointment, ex
   const save = useMutation({
     mutationFn: async (status) => {
       const me = await base44.auth.me();
+      const {
+        syringes_used: _syringes,
+        units_used: _units,
+        units_label: _label,
+        ...restForm
+      } = form;
       const payload = {
         appointment_id: appointment.id,
         provider_id: appointment.provider_id,
@@ -185,7 +328,13 @@ export default function TreatmentDocumentDialog({ open, onClose, appointment, ex
         gfe_status: appointment.gfe_status || null,
         gfe_exam_url: appointment.gfe_exam_url || null,
         status,
-        ...form,
+        ...restForm,
+        units_label: isCombinedInjectable ? "units" : form.units_label,
+        units_used: serializeBillingQuantities({
+          units: form.units_used,
+          syringes: form.syringes_used,
+          isCombined: isCombinedInjectable,
+        }),
       };
       let record;
       if (existingRecord) {
@@ -210,12 +359,31 @@ export default function TreatmentDocumentDialog({ open, onClose, appointment, ex
       qc.invalidateQueries({ queryKey: ["my-appointments"] });
       qc.invalidateQueries({ queryKey: ["my-treatment-records-mktplace"] });
       qc.invalidateQueries({ queryKey: ["my-treatment-records-spend"] });
-      if (status === "submitted") {
+      if (status === "submitted" && !treatmentAlreadyPaid) {
         setSavedRecord(record);
         setShowCheckout(true);
       }
     },
   });
+
+  const handleSubmitForInvoice = async () => {
+    try {
+      const record = await save.mutateAsync("submitted");
+      if (treatmentAlreadyPaid) {
+        toast({
+          title: "Treatment record saved",
+          description: "The patient has already paid this treatment balance. The invoice cannot be changed.",
+        });
+        qc.invalidateQueries({ queryKey: ["my-appointments"] });
+        onClose();
+        return;
+      }
+      setSavedRecord(record);
+      setShowCheckout(true);
+    } catch {
+      /* mutation error surfaced by react-query / UI */
+    }
+  };
 
   if (!appointment) return null;
 
@@ -257,37 +425,155 @@ export default function TreatmentDocumentDialog({ open, onClose, appointment, ex
         )}
 
         <div className="space-y-5 pt-1">
-          {/* Areas Treated */}
-          <div className="space-y-2">
-            <Label className="text-xs font-semibold uppercase tracking-widest" style={{ color: "#DA6A63" }}>Areas Treated</Label>
-            <div className="flex flex-wrap gap-2">
-              {COMMON_AREAS.map(area => (
-                <button
-                  key={area}
-                  type="button"
-                  onClick={() => toggleArea(area)}
-                  className="px-3 py-1 rounded-full text-xs font-medium transition-all"
-                  style={areas.includes(area)
-                    ? { background: "#FA6F30", color: "#fff" }
-                    : { background: "rgba(198,190,168,0.3)", color: "#6B7DB3" }}
-                >
-                  {area}
-                </button>
-              ))}
+          {treatmentAlreadyPaid && (
+            <div className="rounded-xl px-4 py-3" style={{ background: "rgba(34,197,94,0.1)", border: "1px solid rgba(34,197,94,0.3)" }}>
+              <p className="text-xs font-semibold" style={{ color: "#16a34a" }}>Treatment balance paid</p>
+              <p className="text-[11px] mt-0.5" style={{ color: "#5a7a20" }}>
+                The patient has already paid
+                {appointment.treatment_amount ? ` ${formatUsd(appointment.treatment_amount)}` : ""}.
+                You can update the clinical record, but you cannot send a new payment link.
+              </p>
             </div>
-          </div>
+          )}
+          {treatmentAwaitingPayment && !treatmentAlreadyPaid && (
+            <div className="rounded-xl px-4 py-3" style={{ background: "rgba(200,230,60,0.12)", border: "1px solid rgba(200,230,60,0.35)" }}>
+              <p className="text-xs font-semibold" style={{ color: "#5a7a20" }}>Invoice sent — awaiting patient payment</p>
+              <p className="text-[11px] mt-0.5" style={{ color: "rgba(0,0,0,0.55)" }}>
+                You can edit this record and send an updated payment link if the amount changed (before they pay).
+              </p>
+            </div>
+          )}
 
-          {/* Units */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label className="text-xs">Units / Amount Used</Label>
-              <Input type="number" placeholder="e.g. 20" value={form.units_used || ""} onChange={e => f("units_used", e.target.value)} />
+          {isCombinedInjectable && combinedBundle ? (
+            <div className="rounded-xl px-4 py-3 space-y-1" style={{ background: "rgba(123,142,200,0.1)", border: "1px solid rgba(123,142,200,0.25)" }}>
+              <p className="text-xs font-semibold" style={{ color: "#243257" }}>
+                Injectables (combined) — from your treatment menu
+              </p>
+              <p className="text-[11px]" style={{ color: "#6B7DB3" }}>
+                Neurotoxin: {combinedBundle.tox.data?.pricing_model || "Per unit"}
+                {combinedBundle.tox.data?.price ? ` · $${combinedBundle.tox.data.price}` : ""}
+                {combinedBundle.tox.data?.price_per_area ? ` · $${combinedBundle.tox.data.price_per_area}/area` : ""}
+                {" · "}
+                Dermal filler: {combinedBundle.filler.data?.pricing_model || "Per syringe"}
+                {combinedBundle.filler.data?.price ? ` · $${combinedBundle.filler.data.price}` : ""}
+                {combinedBundle.filler.data?.price_per_area ? ` · $${combinedBundle.filler.data.price_per_area}/area` : ""}
+              </p>
+              <p className="text-[11px]" style={{ color: "#6B7DB3" }}>{logForm.logHelper}</p>
             </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">Unit Label</Label>
-              <Input placeholder="units / mL / syringes" value={form.units_label || ""} onChange={e => f("units_label", e.target.value)} />
+          ) : logForm.menuPricingHint ? (
+            <div className="rounded-xl px-4 py-3 space-y-1" style={{ background: "rgba(123,142,200,0.1)", border: "1px solid rgba(123,142,200,0.25)" }}>
+              <p className="text-xs font-semibold" style={{ color: "#243257" }}>
+                From your treatment menu
+                {menuOffering?.subLabel ? ` · ${menuOffering.subLabel}` : ""}: {logForm.menuPricingHint}
+                {menuOffering?.data?.price ? ` · $${menuOffering.data.price}` : ""}
+                {menuOffering?.data?.price_per_area ? ` · $${menuOffering.data.price_per_area}/area` : ""}
+              </p>
+              <p className="text-[11px]" style={{ color: "#6B7DB3" }}>{logForm.logHelper}</p>
             </div>
-          </div>
+          ) : (
+            <p className="text-xs rounded-lg px-3 py-2" style={{ background: "rgba(250,111,48,0.08)", color: "#9a8f7e" }}>
+              Set pricing on Practice → Treatment Menu for this service so logging and checkout auto-calculate.
+            </p>
+          )}
+
+          {open && (
+            <div
+              className="rounded-xl px-4 py-3 space-y-2"
+              style={{ background: "rgba(250,111,48,0.08)", border: "1px solid rgba(250,111,48,0.25)" }}
+            >
+              <p className="text-xs font-semibold uppercase tracking-widest" style={{ color: "#FA6F30" }}>
+                Estimated invoice (from your menu)
+              </p>
+              {menuLoading ? (
+                <p className="text-xs" style={{ color: "#9a8f7e" }}>
+                  Loading your menu prices…
+                </p>
+              ) : liveEstimate?.lines?.length > 0 ? (
+                <>
+                  {liveEstimate.lines.map((line, i) => (
+                    <div key={i} className="flex justify-between text-sm">
+                      <span style={{ color: "#243257" }}>
+                        {line.label}
+                        {line.quantity > 1 ? ` × ${line.quantity}` : ""}
+                        {line.unit_price ? ` @ ${formatUsd(line.unit_price)}` : ""}
+                      </span>
+                      <span className="font-semibold" style={{ color: "#243257" }}>
+                        {formatUsd(line.amount)}
+                      </span>
+                    </div>
+                  ))}
+                  <div
+                    className="flex justify-between text-sm pt-1 border-t font-semibold"
+                    style={{ borderColor: "rgba(250,111,48,0.2)", color: "#243257" }}
+                  >
+                    <span>Subtotal</span>
+                    <span style={{ color: "#FA6F30" }}>{formatUsd(liveEstimate.total)}</span>
+                  </div>
+                </>
+              ) : (
+                <p className="text-xs" style={{ color: "#9a8f7e" }}>
+                  {logForm.menuPrimary === "area"
+                    ? "Select areas treated to see the calculated total."
+                    : logForm.showAmountOnLog
+                      ? `Enter ${logForm.quantityLabel?.toLowerCase() || "quantity"} to see the calculated total.`
+                      : "Flat fee from your menu will apply at checkout."}
+                </p>
+              )}
+            </div>
+          )}
+
+          {logForm.injectableCombined && (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">Number of units (neurotoxin)</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  placeholder="e.g. 20"
+                  value={form.units_used || ""}
+                  onChange={(e) => f("units_used", e.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Number of syringes (filler)</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  placeholder="e.g. 2"
+                  value={form.syringes_used || ""}
+                  onChange={(e) => f("syringes_used", e.target.value)}
+                />
+              </div>
+            </div>
+          )}
+
+          {logForm.showAmountOnLog && !logForm.injectableCombined && (
+            <div className="space-y-1.5">
+              <Label className="text-xs">{logForm.quantityLabel}</Label>
+              <Input
+                type="number"
+                min="0"
+                step="any"
+                placeholder={logForm.quantityPlaceholder || "e.g. 1"}
+                value={form.units_used || ""}
+                onChange={(e) => f("units_used", e.target.value)}
+              />
+              {logForm.quantityBillingNote && (
+                <p className="text-[10px]" style={{ color: "#9a8f7e" }}>
+                  {logForm.quantityBillingNote}
+                </p>
+              )}
+            </div>
+          )}
+
+          {logForm.showAreasOnLog && (
+            <AreasTreatedField
+              areas={areas}
+              onChange={setAreas}
+              suggestions={areaSuggestions}
+              optional={!logForm.showAreasBeforeQuantity && logForm.menuPrimary !== "area"}
+            />
+          )}
 
           {/* Products Used */}
           <div className="space-y-2">
@@ -358,7 +644,7 @@ export default function TreatmentDocumentDialog({ open, onClose, appointment, ex
                     </div>
                     <Input placeholder="Batch/Lot #" className="text-sm h-8" value={p.batch_lot} onChange={e => updateProduct(i, { batch_lot: e.target.value })} />
                     <div className="flex gap-1">
-                      <Input placeholder="Amount" className="text-sm h-8" value={p.amount} onChange={e => updateProduct(i, { amount: e.target.value })} />
+                      <Input placeholder="mL, mg, etc." className="text-sm h-8" value={p.amount} onChange={e => updateProduct(i, { amount: e.target.value })} />
                       {products.length > 1 && (
                         <button type="button" onClick={() => setProducts(prev => prev.filter((_, j) => j !== i))} className="text-red-400 hover:text-red-600">
                           <Trash2 className="w-3.5 h-3.5" />
@@ -449,11 +735,15 @@ export default function TreatmentDocumentDialog({ open, onClose, appointment, ex
           <Button variant="outline" onClick={() => save.mutate("draft")} disabled={save.isPending}>
             Save Draft
           </Button>
-          <Button style={{ background: "#FA6F30", color: "#fff" }} onClick={() => save.mutate("submitted")} disabled={save.isPending}>
+          <Button style={{ background: "#FA6F30", color: "#fff" }} onClick={handleSubmitForInvoice} disabled={save.isPending}>
             <CheckCircle className="w-4 h-4 mr-1.5" />
             {existingRecord?.status === "flagged" || existingRecord?.status === "changes_requested"
               ? "Resubmit for MD Review"
-              : "Save & Send Treatment Invoice"}
+              : treatmentAlreadyPaid
+                ? "Save treatment record"
+                : treatmentAwaitingPayment
+                  ? "Update & resend invoice"
+                  : "Save & Send Treatment Invoice"}
           </Button>
         </div>
       </DialogContent>
