@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import RequiredComplianceDocuments from "@/components/practice/RequiredComplianceDocuments.jsx";
+import ProviderStripeConnectCard from "@/components/provider/ProviderStripeConnectCard.jsx";
 import { providerReviewAverage } from "@/lib/providerRating";
 import { emptyGalleryPair } from "@/lib/galleryPhotos";
 
@@ -325,6 +326,8 @@ export default function PracticeProfileTab({
 
       {/* ── Booking Link ── */}
       <BookingLinkCard me={me} />
+
+      <ProviderStripeConnectCard bookingDeposit={form.booking_deposit ?? me?.booking_deposit} />
 
       {/* ── Pricing & Availability ── */}
       <GlassCard>
