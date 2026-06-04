@@ -1,11 +1,6 @@
 import { useNavigate } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { getFoundationPlaybook } from "@/data/foundationStepPlaybooks";
-import {
-  getStepStatusKey,
-  mergeChecklistUpdate,
-  resolvePlaybookDisplayStatus,
-} from "@/lib/foundationStepProgress";
 import { ExternalLink, CheckCircle2, ChevronDown, ChevronUp } from "lucide-react";
 import { useState } from "react";
 
@@ -37,33 +32,13 @@ function Section({ title, children, defaultOpen = true }) {
 
 export default function FoundationStepPlaybook({
   step,
-  me,
-  licenses = [],
-  certs = [],
   accent = "#7B8EC8",
   isDone,
-  onUpdateChecklist,
   onToggle,
 }) {
   const navigate = useNavigate();
   const playbook = getFoundationPlaybook(step.playbook || step.id);
   if (!playbook) return null;
-
-  const checklist = me?.launch_checklist || {};
-  const statusKey = getStepStatusKey(step.id);
-  const displayStatus = resolvePlaybookDisplayStatus(step, { me, licenses, certs });
-  const selfStatus = checklist[statusKey] || "not_started";
-  const canEditStatus = playbook.statusSource === "self";
-
-  const handleStatusChange = (e) => {
-    const value = e.target.value;
-    onUpdateChecklist(
-      mergeChecklistUpdate(checklist, {
-        [statusKey]: value,
-        ...(playbook.completeStatuses?.includes(value) ? { [step.id]: true } : {}),
-      })
-    );
-  };
 
   const runPrimaryCta = () => {
     const cta = playbook.primaryCta;
@@ -90,35 +65,6 @@ export default function FoundationStepPlaybook({
 
   return (
     <div className="mt-4 space-y-3">
-      {displayStatus && (
-        <div
-          className="flex flex-wrap items-center gap-2 px-3 py-2 rounded-xl text-sm"
-          style={{ background: `${accent}14`, border: `1px solid ${accent}33` }}
-        >
-          <span className="text-xs font-bold uppercase tracking-wider" style={{ color: "rgba(30,37,53,0.45)" }}>
-            Status
-          </span>
-          {canEditStatus && !isDone ? (
-            <select
-              value={selfStatus}
-              onChange={handleStatusChange}
-              className="text-sm font-semibold rounded-lg px-2 py-1 border flex-1 min-w-[10rem]"
-              style={{ borderColor: `${accent}44`, color: "#1e2535" }}
-            >
-              {playbook.statusOptions.map((o) => (
-                <option key={o.key} value={o.key}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <span className="font-semibold" style={{ color: "#1e2535" }}>
-              {displayStatus.label}
-            </span>
-          )}
-        </div>
-      )}
-
       {playbook.outcome && (
         <p className="text-sm leading-relaxed" style={{ color: "rgba(30,37,53,0.6)" }}>
           <span className="font-semibold" style={{ color: "#1e2535" }}>

@@ -264,12 +264,8 @@ export default function LaunchPhaseCarousel({
           {showPlaybook && (
             <FoundationStepPlaybook
               step={step}
-              me={me}
-              licenses={licenses}
-              certs={certs}
               accent={theme.color}
               isDone={isDone}
-              onUpdateChecklist={onUpdateChecklist}
               onToggle={onToggle}
             />
           )}

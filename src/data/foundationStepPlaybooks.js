@@ -92,18 +92,6 @@ export const FOUNDATION_STEP_PLAYBOOKS = {
           "Other nationally recognized CPR/BLS providers (subject to NOVI approval)",
         ],
       },
-      {
-        title: "Statuses",
-        items: [
-          "Missing",
-          "Certification In Progress",
-          "Uploaded",
-          "Under Review",
-          "Approved",
-          "Expired",
-          "Renewal Required",
-        ],
-      },
     ],
     resources: [
       { label: "National CPR Foundation — online CPR & BLS", url: "https://nationalcprfoundation.com" },
@@ -166,10 +154,6 @@ export const FOUNDATION_STEP_PLAYBOOKS = {
           "OSHA compliance standards",
           "Infection control best practices",
         ],
-      },
-      {
-        title: "Statuses",
-        items: ["Not Started", "In Progress", "Certificate Uploaded", "Under Review", "Completed"],
       },
     ],
     statusOptions: [
@@ -397,7 +381,6 @@ export const FOUNDATION_STEP_PLAYBOOKS = {
         defaultOpen: true,
         items: ["Headshot", "Bio", "Credentials", "Services", "Availability", "Social links"],
       },
-      { title: "Statuses", items: ["Incomplete", "Draft", "Live"] },
     ],
     primaryCta: {
       type: "internal",
@@ -420,7 +403,6 @@ export const FOUNDATION_STEP_PLAYBOOKS = {
         defaultOpen: true,
         items: ["Service name", "Pricing", "Duration", "Description", "Treatment category"],
       },
-      { title: "Statuses", items: ["No Services", "Draft Services", "Active Services"] },
     ],
     primaryCta: {
       type: "internal",
@@ -443,7 +425,6 @@ export const FOUNDATION_STEP_PLAYBOOKS = {
         defaultOpen: true,
         items: ["Instagram bio", "TikTok", "Website", "Email signature"],
       },
-      { title: "Statuses", items: ["Not Shared", "Shared"] },
     ],
     primaryCta: {
       type: "internal",
@@ -548,7 +529,6 @@ export const FOUNDATION_STEP_PLAYBOOKS = {
         defaultOpen: true,
         items: ["20–30% deposit", "24–48 hour cancellation policy"],
       },
-      { title: "Statuses", items: ["Not Configured", "Active"] },
     ],
     primaryCta: {
       type: "internal",

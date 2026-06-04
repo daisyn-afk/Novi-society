@@ -34,6 +34,25 @@ export function resolveLicenseProgressStatus(licenses = []) {
   return { key: "pending_submission", label: "Pending Submission" };
 }
 
+function resolveCertProgressStatus(stepId, playbook, certs = [], checklist = {}) {
+  const matched = (certs || []).filter((c) => playbook.certMatcher?.(c));
+  const statusKey = getStepStatusKey(stepId);
+
+  if (matched.some((c) => String(c.status || "").toLowerCase() === "active")) {
+    return { key: "approved", label: "Approved" };
+  }
+  if (matched.some((c) => String(c.status || "").toLowerCase() === "pending")) {
+    return { key: "under_review", label: "Under Review" };
+  }
+  if (matched.some((c) => String(c.status || "").toLowerCase() === "expired")) {
+    return { key: "expired", label: "Expired" };
+  }
+
+  const selfKey = checklist[statusKey] || "missing";
+  const opt = playbook.statusOptions?.find((o) => o.key === selfKey);
+  return { key: selfKey, label: opt?.label || "Missing" };
+}
+
 /** Resolve display status for a playbook step (read-only sources + self-report). */
 export function resolvePlaybookDisplayStatus(step, ctx = {}) {
   const playbook = getFoundationPlaybook(step.playbook || step.id);
@@ -47,14 +66,7 @@ export function resolvePlaybookDisplayStatus(step, ctx = {}) {
   }
 
   if (playbook.statusSource === "cert") {
-    const pending = (ctx.certs || []).some(
-      (c) => c.status === "pending" && playbook.certMatcher?.(c)
-    );
-    const active = (ctx.certs || []).some(
-      (c) => c.status === "active" && playbook.certMatcher?.(c)
-    );
-    if (active) return { key: "verified", label: "Verified" };
-    if (pending) return { key: "under_review", label: "Under Review" };
+    return resolveCertProgressStatus(stepId, playbook, ctx.certs, checklist);
   }
 
   // Auto-detected steps surface their state via the card's completed badge,
