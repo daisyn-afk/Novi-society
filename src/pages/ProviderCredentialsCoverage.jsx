@@ -38,7 +38,8 @@ import {
   MD_ADDON_SERVICE_MONTHLY_FEE as ADDON_SERVICE_PRICE,
   MD_MAX_COVERED_SERVICES as MAX_SERVICES,
   MD_MAX_MONTHLY_CAP as MAX_MONTHLY_CAP,
-  monthlyFeeForNewMdService,
+  resolveMdCoverageMonthlyFee,
+  isMdCoverageTestPricingActiveForProvider,
 } from "@/lib/mdMembershipPricing";
 
 const LICENSE_TYPES = ["RN", "NP", "PA", "MD", "DO", "esthetician", "other"];
@@ -589,12 +590,25 @@ export default function ProviderCredentialsCoverage() {
     if (!course) return false;
     return isNowWithinSessionRedeemWindow(course, enrollment.session_date);
   });
-  const getMembershipPrice = () => alreadyActiveServices.length === 0 ? FIRST_SERVICE_PRICE : ADDON_SERVICE_PRICE;
+  const getMembershipPrice = () =>
+    resolveMdCoverageMonthlyFee({
+      providerId: me?.id,
+      providerEmail: me?.email,
+      activeServiceCountBeforeAdd: alreadyActiveServices.length,
+    });
   const isAtCap = alreadyActiveServices.length >= MAX_SERVICES;
   const calcMonthlyTotal = (count) => {
     if (count <= 0) return 0;
     if (count >= MAX_SERVICES) return MAX_MONTHLY_CAP;
-    return FIRST_SERVICE_PRICE + (count - 1) * ADDON_SERVICE_PRICE;
+    let total = 0;
+    for (let i = 0; i < count; i += 1) {
+      total += resolveMdCoverageMonthlyFee({
+        providerId: me?.id,
+        providerEmail: me?.email,
+        activeServiceCountBeforeAdd: i,
+      });
+    }
+    return Math.min(total, MAX_MONTHLY_CAP);
   };
   const completedEnrollments = myEnrollments.filter((e) => ["completed", "attended"].includes(String(e?.status || "").toLowerCase()));
   const unlockedCourseIds = new Set(
@@ -1237,6 +1251,20 @@ export default function ProviderCredentialsCoverage() {
           <Zap className="w-4 h-4" /> Apply for MD Coverage
         </button>
       </div>
+
+      {isMdCoverageTestPricingActiveForProvider(me?.id, me?.email) && (
+        <div
+          className="flex items-start gap-3 px-4 py-3 rounded-2xl"
+          style={{ background: "rgba(123,142,200,0.12)", border: "1px solid rgba(123,142,200,0.35)" }}
+        >
+          <Info className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: "#5a6fa8" }} />
+          <p className="text-sm" style={{ color: "#243257" }}>
+            <strong>Test pricing active:</strong> your MD Board checkout uses the configured test
+            monthly fee (${getMembershipPrice()}/mo). Disable test pricing in production when
+            finished.
+          </p>
+        </div>
+      )}
 
       {/* Alerts */}
       {visibleApprovedCertsWithoutCoverage.map(c => (

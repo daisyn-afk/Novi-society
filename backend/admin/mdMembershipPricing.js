@@ -10,6 +10,53 @@ export function monthlyFeeForNewMdService(activeServiceCountBeforeAdd = 0) {
   return MD_ADDON_SERVICE_MONTHLY_FEE;
 }
 
+function parseCsvEnv(value) {
+  return String(value || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+export function isMdCoverageTestPricingEnabled() {
+  return String(process.env.MD_COVERAGE_TEST_PRICING_ENABLED || "").trim() === "1";
+}
+
+export function isAllowlistedMdCoverageTestProvider(providerId, providerEmail) {
+  const id = String(providerId || "").trim();
+  const email = String(providerEmail || "").trim().toLowerCase();
+  const idList = parseCsvEnv(process.env.MD_COVERAGE_TEST_PROVIDER_IDS);
+  const emailList = parseCsvEnv(process.env.MD_COVERAGE_TEST_PROVIDER_EMAILS).map((e) =>
+    e.toLowerCase()
+  );
+  if (id && idList.includes(id)) return true;
+  if (email && emailList.includes(email)) return true;
+  return false;
+}
+
+function parseTestMonthlyFee() {
+  const fee = Number(process.env.MD_COVERAGE_TEST_MONTHLY_FEE);
+  if (!Number.isFinite(fee) || fee < 0) return null;
+  return fee;
+}
+
+/**
+ * Server-side MD checkout fee. Allowlisted providers use MD_COVERAGE_TEST_MONTHLY_FEE when enabled.
+ * @param {{ providerId?: string, providerEmail?: string, activeServiceCountBeforeAdd?: number }} params
+ */
+export function resolveMdCoverageMonthlyFee({
+  providerId,
+  providerEmail,
+  activeServiceCountBeforeAdd = 0,
+} = {}) {
+  const standard = monthlyFeeForNewMdService(activeServiceCountBeforeAdd);
+  if (!isMdCoverageTestPricingEnabled()) return standard;
+  if (!isAllowlistedMdCoverageTestProvider(providerId, providerEmail)) return standard;
+  const override = parseTestMonthlyFee();
+  if (override == null) return standard;
+  if (standard === 0) return 0;
+  return override;
+}
+
 export function enrichMdSubscriptionMonthlyFees(subs) {
   const active = (subs || [])
     .filter((s) => String(s?.status || "").toLowerCase() === "active")

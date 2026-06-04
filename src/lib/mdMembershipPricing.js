@@ -1,13 +1,9 @@
-/** NOVI Board MD coverage monthly pricing (matches ProviderCredentialsCoverage checkout). */
+/** NOVI Board MD coverage monthly pricing (keep in sync with backend/admin/mdMembershipPricing.js). */
 export const MD_FIRST_SERVICE_MONTHLY_FEE = 279;
 export const MD_ADDON_SERVICE_MONTHLY_FEE = 129;
 export const MD_MAX_COVERED_SERVICES = 5;
 export const MD_MAX_MONTHLY_CAP = 795;
 
-/**
- * Monthly fee for a newly activated service given how many other active services the provider already has.
- * @param {number} activeServiceCountBeforeAdd
- */
 export function monthlyFeeForNewMdService(activeServiceCountBeforeAdd = 0) {
   const n = Math.max(0, Number(activeServiceCountBeforeAdd) || 0);
   if (n >= MD_MAX_COVERED_SERVICES) return 0;
@@ -15,8 +11,58 @@ export function monthlyFeeForNewMdService(activeServiceCountBeforeAdd = 0) {
   return MD_ADDON_SERVICE_MONTHLY_FEE;
 }
 
+function parseCsvEnv(value) {
+  return String(value || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function isMdCoverageTestPricingEnabled() {
+  return String(import.meta.env.VITE_MD_COVERAGE_TEST_PRICING_ENABLED || "").trim() === "1";
+}
+
+function isAllowlistedMdCoverageTestProvider(providerId, providerEmail) {
+  const id = String(providerId || "").trim();
+  const email = String(providerEmail || "").trim().toLowerCase();
+  const idList = parseCsvEnv(import.meta.env.VITE_MD_COVERAGE_TEST_PROVIDER_IDS);
+  const emailList = parseCsvEnv(import.meta.env.VITE_MD_COVERAGE_TEST_PROVIDER_EMAILS).map((e) =>
+    e.toLowerCase()
+  );
+  if (id && idList.includes(id)) return true;
+  if (email && emailList.includes(email)) return true;
+  return false;
+}
+
+function parseTestMonthlyFee() {
+  const fee = Number(import.meta.env.VITE_MD_COVERAGE_TEST_MONTHLY_FEE);
+  if (!Number.isFinite(fee) || fee < 0) return null;
+  return fee;
+}
+
+/** Display/checkout hint — server resolves the real charge in createMDSubscriptionCheckout. */
+export function resolveMdCoverageMonthlyFee({
+  providerId,
+  providerEmail,
+  activeServiceCountBeforeAdd = 0,
+} = {}) {
+  const standard = monthlyFeeForNewMdService(activeServiceCountBeforeAdd);
+  if (!isMdCoverageTestPricingEnabled()) return standard;
+  if (!isAllowlistedMdCoverageTestProvider(providerId, providerEmail)) return standard;
+  const override = parseTestMonthlyFee();
+  if (override == null) return standard;
+  if (standard === 0) return 0;
+  return override;
+}
+
+export function isMdCoverageTestPricingActiveForProvider(providerId, providerEmail) {
+  return (
+    isMdCoverageTestPricingEnabled() &&
+    isAllowlistedMdCoverageTestProvider(providerId, providerEmail)
+  );
+}
+
 /**
- * Assign display fees to active subscriptions ordered by activation (oldest first = base rate).
  * @param {Array<{ status?: string, service_type_monthly_fee?: number|null, activated_at?: string, created_at?: string }>} subs
  */
 export function enrichMdSubscriptionMonthlyFees(subs) {
