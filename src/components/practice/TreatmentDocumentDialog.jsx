@@ -15,6 +15,7 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Plus, Trash2, Upload, CheckCircle, AlertTriangle } from "lucide-react";
 import AftercarePlanDialog from "./AftercarePlanDialog";
+import TreatmentCheckoutDialog from "./TreatmentCheckoutDialog";
 
 const COMMON_AREAS = ["Forehead", "Glabella", "Crow's Feet", "Lip", "Chin", "Jawline", "Cheeks", "Neck", "Nasolabial Folds", "Marionette Lines"];
 
@@ -35,8 +36,10 @@ export default function TreatmentDocumentDialog({ open, onClose, appointment, ex
   const [afterPhotos, setAfterPhotos] = useState([]);
   const [uploading, setUploading] = useState({ before: false, after: false });
   const [showAftercarePlan, setShowAftercarePlan] = useState(false);
+  const [showCheckout, setShowCheckout] = useState(false);
   const [savedRecord, setSavedRecord] = useState(null);
   const [patientJourney, setPatientJourney] = useState(null);
+  const [providerProfile, setProviderProfile] = useState(null);
 
   const { data: inventory = [] } = useQuery({
     queryKey: ["my-inventory"],
@@ -61,18 +64,27 @@ export default function TreatmentDocumentDialog({ open, onClose, appointment, ex
     }, {});
   }, [inventoryOptions]);
 
-  // Check if patient is premium (has PatientJourney)
   useEffect(() => {
-    const checkPremium = async () => {
-      if (!appointment?.patient_id || !open) return;
+    const loadContext = async () => {
+      if (!open) return;
+      try {
+        const me = await base44.auth.me();
+        setProviderProfile(me);
+      } catch {
+        setProviderProfile(null);
+      }
+      if (!appointment?.patient_id) {
+        setPatientJourney(null);
+        return;
+      }
       try {
         const journeys = await base44.entities.PatientJourney.filter({ patient_id: appointment.patient_id });
         setPatientJourney(journeys[0] || null);
-      } catch (e) {
+      } catch {
         setPatientJourney(null);
       }
     };
-    checkPremium();
+    loadContext();
   }, [appointment?.patient_id, open]);
 
   // Autofill from appointment
@@ -192,18 +204,15 @@ export default function TreatmentDocumentDialog({ open, onClose, appointment, ex
       }
       return record;
     },
-    onSuccess: (record) => {
+    onSuccess: (record, status) => {
       qc.invalidateQueries({ queryKey: ["treatment-records"] });
       qc.invalidateQueries({ queryKey: ["md-treatment-records"] });
       qc.invalidateQueries({ queryKey: ["my-appointments"] });
       qc.invalidateQueries({ queryKey: ["my-treatment-records-mktplace"] });
       qc.invalidateQueries({ queryKey: ["my-treatment-records-spend"] });
-      // Only show aftercare dialog for premium patients
-      if (patientJourney) {
+      if (status === "submitted") {
         setSavedRecord(record);
-        setShowAftercarePlan(true);
-      } else {
-        onClose();
+        setShowCheckout(true);
       }
     },
   });
@@ -211,7 +220,8 @@ export default function TreatmentDocumentDialog({ open, onClose, appointment, ex
   if (!appointment) return null;
 
   return (
-    <Dialog open={open} onOpenChange={onClose}>
+    <>
+    <Dialog open={open && !showCheckout} onOpenChange={onClose}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle style={{ fontFamily: "'DM Serif Display', serif", color: "#243257" }}>
@@ -441,12 +451,13 @@ export default function TreatmentDocumentDialog({ open, onClose, appointment, ex
           </Button>
           <Button style={{ background: "#FA6F30", color: "#fff" }} onClick={() => save.mutate("submitted")} disabled={save.isPending}>
             <CheckCircle className="w-4 h-4 mr-1.5" />
-            {existingRecord?.status === "flagged" || existingRecord?.status === "changes_requested" ? "Resubmit for MD Review" : "Save & Review Aftercare"}
+            {existingRecord?.status === "flagged" || existingRecord?.status === "changes_requested"
+              ? "Resubmit for MD Review"
+              : "Save & Send Treatment Invoice"}
           </Button>
         </div>
       </DialogContent>
 
-      {/* Aftercare Plan Dialog - opens after successful save */}
       {savedRecord && (
         <AftercarePlanDialog
           open={showAftercarePlan}
@@ -459,5 +470,33 @@ export default function TreatmentDocumentDialog({ open, onClose, appointment, ex
         />
       )}
     </Dialog>
+
+    {savedRecord && (
+      <TreatmentCheckoutDialog
+        open={showCheckout}
+        onClose={() => {
+          setShowCheckout(false);
+          if (patientJourney) {
+            setShowAftercarePlan(true);
+          } else {
+            setSavedRecord(null);
+            onClose();
+          }
+        }}
+        appointment={appointment}
+        treatmentRecord={savedRecord}
+        providerProfile={providerProfile}
+        onSent={() => {
+          setShowCheckout(false);
+          if (patientJourney) {
+            setShowAftercarePlan(true);
+          } else {
+            setSavedRecord(null);
+            onClose();
+          }
+        }}
+      />
+    )}
+    </>
   );
 }

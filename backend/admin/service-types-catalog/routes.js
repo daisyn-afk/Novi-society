@@ -1,6 +1,10 @@
 import { Router } from "express";
 import { requireAdminOrStaffWithModule } from "../auth/helpers.js";
 import {
+  clearMdContractFromAllServices,
+  propagateMdContractToAllServices,
+} from "../lib/globalMdContract.js";
+import {
   createServiceType,
   deleteServiceType,
   getServiceTypeById,
@@ -31,6 +35,38 @@ serviceTypesCatalogRouter.get("/:id", async (req, res, next) => {
     next(error);
   }
 });
+
+serviceTypesCatalogRouter.post(
+  "/clear-md-contract",
+  requireAdminOrStaffWithModule("AdminServiceTypes"),
+  async (req, res, next) => {
+    try {
+      const updated = await clearMdContractFromAllServices();
+      res.json({ ok: true, cleared: true, updated_count: updated });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+serviceTypesCatalogRouter.post(
+  "/propagate-md-contract",
+  requireAdminOrStaffWithModule("AdminServiceTypes"),
+  async (req, res, next) => {
+    try {
+      const url = String(req.body?.md_contract_url || "").trim();
+      const updated = await propagateMdContractToAllServices(url);
+      res.json({
+        ok: true,
+        md_contract_url: url,
+        updated_count: updated,
+        cleared: !url,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
 
 serviceTypesCatalogRouter.post("/", requireAdminOrStaffWithModule("AdminServiceTypes"), async (req, res, next) => {
   try {

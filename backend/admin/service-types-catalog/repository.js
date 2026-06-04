@@ -1,4 +1,9 @@
 import { query } from "../db.js";
+import {
+  getGlobalMdContractUrl,
+  isUsableMdContractUrl,
+  propagateMdContractToAllServices,
+} from "../lib/globalMdContract.js";
 
 const CATEGORY_ENUM = new Set([
   "injectables",
@@ -258,7 +263,7 @@ export async function getServiceTypeById(id) {
 
 export async function createServiceType(payload) {
   const { name, category, metadata } = splitRootAndMetadata(payload);
-  const {
+  let {
     description,
     is_active,
     requires_novi_course,
@@ -281,6 +286,9 @@ export async function createServiceType(payload) {
     coverage_tiers,
     certification_name
   } = metadata;
+  if (!isUsableMdContractUrl(md_contract_url)) {
+    md_contract_url = await getGlobalMdContractUrl();
+  }
   const { rows } = await query(
     `insert into public.service_type (
       id,
@@ -481,6 +489,9 @@ export async function updateServiceType(id, payload) {
       JSON.stringify(metadata || {})
     ]
   );
+  if (isUsableMdContractUrl(md_contract_url)) {
+    await propagateMdContractToAllServices(md_contract_url);
+  }
   return rows[0] ? rowToApi(rows[0]) : null;
 }
 

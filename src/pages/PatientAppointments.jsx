@@ -19,6 +19,8 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Calendar, Clock, User, MessageSquare, FileText, DollarSign, Star, Image as ImageIcon } from "lucide-react";
+import AppointmentGfePatientBlock from "@/components/appointments/AppointmentGfePatientBlock";
+import { appointmentGfeDisplayStatus, gfeReturnNotice } from "@/lib/appointmentGfe";
 import { format } from "date-fns";
 import MessageThread from "@/components/messaging/MessageThread";
 import MessageUnreadBadge from "@/components/messaging/MessageUnreadBadge";
@@ -66,6 +68,7 @@ export default function PatientAppointments() {
   const [reviewForm, setReviewForm] = useState({ rating: 5, comment: "" });
   const [recordDialog, setRecordDialog] = useState(null);
   const [paymentNotice, setPaymentNotice] = useState(null);
+  const [gfeNotice, setGfeNotice] = useState(null);
 
   const { data: appointments = [], isLoading } = useQuery({
     queryKey: ["patient-appointments"],
@@ -75,7 +78,17 @@ export default function PatientAppointments() {
     refetchInterval: (query) => {
       const rows = query.state.data;
       if (!Array.isArray(rows)) return false;
-      return rows.some((a) => String(a.status || "").toLowerCase() === "awaiting_payment") ? 1500 : false;
+      if (rows.some((a) => String(a.status || "").toLowerCase() === "awaiting_payment")) return 1500;
+      if (rows.some((a) => String(a.treatment_payment_status || "").toLowerCase() === "awaiting_payment")) {
+        return 1500;
+      }
+      return rows.some(
+        (a) =>
+          a.requires_gfe === true &&
+          ["pending", "not_sent"].includes(appointmentGfeDisplayStatus(a))
+      )
+        ? 15000
+        : false;
     },
   });
 
@@ -103,7 +116,18 @@ export default function PatientAppointments() {
     const appointmentId = params.get("appointment_id");
 
     const finish = async () => {
-      if (payment === "success" && appointmentId) {
+      if (payment === "treatment_success" && appointmentId) {
+        try {
+          const updated = await appointmentsApi.syncTreatmentPayment(appointmentId);
+          patchAppointmentInCache(qc, ["patient-appointments"], appointmentId, updated);
+          broadcastAppointmentsRefresh();
+          setPaymentNotice({ type: "success", message: "Treatment payment received. Thank you!" });
+        } catch (err) {
+          console.warn("[appointments] treatment sync after redirect:", err?.message || err);
+          setPaymentNotice({ type: "success", message: "Payment received — refreshing status…" });
+          void qc.refetchQueries({ queryKey: ["patient-appointments"] });
+        }
+      } else if (payment === "success" && appointmentId) {
         try {
           const updated = await appointmentsApi.syncDepositPayment(appointmentId);
           patchAppointmentInCache(qc, ["patient-appointments"], appointmentId, {
@@ -117,11 +141,11 @@ export default function PatientAppointments() {
           console.warn("[appointments] deposit sync after redirect:", err?.message || err);
           setPaymentNotice({
             type: "success",
-            message: "Payment received — refreshing appointment status…",
+            message: "Deposit received — refreshing appointment status…",
           });
           void qc.refetchQueries({ queryKey: ["patient-appointments"] });
         }
-      } else if (payment === "cancelled") {
+      } else if (payment === "treatment_cancelled" || payment === "cancelled") {
         setPaymentNotice({ type: "cancelled", message: "Payment was cancelled. You can try again when ready." });
       }
 
@@ -133,6 +157,25 @@ export default function PatientAppointments() {
     };
 
     void finish();
+  }, [qc]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const gfe = params.get("gfe");
+    if (!gfe) return;
+
+    const message = gfeReturnNotice(gfe);
+    if (message) {
+      setGfeNotice({ type: gfe === "approved" ? "success" : "info", message });
+      void qc.refetchQueries({ queryKey: ["patient-appointments"] });
+      void qc.invalidateQueries({ queryKey: ["my-notifications"] });
+    }
+
+    params.delete("gfe");
+    params.delete("appointment_id");
+    const nextSearch = params.toString();
+    const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ""}`;
+    window.history.replaceState({}, "", nextUrl);
   }, [qc]);
 
   const { data: records = [] } = useQuery({
@@ -151,6 +194,22 @@ export default function PatientAppointments() {
     onSuccess: () => {
       qc.invalidateQueries(["patient-appointments"]);
       qc.invalidateQueries({ queryKey: ["my-notifications"] });
+    },
+  });
+
+  const payTreatment = useMutation({
+    mutationFn: async (appointmentId) => {
+      const result = await appointmentsApi.createTreatmentCheckout(appointmentId);
+      const checkoutUrl = result?.sessionUrl || result?.checkout_url;
+      if (checkoutUrl) {
+        redirectToStripeCheckout(checkoutUrl);
+        return;
+      }
+      throw new Error(result?.error || "Payment system did not return a checkout URL.");
+    },
+    onError: (error) => {
+      alert(error?.message || "Payment system temporarily unavailable. Please contact your provider.");
+      console.error("Treatment payment error:", error);
     },
   });
 
@@ -196,7 +255,11 @@ export default function PatientAppointments() {
     },
   });
 
-  const upcoming = appointments.filter(a => ["requested", "confirmed", "awaiting_payment", "awaiting_consent"].includes(a.status));
+  const upcoming = appointments.filter(
+    (a) =>
+      ["requested", "confirmed", "awaiting_payment", "awaiting_consent"].includes(a.status) ||
+      String(a.treatment_payment_status || "").toLowerCase() === "awaiting_payment"
+  );
   const past = appointments.filter(a => ["completed", "cancelled", "no_show"].includes(a.status));
 
   const hasReviewed = (apptId) => reviews.some(r => r.appointment_id === apptId);
@@ -222,6 +285,19 @@ export default function PatientAppointments() {
         </div>
       )}
 
+      {gfeNotice && (
+        <div
+          className="rounded-xl px-4 py-3 text-sm"
+          style={
+            gfeNotice.type === "success"
+              ? { background: "rgba(74,222,128,0.12)", border: "1px solid rgba(74,222,128,0.35)", color: "#166534" }
+              : { background: "rgba(123,142,200,0.1)", border: "1px solid rgba(123,142,200,0.3)", color: "#4a5fa8" }
+          }
+        >
+          {gfeNotice.message}
+        </div>
+      )}
+
       <Tabs defaultValue="upcoming">
         <TabsList>
           <TabsTrigger value="upcoming">Upcoming ({upcoming.length})</TabsTrigger>
@@ -238,6 +314,14 @@ export default function PatientAppointments() {
           ) : (
             upcoming.map(a => {
               const depositLabel = appointmentDepositDisplay(a);
+              const treatmentDue =
+                String(a.treatment_payment_status || "").toLowerCase() === "awaiting_payment" &&
+                Number(a.treatment_amount) > 0;
+              const treatmentLabel = treatmentDue
+                ? a.treatment_amount % 1 === 0
+                  ? String(a.treatment_amount)
+                  : Number(a.treatment_amount).toFixed(2)
+                : null;
               return (
               <Card key={a.id}>
                 <CardContent className="pt-4 pb-4">
@@ -248,28 +332,46 @@ export default function PatientAppointments() {
                           <span className="font-semibold text-slate-900">{a.service}</span>
                           <Badge className={statusColor[a.status]}>{a.status.replace(/_/g, " ")}</Badge>
                         </div>
+                        <AppointmentGfePatientBlock appointment={a} />
                         <div className="flex gap-3 text-sm text-slate-500 mt-1 flex-wrap">
                           <span className="flex items-center gap-1"><User className="w-3.5 h-3.5" />{a.provider_name}</span>
                           <span className="flex items-center gap-1"><Calendar className="w-3.5 h-3.5" />
                             {a.appointment_date ? format(new Date(a.appointment_date), "MMM d, yyyy") : ""}
                           </span>
                           {a.appointment_time && <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5" />{a.appointment_time}</span>}
-                          {a.status === "awaiting_payment" && depositLabel && (
+                          {a.status === "awaiting_payment" && Number(a.deposit_amount) > 0 && depositLabel && (
                             <span className="flex items-center gap-1"><DollarSign className="w-3.5 h-3.5" />${depositLabel} booking deposit</span>
                           )}
                         </div>
-                        {a.status === "awaiting_payment" && (
+                        {a.status === "awaiting_payment" && Number(a.deposit_amount) > 0 && (
                           <p className="text-xs text-purple-700 mt-2">
-                            Your provider requires a ${depositLabel || "50"} booking deposit to confirm this visit.
+                            Your provider requires a ${depositLabel} booking deposit to confirm this visit.
+                          </p>
+                        )}
+                        {treatmentDue && (
+                          <p className="text-xs mt-2 font-medium" style={{ color: "#FA6F30" }}>
+                            Treatment balance due: ${treatmentLabel}
                           </p>
                         )}
                       </div>
                     </div>
 
                     <div className="flex gap-2 flex-wrap">
-                      {a.status === "awaiting_payment" && (
+                      {treatmentDue && (
+                        <Button
+                          size="sm"
+                          style={{ background: "#FA6F30", color: "#fff" }}
+                          onClick={() => payTreatment.mutate(a.id)}
+                          disabled={payTreatment.isPending}
+                          className="gap-1"
+                        >
+                          <DollarSign className="w-3.5 h-3.5" />
+                          {payTreatment.isPending ? "Redirecting…" : `Pay $${treatmentLabel}`}
+                        </Button>
+                      )}
+                      {a.status === "awaiting_payment" && Number(a.deposit_amount) > 0 && (
                         <Button size="sm" style={{ background: "#7B8EC8", color: "#fff" }} onClick={() => payDeposit.mutate(a.id)} disabled={payDeposit.isPending} className="gap-1">
-                          <DollarSign className="w-3.5 h-3.5" /> {payDeposit.isPending ? "Redirecting…" : `Pay $${depositLabel || "50"} Deposit`}
+                          <DollarSign className="w-3.5 h-3.5" /> {payDeposit.isPending ? "Redirecting…" : `Pay $${depositLabel} Deposit`}
                         </Button>
                       )}
                       {a.status === "awaiting_consent" && (
@@ -302,6 +404,14 @@ export default function PatientAppointments() {
             past.map(a => {
               const record = getRecord(a.id);
               const reviewed = hasReviewed(a.id);
+              const treatmentDue =
+                String(a.treatment_payment_status || "").toLowerCase() === "awaiting_payment" &&
+                Number(a.treatment_amount) > 0;
+              const treatmentLabel = treatmentDue
+                ? a.treatment_amount % 1 === 0
+                  ? String(a.treatment_amount)
+                  : Number(a.treatment_amount).toFixed(2)
+                : null;
               return (
                 <Card key={a.id}>
                   <CardContent className="pt-4 pb-4">
@@ -322,6 +432,18 @@ export default function PatientAppointments() {
                       </div>
 
                       <div className="flex gap-2 flex-wrap">
+                        {treatmentDue && (
+                          <Button
+                            size="sm"
+                            style={{ background: "#FA6F30", color: "#fff" }}
+                            onClick={() => payTreatment.mutate(a.id)}
+                            disabled={payTreatment.isPending}
+                            className="gap-1"
+                          >
+                            <DollarSign className="w-3.5 h-3.5" />
+                            {payTreatment.isPending ? "Redirecting…" : `Pay $${treatmentLabel}`}
+                          </Button>
+                        )}
                         {record && (
                           <Button size="sm" variant="outline" onClick={() => setRecordDialog(record)} className="gap-1">
                             <ImageIcon className="w-3.5 h-3.5" /> View Treatment Record

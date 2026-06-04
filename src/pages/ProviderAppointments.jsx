@@ -9,6 +9,10 @@ import { Button } from "@/components/ui/button";
 import {
   Calendar, Clock, User, MessageSquare, FileUser, AlertTriangle, Mail,
 } from "lucide-react";
+import GFEStatusBadge from "@/components/GFEStatusBadge";
+import AppointmentGfeProviderControls from "@/components/appointments/AppointmentGfeProviderControls";
+import { appointmentGfeDisplayStatus } from "@/lib/appointmentGfe";
+import { useSendAppointmentGfe } from "@/hooks/useSendAppointmentGfe";
 import { format } from "date-fns";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
@@ -18,7 +22,11 @@ import MessageUnreadBadge from "@/components/messaging/MessageUnreadBadge";
 import { useAppointmentMessageUnread, unreadCountForThread } from "@/hooks/useAppointmentMessageUnread";
 import PatientChartView from "@/components/provider/PatientChartView";
 import { subscribeAppointmentsRefresh } from "@/lib/appointmentSync";
-import { appointmentServiceLabel, formatAppointmentDate } from "@/lib/appointmentDisplay";
+import {
+  appointmentServiceLabel,
+  formatAppointmentDate,
+  providerConfirmActionLabel,
+} from "@/lib/appointmentDisplay";
 import { createPageUrl } from "@/utils";
 import { Link } from "react-router-dom";
 import { legacyPreBookingThreadId } from "@/lib/appointmentMessageThreads";
@@ -75,9 +83,14 @@ function AppointmentCard({
   onComplete,
   onCancel,
   actionsPending,
+  onSendGFE,
+  gfeSending,
+  gfeFeedback,
+  confirmActionLabel = "Confirm Appointment",
 }) {
   const service = appointmentServiceLabel(a);
   const dateLabel = formatAppointmentDate(a.appointment_date, "MMM d, yyyy");
+  const gfeStatus = appointmentGfeDisplayStatus(a);
 
   return (
     <Card>
@@ -87,6 +100,7 @@ function AppointmentCard({
             <div className="flex items-center gap-2 flex-wrap">
               <span className="font-semibold text-slate-900">{service || "Appointment"}</span>
               <StatusBadge status={a.status} />
+              {a.requires_gfe === true && <GFEStatusBadge status={gfeStatus} size="sm" />}
             </div>
 
             <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-600">
@@ -143,6 +157,29 @@ function AppointmentCard({
                 Waiting for patient deposit{a.deposit_amount ? ` ($${a.deposit_amount})` : ""}
               </p>
             )}
+
+            {a.requires_gfe === true && (
+              <div className="flex flex-wrap items-center gap-2">
+                <AppointmentGfeProviderControls
+                  appointment={a}
+                  gfeSending={Boolean(gfeSending?.[a.id])}
+                  onSendGFE={onSendGFE}
+                />
+              </div>
+            )}
+
+            {gfeFeedback?.id === a.id && gfeFeedback.message && (
+              <div
+                className="rounded-lg px-3 py-2 text-xs"
+                style={
+                  gfeFeedback.type === "success"
+                    ? { background: "rgba(74,222,128,0.12)", border: "1px solid rgba(74,222,128,0.35)", color: "#166534" }
+                    : { background: "rgba(254,226,226,0.85)", border: "1px solid rgba(220,38,38,0.35)", color: "#991b1b" }
+                }
+              >
+                {gfeFeedback.message}
+              </div>
+            )}
           </div>
 
           <div className="flex flex-col gap-2 flex-shrink-0 w-full lg:w-auto">
@@ -174,7 +211,7 @@ function AppointmentCard({
                   onClick={() => onConfirmDeposit(a.id)}
                   disabled={actionsPending}
                 >
-                  Confirm &amp; Request Payment
+                  {confirmActionLabel}
                 </Button>
                 <Button
                   size="sm"
@@ -204,6 +241,7 @@ function AppointmentCard({
                 </Button>
               </div>
             )}
+
           </div>
         </div>
       </CardContent>
@@ -301,6 +339,9 @@ export default function ProviderAppointments() {
   });
 
   const actionsPending = update.isPending || requestDeposit.isPending;
+  const confirmActionLabel = providerConfirmActionLabel(me?.booking_deposit);
+
+  const { sendGFE, gfeSending, gfeFeedback } = useSendAppointmentGfe();
 
   const upcomingCount = useMemo(
     () => appointments.filter((a) => a.status === "confirmed").length,
@@ -402,10 +443,14 @@ export default function ProviderAppointments() {
                   setNotesText(appt.notes || "");
                 }}
                 onConfirmDeposit={(id) => requestDeposit.mutate(id)}
+                confirmActionLabel={confirmActionLabel}
                 onDecline={handleDecline}
                 onComplete={handleComplete}
                 onCancel={handleCancel}
                 actionsPending={actionsPending}
+                onSendGFE={sendGFE}
+                gfeSending={gfeSending}
+                gfeFeedback={gfeFeedback}
               />
             ))}
           </div>

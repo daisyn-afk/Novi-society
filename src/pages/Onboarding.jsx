@@ -10,6 +10,7 @@ import {
   GOAL_NEED_MD_COVERAGE,
   GOAL_NEED_TRAINING,
   clearSkipExploreFlag,
+  persistProviderSignupIntentChoice,
   writeProviderSignupGoal,
   writeSkipExploreFlag,
 } from "@/lib/providerSignupIntent";
@@ -68,6 +69,11 @@ export default function Onboarding() {
     setSaving(true);
     persistGoalAndGoBasic(providerPath);
     try {
+      await persistProviderSignupIntentChoice({
+        goal: providerPath,
+        explore_skip: false,
+        email: me?.email,
+      });
       await base44.auth.updateMe({ role: "provider" });
       window.location.href = createPageUrl("ProviderBasicOnboarding");
     } catch {
@@ -81,6 +87,7 @@ export default function Onboarding() {
     setSaving(true);
     writeSkipExploreFlag();
     try {
+      await persistProviderSignupIntentChoice({ explore_skip: true, email: me?.email });
       if (me?.id) {
         try {
           await base44.auth.updateMe({ role: "provider" });

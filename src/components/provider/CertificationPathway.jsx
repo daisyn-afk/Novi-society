@@ -1,6 +1,10 @@
-import { CheckCircle2, Lock, MapPin, Users, Clock, Zap, ChevronDown, ChevronUp } from "lucide-react";
+import { CheckCircle2, Users, Clock, ChevronDown, ChevronUp } from "lucide-react";
 import { useState } from "react";
-import { formatMinAvailableSeatsLabel } from "@/lib/sessionDateSeats";
+import {
+  formatMinAvailableSeatsLabel,
+  formatSeatsLeftForEnrollment,
+} from "@/lib/sessionDateSeats";
+import PreCourseMaterialsStudyBlock from "@/components/provider/PreCourseMaterialsStudyBlock";
 
 export default function CertificationPathway({
   serviceType,
@@ -12,7 +16,6 @@ export default function CertificationPathway({
   sessionByEnrollment = {},
   initiallyExpandedCourseId = null,
   onEnroll,
-  onViewEnrollment,
   onApplyMD
 }) {
   const firstEnrolledCourseId = courses.find((course) => enrolledCourseIds.has(course.id))?.id || null;
@@ -128,7 +131,12 @@ export default function CertificationPathway({
             {courses.map((course) => {
               const isEnrolled = enrolledCourseIds.has(course.id);
               const isExpanded = expandedCourseId === course.id;
-              const seatsHint = formatMinAvailableSeatsLabel(course);
+              const enrollment = serviceEnrollments.find((e) => e.course_id === course.id);
+              const scheduledDate =
+                enrollment?.session_date || course.session_dates?.find((d) => d?.date)?.date;
+              const seatsHint = isEnrolled
+                ? formatSeatsLeftForEnrollment(course, scheduledDate)
+                : formatMinAvailableSeatsLabel(course);
               return (
                 <div key={course.id} className="rounded-xl overflow-hidden" style={{ background: "rgba(255,255,255,0.7)", border: "1px solid rgba(30,37,53,0.1)" }}>
                   {/* Collapsible Header */}
@@ -174,51 +182,46 @@ export default function CertificationPathway({
                         </p>
                       )}
 
-                      {/* Pre-Course Materials */}
-                      {course.pre_course_materials?.length > 0 && (
-                        <div className="rounded-lg p-3" style={{ background: "rgba(123,142,200,0.08)", border: "1px solid rgba(123,142,200,0.15)" }}>
-                          <p className="text-xs font-bold mb-2" style={{ color: "#7B8EC8" }}>📚 Pre-Course Materials to Study</p>
-                          <ul className="space-y-1">
-                            {course.pre_course_materials.map((mat, i) => (
-                              <li key={i} className="text-xs flex items-start gap-2" style={{ color: "rgba(30,37,53,0.6)" }}>
-                                {mat.required && <Zap className="w-3 h-3 flex-shrink-0 mt-0.5" style={{ color: "#FA6F30" }} />}
-                                <span>{mat.title}{mat.required ? " (Required)" : ""}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
+                      {isEnrolled && (
+                        <PreCourseMaterialsStudyBlock
+                          course={course}
+                          title="Pre-Course Materials to Study"
+                        />
                       )}
 
-                      {/* Course Info Grid */}
-                      <div className="grid grid-cols-3 gap-2 p-3 rounded-lg" style={{ background: "rgba(30,37,53,0.04)" }}>
-                        {course.location && (
-                          <div className="flex items-center gap-1.5 text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>
-                            <MapPin className="w-3.5 h-3.5 flex-shrink-0" />
-                            <span>{course.location}</span>
-                          </div>
-                        )}
-                        {course.duration_hours && (
-                          <div className="flex items-center gap-1.5 text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>
-                            <Clock className="w-3.5 h-3.5 flex-shrink-0" />
-                            <span>{course.duration_hours}h</span>
-                          </div>
-                        )}
-                        {seatsHint != null && (
-                          <div className="flex items-center gap-1.5 text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>
-                            <Users className="w-3.5 h-3.5 flex-shrink-0" />
-                            <span>{seatsHint}</span>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* CTA Button */}
-                      {!activeCert && (
-                        <button
-                          onClick={() => (isEnrolled ? onViewEnrollment?.(course) : onEnroll(course))}
-                          className="w-full py-3 rounded-lg font-bold text-white transition-all hover:opacity-90"
-                          style={{ background: isEnrolled ? "#7B8EC8" : "#FA6F30" }}
+                      {(course.duration_hours != null && course.duration_hours !== "") || seatsHint ? (
+                        <div
+                          className="grid grid-cols-3 items-center gap-4 px-4 py-3 rounded-xl text-sm"
+                          style={{ background: "rgba(30,37,53,0.04)", color: "rgba(30,37,53,0.55)" }}
                         >
-                          {isEnrolled ? "View Enrollment" : "Enroll"}
+                          {course.duration_hours != null && course.duration_hours !== "" ? (
+                            <span className="inline-flex items-center gap-2 justify-self-start">
+                              <Clock className="w-4 h-4 flex-shrink-0" style={{ color: "rgba(30,37,53,0.4)" }} />
+                              {course.duration_hours}h
+                            </span>
+                          ) : (
+                            <span />
+                          )}
+                          {seatsHint ? (
+                            <span className="inline-flex items-center gap-2 justify-self-center">
+                              <Users className="w-4 h-4 flex-shrink-0" style={{ color: "rgba(30,37,53,0.4)" }} />
+                              {seatsHint}
+                            </span>
+                          ) : (
+                            <span />
+                          )}
+                          <span />
+                        </div>
+                      ) : null}
+
+                      {!activeCert && !isEnrolled && (
+                        <button
+                          type="button"
+                          onClick={() => onEnroll(course)}
+                          className="w-full py-3 rounded-lg font-bold text-white transition-all hover:opacity-90"
+                          style={{ background: "#FA6F30" }}
+                        >
+                          Enroll
                         </button>
                       )}
                     </div>

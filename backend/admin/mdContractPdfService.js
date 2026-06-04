@@ -1,5 +1,10 @@
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { query } from "./db.js";
+import { getGlobalMdContractUrl, isUsableMdContractUrl } from "./lib/globalMdContract.js";
+import {
+  getLastPageSignaturePlacement,
+  signatureBlockTopBaseline,
+} from "./lib/mdContractPdfLayout.js";
 import { uploadMdSignedContract } from "./supabaseStorage.js";
 
 function parseSignatureDataUrl(dataUrl) {
@@ -37,9 +42,13 @@ export async function getServiceTypeContractInfo(serviceTypeId) {
     [id]
   );
   const row = rows?.[0] || {};
+  let mdContractUrl = row.md_contract_url || null;
+  if (!isUsableMdContractUrl(mdContractUrl)) {
+    mdContractUrl = (await getGlobalMdContractUrl()) || null;
+  }
   return {
     name: row.name || "",
-    md_contract_url: row.md_contract_url || null,
+    md_contract_url: mdContractUrl,
     md_agreement_text: row.md_agreement_text || "",
   };
 }
@@ -66,22 +75,6 @@ function wrapTextLines(text, maxChars = 88) {
   }
   if (line) lines.push(line);
   return lines;
-}
-
-/** Estimate lowest text baseline on the last page from PDF content streams. */
-function estimateLastPageContentBottomY(pdfBytes, pageHeight) {
-  const tail = pdfBytes.subarray(Math.max(0, pdfBytes.length - 25000)).toString("latin1");
-  const ys = [];
-  for (const m of tail.matchAll(/(-?\d+\.?\d*)\s+(-?\d+\.?\d*)\s+Td/g)) {
-    const y = parseFloat(m[2]);
-    if (Number.isFinite(y) && y >= 36 && y <= pageHeight) ys.push(y);
-  }
-  for (const m of tail.matchAll(/1\s+0\s+0\s+1\s+(-?\d+\.?\d*)\s+(-?\d+\.?\d*)\s+Tm/g)) {
-    const y = parseFloat(m[2]);
-    if (Number.isFinite(y) && y >= 36 && y <= pageHeight) ys.push(y);
-  }
-  if (!ys.length) return pageHeight * 0.45;
-  return Math.min(...ys);
 }
 
 async function buildStandaloneAgreementPdf({ agreementText, serviceTypeName }) {
@@ -119,28 +112,35 @@ async function buildContractPdfDocument({ contractPdfUrl }) {
   const bytes = await fetchPdfBytes(contractPdfUrl);
   const pdfDoc = await PDFDocument.load(bytes);
   const lastPage = pdfDoc.getPage(pdfDoc.getPageCount() - 1);
-  const contentEndY = estimateLastPageContentBottomY(bytes, lastPage.getHeight());
-  return { pdfDoc, contentEndY };
+  const placement = await getLastPageSignaturePlacement(bytes);
+  return {
+    pdfDoc,
+    contentBottomY: placement.contentBottomY,
+    pageHeight: placement.pageHeight,
+    firstExhibitY: placement.firstExhibitY,
+    exhibitBandTop: placement.exhibitBandTop,
+  };
 }
 
-/** Draw signature immediately below where document content ends (same page, no extra page). */
-async function drawSignatureAfterContent(pdfDoc, {
-  contentEndY,
+/** Draw provider signature on the last page, below all existing contract content. */
+async function drawSignatureBelowContent(pdfDoc, {
+  contentBottomY,
+  pageHeight,
+  firstExhibitY = null,
+  exhibitBandTop = null,
   providerName,
   serviceTypeName,
   contractName,
   dateLabel,
   signature,
-  pageIndex = null,
 }) {
-  const pageCount = pdfDoc.getPageCount();
-  if (pageCount < 1) {
+  if (pdfDoc.getPageCount() < 1) {
     throw new Error("Contract PDF has no pages.");
   }
 
-  const sigPage = pdfDoc.getPage(pageIndex ?? pageCount - 1);
+  const sigPage = pdfDoc.getPage(pdfDoc.getPageCount() - 1);
   const pageWidth = sigPage.getWidth();
-  const pageHeight = sigPage.getHeight();
+  const pageH = pageHeight || sigPage.getHeight();
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
@@ -152,19 +152,15 @@ async function drawSignatureAfterContent(pdfDoc, {
   const marginX = Math.max(36, pageWidth * 0.08);
   const imgWidth = Math.min(220, pageWidth - marginX * 2);
   const imgHeight = Math.min(70, (embeddedImage.height / embeddedImage.width) * imgWidth);
-  const gapBelowContent = 28;
-  const blockHeight = imgHeight + 82;
-  const minBottom = 40;
-
-  let startY = Number(contentEndY);
-  if (!Number.isFinite(startY) || startY <= minBottom + blockHeight) {
-    startY = pageHeight * 0.42;
-  }
-  if (startY - gapBelowContent - blockHeight < minBottom) {
-    startY = minBottom + blockHeight + gapBelowContent;
-  }
-
-  let y = startY - gapBelowContent;
+  const blockHeight = imgHeight + 88;
+  let y = signatureBlockTopBaseline({
+    contentBottomY,
+    pageHeight: pageH,
+    blockHeight,
+    firstExhibitY,
+    exhibitBandTop,
+    gapBelowContent: 56,
+  });
 
   sigPage.drawText("Provider Signature", {
     x: marginX,
@@ -257,18 +253,25 @@ export async function generateAndUploadSignedMdContract({
   const agreementBody = agreementText || contractInfo.md_agreement_text || "";
 
   let pdfDoc;
-  let contentEndY;
+  let contentBottomY;
+  let pageHeight;
+  let firstExhibitY = null;
+  let exhibitBandTop = null;
   if (isUsableDocumentUrl(templateUrl)) {
     const built = await buildContractPdfDocument({ contractPdfUrl: templateUrl });
     pdfDoc = built.pdfDoc;
-    contentEndY = built.contentEndY;
+    contentBottomY = built.contentBottomY;
+    pageHeight = built.pageHeight;
+    firstExhibitY = built.firstExhibitY;
+    exhibitBandTop = built.exhibitBandTop;
   } else {
     const built = await buildStandaloneAgreementPdf({
       agreementText: agreementBody,
       serviceTypeName: serviceTypeName || contractInfo.name,
     });
     pdfDoc = built.pdfDoc;
-    contentEndY = built.contentEndY;
+    contentBottomY = built.contentEndY - 14;
+    pageHeight = pdfDoc.getPage(0).getHeight();
   }
 
   const signedAt = signedAtIso ? new Date(signedAtIso) : new Date();
@@ -280,8 +283,11 @@ export async function generateAndUploadSignedMdContract({
     minute: "2-digit",
   });
 
-  await drawSignatureAfterContent(pdfDoc, {
-    contentEndY,
+  await drawSignatureBelowContent(pdfDoc, {
+    contentBottomY,
+    pageHeight,
+    firstExhibitY,
+    exhibitBandTop,
     providerName,
     serviceTypeName,
     contractName: contractInfo.name,

@@ -2,7 +2,11 @@ import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { base44 } from "@/api/base44Client";
 import { useAuth } from "@/lib/AuthContext";
-import { readSkipExploreFlag, clearSkipExploreFlag } from "@/lib/providerSignupIntent";
+import {
+  readSkipExploreFlag,
+  clearSkipExploreFlag,
+  syncProviderJoinChoiceFromSession,
+} from "@/lib/providerSignupIntent";
 import { getPostAuthRedirectPath } from "@/lib/providerOnboardingState";
 
 export default function Login() {
@@ -68,7 +72,9 @@ export default function Login() {
         password: form.password
       });
       let currentUser = await base44.auth.me();
-      if (readSkipExploreFlag()) {
+      const hadSkipExplore = readSkipExploreFlag();
+      await syncProviderJoinChoiceFromSession(currentUser?.email || form.email.trim());
+      if (hadSkipExplore) {
         try {
           await base44.auth.updateMe({ role: "provider" });
           currentUser = await base44.auth.me();

@@ -1,8 +1,7 @@
-import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { FileText, Video, Link as LinkIcon, BookOpen, CheckCircle, ExternalLink } from "lucide-react";
+import { FileText, Video, Link as LinkIcon, BookOpen, ExternalLink } from "lucide-react";
+import { normalizePreCourseMaterials } from "@/lib/preCourseMaterials";
 
 const TYPE_ICONS = {
   pdf: FileText,
@@ -19,17 +18,12 @@ const TYPE_COLORS = {
 };
 
 export default function PreCourseMaterials({ course, open, onClose }) {
-  const [viewed, setViewed] = useState(new Set());
-  const materials = course?.pre_course_materials || [];
+  const materials = normalizePreCourseMaterials(course?.pre_course_materials);
 
   if (!materials.length) return null;
 
-  const requiredCount = materials.filter(m => m.required !== false).length;
-  const viewedRequired = materials.filter((m, i) => m.required !== false && viewed.has(i)).length;
-  const allRequiredViewed = viewedRequired >= requiredCount;
-
   return (
-    <Dialog open={open} onOpenChange={onClose}>
+    <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose?.()}>
       <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Pre-Course Materials</DialogTitle>
@@ -37,53 +31,32 @@ export default function PreCourseMaterials({ course, open, onClose }) {
         </DialogHeader>
 
         <div className="space-y-3 pt-2">
-          <div className="flex items-center justify-between text-xs text-slate-500 bg-slate-50 rounded-lg px-3 py-2">
-            <span>Review all required materials before your class</span>
-            <span className="font-semibold">{viewedRequired}/{requiredCount} completed</span>
-          </div>
-
           {materials.map((m, i) => {
             const Icon = TYPE_ICONS[m.type] || BookOpen;
             const colorClass = TYPE_COLORS[m.type] || "bg-slate-50 text-slate-600";
-            const isViewed = viewed.has(i);
+            const href = m.url?.trim() || null;
             return (
-              <div key={i} className={`rounded-xl border p-4 transition-colors ${isViewed ? "border-green-200 bg-green-50/30" : "border-slate-200 bg-white"}`}>
+              <div key={i} className="rounded-xl border border-slate-200 bg-white p-4">
                 <div className="flex items-start gap-3">
                   <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${colorClass}`}>
                     <Icon className="w-4 h-4" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <p className="font-semibold text-slate-900 text-sm">{m.title}</p>
-                      {m.required !== false && (
-                        <Badge className="text-xs bg-orange-100 text-orange-700">Required</Badge>
-                      )}
-                      {isViewed && <CheckCircle className="w-4 h-4 text-green-500" />}
-                    </div>
+                    <p className="font-semibold text-slate-900 text-sm">{m.title || "Study material"}</p>
                     {m.content && m.type === "text" && (
-                      <p className="text-sm text-slate-600 mt-1 leading-relaxed">{m.content}</p>
+                      <p className="text-sm text-slate-600 mt-1 leading-relaxed whitespace-pre-wrap">{m.content}</p>
                     )}
-                    {m.url && (
+                    {href && (
                       <a
-                        href={m.url}
+                        href={href}
                         target="_blank"
                         rel="noreferrer"
                         className="mt-2 inline-flex items-center gap-1.5 text-sm font-medium hover:underline"
                         style={{ color: "#FA6F30" }}
-                        onClick={() => setViewed(v => new Set([...v, i]))}
                       >
                         Open {m.type === "pdf" ? "PDF" : m.type === "video" ? "Video" : "Link"}
                         <ExternalLink className="w-3.5 h-3.5" />
                       </a>
-                    )}
-                    {m.type === "text" && !isViewed && (
-                      <button
-                        className="mt-2 text-sm font-medium"
-                        style={{ color: "#FA6F30" }}
-                        onClick={() => setViewed(v => new Set([...v, i]))}
-                      >
-                        Mark as Read
-                      </button>
                     )}
                   </div>
                 </div>
@@ -92,12 +65,12 @@ export default function PreCourseMaterials({ course, open, onClose }) {
           })}
 
           <Button
+            type="button"
             className="w-full mt-2"
-            style={{ background: allRequiredViewed ? "#FA6F30" : "#94a3b8", color: "#fff" }}
+            style={{ background: "#FA6F30", color: "#fff" }}
             onClick={onClose}
-            disabled={!allRequiredViewed}
           >
-            {allRequiredViewed ? "Continue to Enrollment" : `Review ${requiredCount - viewedRequired} more required material(s)`}
+            Close
           </Button>
         </div>
       </DialogContent>

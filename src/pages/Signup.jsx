@@ -4,7 +4,12 @@ import { useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { createPageUrl } from "@/utils";
 import { useAuth } from "@/lib/AuthContext";
-import { readSkipExploreFlag, clearSkipExploreFlag } from "@/lib/providerSignupIntent";
+import {
+  readProviderSignupGoal,
+  readSkipExploreFlag,
+  clearSkipExploreFlag,
+  syncProviderJoinChoiceFromSession,
+} from "@/lib/providerSignupIntent";
 
 const ROLE_OPTIONS = [
   { value: "provider", label: "Provider" },
@@ -87,8 +92,13 @@ export default function Signup() {
       }
       setAuthenticatedSession(createdUser);
       qc.invalidateQueries({ queryKey: ["me"] });
+      const hadSkipExplore = readSkipExploreFlag();
+      const hadJoinChoice = hadSkipExplore || Boolean(readProviderSignupGoal());
+      if (hadJoinChoice) {
+        await syncProviderJoinChoiceFromSession(createdUser?.email || form.email.trim());
+      }
       const safeNext = readSafeNextParam(searchParams);
-      if (readSkipExploreFlag()) {
+      if (hadSkipExplore) {
         clearSkipExploreFlag();
         navigate(createPageUrl("ProviderDashboard"), { replace: true });
         return;
