@@ -12,6 +12,7 @@ import {
   ensureProviderUserRecord,
   getUserPasswordSetupByAuthUserId,
   isPasswordResetLinkConsumed,
+  lookupCustomerNamesFromPreOrders,
   markPasswordResetCompleted,
   syncUserRecordOnPasswordSetup
 } from "../users/passwordSetup.js";
@@ -683,6 +684,28 @@ export async function getMeFromAccessToken(accessToken) {
     const profile = await getUserRowByAuthUserId(data.user.id);
     const resolvedRole = profile?.role || data.user.user_metadata?.role || "provider";
     const metaName = readNameFromAuthUser(data.user || {});
+    let resolvedFirstName = profile?.first_name || metaName.firstName || null;
+    let resolvedLastName = profile?.last_name || metaName.lastName || null;
+    let resolvedFullName = profile?.full_name || metaName.fullName || null;
+    if (!resolvedFirstName && !resolvedLastName && data.user.email) {
+      const fromPreOrder = await lookupCustomerNamesFromPreOrders(data.user.email);
+      if (fromPreOrder.firstName || fromPreOrder.lastName) {
+        resolvedFirstName = fromPreOrder.firstName;
+        resolvedLastName = fromPreOrder.lastName;
+        resolvedFullName = fullName(resolvedFirstName, resolvedLastName);
+        // Persist names so admin panel and future sessions stay in sync.
+        try {
+          await syncUserRecordOnPasswordSetup({
+            authUserId: data.user.id,
+            email: data.user.email,
+            firstName: resolvedFirstName,
+            lastName: resolvedLastName
+          });
+        } catch {
+          // Non-fatal; response still includes resolved names.
+        }
+      }
+    }
     const providerProfile = resolvedRole === "provider"
       ? await getProviderProfileByUserId(profile?.id)
       : null;
@@ -700,9 +723,9 @@ export async function getMeFromAccessToken(accessToken) {
       email: data.user.email,
       role: resolvedRole,
       permissions: staffPermissions,
-      first_name: profile?.first_name || metaName.firstName || null,
-      last_name: profile?.last_name || metaName.lastName || null,
-      full_name: profile?.full_name || metaName.fullName || null,
+      first_name: resolvedFirstName,
+      last_name: resolvedLastName,
+      full_name: resolvedFullName,
       dob: normalizeDateOnly(providerProfile?.dob),
       address_line1: providerProfile?.address_line1 || null,
       address_line2: providerProfile?.address_line2 || null,
@@ -888,12 +911,19 @@ export async function setPasswordWithAccessToken({ accessToken, refreshToken, pa
 
   const userEmail = updatedData?.user?.email || sessionData.user.email;
   const metaName = readNameFromAuthUser(sessionData.user || {});
+  let resolvedFirstName = metaName.firstName;
+  let resolvedLastName = metaName.lastName;
+  if (!resolvedFirstName && !resolvedLastName && userEmail) {
+    const fromPreOrder = await lookupCustomerNamesFromPreOrders(userEmail);
+    resolvedFirstName = fromPreOrder.firstName;
+    resolvedLastName = fromPreOrder.lastName;
+  }
 
   await syncUserRecordOnPasswordSetup({
     authUserId,
     email: userEmail,
-    firstName: metaName.firstName,
-    lastName: metaName.lastName
+    firstName: resolvedFirstName,
+    lastName: resolvedLastName
   });
 
   await markPasswordResetCompleted(authUserId, userEmail);

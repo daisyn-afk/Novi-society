@@ -25,6 +25,8 @@ import {
 } from "../payments/service.js";
 import { resolveAppBaseUrl } from "../lib/frontendBaseUrl.js";
 import { sendEmailFromTemplate } from "../emails/renderTemplate.js";
+import { splitCustomerName } from "../users/providerSignupLink.js";
+import { markPasswordResetPending } from "../users/passwordSetup.js";
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
 
@@ -49,6 +51,15 @@ function normalizeRole(role) {
 
 function fullName(firstName, lastName) {
   return [firstName, lastName].filter(Boolean).join(" ").trim() || null;
+}
+
+function resolveCheckoutCustomerNames({ first_name, last_name, customer_name } = {}) {
+  const firstName = String(first_name || "").trim() || null;
+  const lastName = String(last_name || "").trim() || null;
+  if (firstName || lastName) {
+    return { firstName, lastName };
+  }
+  return splitCustomerName(customer_name);
 }
 
 function normalizePromoCode(code) {
@@ -998,11 +1009,16 @@ export async function getPreOrder({ id, sessionId }) {
     // Safety net: ensure provider row and setup invite are attempted even when
     // async reconciliation path did not complete.
     if (preOrder?.status === "paid" && preOrder?.order_type === "course") {
+      const checkoutNames = resolveCheckoutCustomerNames({
+        first_name: preOrder.first_name,
+        last_name: preOrder.last_name,
+        customer_name: preOrder.customer_name
+      });
       try {
         await upsertProviderUserByEmail(client, {
           email: preOrder.customer_email,
-          firstName: preOrder.first_name,
-          lastName: preOrder.last_name
+          firstName: checkoutNames.firstName,
+          lastName: checkoutNames.lastName
         });
       } catch (profileErr) {
         // eslint-disable-next-line no-console
@@ -1012,11 +1028,20 @@ export async function getPreOrder({ id, sessionId }) {
       try {
         const inviteResult = await inviteUserIfNeeded(
           preOrder.customer_email,
-          preOrder.first_name,
-          preOrder.last_name,
+          checkoutNames.firstName,
+          checkoutNames.lastName,
           null,
-          client
+          client,
+          { customerName: preOrder.customer_name }
         );
+        if (inviteResult?.authUserId) {
+          await upsertProviderUserRow(client, {
+            authUserId: inviteResult.authUserId,
+            email: preOrder.customer_email,
+            firstName: checkoutNames.firstName,
+            lastName: checkoutNames.lastName
+          });
+        }
         // eslint-disable-next-line no-console
         console.log("[checkout] getPreOrder invite result:", {
           preOrderId: preOrder.id,
@@ -1266,7 +1291,14 @@ async function upsertProviderUserByEmail(client, {
   return inserted.rows[0] ?? null;
 }
 
-async function inviteUserIfNeeded(email, firstName, lastName, frontendBaseUrlOverride = null, dbClient = null) {
+async function inviteUserIfNeeded(
+  email,
+  firstName,
+  lastName,
+  frontendBaseUrlOverride = null,
+  dbClient = null,
+  { customerName } = {}
+) {
   if (!email) {
     return {
       wasNewUser: false,
@@ -1275,25 +1307,60 @@ async function inviteUserIfNeeded(email, firstName, lastName, frontendBaseUrlOve
       authUserId: null
     };
   }
+  const { firstName: resolvedFirstName, lastName: resolvedLastName } = resolveCheckoutCustomerNames({
+    first_name: firstName,
+    last_name: lastName,
+    customer_name: customerName
+  });
+  firstName = resolvedFirstName;
+  lastName = resolvedLastName;
+
   try {
     const runQuery = async (sql, params = []) => (dbClient ? dbClient.query(sql, params) : query(sql, params));
     const normalizedEmail = String(email).trim().toLowerCase();
     const signupBaseUrl = resolveAppBaseUrl({ origin: frontendBaseUrlOverride });
     const defaultSignupLink = `${signupBaseUrl}/signup?email=${encodeURIComponent(normalizedEmail)}`;
+    const linkMetadata = {
+      first_name: firstName || "",
+      last_name: lastName || "",
+      role: "provider"
+    };
 
     const generateSetupLink = async (linkType = "invite") => {
-      if (!supabaseAdmin?.auth?.admin?.generateLink) return "";
+      if (!supabaseAdmin?.auth?.admin?.generateLink) return { link: "", authUserId: null };
       const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
         type: linkType,
         email: normalizedEmail,
-        options: { redirectTo: `${signupBaseUrl}/set-password` }
+        options: {
+          redirectTo: `${signupBaseUrl}/set-password`,
+          data: linkMetadata
+        }
       });
       if (linkError) {
         // eslint-disable-next-line no-console
         console.error(`[checkout] ${linkType} link generation failed:`, linkError.message || linkError);
-        return "";
+        return { link: "", authUserId: null };
       }
-      return linkData?.properties?.action_link || linkData?.action_link || "";
+      return {
+        link: linkData?.properties?.action_link || linkData?.action_link || "",
+        authUserId: linkData?.user?.id || null
+      };
+    };
+
+    const syncAuthUserMetadata = async (authUserId) => {
+      if (!authUserId || !supabaseAdmin?.auth?.admin?.updateUserById) return;
+      try {
+        await supabaseAdmin.auth.admin.updateUserById(authUserId, {
+          user_metadata: {
+            first_name: firstName || null,
+            last_name: lastName || null,
+            role: "provider"
+          }
+        });
+      } catch (metaErr) {
+        // eslint-disable-next-line no-console
+        console.warn("[checkout] auth user metadata update failed:", metaErr?.message || metaErr);
+      }
     };
 
     const existingUserRes = await runQuery(
@@ -1305,6 +1372,15 @@ async function inviteUserIfNeeded(email, firstName, lastName, frontendBaseUrlOve
     );
     const existingAuthUserId = existingUserRes.rows[0]?.auth_user_id || null;
     if (existingAuthUserId) {
+      await syncAuthUserMetadata(existingAuthUserId);
+      if (dbClient) {
+        await upsertProviderUserRow(dbClient, {
+          authUserId: existingAuthUserId,
+          email: normalizedEmail,
+          firstName,
+          lastName
+        });
+      }
       return {
         wasNewUser: false,
         existingUser: true,
@@ -1317,21 +1393,9 @@ async function inviteUserIfNeeded(email, firstName, lastName, frontendBaseUrlOve
     let createdAuthUserId = null;
 
     if (supabaseAdmin?.auth?.admin?.generateLink) {
-      const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
-        type: "invite",
-        email: normalizedEmail,
-        options: {
-          redirectTo: `${signupBaseUrl}/set-password`
-        }
-      });
-      if (linkError) {
-        // eslint-disable-next-line no-console
-        console.error("[checkout] invite link generation failed:", linkError.message || linkError);
-      } else {
-        const generatedLink = linkData?.properties?.action_link || linkData?.action_link || "";
-        if (generatedLink) signupLink = generatedLink;
-        createdAuthUserId = linkData?.user?.id || null;
-      }
+      const inviteResult = await generateSetupLink("invite");
+      if (inviteResult.link) signupLink = inviteResult.link;
+      createdAuthUserId = inviteResult.authUserId;
     }
 
     let inviteSent = await sendNewUserInviteEmail({
@@ -1340,11 +1404,12 @@ async function inviteUserIfNeeded(email, firstName, lastName, frontendBaseUrlOve
       signupLink
     });
     if (!inviteSent) {
-      const recoveryLink = await generateSetupLink("recovery");
+      const recoveryResult = await generateSetupLink("recovery");
+      createdAuthUserId = createdAuthUserId || recoveryResult.authUserId;
       inviteSent = await sendNewUserInviteEmail({
         to: normalizedEmail,
         firstName,
-        signupLink: recoveryLink || signupLink
+        signupLink: recoveryResult.link || signupLink
       });
       // eslint-disable-next-line no-console
       console.warn("[checkout] invite resend attempted with recovery link:", {
@@ -1352,6 +1417,25 @@ async function inviteUserIfNeeded(email, firstName, lastName, frontendBaseUrlOve
         resent: inviteSent
       });
     }
+
+    if (createdAuthUserId) {
+      await syncAuthUserMetadata(createdAuthUserId);
+      if (dbClient) {
+        await upsertProviderUserRow(dbClient, {
+          authUserId: createdAuthUserId,
+          email: normalizedEmail,
+          firstName,
+          lastName
+        });
+      }
+      await markPasswordResetPending({
+        email: normalizedEmail,
+        authUserId: createdAuthUserId,
+        firstName,
+        lastName
+      });
+    }
+
     // eslint-disable-next-line no-console
     console.log("[checkout] invite send result:", {
       email: normalizedEmail,
@@ -1674,12 +1758,17 @@ export async function processCompletedCheckoutSession(session) {
 
     let wasNewUser = false;
     let linkedUserId = null;
+    const checkoutNames = resolveCheckoutCustomerNames({
+      first_name: preOrder.first_name,
+      last_name: preOrder.last_name,
+      customer_name: preOrder.customer_name
+    });
 
     try {
       await upsertProviderUserByEmail(client, {
         email: preOrder.customer_email,
-        firstName: preOrder.first_name,
-        lastName: preOrder.last_name
+        firstName: checkoutNames.firstName,
+        lastName: checkoutNames.lastName
       });
     } catch (profileErr) {
       // Never block payment finalization on profile projection failures.
@@ -1689,10 +1778,11 @@ export async function processCompletedCheckoutSession(session) {
 
     const inviteResult = await inviteUserIfNeeded(
       preOrder.customer_email,
-      preOrder.first_name,
-      preOrder.last_name,
+      checkoutNames.firstName,
+      checkoutNames.lastName,
       session?.metadata?.app_base_url || null,
-      client
+      client,
+      { customerName: preOrder.customer_name }
     );
     wasNewUser = Boolean(inviteResult?.wasNewUser);
     linkedUserId = inviteResult?.authUserId || null;
@@ -1701,8 +1791,8 @@ export async function processCompletedCheckoutSession(session) {
       await upsertProviderUserRow(client, {
         authUserId: linkedUserId,
         email: preOrder.customer_email,
-        firstName: preOrder.first_name,
-        lastName: preOrder.last_name
+        firstName: checkoutNames.firstName,
+        lastName: checkoutNames.lastName
       });
     }
 
