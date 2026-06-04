@@ -13,6 +13,8 @@ import {
   loadProviderOfferings,
   resolveOfferingForAppointment,
 } from "../lib/treatmentPricing.js";
+import { createMarketplaceCheckoutSession, retrieveMarketplaceCheckoutSession } from "../stripe-connect/checkout.js";
+import { isStripeConnectConfigured } from "../stripe-connect/config.js";
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || "";
 const appBaseUrl = process.env.APP_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || "";
@@ -175,7 +177,7 @@ export async function createAppointmentTreatmentCheckout({
       e.statusCode = 400;
       throw e;
     }
-    if (!stripe) {
+    if (!stripe && !isStripeConnectConfigured()) {
       const e = new Error("Stripe is not configured.");
       e.statusCode = 500;
       throw e;
@@ -222,35 +224,43 @@ export async function createAppointmentTreatmentCheckout({
         ? `${serviceLabel} with ${providerName} (booking deposit of $${depositCredit.toFixed(2)} already applied)`
         : `${serviceLabel} with ${providerName}`;
 
-    const checkoutSession = await stripe.checkout.sessions.create({
-      mode: "payment",
-      payment_method_types: ["card"],
-      customer_email: customerEmail || undefined,
-      success_url: successUrl,
-      cancel_url: cancelUrl,
-      line_items: [
-        {
-          quantity: 1,
-          price_data: {
-            currency: "usd",
-            unit_amount: amountCents,
-            product_data: {
-              name: `Treatment — ${serviceLabel}`,
-              description,
+    const treatmentMetadata = {
+      checkout_type: "appointment_treatment",
+      appointment_id: appointmentId,
+      provider_id: String(appt.provider_id || ""),
+      patient_id: String(appt.patient_id || ""),
+      treatment_record_id: String(appt.treatment_record_id || ""),
+      customer_email: customerEmail,
+      customer_name: customerName,
+      service: serviceLabel,
+      deposit_credit: String(depositCredit),
+    };
+
+    const { session: checkoutSession } = await createMarketplaceCheckoutSession({
+      legacyStripe: stripe,
+      providerAuthUserId: String(appt.provider_id || ""),
+      amountCents,
+      sessionCreateParams: {
+        mode: "payment",
+        payment_method_types: ["card"],
+        customer_email: customerEmail || undefined,
+        success_url: successUrl,
+        cancel_url: cancelUrl,
+        line_items: [
+          {
+            quantity: 1,
+            price_data: {
+              currency: "usd",
+              unit_amount: amountCents,
+              product_data: {
+                name: `Treatment — ${serviceLabel}`,
+                description,
+              },
             },
           },
-        },
-      ],
-      metadata: {
-        checkout_type: "appointment_treatment",
-        appointment_id: appointmentId,
-        provider_id: String(appt.provider_id || ""),
-        patient_id: String(appt.patient_id || ""),
-        treatment_record_id: String(appt.treatment_record_id || ""),
-        customer_email: customerEmail,
-        customer_name: customerName,
-        service: serviceLabel,
-        deposit_credit: String(depositCredit),
+        ],
+        metadata: treatmentMetadata,
+        payment_intent_data: { metadata: treatmentMetadata },
       },
     });
 
@@ -371,7 +381,7 @@ export async function syncAppointmentTreatmentPayment({ token, appointmentId, st
     e.statusCode = 400;
     throw e;
   }
-  if (!stripe) {
+  if (!stripe && !isStripeConnectConfigured()) {
     const e = new Error("Stripe is not configured.");
     e.statusCode = 500;
     throw e;
@@ -400,7 +410,10 @@ export async function syncAppointmentTreatmentPayment({ token, appointmentId, st
     throw e;
   }
 
-  const session = await stripe.checkout.sessions.retrieve(sessionId);
+  const { session } = await retrieveMarketplaceCheckoutSession({
+    legacyStripe: stripe,
+    sessionId,
+  });
   const paid =
     String(session?.payment_status || "").toLowerCase() === "paid" ||
     String(session?.status || "").toLowerCase() === "complete";

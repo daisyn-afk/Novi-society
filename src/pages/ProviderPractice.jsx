@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { subscribeAppointmentsRefresh } from "@/lib/appointmentSync";
+import { stripeConnectCallbackMessage, refreshStripeConnectStatus } from "@/lib/stripeConnectApi";
 import { buildProviderProfileForm, sanitizeProfileSavePayload } from "@/lib/providerProfileForm";
 import { useAppointmentMessageUnread, unreadMessagesByPatient } from "@/hooks/useAppointmentMessageUnread";
 
@@ -214,6 +215,20 @@ export default function ProviderPractice() {
     setSearchParams(nextParams, { replace: true });
     setActivePanel("appointments");
   }, [searchParams, setSearchParams]);
+
+  useEffect(() => {
+    const banner = stripeConnectCallbackMessage(searchParams);
+    if (!banner) return;
+    if (banner.shouldRefresh) {
+      void refreshStripeConnectStatus().then(() => {
+        qc.invalidateQueries({ queryKey: ["stripe-connect-status"] });
+      });
+    }
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete("stripe_connect");
+    setSearchParams(nextParams, { replace: true });
+    if (banner.type === "success") setActivePanel("profile");
+  }, [searchParams, setSearchParams, qc]);
 
   const { data: messageUnreadSummary } = useAppointmentMessageUnread();
   const unreadMessagePatients = unreadMessagesByPatient(appointments, messageUnreadSummary);
