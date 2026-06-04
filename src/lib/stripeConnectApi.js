@@ -2,8 +2,11 @@ import { adminApiRequest } from "@/api/adminApiRequest";
 
 const BASE = "/admin/integrations/stripe-connect";
 
-export function fetchStripeConnectStatus({ refresh = false } = {}) {
-  const qs = refresh ? "?refresh=true" : "";
+export function fetchStripeConnectStatus({ refresh = false, live = true } = {}) {
+  const params = new URLSearchParams();
+  if (refresh) params.set("refresh", "true");
+  else if (live) params.set("live", "true");
+  const qs = params.toString() ? `?${params.toString()}` : "";
   return adminApiRequest(`${BASE}/status${qs}`, { method: "GET" });
 }
 
@@ -23,7 +26,7 @@ export function stripeConnectCallbackMessage(searchParams) {
   if (status === "return") {
     return {
       type: "success",
-      message: "Stripe setup updated. Refreshing your connection status…",
+      message: "Returned from Stripe. Your setup status is shown below.",
       shouldRefresh: true,
     };
   }
