@@ -1,5 +1,9 @@
 import launchRoadmap from "@/data/launchRoadmap.json";
 import { isBbpCert, isCprBlsCert } from "@/lib/complianceCerts";
+import {
+  hasFoundationPlaybook,
+  isPlaybookStepComplete,
+} from "@/lib/foundationStepProgress";
 
 const PROFILE_FIELDS = [
   "avatar_url",
@@ -106,7 +110,11 @@ export function buildCompleted(ctx) {
   return { ...autoDetected, ...manualChecklist };
 }
 
-function isStepComplete(step, autoChecks, manualChecklist = {}) {
+function isStepComplete(step, autoChecks, manualChecklist = {}, ctx = {}) {
+  if (hasFoundationPlaybook(step)) {
+    const playbookDone = isPlaybookStepComplete(step, autoChecks, manualChecklist, ctx);
+    if (playbookDone != null) return playbookDone;
+  }
   if (step.autoCheck) {
     return !!autoChecks[step.autoCheck];
   }
@@ -122,7 +130,7 @@ export function isPhaseComingSoon(phase) {
 export function countsTowardProgress(step, phase) {
   if (isPhaseComingSoon(phase)) return false;
   if (step.coming_soon) return false;
-  if (step.embedded_tool) return false;
+  if (step.embedded_tool && !hasFoundationPlaybook(step)) return false;
   if (step.type && step.type !== "checklist") return false;
   return true;
 }
@@ -151,7 +159,16 @@ export function mergeLaunchRoadmapPhases(dbPhases = [], staticPhases = getStatic
     const staticPhase = staticById[dbPhase.id];
     const dbStepIds = new Set((dbPhase.steps || []).map((s) => s.id));
     const missingStaticSteps = (staticPhase?.steps || []).filter((s) => !dbStepIds.has(s.id));
-    const steps = [...(dbPhase.steps || []), ...missingStaticSteps].sort(
+    const mergedDbSteps = (dbPhase.steps || []).map((dbStep) => {
+      const staticStep = (staticPhase?.steps || []).find((s) => s.id === dbStep.id);
+      if (!staticStep) return dbStep;
+      return {
+        ...dbStep,
+        ...(staticStep.playbook ? { playbook: staticStep.playbook } : {}),
+        ...(staticStep.desc && !dbStep.desc ? { desc: staticStep.desc } : {}),
+      };
+    });
+    const steps = [...mergedDbSteps, ...missingStaticSteps].sort(
       (a, b) => (a.priority || 0) - (b.priority || 0)
     );
     return {
@@ -184,7 +201,7 @@ export function computeLaunchRoadmapStats({
   const phasesWithProgress = phases.map((phase) => {
     const steps = phase.steps.map((step) => ({
       ...step,
-      done: isStepComplete(step, autoChecks, manualChecklist),
+      done: isStepComplete(step, autoChecks, manualChecklist, ctx),
     }));
     const checklistSteps = getChecklistSteps(steps, phase);
     const doneCount = checklistSteps.filter((s) => s.done).length;
