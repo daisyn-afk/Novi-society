@@ -16,9 +16,16 @@ import {
 import { format, isToday, isTomorrow, startOfWeek, addDays, isSameDay, parseISO, addWeeks, subWeeks } from "date-fns";
 import TreatmentDocumentDialog from "@/components/practice/TreatmentDocumentDialog.jsx";
 import GFEStatusBadge from "@/components/GFEStatusBadge";
-import { appointmentServiceLabel, formatAppointmentDate } from "@/lib/appointmentDisplay";
+import AppointmentGfeProviderControls from "@/components/appointments/AppointmentGfeProviderControls";
+import {
+  appointmentServiceLabel,
+  formatAppointmentDate,
+  profileBookingDepositAmount,
+  providerConfirmActionLabel,
+} from "@/lib/appointmentDisplay";
 import { appointmentGfeDisplayStatus, appointmentGfeLink } from "@/lib/appointmentGfe";
 import { useToast } from "@/components/ui/use-toast";
+import { useSendAppointmentGfe } from "@/hooks/useSendAppointmentGfe";
 
 const STATUS = {
   requested:  { bg: "rgba(251,191,36,0.18)", text: "#d97706", border: "rgba(251,191,36,0.45)", label: "Pending", dot: "#fbbf24" },
@@ -77,7 +84,23 @@ function CalApptPill({ appt, onClick }) {
 }
 
 // ── Appointment detail drawer content ────────────────────────────
-function ApptDetail({ appt, treatmentRecords, onConfirm, onCancel, onComplete, onNoShow, noShowPending, onSendGFE, gfeSending, gfeFeedback, onDoc, onMessage, messageUnreadCount, onClose }) {
+function ApptDetail({
+  appt,
+  treatmentRecords,
+  onConfirm,
+  onCancel,
+  onComplete,
+  onNoShow,
+  noShowPending,
+  onSendGFE,
+  gfeSending,
+  gfeFeedback,
+  onDoc,
+  onMessage,
+  messageUnreadCount,
+  onClose,
+  confirmActionLabel = "Confirm Appointment",
+}) {
   const sc = STATUS[appt.status] || STATUS.confirmed;
   const hasRecord = treatmentRecords.find(r => r.appointment_id === appt.id);
   const serviceLabel = appointmentServiceLabel(appt);
@@ -158,26 +181,27 @@ function ApptDetail({ appt, treatmentRecords, onConfirm, onCancel, onComplete, o
       )}
 
       {appt.requires_gfe === true && (
-        <div className="px-3 py-2.5 rounded-xl text-xs space-y-1" style={{ background: "rgba(123,142,200,0.08)", border: "1px solid rgba(123,142,200,0.2)", color: "rgba(30,37,53,0.65)" }}>
-          <p className="font-bold" style={{ color: "#7B8EC8" }}>Good Faith Exam</p>
-          <div className="flex items-center gap-2 flex-wrap">
-            <GFEStatusBadge status={gfeStatus} examUrl={gfeLink || undefined} size="md" />
-          </div>
-          {gfeStatus === "pending" && gfeLink && (
-            <p className="text-[11px] pt-1">
-              Patient invite sent
-              {appt.gfe_sent_at ? ` · ${format(new Date(appt.gfe_sent_at), "MMM d, h:mm a")}` : ""}.
-              {" "}
-              <a href={gfeLink} target="_blank" rel="noopener noreferrer" className="font-semibold underline" style={{ color: "#5b6fa8" }}>
-                Open exam link
-              </a>
-            </p>
+        <div
+          className="flex flex-wrap items-center gap-2 px-3 py-2 rounded-xl text-xs"
+          style={{ background: "rgba(123,142,200,0.08)", border: "1px solid rgba(123,142,200,0.2)", color: "rgba(30,37,53,0.65)" }}
+        >
+          <span className="font-bold shrink-0" style={{ color: "#7B8EC8" }}>GFE</span>
+          <GFEStatusBadge status={gfeStatus} examUrl={gfeLink || undefined} size="sm" />
+          <AppointmentGfeProviderControls
+            appointment={appt}
+            gfeSending={gfeSending}
+            onSendGFE={onSendGFE}
+          />
+          {gfeStatus === "pending" && gfeLink && appt.gfe_sent_at && (
+            <span className="text-[10px]" style={{ color: "rgba(30,37,53,0.45)" }}>
+              Sent {format(new Date(appt.gfe_sent_at), "MMM d, h:mm a")}
+            </span>
           )}
           {gfeStatus === "approved" && appt.gfe_provider_name && (
-            <p className="text-[11px]">
-              Reviewed by {appt.gfe_provider_name}
+            <span className="text-[10px]" style={{ color: "rgba(30,37,53,0.45)" }}>
+              {appt.gfe_provider_name}
               {appt.gfe_completed_at ? ` · ${format(new Date(appt.gfe_completed_at), "MMM d, yyyy")}` : ""}
-            </p>
+            </span>
           )}
         </div>
       )}
@@ -222,7 +246,7 @@ function ApptDetail({ appt, treatmentRecords, onConfirm, onCancel, onComplete, o
               onClick={onConfirm}
             >
               <CheckCircle className="w-4 h-4 flex-shrink-0" />
-              Confirm &amp; Request Payment
+              {confirmActionLabel}
             </Button>
             <Button className="w-full gap-1.5" variant="outline" onClick={onCancel}>
               <X className="w-4 h-4" />Decline
@@ -257,12 +281,6 @@ function ApptDetail({ appt, treatmentRecords, onConfirm, onCancel, onComplete, o
             Message Patient
             <MessageUnreadBadge count={messageUnreadCount} />
           </Button>
-          {(["requested", "awaiting_payment", "confirmed"].includes(appt.status)) && appt.requires_gfe === true && (
-            <Button className="w-full gap-1.5" style={{ background: "rgba(123,142,200,0.12)", color: "#7B8EC8", border: "1px solid rgba(123,142,200,0.3)" }}
-              onClick={onSendGFE} disabled={gfeSending || gfeStatus === "approved"}>
-              <ShieldCheck className="w-4 h-4" />{gfeSending ? "Sending…" : gfeStatus === "pending" ? "Resend GFE" : "Send GFE"}
-            </Button>
-          )}
           <Button className="w-full gap-1.5" style={{ background: "rgba(250,111,48,0.1)", color: "#FA6F30", border: "1px solid rgba(250,111,48,0.3)" }}
             onClick={onDoc}>
             <FileText className="w-4 h-4" />{hasRecord ? "View Record" : "Log Treatment"}
@@ -289,6 +307,7 @@ export default function PracticeAppointmentsTab({
   initialFilter = "upcoming",
   openMessageAppointmentId = null,
   onOpenMessageHandled,
+  defaultBookingDeposit = null,
 }) {
   const qc = useQueryClient();
   const { toast } = useToast();
@@ -305,9 +324,12 @@ export default function PracticeAppointmentsTab({
   const [notesText, setNotesText] = useState("");
   const [docDialog, setDocDialog] = useState({ open: false, appt: null, existing: null });
   const [completePrompt, setCompletePrompt] = useState({ open: false, appt: null });
-  const [gfeSending, setGfeSending] = useState({});
-  const [gfeFeedback, setGfeFeedback] = useState({ id: null, type: null, message: "" });
   const [msgDialog, setMsgDialog] = useState(null);
+  const { sendGFE, gfeSending, gfeFeedback, setGfeFeedback } = useSendAppointmentGfe({
+    onLocalUpdate: (id, patch) => {
+      setSelectedAppt((prev) => (prev?.id === id ? { ...prev, ...patch } : prev));
+    },
+  });
   const { data: unreadSummary } = useAppointmentMessageUnread();
 
   useEffect(() => {
@@ -330,6 +352,13 @@ export default function PracticeAppointmentsTab({
     },
   });
 
+  const profileBookingDeposit = profileBookingDepositAmount(defaultBookingDeposit);
+  const confirmActionLabel = providerConfirmActionLabel(defaultBookingDeposit);
+
+  const openConfirmDialog = (appt) => {
+    setConfirmDialog({ open: true, appt });
+  };
+
   const confirmAppt = useMutation({
     mutationFn: async ({ id }) => {
       if (confirmTime) {
@@ -344,8 +373,11 @@ export default function PracticeAppointmentsTab({
       setDetailOpen(false);
       setFilter("upcoming");
       toast({
-        title: "Payment requested",
-        description: "The patient was notified to pay their deposit.",
+        title: profileBookingDeposit === 0 ? "Appointment confirmed" : "Payment requested",
+        description:
+          profileBookingDeposit === 0
+            ? "No booking deposit on your profile — the patient was notified."
+            : `The patient was notified to pay your $${profileBookingDeposit} booking deposit from Practice Profile.`,
         duration: 6000,
       });
     },
@@ -370,74 +402,6 @@ export default function PracticeAppointmentsTab({
     mutationFn: ({ id }) => base44.entities.Appointment.update(id, { notes: notesText }),
     onSuccess: () => { qc.invalidateQueries(["my-appointments"]); setNotesDialog({ open: false, appt: null }); },
   });
-
-  const sendGFE = async (appt) => {
-    if (!appt?.id) return;
-    setGfeFeedback({ id: appt.id, type: null, message: "" });
-    setGfeSending((s) => ({ ...s, [appt.id]: true }));
-    try {
-      const res = await base44.functions.invoke("sendQualiphyGFE", { appointment_id: appt.id });
-      const data = res?.data || {};
-      if (data.success) {
-        const meetingUrl = String(data.meeting_url || "").trim();
-        setSelectedAppt((prev) =>
-          prev && prev.id === appt.id
-            ? {
-                ...prev,
-                gfe_status: "pending",
-                gfe_meeting_url: meetingUrl || prev.gfe_meeting_url,
-                gfe_exam_url: meetingUrl || prev.gfe_exam_url,
-                gfe_sent_at: new Date().toISOString(),
-              }
-            : prev
-        );
-        const emailed = data.email_sent !== false;
-        const notified = data.notification_sent !== false;
-        setGfeFeedback({
-          id: appt.id,
-          type: "success",
-          message: emailed
-            ? "GFE invite sent. The patient was emailed the exam link and notified in their NOVI account. Status shows as GFE Pending until they complete it."
-            : "GFE link created. Email could not be delivered — use Resend GFE to try again.",
-        });
-        void qc.invalidateQueries({ queryKey: ["my-appointments"] });
-        void qc.invalidateQueries({ queryKey: ["treatment-records"] });
-        void qc.invalidateQueries({ queryKey: ["my-notifications"] });
-        toast({
-          title: "GFE invite sent",
-          description: emailed && notified
-            ? "Patient emailed and notified in-app."
-            : emailed
-              ? "Patient emailed with the GFE link."
-              : "GFE created; check email configuration.",
-          duration: 6000,
-        });
-      } else {
-        const errMsg = data.error || "Unexpected response from server.";
-        setGfeFeedback({ id: appt.id, type: "error", message: errMsg });
-        toast({
-          title: "GFE not sent",
-          description: errMsg,
-          variant: "destructive",
-          duration: 8000,
-        });
-      }
-    } catch (err) {
-      const rawMsg = (err?.message || "Could not send GFE invite.").replace(/^\[lovable-provider\]\s*\d+\s+/, "");
-      const msg = /failed to fetch|fetch failed/i.test(rawMsg)
-        ? "Could not reach the GFE service right now. Please try again in a minute."
-        : rawMsg;
-      setGfeFeedback({ id: appt.id, type: "error", message: msg });
-      toast({
-        title: "GFE failed",
-        description: msg,
-        variant: "destructive",
-        duration: 10000,
-      });
-    } finally {
-      setGfeSending((s) => ({ ...s, [appt.id]: false }));
-    }
-  };
 
   const markComplete = useMutation({
     mutationFn: ({ id }) => base44.entities.Appointment.update(id, {
@@ -708,7 +672,7 @@ export default function PracticeAppointmentsTab({
                                   type="button"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    setConfirmDialog({ open: true, appt: a });
+                                    openConfirmDialog(a);
                                     setConfirmTime("");
                                   }}
                                   className="w-8 h-8 rounded-xl flex items-center justify-center transition-all hover:opacity-80"
@@ -827,10 +791,10 @@ export default function PracticeAppointmentsTab({
             <ApptDetail
               appt={selectedAppt}
               treatmentRecords={treatmentRecords}
-              gfeSending={!!gfeSending[selectedAppt?.id]}
+              gfeSending={Boolean(gfeSending[selectedAppt?.id])}
               gfeFeedback={gfeFeedback}
               onClose={() => setDetailOpen(false)}
-              onConfirm={() => { setConfirmDialog({ open: true, appt: selectedAppt }); setDetailOpen(false); }}
+              onConfirm={() => { openConfirmDialog(selectedAppt); setDetailOpen(false); }}
               onCancel={() => { setCancelDialog({ open: true, appt: selectedAppt, isDecline: selectedAppt.status === "requested" }); setDetailOpen(false); }}
               onComplete={() => {
                 markComplete.mutate(
@@ -853,6 +817,7 @@ export default function PracticeAppointmentsTab({
                 setDetailOpen(false);
               }}
               messageUnreadCount={unreadCountForThread(unreadSummary, selectedAppt?.id)}
+              confirmActionLabel={confirmActionLabel}
             />
             </>
           )}
@@ -862,11 +827,25 @@ export default function PracticeAppointmentsTab({
       {/* ── Confirm dialog ── */}
       <Dialog open={confirmDialog.open} onOpenChange={v => setConfirmDialog(d => ({ ...d, open: v }))}>
         <DialogContent className="max-w-sm">
-          <DialogHeader><DialogTitle style={{ fontFamily: "'DM Serif Display', serif" }}>Confirm & Request Payment</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle style={{ fontFamily: "'DM Serif Display', serif" }}>
+              {profileBookingDeposit > 0 ? "Confirm & Request Deposit" : "Confirm Appointment"}
+            </DialogTitle>
+          </DialogHeader>
           <div className="space-y-3 pt-1">
             <p className="text-sm" style={{ color: "rgba(30,37,53,0.6)" }}>{appointmentServiceLabel(confirmDialog.appt)} · {confirmDialog.appt?.patient_name} · {formatAppointmentDate(confirmDialog.appt?.appointment_date)}</p>
             <p className="text-xs rounded-xl px-3 py-2" style={{ background: "rgba(250,111,48,0.08)", color: "rgba(30,37,53,0.65)" }}>
-              The patient will receive a notification to pay their booking deposit before the appointment is fully confirmed.
+              {profileBookingDeposit > 0 ? (
+                <>
+                  Booking deposit: <strong>${profileBookingDeposit}</strong> from your Practice Profile. The patient will pay via Stripe before the visit is confirmed.
+                  {" "}To change this amount, update <strong>Practice Profile → Booking Deposit</strong>.
+                </>
+              ) : (
+                <>
+                  No booking deposit on your Practice Profile — this appointment will confirm immediately.
+                  Treatment is billed separately after the visit.
+                </>
+              )}
             </p>
             <div>
               <label className="text-xs font-semibold mb-1.5 block" style={{ color: "rgba(30,37,53,0.55)" }}>Set appointment time (optional)</label>
@@ -877,7 +856,7 @@ export default function PracticeAppointmentsTab({
               <Button variant="outline" className="flex-1" onClick={() => setConfirmDialog({ open: false, appt: null })}>Back</Button>
               <Button className="flex-1 gap-1.5" style={{ background: "#FA6F30", color: "#fff" }}
                 onClick={() => confirmAppt.mutate({ id: confirmDialog.appt?.id })} disabled={confirmAppt.isPending}>
-                <CheckCircle className="w-4 h-4" />{confirmAppt.isPending ? "Sending…" : "Send Payment Link"}
+                <CheckCircle className="w-4 h-4" />{confirmAppt.isPending ? "Sending…" : profileBookingDeposit > 0 ? "Send Payment Link" : "Confirm"}
               </Button>
             </div>
           </div>

@@ -44,6 +44,7 @@ const { providerManufacturerRepsRouter } = await import("./manufacturers/provide
 const { providerRepCallsRouter } = await import("./manufacturers/providerRepCallsRoutes.js");
 const { googleCalendarRouter } = await import("./manufacturers/googleCalendarRoutes.js");
 const { gmailRouter } = await import("./manufacturers/gmailRoutes.js");
+const { stripeConnectRouter } = await import("./stripe-connect/routes.js");
 const { mdMessagesRouter } = await import("./md-messages/routes.js");
 const { appointmentMessagesRouter } = await import("./appointment-messages/routes.js");
 const { marketplaceRouter } = await import("./marketplace/routes.js");
@@ -62,6 +63,7 @@ export function createAdminApp() {
   // body bytes. These middlewares MUST run before express.json() so the
   // bodies arrive as Buffer (not parsed JSON). Mount one per webhook URL.
   app.use("/webhooks/stripe", express.raw({ type: "application/json" }));
+  app.use("/webhooks/stripe-connect", express.raw({ type: "application/json" }));
   app.use("/functions/modelCheckoutWebhook", express.raw({ type: "application/json" }));
   app.use("/webhooks", webhooksRouter);
 
@@ -99,6 +101,7 @@ export function createAdminApp() {
   app.use("/admin/provider-rep-calls", providerRepCallsRouter);
   app.use("/admin/integrations/google-calendar", googleCalendarRouter);
   app.use("/admin/integrations/gmail", gmailRouter);
+  app.use("/admin/integrations/stripe-connect", stripeConnectRouter);
   app.use("/admin/md-messages", mdMessagesRouter);
   app.use("/admin/appointment-messages", appointmentMessagesRouter);
   app.use("/admin/marketplace", marketplaceRouter);

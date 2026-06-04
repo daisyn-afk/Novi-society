@@ -17,8 +17,8 @@
 import { Link, useNavigate } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import {
-  Lock, Clock, CheckCircle2, ArrowRight, BookOpen, Award, Shield,
-  Stethoscope, Users, Activity, FileText, Zap, X
+  Lock, Clock, CheckCircle2, ArrowRight, BookOpen, Award,  
+  Stethoscope, Users, Activity, Zap, X, Rocket
 } from "lucide-react";
 
 const TIER_ORDER = ["none", "rejected", "pending", "courses_only", "md_eligible", "full"];
@@ -114,6 +114,19 @@ const FEATURE_META = {
     ],
     icon: Zap,
     color: "#C8E63C",
+  },
+  launchpad: {
+    title: "Growth Studio Launch Pad",
+    tagline: "Your end-to-end roadmap and vendor network to launch and grow your practice.",
+    bullets: [
+      "Step-by-step launch roadmap personalized to your progress",
+      "Curated vendor directory: legal, banking, insurance, marketing & more",
+      "Track readiness, profile completeness, and phases done",
+      "One-click navigation to the next best action at every stage",
+      "NOVI-vetted partners with exclusive provider perks",
+    ],
+    icon: Rocket,
+    color: "#7B8EC8",
   },
 };
 

@@ -1,9 +1,10 @@
-/** Session keys for provider homepage → onboarding → basic profile flow */
+/** Session keys until signup/login saves email + choice to provider_join_choices. */
 export const PROVIDER_SIGNUP_GOAL_KEY = "novi_provider_signup_goal";
 export const PROVIDER_SKIP_EXPLORE_KEY = "novi_provider_skip_explore";
 
 export const GOAL_NEED_TRAINING = "need_training";
 export const GOAL_NEED_MD_COVERAGE = "need_md_coverage";
+export const CHOICE_EXPLORE_SKIP = "explore_skip";
 
 export function readProviderSignupGoal() {
   try {
@@ -56,3 +57,59 @@ export function clearSkipExploreFlag() {
     /* ignore */
   }
 }
+
+/** Map session state to API choice value. */
+export function sessionChoicePayload() {
+  if (readSkipExploreFlag()) {
+    return { choice: CHOICE_EXPLORE_SKIP, explore_skip: true };
+  }
+  const goal = readProviderSignupGoal();
+  if (goal) return { goal, choice: goal };
+  return null;
+}
+
+/**
+ * After login/signup: save email + choice from session into provider_join_choices.
+ */
+export async function syncProviderJoinChoiceFromSession(email) {
+  const payload = sessionChoicePayload();
+  if (!payload) return null;
+  const normalizedEmail = String(email || "").trim();
+  if (!normalizedEmail) return null;
+
+  const { saveProviderJoinChoiceApi } = await import("@/api/providerSignupIntentApi");
+  try {
+    const saved = await saveProviderJoinChoiceApi({
+      email: normalizedEmail,
+      ...payload,
+    });
+    clearProviderSignupGoal();
+    clearSkipExploreFlag();
+    return saved;
+  } catch {
+    return null;
+  }
+}
+
+/** Remember choice in session; persist now if we already have an email. */
+export async function persistProviderSignupIntentChoice({ goal, explore_skip, email }) {
+  if (explore_skip) {
+    writeSkipExploreFlag();
+    clearProviderSignupGoal();
+  } else if (goal === GOAL_NEED_TRAINING || goal === GOAL_NEED_MD_COVERAGE) {
+    writeProviderSignupGoal(goal);
+    clearSkipExploreFlag();
+  }
+
+  const resolvedEmail = String(email || "").trim();
+  if (!resolvedEmail) return null;
+
+  const { saveProviderJoinChoiceApi } = await import("@/api/providerSignupIntentApi");
+  return saveProviderJoinChoiceApi({
+    email: resolvedEmail,
+    ...(explore_skip ? { choice: CHOICE_EXPLORE_SKIP, explore_skip: true } : { goal, choice: goal }),
+  });
+}
+
+/** @deprecated use syncProviderJoinChoiceFromSession */
+export const syncProviderSignupIntentFromSession = syncProviderJoinChoiceFromSession;

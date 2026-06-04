@@ -69,7 +69,9 @@ export default function ModelSignup() {
   const [gfeUrl, setGfeUrl] = useState(null);
   const [sendingGFE, setSendingGFE] = useState(false);
   const [gfeSent, setGfeSent] = useState(false);
+  const [gfeEmailSent, setGfeEmailSent] = useState(false);
   const [gfeChoice, setGfeChoice] = useState(null);
+  const [activePreOrderId, setActivePreOrderId] = useState(null);
   const [nonRefundableChecked, setNonRefundableChecked] = useState(false);
   const [processingPayment, setProcessingPayment] = useState(false);
   const [age18Checked, setAge18Checked] = useState(false);
@@ -88,6 +90,7 @@ export default function ModelSignup() {
   const [stripeGfeSending, setStripeGfeSending] = useState(false);
   const [stripeGfeChoice, setStripeGfeChoice] = useState(null);
   const [stripeGfeError, setStripeGfeError] = useState("");
+  const [stripeGfeEmailSent, setStripeGfeEmailSent] = useState(false);
   const [stripeCourseId] = useState(() => urlParams.get("course_id") || null);
   const [stripeCustomerEmail] = useState(() => urlParams.get("customer_email") || null);
   const [stripeCustomerName] = useState(() => urlParams.get("customer_name") || null);
@@ -96,33 +99,38 @@ export default function ModelSignup() {
   const [stripeTreatmentType] = useState(() => urlParams.get("treatment_type") || null);
 
   const sendStripeGFE = async () => {
-    if (!stripeCourseId) return;
+    if (!stripeCourseId || !stripePreOrderId || !stripeCustomerEmail) {
+      setStripeGfeError("Missing booking details. Please refresh this page or contact support.");
+      return false;
+    }
     setStripeGfeSending(true);
     setStripeGfeError("");
+    setStripeGfeEmailSent(false);
     try {
       const res = await base44.functions.invoke("sendModelGFE", {
         course_id: stripeCourseId,
         customer_name: stripeCustomerName || "",
         customer_email: stripeCustomerEmail || "",
         phone: stripePhone || "",
-        pre_order_id: stripePreOrderId || null,
+        pre_order_id: stripePreOrderId,
         treatment_type: stripeTreatmentType || form.treatment_type || null,
         date_of_birth: stripeDateOfBirth || form.date_of_birth || null,
+        send_email: true,
       });
       if (res.data?.success && res.data?.meeting_url) {
         setStripeGfeUrl(res.data.meeting_url);
-        // Always email the link so they have it regardless of "now" or "later"
-        await base44.functions.invoke("sendModelGFEEmail", {
-          customer_email: stripeCustomerEmail || "",
-          customer_name: stripeCustomerName || "",
-          gfe_url: res.data.meeting_url,
-        });
+        setStripeGfeEmailSent(res.data?.email_sent === true);
+        return true;
       }
+      setStripeGfeError("We could not generate your GFE link. Please try again.");
+      return false;
     } catch (e) {
       console.error("GFE send error:", e);
       setStripeGfeError(e?.message || "Failed to generate GFE link.");
+      return false;
+    } finally {
+      setStripeGfeSending(false);
     }
-    setStripeGfeSending(false);
   };
 
   const { data: courses = [] } = useQuery({
@@ -186,9 +194,13 @@ export default function ModelSignup() {
   const submitMutation = useMutation({
     mutationFn: (payload) => base44.functions.invoke("submitPreOrderRequest", payload),
     onSuccess: (res) => {
+      const preOrderId = res?.data?.id || res?.data?.pre_order_id || null;
+      setActivePreOrderId(preOrderId);
+      setGfeUrl(null);
+      setGfeSent(false);
+      setGfeEmailSent(false);
+      setGfeChoice(null);
       setStep("submitted");
-      const preOrderId = res?.data?.id || res?.data?.pre_order_id;
-      sendGFE(preOrderId);
     },
   });
 
@@ -215,8 +227,12 @@ export default function ModelSignup() {
             setSelectedTimeSlot(null);
           }
           // Fully discounted — skip Stripe, go straight to success
+          setActivePreOrderId(res.data?.pre_order_id || null);
+          setGfeUrl(null);
+          setGfeSent(false);
+          setGfeEmailSent(false);
+          setGfeChoice(null);
           setStep("submitted");
-          sendGFE(res.data?.pre_order_id || null);
         } else if (res.data?.url) {
           if (res.data?.waitlist_auto) {
             setShowWaitlist(true);
@@ -233,35 +249,42 @@ export default function ModelSignup() {
     },
   });
 
-  const sendGFE = async (preOrderId) => {
-    if (!selectedCourse?.id) return;
+  const sendGFE = async (preOrderIdOverride) => {
+    const preOrderId = preOrderIdOverride ?? activePreOrderId;
+    if (!selectedCourse?.id) return false;
+    if (!preOrderId || !form.customer_email) {
+      setStripeGfeError("Missing booking details. Please contact support if this continues.");
+      return false;
+    }
     setSendingGFE(true);
     setStripeGfeError("");
+    setGfeEmailSent(false);
     try {
       const res = await base44.functions.invoke("sendModelGFE", {
         course_id: selectedCourse.id,
         customer_name: form.customer_name,
         customer_email: form.customer_email,
         phone: form.phone,
-        pre_order_id: preOrderId || null,
+        pre_order_id: preOrderId,
         treatment_type: form.treatment_type || null,
         date_of_birth: form.date_of_birth || null,
+        send_email: true,
       });
       if (res.data?.success && res.data?.meeting_url) {
         setGfeUrl(res.data.meeting_url);
         setGfeSent(true);
-        // Always email the link so they have it
-        await base44.functions.invoke("sendModelGFEEmail", {
-          customer_email: form.customer_email,
-          customer_name: form.customer_name,
-          gfe_url: res.data.meeting_url,
-        });
+        setGfeEmailSent(res.data?.email_sent === true);
+        return true;
       }
+      setStripeGfeError("We could not generate your GFE link. Please try again.");
+      return false;
     } catch (e) {
       console.error("GFE send error:", e);
       setStripeGfeError(e?.message || "Failed to generate GFE link.");
+      return false;
+    } finally {
+      setSendingGFE(false);
     }
-    setSendingGFE(false);
   };
 
   const resetPromo = () => {
@@ -423,10 +446,32 @@ export default function ModelSignup() {
                     <button onClick={() => { setStripeGfeChoice(null); setStripeGfeSending(false); }} className="text-xs underline" style={{ color: "#2D6B7F" }}>Try again</button>
                   </div>
                 )
-              ) : (
+              ) : stripeGfeSending ? (
+                <div className="flex items-center gap-2 text-sm" style={{ color: "rgba(30,37,53,0.6)" }}>
+                  <RefreshCw className="w-4 h-4 animate-spin" /> Sending GFE link to your email...
+                </div>
+              ) : stripeGfeEmailSent || stripeGfeUrl ? (
                 <div className="flex items-start gap-2">
                   <CheckCircle2 className="w-4 h-4 mt-0.5 flex-shrink-0" style={{ color: "#5a7a20" }} />
-                  <p className="text-sm" style={{ color: "rgba(30,37,53,0.65)" }}>Our team will email the GFE link to <strong>{stripeCustomerEmail}</strong> before your course date.</p>
+                  <p className="text-sm" style={{ color: "rgba(30,37,53,0.65)" }}>
+                    {stripeGfeEmailSent
+                      ? <>We emailed your GFE link to <strong>{stripeCustomerEmail}</strong>. Check your inbox (and spam folder).</>
+                      : <>Your GFE link is ready. Open it from the email we sent to <strong>{stripeCustomerEmail}</strong>.</>}
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-sm" style={{ color: "rgba(30,37,53,0.6)" }}>
+                    {stripeGfeError || `We couldn't email your GFE link. Please try again.`}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => { setStripeGfeChoice(null); setStripeGfeError(""); }}
+                    className="text-xs underline"
+                    style={{ color: "#2D6B7F" }}
+                  >
+                    Try again
+                  </button>
                 </div>
               )}
             </div>
@@ -1058,7 +1103,7 @@ export default function ModelSignup() {
                     <button
                       onClick={() => {
                         setGfeChoice("now");
-                        if (!gfeSent) sendGFE(null);
+                        if (!gfeSent) sendGFE();
                       }}
                       className="p-4 rounded-xl text-left transition-all"
                       style={{ background: "rgba(200,230,60,0.1)", border: "2px solid rgba(200,230,60,0.4)" }}
@@ -1067,12 +1112,16 @@ export default function ModelSignup() {
                       <p className="text-xs" style={{ color: "rgba(30,37,53,0.55)" }}>Open the GFE portal and finish it today</p>
                     </button>
                     <button
-                      onClick={() => setGfeChoice("later")}
-                      className="p-4 rounded-xl text-left transition-all"
+                      onClick={async () => {
+                        setGfeChoice("later");
+                        await sendGFE();
+                      }}
+                      disabled={sendingGFE}
+                      className="p-4 rounded-xl text-left transition-all disabled:opacity-60"
                       style={{ background: "rgba(45,107,127,0.07)", border: "2px solid rgba(45,107,127,0.2)" }}
                     >
                       <p className="font-bold text-sm mb-1" style={{ color: "#2D6B7F" }}>Email Me Later</p>
-                      <p className="text-xs" style={{ color: "rgba(30,37,53,0.55)" }}>Admin will send the link to your email</p>
+                      <p className="text-xs" style={{ color: "rgba(30,37,53,0.55)" }}>We'll email you the link</p>
                     </button>
                   </div>
                 ) : gfeChoice === "now" ? (
@@ -1102,10 +1151,28 @@ export default function ModelSignup() {
                       <button onClick={() => setGfeChoice(null)} className="text-xs underline" style={{ color: "#2D6B7F" }}>Go back</button>
                     </div>
                   )
-                ) : (
+                ) : sendingGFE ? (
+                  <div className="flex items-center gap-2 text-sm" style={{ color: "rgba(30,37,53,0.6)" }}>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    Sending GFE link to your email...
+                  </div>
+                ) : gfeEmailSent || gfeUrl ? (
                   <div className="flex items-start gap-2">
                     <CheckCircle2 className="w-4 h-4 mt-0.5 flex-shrink-0" style={{ color: "#5a7a20" }} />
-                    <p className="text-sm" style={{ color: "rgba(30,37,53,0.65)" }}>Got it — our admin team will email the GFE link to <strong>{form.customer_email}</strong> before your course date.</p>
+                    <p className="text-sm" style={{ color: "rgba(30,37,53,0.65)" }}>
+                      {gfeEmailSent
+                        ? <>We emailed your GFE link to <strong>{form.customer_email}</strong>. Check your inbox (and spam folder).</>
+                        : <>Your GFE link is ready. Check <strong>{form.customer_email}</strong> for the message.</>}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <p className="text-sm" style={{ color: "rgba(30,37,53,0.6)" }}>
+                      {stripeGfeError || "We couldn't email your GFE link. Please try again."}
+                    </p>
+                    <button type="button" onClick={() => { setGfeChoice(null); setStripeGfeError(""); }} className="text-xs underline" style={{ color: "#2D6B7F" }}>
+                      Go back
+                    </button>
                   </div>
                 )}
               </div>

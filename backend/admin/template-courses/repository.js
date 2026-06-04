@@ -296,6 +296,12 @@ export async function updateTemplateCourse(id, payload, serviceTypeNameLookup) {
 
     const normalizedAwards = normalizeAwardsForApi(payload.certifications_awarded);
     await replaceCertifications(client, id, normalizedAwards);
+    await client.query(
+      `update public.scheduled_courses
+       set pre_course_materials = $2::jsonb
+       where template_id = $1`,
+      [id, JSON.stringify(payload.pre_course_materials || [])]
+    );
     await client.query("commit");
     return rowToApi(row, normalizedAwards);
   } catch (e) {

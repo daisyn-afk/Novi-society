@@ -9,6 +9,8 @@ import {
   markAttemptFailed,
   PAYMENT_FLOW,
 } from "../payments/service.js";
+import { createMarketplaceCheckoutSession, retrieveMarketplaceCheckoutSession } from "../stripe-connect/checkout.js";
+import { isStripeConnectConfigured } from "../stripe-connect/config.js";
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || "";
 const appBaseUrl = process.env.APP_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || "";
@@ -49,10 +51,10 @@ function formatDepositUsd(value) {
   return n % 1 === 0 ? String(n) : n.toFixed(2);
 }
 
-/** Flat booking deposit from provider profile metadata, or platform default. */
+/** Booking deposit from provider profile metadata. Empty/unset = no deposit ($0). */
 export async function resolveProviderBookingDeposit(providerId) {
   const pid = String(providerId || "").trim();
-  if (!pid) return DEFAULT_APPOINTMENT_DEPOSIT_USD;
+  if (!pid) return 0;
   const { rows } = await query(
     `select pp.metadata
        from public.users u
@@ -65,25 +67,73 @@ export async function resolveProviderBookingDeposit(providerId) {
   const metadata =
     rows[0]?.metadata && typeof rows[0].metadata === "object" ? rows[0].metadata : {};
 
-  const fixed = Number(metadata.booking_deposit);
-  if (Number.isFinite(fixed) && fixed > 0) return fixed;
+  if (
+    metadata.booking_deposit == null ||
+    metadata.booking_deposit === ""
+  ) {
+    return 0;
+  }
 
-  return DEFAULT_APPOINTMENT_DEPOSIT_USD;
+  const fixed = Number(metadata.booking_deposit);
+  if (Number.isFinite(fixed) && fixed >= 0) return fixed;
+
+  return 0;
 }
 
-/** Deposit for an appointment: saved amount first, then provider profile default. */
+/** Deposit for an appointment. While awaiting payment, always use current Practice Profile. */
 export async function resolveAppointmentDeposit(appointment) {
+  const status = String(appointment?.status || "").toLowerCase();
+  if (status === "awaiting_payment") {
+    return resolveProviderBookingDeposit(appointment?.provider_id);
+  }
   const saved = Number(appointment?.deposit_amount);
-  if (Number.isFinite(saved) && saved > 0) return saved;
+  if (Number.isFinite(saved) && saved >= 0) return saved;
   return resolveProviderBookingDeposit(appointment?.provider_id);
 }
 
-/** Ensure awaiting_payment rows expose the deposit the patient will be charged. */
+/**
+ * Sync awaiting_payment rows with the provider's current booking_deposit.
+ * Fixes legacy rows that still have deposit_amount=50 from the old platform default.
+ */
 export async function enrichAppointmentDepositFields(appointment) {
   if (!appointment || typeof appointment !== "object") return appointment;
   const status = String(appointment.status || "").toLowerCase();
   if (status !== "awaiting_payment") return appointment;
-  const deposit = await resolveAppointmentDeposit(appointment);
+
+  const deposit = await resolveProviderBookingDeposit(appointment.provider_id);
+  const id = String(appointment.id || "").trim();
+
+  if (deposit <= 0 && id) {
+    const nowIso = new Date().toISOString();
+    await query(
+      `update public.appointments
+          set status = 'confirmed',
+              deposit_amount = 0,
+              payment_status = 'unpaid',
+              amount_paid = 0,
+              confirmed_at = coalesce(confirmed_at, $2::timestamptz),
+              updated_at = now()
+        where id = $1
+          and status = 'awaiting_payment'`,
+      [id, nowIso]
+    );
+    return {
+      ...appointment,
+      status: "confirmed",
+      deposit_amount: 0,
+      payment_status: "unpaid",
+      amount_paid: 0,
+      confirmed_at: appointment.confirmed_at || nowIso,
+    };
+  }
+
+  if (id && Number(appointment.deposit_amount) !== deposit) {
+    await query(
+      `update public.appointments set deposit_amount = $2, updated_at = now() where id = $1`,
+      [id, deposit]
+    );
+  }
+
   return {
     ...appointment,
     deposit_amount: deposit,
@@ -240,7 +290,7 @@ export async function createAppointmentDepositCheckout({
       e.statusCode = 400;
       throw e;
     }
-    if (!stripe) {
+    if (!stripe && !isStripeConnectConfigured()) {
       const e = new Error("Stripe is not configured.");
       e.statusCode = 500;
       throw e;
@@ -306,27 +356,32 @@ export async function createAppointmentDepositCheckout({
       service: serviceLabel,
     };
 
-    const checkoutSession = await stripe.checkout.sessions.create({
-      mode: "payment",
-      payment_method_types: ["card"],
-      customer_email: customerEmail || undefined,
-      success_url: successUrl,
-      cancel_url: cancelUrl,
-      line_items: [
-        {
-          quantity: 1,
-          price_data: {
-            currency: "usd",
-            unit_amount: depositCents,
-            product_data: {
-              name: `${serviceLabel} — deposit`,
-              description: `Appointment deposit with ${providerName}`,
+    const { session: checkoutSession } = await createMarketplaceCheckoutSession({
+      legacyStripe: stripe,
+      providerAuthUserId: String(appt.provider_id || ""),
+      amountCents: depositCents,
+      sessionCreateParams: {
+        mode: "payment",
+        payment_method_types: ["card"],
+        customer_email: customerEmail || undefined,
+        success_url: successUrl,
+        cancel_url: cancelUrl,
+        line_items: [
+          {
+            quantity: 1,
+            price_data: {
+              currency: "usd",
+              unit_amount: depositCents,
+              product_data: {
+                name: `${serviceLabel} — deposit`,
+                description: `Appointment deposit with ${providerName}`,
+              },
             },
           },
-        },
-      ],
-      metadata: checkoutMetadata,
-      payment_intent_data: { metadata: checkoutMetadata },
+        ],
+        metadata: checkoutMetadata,
+        payment_intent_data: { metadata: checkoutMetadata },
+      },
     });
 
     const sessionUrl = checkoutSession.url;
@@ -385,8 +440,8 @@ export async function createAppointmentDepositCheckout({
   }
 }
 
-/** Provider confirms a request and asks the patient to pay the deposit. */
-export async function requestAppointmentDeposit({ token, appointmentId }) {
+/** Provider confirms a request and asks the patient to pay the deposit (or confirms with $0 deposit). */
+export async function requestAppointmentDeposit({ token, appointmentId, body = {} }) {
   if (!token) {
     const e = new Error("Missing bearer token.");
     e.statusCode = 401;
@@ -423,8 +478,36 @@ export async function requestAppointmentDeposit({ token, appointmentId }) {
     throw e;
   }
 
-  const depositAmount = await resolveAppointmentDeposit(existing);
+  // Deposit always comes from Practice Profile (booking_deposit), not per-appointment input.
+  const depositAmount = await resolveProviderBookingDeposit(existing.provider_id);
   const nowIso = new Date().toISOString();
+
+  if (depositAmount <= 0) {
+    const { rows } = await query(
+      `update public.appointments
+          set status = 'confirmed',
+              confirmed_at = coalesce(confirmed_at, $2::timestamptz),
+              deposit_amount = 0,
+              payment_status = 'unpaid',
+              amount_paid = 0,
+              updated_at = now()
+        where id = $1
+        returning *`,
+      [id, nowIso]
+    );
+    const updated = rows[0];
+    await query(
+      `insert into public.notifications (user_id, user_email, type, message, link_page)
+       values ($1, $2, 'general', $3, $4)`,
+      [
+        updated.patient_id,
+        updated.patient_email,
+        `Your appointment with ${updated.provider_name || "your provider"} on ${updated.appointment_date || "the scheduled date"} is confirmed — no deposit required.`,
+        "PatientAppointments",
+      ]
+    ).catch(() => {});
+    return updated;
+  }
 
   const { rows } = await query(
     `update public.appointments
@@ -469,7 +552,7 @@ export async function syncAppointmentDepositPayment({ token, appointmentId, stri
     e.statusCode = 400;
     throw e;
   }
-  if (!stripe) {
+  if (!stripe && !isStripeConnectConfigured()) {
     const e = new Error("Stripe is not configured.");
     e.statusCode = 500;
     throw e;
@@ -518,7 +601,10 @@ export async function syncAppointmentDepositPayment({ token, appointmentId, stri
     throw e;
   }
 
-  const session = await stripe.checkout.sessions.retrieve(sessionId);
+  const { session } = await retrieveMarketplaceCheckoutSession({
+    legacyStripe: stripe,
+    sessionId,
+  });
   const paid =
     String(session?.payment_status || "").toLowerCase() === "paid" ||
     String(session?.status || "").toLowerCase() === "complete";

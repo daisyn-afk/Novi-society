@@ -14,7 +14,7 @@
 }
 
 html {
-  background: linear-gradient(150deg, #ede9fb 0%, #f5f2ff 40%, #eaf5c8 75%, #C8E63C 100%) !important;
+  background: linear-gradient(150deg, #f8f5ed 0%, #f5f3ef 50%, #f2eedf 100%) !important;
   background-attachment: fixed !important;
   min-height: 100%;
 }

@@ -279,6 +279,17 @@ export function sessionDateSeatsSummaryForEnrollment(course, sessionDate) {
   return null;
 }
 
+/** Compact seats label for pathway cards, e.g. "12 left". */
+export function formatSeatsLeftForEnrollment(course, sessionDate) {
+  const entry = sessionDate ? findSessionEntryByDate(course?.session_dates, sessionDate) : null;
+  if (entry && hasValidSessionSeatEntry(entry)) {
+    return `${effectiveAvailableSeats(entry)} left`;
+  }
+  const fallback = formatMinAvailableSeatsLabel(course);
+  if (!fallback) return null;
+  return fallback.replace(/\s*seats?\s*left/i, " left");
+}
+
 export function todaySessionDateKey() {
   const d = new Date();
   const y = d.getFullYear();

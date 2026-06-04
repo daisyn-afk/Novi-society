@@ -134,38 +134,44 @@ function validateAdult(dobValue) {
   }
 }
 
+async function legacyRowExists(sql, params) {
+  try {
+    const { rows } = await query(sql, params);
+    return Boolean(rows[0]);
+  } catch (error) {
+    if (error?.code === "42P01") return false;
+    throw error;
+  }
+}
+
 async function inferLegacyBasicOnboardingComplete(authUserId) {
   if (!authUserId) return false;
 
-  const { rows: licenseRows } = await query(
-    `select 1
-     from public.licenses
-     where provider_id = $1
-       and status = 'verified'
-     limit 1`,
-    [authUserId]
-  );
-  if (licenseRows[0]) return true;
+  if (
+    await legacyRowExists(
+      `select 1 from public.licenses
+        where provider_id = $1 and status = 'verified' limit 1`,
+      [authUserId]
+    )
+  ) {
+    return true;
+  }
 
-  const { rows: certRows } = await query(
-    `select 1
-     from public.certifications
-     where provider_id = $1
-       and status = 'active'
-     limit 1`,
-    [authUserId]
-  );
-  if (certRows[0]) return true;
+  if (
+    await legacyRowExists(
+      `select 1 from public.certification
+        where provider_id = $1 and status = 'active' limit 1`,
+      [authUserId]
+    )
+  ) {
+    return true;
+  }
 
-  const { rows: mdSubRows } = await query(
-    `select 1
-     from public.md_subscriptions
-     where provider_id = $1
-       and status = 'active'
-     limit 1`,
+  return legacyRowExists(
+    `select 1 from public.md_subscriptions
+      where provider_id = $1 and status = 'active' limit 1`,
     [authUserId]
   );
-  return Boolean(mdSubRows[0]);
 }
 
 export async function getProviderBasicOnboardingForMe(accessToken) {

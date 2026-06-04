@@ -2,9 +2,15 @@ import express, { Router } from "express";
 import { processCompletedCheckoutSession, verifyStripeWebhook } from "../checkout/service.js";
 import { processModelCheckoutCompletedSession } from "../functions/routes.js";
 import { processAppointmentCheckoutCompletedSession } from "../appointments/paymentService.js";
+import { processAppointmentTreatmentCheckoutCompletedSession } from "../appointments/treatmentPaymentService.js";
 import { processMdBoardStripeEvent } from "../mdBillingService.js";
 import { recordStripeWebhookEvent } from "../payments/service.js";
 import { handleQualiphyExamWebhook } from "../qualiphy/webhookHandler.js";
+import {
+  verifyStripeConnectWebhook,
+  processStripeConnectWebhookEvent,
+} from "../stripe-connect/webhookHandler.js";
+import { isStripeConnectConfigured } from "../stripe-connect/config.js";
 
 export const webhooksRouter = Router();
 
@@ -36,6 +42,41 @@ const TRACKED_STRIPE_EVENT_TYPES = new Set([
 
 // Qualiphy sends JSON; mount parser here because this router is registered before app-level express.json().
 webhooksRouter.post("/qualiphy", express.json({ limit: "1mb" }), handleQualiphyExamWebhook);
+
+webhooksRouter.post("/stripe-connect", async (req, res, next) => {
+  try {
+    if (!isStripeConnectConfigured()) {
+      return res.status(503).json({ error: "Stripe Connect webhooks are not configured." });
+    }
+
+    const signatureHeader = req.headers["stripe-signature"];
+    const signature = Array.isArray(signatureHeader) ? signatureHeader[0] : signatureHeader;
+    if (!signature) {
+      return res.status(400).send("Missing stripe-signature header.");
+    }
+    if (!Buffer.isBuffer(req.body)) {
+      return res.status(400).send("Webhook body was pre-parsed; raw bytes required for signature verification.");
+    }
+
+    let event;
+    try {
+      event = verifyStripeConnectWebhook(req.body, signature);
+    } catch (verifyError) {
+      // eslint-disable-next-line no-console
+      console.error("[webhook/stripe-connect] signature verification FAILED:", verifyError?.message || verifyError);
+      return res.status(400).send(`Signature verification failed: ${verifyError?.message || "unknown"}`);
+    }
+
+    await processStripeConnectWebhookEvent(event);
+    // eslint-disable-next-line no-console
+    console.log("[webhook/stripe-connect] processed", event.type, event.id);
+    return res.json({ received: true });
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error("[webhook/stripe-connect] handler threw:", error?.message || error);
+    return next(error);
+  }
+});
 
 webhooksRouter.post("/stripe", async (req, res, next) => {
   try {
@@ -90,6 +131,8 @@ webhooksRouter.post("/stripe", async (req, res, next) => {
         await processModelCheckoutCompletedSession(session);
       } else if (checkoutType === "appointment") {
         await processAppointmentCheckoutCompletedSession(session);
+      } else if (checkoutType === "appointment_treatment") {
+        await processAppointmentTreatmentCheckoutCompletedSession(session);
       } else if (checkoutType === "md_board_coverage") {
         await processMdBoardStripeEvent(event);
       } else {
@@ -97,8 +140,11 @@ webhooksRouter.post("/stripe", async (req, res, next) => {
       }
     } else if (event.type === "checkout.session.async_payment_succeeded") {
       const session = event.data.object;
-      if (String(session?.metadata?.checkout_type || "").toLowerCase() === "appointment") {
+      const asyncType = String(session?.metadata?.checkout_type || "").toLowerCase();
+      if (asyncType === "appointment") {
         await processAppointmentCheckoutCompletedSession(session);
+      } else if (asyncType === "appointment_treatment") {
+        await processAppointmentTreatmentCheckoutCompletedSession(session);
       }
     } else {
       await processMdBoardStripeEvent(event);
