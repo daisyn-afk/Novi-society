@@ -15,9 +15,47 @@ function looksLikeStorageObjectKey(name) {
   return false;
 }
 
-export function getMdContractUrl(serviceType) {
+/** First usable MD contract URL across service types (shared global contract). */
+export function pickGlobalMdContractUrl(serviceTypes) {
+  for (const st of serviceTypes || []) {
+    const url = String(st?.md_contract_url || "").trim();
+    if (isUsableDocumentUrl(url)) return url;
+  }
+  return null;
+}
+
+export function getMdContractUrl(serviceType, options = {}) {
   const url = String(serviceType?.md_contract_url || "").trim();
-  return isUsableDocumentUrl(url) ? url : null;
+  if (isUsableDocumentUrl(url)) return url;
+  const globalUrl =
+    options.globalContractUrl ||
+    pickGlobalMdContractUrl(options.allServiceTypes);
+  return isUsableDocumentUrl(globalUrl) ? globalUrl : null;
+}
+
+/** Protocol docs for a provider MD subscription (snapshot first, then live service config). */
+export function getProtocolDocumentsForSubscription(subscription, serviceType) {
+  const snapshot = filterProtocolDocuments(subscription?.protocol_document_urls);
+  if (snapshot.length) return snapshot;
+  const tiers = serviceType?.coverage_tiers || [];
+  const tierNum = subscription?.coverage_tier || 1;
+  if (tiers.length > 0) {
+    const tierDef =
+      tiers.find((t) => t.tier_number === tierNum) ||
+      tiers.find((t) => t.tier_number === 1) ||
+      tiers[0];
+    return filterProtocolDocuments(tierDef?.protocol_document_urls);
+  }
+  return filterProtocolDocuments(serviceType?.protocol_document_urls);
+}
+
+export function subscriptionHasMdAgreement(subscription) {
+  if (!subscription) return false;
+  if (String(subscription.status || "").toLowerCase() === "active") return true;
+  return Boolean(
+    subscription.signed_at &&
+      (isUsableDocumentUrl(subscription.signed_contract_url) || subscription.signature_data)
+  );
 }
 
 /** Human-readable label for the admin-uploaded MD contract PDF. */

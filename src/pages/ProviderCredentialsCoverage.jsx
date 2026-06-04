@@ -30,9 +30,13 @@ import {
   getMdContractUrl,
   getMdContractDisplayName,
   getSignedMdContractFileName,
+  getProtocolDocumentsForSubscription,
+  subscriptionHasMdAgreement,
+  pickGlobalMdContractUrl,
   filterProtocolDocuments,
   isUsableDocumentUrl,
 } from "@/lib/serviceTypeDocuments";
+import { getDocumentViewUrl } from "@/lib/documentViewerUrl";
 import {
   MD_FIRST_SERVICE_MONTHLY_FEE as FIRST_SERVICE_PRICE,
   MD_ADDON_SERVICE_MONTHLY_FEE as ADDON_SERVICE_PRICE,
@@ -69,9 +73,9 @@ function formatSessionDateLabel(value) {
   return format(new Date(y, m - 1, d), "MMM d, yyyy");
 }
 
-/** Embed PDF without browser sidebar/toolbar clutter where supported. */
+/** Inline PDF URL for iframe preview (native browser PDF viewer). */
 function mdContractViewerUrl(url) {
-  const base = String(url || "").trim();
+  const base = getDocumentViewUrl(url) || String(url || "").trim();
   if (!base) return "";
   const params = "toolbar=0&navpanes=0&scrollbar=1&view=FitH";
   return base.includes("#") ? `${base}&${params}` : `${base}#${params}`;
@@ -474,6 +478,7 @@ export default function ProviderCredentialsCoverage() {
       throw new Error(data?.error || "Unable to activate MD coverage.");
     }
     const pending = readMdCoveragePending(stId);
+    const st = serviceTypes.find((s) => s.id === stId);
     upsertMdSubscriptionInCache(qc, {
       id: data.md_subscription_id || pending?.id,
       service_type_id: stId,
@@ -482,8 +487,10 @@ export default function ProviderCredentialsCoverage() {
       signed_by_name: me?.full_name || pending?.signed_by_name,
       signed_at: pending?.signed_at || new Date().toISOString(),
       status: "active",
-      md_contract_url: pending?.md_contract_url || null,
-      md_agreement_text: pending?.md_agreement_text || null,
+      md_contract_url: pending?.md_contract_url || getMdContractUrl(st, { allServiceTypes: serviceTypes }) || null,
+      md_agreement_text: pending?.md_agreement_text || st?.md_agreement_text || null,
+      protocol_document_urls:
+        pending?.protocol_document_urls || getProtocolDocumentsForSubscription({}, st),
     });
     clearMdCoveragePending(stId);
     qc.invalidateQueries({ queryKey: ["my-md-relationships"] });
@@ -576,6 +583,8 @@ export default function ProviderCredentialsCoverage() {
   const pendingCerts = myCerts.filter(c => c.status === "pending");
   const otherCerts = myCerts.filter(c => c.status !== "active" && c.status !== "pending");
   const activeSubscriptions = mySubscriptions.filter((s) => s.status === "active");
+  const globalMdContractUrl = pickGlobalMdContractUrl(serviceTypes);
+  const documentSubscriptions = mySubscriptions.filter((s) => subscriptionHasMdAgreement(s));
 
   const alreadyActiveServices = activeSubscriptions.map(s => s.service_type_id);
   const activeRelationships = relationships.filter(r => r.status === "active");
@@ -636,7 +645,10 @@ export default function ProviderCredentialsCoverage() {
   const unlockedServiceTypeIds = new Set([...earnedServiceTypeIds, ...activeCertServiceTypeIds]);
   const availableServices = serviceTypes.filter((s) => !alreadyActiveServices.includes(s.id) && unlockedServiceTypeIds.has(s.id));
   const selectedService = serviceTypes.find(s => s.id === selectedServiceTypeId);
-  const selectedServiceContractUrl = getMdContractUrl(selectedService);
+  const selectedServiceContractUrl = getMdContractUrl(selectedService, {
+    allServiceTypes: serviceTypes,
+    globalContractUrl: globalMdContractUrl,
+  });
   const activeServices = serviceTypes.filter(s => alreadyActiveServices.includes(s.id));
   const approvedCertsWithoutCoverage = myCerts.filter(c => c.status === "active" && c.service_type_id && !alreadyActiveServices.includes(c.service_type_id));
   const visibleApprovedCertsWithoutCoverage = approvedCertsWithoutCoverage.filter((c) => !dismissedApprovedAlertIds.includes(c.id));
@@ -1110,8 +1122,9 @@ export default function ProviderCredentialsCoverage() {
             signed_contract_url: res.data.signed_contract_url || null,
             signed_by_name: me?.full_name,
             signed_at: new Date().toISOString(),
-            md_contract_url: st?.md_contract_url || null,
+            md_contract_url: getMdContractUrl(st, { allServiceTypes: serviceTypes }) || null,
             md_agreement_text: st?.md_agreement_text || null,
+            protocol_document_urls: getProtocolDocumentsForSubscription({}, st),
           });
         } catch { /* ignore */ }
         window.location.href = res.data.url;
@@ -1825,20 +1838,21 @@ export default function ProviderCredentialsCoverage() {
               </div>
             </div>
             <div className="px-6 py-5">
-              {activeSubscriptions.length === 0 ? (
+              {documentSubscriptions.length === 0 ? (
                 <div className="text-center py-6">
-                  <p className="text-sm font-semibold" style={{ color: "#1e2535" }}>No active MD agreements</p>
-                  <p className="text-xs mt-1 mb-3" style={{ color: "rgba(30,37,53,0.4)" }}>Once you activate MD coverage, your signed agreements will appear here.</p>
+                  <p className="text-sm font-semibold" style={{ color: "#1e2535" }}>No MD agreements yet</p>
+                  <p className="text-xs mt-1 mb-3" style={{ color: "rgba(30,37,53,0.4)" }}>After you sign MD coverage for a service, your agreement and protocol documents appear here.</p>
                   <button onClick={() => { setActivateDialog(true); resetActivation(); }} className="text-xs font-bold" style={{ color: "#FA6F30" }}>Apply for Coverage</button>
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {activeSubscriptions.map((sub) => {
+                  {documentSubscriptions.map((sub) => {
                     const st = serviceTypes.find((s) => String(s.id) === String(sub.service_type_id));
-                    const contractMeta = st || {
-                      name: sub.service_type_name,
-                      md_contract_url: sub.md_contract_url,
-                      md_agreement_text: sub.md_agreement_text,
+                    const contractMeta = {
+                      ...(st || {}),
+                      name: st?.name || sub.service_type_name,
+                      md_contract_url: sub.md_contract_url || st?.md_contract_url || globalMdContractUrl,
+                      md_agreement_text: st?.md_agreement_text || sub.md_agreement_text,
                     };
                     const agreementText = contractMeta.md_agreement_text || sub.md_agreement_text;
                     const signedPdfUrl = isUsableDocumentUrl(sub.signed_contract_url)
@@ -1874,7 +1888,7 @@ export default function ProviderCredentialsCoverage() {
                               {agreementText}
                             </div>
                           )}
-                          {(signedPdfUrl || getMdContractUrl(contractMeta)) && (
+                          {(signedPdfUrl || getMdContractUrl(contractMeta, { allServiceTypes: serviceTypes, globalContractUrl: globalMdContractUrl })) && (
                             <div>
                               <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: "rgba(30,37,53,0.45)" }}>
                                 MD Contract
@@ -1895,12 +1909,7 @@ export default function ProviderCredentialsCoverage() {
                             </div>
                           )}
                           {(() => {
-                            const tiers = st?.coverage_tiers || [];
-                            const tierNum = sub.coverage_tier || 1;
-                            const tierDef = tiers.find(t => t.tier_number === tierNum);
-                            const docs = filterProtocolDocuments(
-                              tiers.length > 0 ? (tierDef?.protocol_document_urls || []) : (st?.protocol_document_urls || [])
-                            );
+                            const docs = getProtocolDocumentsForSubscription(sub, st);
                             return docs.length > 0 ? (
                               <div>
                                 <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: "rgba(30,37,53,0.45)" }}>Protocol Documents</p>
@@ -2383,7 +2392,7 @@ export default function ProviderCredentialsCoverage() {
                         <p className="text-xs text-slate-500 mt-0.5">Read the MD Board contract for {selectedService?.name || "this service"}.</p>
                       </div>
                       <a
-                        href={selectedServiceContractUrl}
+                        href={getDocumentViewUrl(selectedServiceContractUrl) || selectedServiceContractUrl}
                         target="_blank"
                         rel="noreferrer"
                         className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg flex-shrink-0 whitespace-nowrap"
@@ -2417,7 +2426,7 @@ export default function ProviderCredentialsCoverage() {
                   </p>
                   <p className="text-xs text-slate-500 mb-3">
                     {selectedServiceContractUrl
-                      ? "Your signature is placed on the last page of the MD Contract, directly after the agreement text."
+                      ? "Your signature is placed on the last page of the MD Contract, directly below the agreement text."
                       : "Your signature is saved with your MD Board coverage agreement. After activation, the signed agreement appears in Documents."}
                   </p>
                   <div className="border-2 border-dashed border-slate-300 rounded-xl overflow-hidden bg-white relative w-full">

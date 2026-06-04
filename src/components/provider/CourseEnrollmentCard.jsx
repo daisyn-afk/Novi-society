@@ -1,4 +1,6 @@
-import { Calendar, MapPin, Users, Clock, FileText, BookOpen, Award, CheckCircle2, Zap } from "lucide-react";
+import { Calendar, MapPin, Users, Clock, FileText, Award, CheckCircle2, Zap } from "lucide-react";
+import PreCourseMaterialsStudyBlock from "@/components/provider/PreCourseMaterialsStudyBlock";
+import { coursePreCourseMaterials } from "@/lib/preCourseMaterials";
 import { format, differenceInDays } from "date-fns";
 import { useState } from "react";
 import { sessionDateSeatsSummaryForEnrollment } from "@/lib/sessionDateSeats";
@@ -50,6 +52,7 @@ export default function CourseEnrollmentCard({
   const isCompleted = ["attended", "completed"].includes(enrollment.status);
   const attendanceIsOpen = Boolean(attendanceWindow?.isOpen && !attendanceWindow?.isAttended);
   const attendanceIsDone = Boolean(attendanceWindow?.isAttended);
+  const hasPreCourseMaterials = coursePreCourseMaterials(course).length > 0;
 
   return (
     <div
@@ -122,30 +125,7 @@ export default function CourseEnrollmentCard({
 
       {/* Content */}
       <div className="px-6 py-5 space-y-4">
-        {/* Pre-Course Materials */}
-        {course.pre_course_materials?.length > 0 && (
-          <div className="rounded-xl p-4" style={{ background: "rgba(123,142,200,0.1)", border: "1px solid rgba(123,142,200,0.25)" }}>
-            <div className="flex items-center gap-2 mb-3">
-              <BookOpen className="w-4 h-4" style={{ color: "#7B8EC8" }} />
-              <p className="text-sm font-bold" style={{ color: "#1e2535" }}>📚 Pre-Course Materials</p>
-            </div>
-            <div className="space-y-2.5">
-              {course.pre_course_materials.map((mat, idx) => (
-                <div key={idx} className="flex items-start gap-2.5 p-2.5 rounded-lg" style={{ background: "rgba(255,255,255,0.5)", border: "1px solid rgba(123,142,200,0.15)" }}>
-                  {mat.required ? (
-                    <Zap className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" style={{ color: "#FA6F30" }} />
-                  ) : (
-                    <FileText className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" style={{ color: "#7B8EC8" }} />
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-semibold" style={{ color: "#1e2535" }}>{mat.title}</p>
-                    {mat.required && <span className="text-xs font-bold" style={{ color: "#FA6F30", fontSize: "9px" }}>🔴 Required</span>}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        <PreCourseMaterialsStudyBlock course={course} title="Pre-Course Materials to Study" />
 
         {/* Quick info grid */}
         <div className="grid grid-cols-2 gap-2">
@@ -354,17 +334,20 @@ export default function CourseEnrollmentCard({
               <Zap className="w-3.5 h-3.5" /> Class Day Wizard
             </button>
           )}
-          <button
-            onClick={onViewMaterials}
-            className={`${showClassWizardCta ? "flex-[1.1]" : "flex-1"} flex items-center justify-center gap-2 py-2.5 rounded-lg text-xs font-bold transition-all`}
-            style={{
-              background: "rgba(123,142,200,0.1)",
-              color: "#4a5fa8",
-              border: "1px solid rgba(123,142,200,0.2)",
-            }}
-          >
-            <FileText className="w-3.5 h-3.5" /> View Materials
-          </button>
+          {hasPreCourseMaterials && (
+            <button
+              type="button"
+              onClick={onViewMaterials}
+              className={`${showClassWizardCta ? "flex-[1.1]" : "flex-1"} flex items-center justify-center gap-2 py-2.5 rounded-lg text-xs font-bold transition-all`}
+              style={{
+                background: "rgba(123,142,200,0.1)",
+                color: "#4a5fa8",
+                border: "1px solid rgba(123,142,200,0.2)",
+              }}
+            >
+              <FileText className="w-3.5 h-3.5" /> View Materials
+            </button>
+          )}
         </div>
       </div>
     </div>

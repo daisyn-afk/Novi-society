@@ -4,6 +4,7 @@ import { insertAppNotification } from "./certificationNotifications.js";
 import { monthlyFeeForNewMdService, resolveMdCoverageMonthlyFee } from "./mdMembershipPricing.js";
 import { submitMdBoardCoverageAssignment } from "./mdAssignmentService.js";
 import { attachSignedContractToSubscription, getServiceTypeContractInfo } from "./mdContractPdfService.js";
+import { snapshotProtocolDocumentsOnSubscription } from "./lib/mdSubscriptionProtocolDocs.js";
 import { getProviderIdAliases } from "./mdSupervisedAccess.js";
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || "";
@@ -268,12 +269,13 @@ export async function createPendingMdSubscriptionForCheckout({
       [existing.id, signatureData || null, touchIso, signedByName || providerName || null]
     );
     const updated = updatedRows[0] || existing;
+    await snapshotProtocolDocumentsOnSubscription(updated.id, stId);
     await maybeStoreSignedContract(updated, {
       signatureData: signatureData || updated.signature_data,
       signedByName: signedByName || updated.signed_by_name || providerName,
       signedAtIso: updated.signed_at || touchIso,
     });
-    return updated;
+    return (await getMdSubscriptionById(updated.id)) || updated;
   }
 
   const activeOtherCount = (
@@ -314,12 +316,13 @@ export async function createPendingMdSubscriptionForCheckout({
     ]
   );
   const created = rows[0];
+  await snapshotProtocolDocumentsOnSubscription(created.id, stId);
   await maybeStoreSignedContract(created, {
     signatureData,
     signedByName: signedByName || providerName,
     signedAtIso: nowIso,
   });
-  return created;
+  return (await getMdSubscriptionById(created.id)) || created;
 }
 
 export async function attachCheckoutSessionToMdSubscription(mdSubscriptionId, stripeCheckoutSessionId) {
@@ -422,6 +425,7 @@ export async function activateMdSubscriptionFromStripeSession(session) {
     ]
   );
   row = rows[0] || row;
+  await snapshotProtocolDocumentsOnSubscription(row.id, row.service_type_id);
 
   await logBillingEvent({
     mdSubscriptionId: row.id,
@@ -551,6 +555,7 @@ export async function finalizeMdBoardCoverage({
       ]
     );
     row = rows[0];
+    await snapshotProtocolDocumentsOnSubscription(row.id, stId);
     await logBillingEvent({
       mdSubscriptionId: row.id,
       eventType: "free_activation",
@@ -573,12 +578,15 @@ export async function finalizeMdBoardCoverage({
       [row.id, monthlyFee, nowIso, signatureData || null, signedByName || providerName || null]
     );
     row = rows[0];
+    await snapshotProtocolDocumentsOnSubscription(row.id, stId);
     await logBillingEvent({
       mdSubscriptionId: row.id,
       eventType: "free_activation",
       metadata: { monthly_fee: monthlyFee },
     });
   }
+
+  await snapshotProtocolDocumentsOnSubscription(row.id, stId);
 
   const signedContractUrl = await ensureSignedContractForSubscription(row, {
     signatureData: signatureData || row.signature_data,

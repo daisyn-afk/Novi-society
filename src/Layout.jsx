@@ -1,4 +1,4 @@
-// @ts-nocheck — checkJs + untyped base44 client causes false-positive TS errors in this file
+// @ts-nocheck — checkJs + untyped base44 client causes false-positive jTS errors in this file
 import { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { createPageUrl } from "@/utils";
@@ -218,7 +218,7 @@ export default function Layout({ children, currentPageName }) {
   }[role] || role;
 
   return (
-    <div className="min-h-screen flex" style={{ fontFamily: "'DM Sans', sans-serif", background: "linear-gradient(150deg, #ede9fb 0%, #f5f2ff 40%, #eaf5c8 75%, #C8E63C 100%)", backgroundAttachment: "fixed" }}>
+    <div className="min-h-screen flex" style={{ fontFamily: "'DM Sans', sans-serif",background: "linear-gradient(150deg, #f8f5ed 0%, #f5f3ef 50%, #f2eedf 100%)", backgroundAttachment: "fixed" }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&display=swap');
 

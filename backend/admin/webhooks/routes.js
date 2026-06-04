@@ -2,6 +2,7 @@ import express, { Router } from "express";
 import { processCompletedCheckoutSession, verifyStripeWebhook } from "../checkout/service.js";
 import { processModelCheckoutCompletedSession } from "../functions/routes.js";
 import { processAppointmentCheckoutCompletedSession } from "../appointments/paymentService.js";
+import { processAppointmentTreatmentCheckoutCompletedSession } from "../appointments/treatmentPaymentService.js";
 import { processMdBoardStripeEvent } from "../mdBillingService.js";
 import { recordStripeWebhookEvent } from "../payments/service.js";
 import { handleQualiphyExamWebhook } from "../qualiphy/webhookHandler.js";
@@ -90,6 +91,8 @@ webhooksRouter.post("/stripe", async (req, res, next) => {
         await processModelCheckoutCompletedSession(session);
       } else if (checkoutType === "appointment") {
         await processAppointmentCheckoutCompletedSession(session);
+      } else if (checkoutType === "appointment_treatment") {
+        await processAppointmentTreatmentCheckoutCompletedSession(session);
       } else if (checkoutType === "md_board_coverage") {
         await processMdBoardStripeEvent(event);
       } else {
@@ -97,8 +100,11 @@ webhooksRouter.post("/stripe", async (req, res, next) => {
       }
     } else if (event.type === "checkout.session.async_payment_succeeded") {
       const session = event.data.object;
-      if (String(session?.metadata?.checkout_type || "").toLowerCase() === "appointment") {
+      const asyncType = String(session?.metadata?.checkout_type || "").toLowerCase();
+      if (asyncType === "appointment") {
         await processAppointmentCheckoutCompletedSession(session);
+      } else if (asyncType === "appointment_treatment") {
+        await processAppointmentTreatmentCheckoutCompletedSession(session);
       }
     } else {
       await processMdBoardStripeEvent(event);

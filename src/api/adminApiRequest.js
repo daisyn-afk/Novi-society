@@ -6,6 +6,19 @@
  * - In non-local environments, also use same-origin so production does not try to call
  *   the viewer's own localhost by mistake.
  */
+export function getAdminApiBaseUrl() {
+  return resolveAdminApiBaseUrl();
+}
+
+export function toApiPath(path) {
+  if (!path || typeof path !== "string") return path;
+  if (path.startsWith("/api/")) return path;
+  if (path.startsWith("/admin/") || path.startsWith("/webhooks/")) {
+    return `/api${path}`;
+  }
+  return path;
+}
+
 function resolveAdminApiBaseUrl() {
   const raw = (import.meta.env.VITE_APP_API_BASE_URL || "").trim();
   if (!raw) return "";
@@ -30,18 +43,6 @@ const API_BASE_URL = resolveAdminApiBaseUrl();
 const ACCESS_TOKEN_KEY = "novi_auth_access_token";
 const REFRESH_TOKEN_KEY = "novi_auth_refresh_token";
 const API_REQUEST_TIMEOUT_MS = Number(import.meta.env.VITE_ADMIN_API_TIMEOUT_MS || 15000);
-
-// Prepend "/api" to paths under /admin/ or /webhooks/ so API calls do not
-// collide with React Router SPA routes (e.g. /admin dashboard page).
-// Serverless functions live at /api/admin/[...path].js and /api/webhooks/[...path].js.
-function toApiPath(path) {
-  if (!path || typeof path !== "string") return path;
-  if (path.startsWith("/api/")) return path;
-  if (path.startsWith("/admin/") || path.startsWith("/webhooks/")) {
-    return `/api${path}`;
-  }
-  return path;
-}
 
 async function tryRefreshAuthSession() {
   if (typeof window === "undefined") return false;

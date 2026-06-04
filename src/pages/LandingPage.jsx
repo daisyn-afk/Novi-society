@@ -39,7 +39,9 @@ const PILLARS = [
   { number: "04", label: "Command", desc: "Run your practice from one obsessively crafted dashboard — bookings, records, reviews." },
 ];
 
-const LOGIN_PATH = "/admin";
+const SIGN_IN_PATH = "/login";
+const PROVIDER_JOIN_PATH = `${createPageUrl("Onboarding")}?from=provider`;
+const PATIENT_JOIN_PATH = createPageUrl("Onboarding");
 
 export default function LandingPage() {
   const { data: me } = useQuery({
@@ -188,7 +190,7 @@ export default function LandingPage() {
                 if (isAuthenticated) {
                   base44.auth.logout(`${window.location.origin}/`);
                 } else {
-                  window.location.href = LOGIN_PATH;
+                  window.location.href = SIGN_IN_PATH;
                 }
               }}
               className="btn-outline"
@@ -272,10 +274,10 @@ export default function LandingPage() {
               Novi Society is the members-only platform for elite aesthetic providers — combining certification, compliance, and patient connection in one beautifully crafted system.
             </p>
             <div className="cta-buttons" style={{ display: "flex", gap: 12 }}>
-              <Link to={LOGIN_PATH} className="btn-dark">
+              <Link to={PROVIDER_JOIN_PATH} className="btn-dark">
                 Join the Society <ArrowRight style={{ width: 14, height: 14 }} />
               </Link>
-              <Link to={LOGIN_PATH} className="btn-outline">
+              <Link to={PATIENT_JOIN_PATH} className="btn-outline">
                 For Patients
               </Link>
             </div>
@@ -347,7 +349,7 @@ export default function LandingPage() {
                 </li>
               ))}
             </ul>
-              <Link to={LOGIN_PATH} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "12px 28px", background: "#C8E63C", color: BRAND.dark, fontWeight: 700, fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase", borderRadius: 100, textDecoration: "none", fontFamily: "'DM Sans', sans-serif" }}>
+              <Link to={PROVIDER_JOIN_PATH} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "12px 28px", background: "#C8E63C", color: BRAND.dark, fontWeight: 700, fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase", borderRadius: 100, textDecoration: "none", fontFamily: "'DM Sans', sans-serif" }}>
                 Join as Provider <ArrowRight style={{ width: 13, height: 13 }} />
               </Link>
           </div>
@@ -370,7 +372,7 @@ export default function LandingPage() {
                 </li>
               ))}
             </ul>
-            <Link to={LOGIN_PATH} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "12px 28px", background: BRAND.dark, color: "white", fontWeight: 700, fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase", borderRadius: 100, textDecoration: "none", fontFamily: "'DM Sans', sans-serif" }}>
+            <Link to={PATIENT_JOIN_PATH} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "12px 28px", background: BRAND.dark, color: "white", fontWeight: 700, fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase", borderRadius: 100, textDecoration: "none", fontFamily: "'DM Sans', sans-serif" }}>
               Find a Provider <ArrowRight style={{ width: 13, height: 13 }} />
             </Link>
             <div style={{ marginTop: 28, paddingTop: 24, borderTop: "1px solid rgba(30,37,53,0.12)" }}>
@@ -605,10 +607,10 @@ export default function LandingPage() {
             The aesthetic medicine industry has never seen anything like this. You're early. That's the point.
           </p>
           <div className="cta-buttons" style={{ display: "flex", gap: 12, justifyContent: "center" }}>
-            <Link to={LOGIN_PATH} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "14px 36px", background: "white", color: BRAND.dark, fontWeight: 700, fontSize: 13, letterSpacing: "0.08em", textTransform: "uppercase", borderRadius: 100, textDecoration: "none", fontFamily: "'DM Sans', sans-serif" }}>
+            <Link to={PROVIDER_JOIN_PATH} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "14px 36px", background: "white", color: BRAND.dark, fontWeight: 700, fontSize: 13, letterSpacing: "0.08em", textTransform: "uppercase", borderRadius: 100, textDecoration: "none", fontFamily: "'DM Sans', sans-serif" }}>
               Join as Provider <ArrowRight style={{ width: 14, height: 14 }} />
             </Link>
-            <Link to={LOGIN_PATH} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "14px 36px", background: "transparent", color: "white", fontWeight: 600, fontSize: 13, letterSpacing: "0.08em", textTransform: "uppercase", borderRadius: 100, border: "1.5px solid rgba(255,255,255,0.4)", textDecoration: "none", fontFamily: "'DM Sans', sans-serif" }}>
+            <Link to={PATIENT_JOIN_PATH} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "14px 36px", background: "transparent", color: "white", fontWeight: 600, fontSize: 13, letterSpacing: "0.08em", textTransform: "uppercase", borderRadius: 100, border: "1.5px solid rgba(255,255,255,0.4)", textDecoration: "none", fontFamily: "'DM Sans', sans-serif" }}>
               Find a Provider
             </Link>
           </div>

@@ -10,6 +10,12 @@ import {
   enrichAppointmentDepositFields,
 } from "./paymentService.js";
 import {
+  createAppointmentTreatmentCheckout,
+  previewTreatmentInvoice,
+  requestAppointmentTreatmentPayment,
+  syncAppointmentTreatmentPayment,
+} from "./treatmentPaymentService.js";
+import {
   sendAppointmentConfirmedPatientEmail,
   sendAppointmentCancelledPatientEmail,
   sendAppointmentNoShowPatientEmail,
@@ -605,12 +611,110 @@ appointmentsRouter.post("/:id/sync-deposit-payment", async (req, res, next) => {
   }
 });
 
+/** Provider preview treatment invoice from menu pricing + logged units/areas. */
+appointmentsRouter.post("/:id/treatment-invoice-preview", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    const appointmentId = String(req.params.id || "").trim();
+    const preview = await previewTreatmentInvoice({
+      token,
+      appointmentId,
+      body: req.body || {},
+    });
+    return res.json(preview);
+  } catch (error) {
+    if (error?.statusCode) return res.status(error.statusCode).json({ error: error.message });
+    return next(error);
+  }
+});
+
+/** Provider sends treatment balance invoice to patient. */
+appointmentsRouter.post("/:id/request-treatment-payment", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    const appointmentId = String(req.params.id || "").trim();
+    const updated = await requestAppointmentTreatmentPayment({
+      token,
+      appointmentId,
+      body: req.body || {},
+    });
+    const { rows: enriched } = await query(
+      `${APPOINTMENTS_SELECT}
+         ${APPOINTMENTS_FROM}
+        where a.id = $1`,
+      [appointmentId]
+    );
+    return res.json(mapAppointmentRow(enriched[0] || updated));
+  } catch (error) {
+    if (error?.statusCode) return res.status(error.statusCode).json({ error: error.message });
+    return next(error);
+  }
+});
+
+/** Patient pays treatment balance via Stripe Checkout. */
+appointmentsRouter.post("/:id/treatment-checkout", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    const appointmentId = String(req.params.id || "").trim();
+    const body = req.body || {};
+    const result = await createAppointmentTreatmentCheckout({
+      token,
+      appointmentId,
+      body,
+      tracking: {
+        clientTimestamp: req.get("x-novi-client-timestamp") || body.client_timestamp || null,
+        sourceOrigin: req.get("origin") || req.get("referer") || null,
+        requestIp: (() => {
+          const forwarded = req.get("x-forwarded-for");
+          if (forwarded) return String(forwarded).split(",")[0].trim();
+          return req.ip || req.socket?.remoteAddress || null;
+        })(),
+        userAgent: req.get("user-agent") || null,
+      },
+    });
+    return res.json(result);
+  } catch (error) {
+    if (error?.statusCode) {
+      return res.status(error.statusCode).json({ error: error.message, sessionUrl: null });
+    }
+    return next(error);
+  }
+});
+
+/** Patient: sync treatment payment after Stripe redirect. */
+appointmentsRouter.post("/:id/sync-treatment-payment", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    const appointmentId = String(req.params.id || "").trim();
+    const stripeSessionId = String(req.body?.stripe_session_id || "").trim() || null;
+    const updated = await syncAppointmentTreatmentPayment({
+      token,
+      appointmentId,
+      stripeSessionId,
+    });
+    const { rows: enriched } = await query(
+      `${APPOINTMENTS_SELECT}
+         ${APPOINTMENTS_FROM}
+        where a.id = $1`,
+      [appointmentId]
+    );
+    return res.json(mapAppointmentRow(enriched[0] || updated));
+  } catch (error) {
+    if (error?.statusCode) return res.status(error.statusCode).json({ error: error.message });
+    return next(error);
+  }
+});
+
 /** Provider confirms request and asks patient to pay deposit. */
 appointmentsRouter.post("/:id/request-deposit", async (req, res, next) => {
   try {
     const token = getBearerToken(req);
     const appointmentId = String(req.params.id || "").trim();
-    const updated = await requestAppointmentDeposit({ token, appointmentId });
+    const updated = await requestAppointmentDeposit({
+      token,
+      appointmentId,
+      body: req.body || {},
+    });
     const { rows: enriched } = await query(
       `${APPOINTMENTS_SELECT}
          ${APPOINTMENTS_FROM}

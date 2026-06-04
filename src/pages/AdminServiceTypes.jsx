@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { adminApiRequest } from "@/api/adminApiRequest";
@@ -10,7 +10,13 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { useToast } from "@/components/ui/use-toast";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Pencil, Trash2, ChevronDown, ChevronUp, ShieldCheck, Upload, FileText, X, Sparkles, Video, Award, Users, CreditCard, Stethoscope, ChevronRight, Info } from "lucide-react";
-import { getMdContractUrl, filterProtocolDocuments } from "@/lib/serviceTypeDocuments";
+import {
+  getMdContractUrl,
+  filterProtocolDocuments,
+  isUsableDocumentUrl,
+  pickGlobalMdContractUrl,
+} from "@/lib/serviceTypeDocuments";
+import { getDocumentViewUrl, openDocumentInNewTab } from "@/lib/documentViewerUrl";
 
 const CATEGORIES = ["injectables", "fillers", "laser", "skincare", "body_contouring", "prp", "other"];
 const LICENSE_TYPES = ["RN", "NP", "PA", "MD", "DO", "esthetician"];
@@ -132,6 +138,11 @@ export default function AdminServiceTypes() {
   const [tierNewArea, setTierNewArea] = useState("");
   const [tierNewRule, setTierNewRule] = useState({ rule_name: "", rule_value: "", unit: "", description: "" });
   const [uploadError, setUploadError] = useState("");
+  const [clearMdContractOpen, setClearMdContractOpen] = useState(false);
+  const [clearingMdContract, setClearingMdContract] = useState(false);
+  const mdContractInputRef = useRef(null);
+  /** When true, UI hides shared MD contract until a new upload (avoids stale list fallback). */
+  const [sharedMdContractCleared, setSharedMdContractCleared] = useState(false);
 
   const supervisionMonthsError = useMemo(
     () => validateSupervisionMonths(form.requires_supervision_months),
@@ -142,6 +153,13 @@ export default function AdminServiceTypes() {
     queryKey: ["service-types"],
     queryFn: () => base44.entities.ServiceType.list(),
   });
+
+  const displayedMdContractUrl = useMemo(() => {
+    if (sharedMdContractCleared) return null;
+    const formUrl = String(form.md_contract_url || "").trim();
+    if (isUsableDocumentUrl(formUrl)) return formUrl;
+    return pickGlobalMdContractUrl(services);
+  }, [sharedMdContractCleared, form.md_contract_url, services]);
 
   const saveMutation = useMutation({
     mutationFn: async (data) => {
@@ -166,8 +184,22 @@ export default function AdminServiceTypes() {
     },
   });
 
-  const openNew = () => { setEditing(null); setForm(EMPTY_SERVICE); setActiveTab("basics"); setEditingTier(null); setOpen(true); };
-  const openEdit = (s) => { setEditing(s); setForm({ ...s, protocol_document_urls: s.protocol_document_urls || [], md_contract_url: s.md_contract_url || "", coverage_tiers: s.coverage_tiers || [] }); setActiveTab("basics"); setEditingTier(null); setOpen(true); };
+  const openNew = () => {
+    setEditing(null);
+    setForm(EMPTY_SERVICE);
+    setSharedMdContractCleared(false);
+    setActiveTab("basics");
+    setEditingTier(null);
+    setOpen(true);
+  };
+  const openEdit = (s) => {
+    setEditing(s);
+    setForm({ ...s, protocol_document_urls: s.protocol_document_urls || [], md_contract_url: s.md_contract_url || "", coverage_tiers: s.coverage_tiers || [] });
+    setSharedMdContractCleared(false);
+    setActiveTab("basics");
+    setEditingTier(null);
+    setOpen(true);
+  };
 
   const applyPreset = () => {
     const preset = CATEGORY_PRESETS[form.category];
@@ -211,7 +243,26 @@ export default function AdminServiceTypes() {
         method: "POST",
         body
       });
-      setForm(f => ({ ...f, md_contract_url: uploaded?.url || "" }));
+      const contractUrl = uploaded?.url || "";
+      if (contractUrl) {
+        await adminApiRequest("/admin/service-types/propagate-md-contract", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ md_contract_url: contractUrl }),
+        });
+        queryClient.setQueryData(["service-types"], (old) =>
+          Array.isArray(old) ? old.map((s) => ({ ...s, md_contract_url: contractUrl })) : old
+        );
+        queryClient.invalidateQueries({ queryKey: ["service-types"] });
+      }
+      setSharedMdContractCleared(false);
+      setForm((f) => ({ ...f, md_contract_url: contractUrl }));
+      toast({
+        title: uploaded?.converted_to_pdf ? "Converted to PDF" : "MD contract uploaded",
+        description: uploaded?.converted_to_pdf
+          ? `${uploaded.original_filename || "Document"} was saved as PDF and applied to all service types.`
+          : "Shared MD contract updated for all service types (including new ones).",
+      });
     } catch (error) {
       setUploadError(error?.message || "Failed to upload MD contract.");
     } finally {
@@ -247,6 +298,50 @@ export default function AdminServiceTypes() {
   };
 
   const removeProtocol = (i) => setForm(f => ({ ...f, protocol_document_urls: f.protocol_document_urls.filter((_, idx) => idx !== i) }));
+
+  const handleViewDocument = async (url) => {
+    try {
+      await openDocumentInNewTab(url);
+    } catch (error) {
+      toast({
+        title: "Could not open document",
+        description: error?.message || "Try downloading the file instead.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const confirmClearGlobalMdContract = async () => {
+    setClearingMdContract(true);
+    try {
+      const result = await adminApiRequest("/admin/service-types/clear-md-contract", {
+        method: "POST",
+      });
+      if (!result?.ok) {
+        throw new Error("Server did not confirm MD contract removal.");
+      }
+      setSharedMdContractCleared(true);
+      setForm((f) => ({ ...f, md_contract_url: "" }));
+      queryClient.setQueryData(["service-types"], (old) =>
+        Array.isArray(old) ? old.map((s) => ({ ...s, md_contract_url: "" })) : old
+      );
+      await queryClient.refetchQueries({ queryKey: ["service-types"] });
+      setClearMdContractOpen(false);
+      toast({
+        title: "MD contract removed",
+        description: "Removed from all service types. Upload a new file to set the shared contract.",
+      });
+      setTimeout(() => mdContractInputRef.current?.click(), 200);
+    } catch (error) {
+      toast({
+        title: "Could not remove contract",
+        description: error?.message || "Try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setClearingMdContract(false);
+    }
+  };
 
   const handleSave = () => {
     if (supervisionMonthsError) {
@@ -313,7 +408,7 @@ export default function AdminServiceTypes() {
                         {s.is_active ? "Active" : "Inactive"}
                       </Badge>
                       <Badge variant="outline" className="text-xs capitalize">{s.category?.replace("_", " ")}</Badge>
-                      {getMdContractUrl(s) && <Badge className="bg-blue-100 text-blue-700 text-xs">MD Contract ✓</Badge>}
+                      {getMdContractUrl(s, { allServiceTypes: services }) && <Badge className="bg-blue-100 text-blue-700 text-xs">MD Contract ✓</Badge>}
                       {s.requires_gfe && <Badge className="bg-green-100 text-green-700 text-xs">GFE Required</Badge>}
                       {filterProtocolDocuments(s.protocol_document_urls).length > 0 && (
                         <Badge className="bg-purple-100 text-purple-700 text-xs">
@@ -368,17 +463,28 @@ export default function AdminServiceTypes() {
                     <div>
                       <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Documents</p>
                       <div className="space-y-1">
-                        {getMdContractUrl(s) && (
-                          <a href={getMdContractUrl(s)} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-xs text-blue-600 hover:underline">
+                        {getMdContractUrl(s, { allServiceTypes: services }) && (
+                          <a
+                            href={getDocumentViewUrl(getMdContractUrl(s, { allServiceTypes: services })) || "#"}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-1.5 text-xs text-blue-600 hover:underline"
+                          >
                             <FileText className="w-3 h-3" /> MD Contract
                           </a>
                         )}
                         {filterProtocolDocuments(s.protocol_document_urls).map((doc, i) => (
-                          <a key={i} href={doc.url} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-xs text-purple-600 hover:underline">
+                          <a
+                            key={i}
+                            href={getDocumentViewUrl(doc.url) || doc.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-1.5 text-xs text-purple-600 hover:underline"
+                          >
                             <FileText className="w-3 h-3" /> {doc.name}
                           </a>
                         ))}
-                        {!getMdContractUrl(s) && filterProtocolDocuments(s.protocol_document_urls).length === 0 && (
+                        {!getMdContractUrl(s, { allServiceTypes: services }) && filterProtocolDocuments(s.protocol_document_urls).length === 0 && (
                           <p className="text-xs text-slate-400">No documents uploaded</p>
                         )}
                       </div>
@@ -779,35 +885,60 @@ export default function AdminServiceTypes() {
             {activeTab === "documents" && <>
               <div className="rounded-lg bg-slate-50 border border-slate-200 px-4 py-3 text-xs text-slate-600 flex items-start gap-2">
                 <Info className="w-4 h-4 mt-0.5 flex-shrink-0 text-slate-400" />
-                <div>The <strong>MD Contract</strong> is shown to providers during onboarding when they sign up for this service. <strong>Protocol documents</strong> are unlocked for providers once their coverage is active.</div>
+                <div>The <strong>MD Contract</strong> is shared across <strong>all service types</strong> (including new ones). Providers see it when signing MD coverage. <strong>Protocol documents</strong> below are per service and appear in the provider Documents tab after they sign (no signature required).</div>
               </div>
               <div>
-                <label className="text-xs font-semibold text-slate-600 mb-1 block">MD Contract <span className="font-normal text-slate-400">(signed by providers during class day onboarding)</span></label>
-                {getMdContractUrl(form) ? (
+                <label className="text-xs font-semibold text-slate-600 mb-1 block">MD Contract <span className="font-normal text-slate-400">(shared by all services — signed during MD coverage onboarding)</span></label>
+                {displayedMdContractUrl ? (
                   <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2.5">
                     <FileText className="w-4 h-4 text-blue-600 flex-shrink-0" />
-                    <a href={getMdContractUrl(form)} target="_blank" rel="noreferrer" className="text-sm text-blue-700 hover:underline flex-1">View uploaded contract</a>
-                    <button onClick={() => setForm(f => ({ ...f, md_contract_url: "" }))} className="text-slate-400 hover:text-red-500">
+                    <button
+                      type="button"
+                      onClick={() => handleViewDocument(displayedMdContractUrl)}
+                      className="text-sm text-blue-700 hover:underline flex-1 text-left"
+                    >
+                      View uploaded contract
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setClearMdContractOpen(true)}
+                      className="text-slate-400 hover:text-red-500"
+                      title="Remove shared MD contract from all services"
+                    >
                       <X className="w-4 h-4" />
                     </button>
                   </div>
                 ) : (
                   <label className="flex items-center gap-2 cursor-pointer border-2 border-dashed border-slate-200 rounded-lg p-4 hover:bg-slate-50 hover:border-slate-300 transition-all">
                     <Upload className="w-4 h-4 text-slate-400" />
-                    <span className="text-sm text-slate-500">{uploadingContract ? "Uploading..." : "Click to upload MD Contract (PDF)"}</span>
-                    <input type="file" className="hidden" accept=".pdf,.doc,.docx" onChange={uploadMDContract} disabled={uploadingContract} />
+                    <span className="text-sm text-slate-500">{uploadingContract ? "Uploading..." : "Upload MD Contract (PDF, DOC, or DOCX — Word files are saved as PDF)"}</span>
+                    <input
+                      ref={mdContractInputRef}
+                      type="file"
+                      className="hidden"
+                      accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                      onChange={uploadMDContract}
+                      disabled={uploadingContract}
+                    />
                   </label>
                 )}
               </div>
 
               <div>
-                <label className="text-xs font-semibold text-slate-600 mb-1 block">Protocol Documents <span className="font-normal text-slate-400">(visible to providers after coverage is active)</span></label>
+                <label className="text-xs font-semibold text-slate-600 mb-1 block">Protocol Documents <span className="font-normal text-slate-400">(visible in provider Documents after MD sign-up for this service)</span></label>
                 <div className="space-y-2 mb-3">
                   {form.protocol_document_urls?.length === 0 && <p className="text-xs text-slate-400">No protocol documents uploaded yet</p>}
                   {form.protocol_document_urls?.map((doc, i) => (
                     <div key={i} className="flex items-center gap-2 bg-purple-50 border border-purple-200 rounded-lg px-3 py-2.5">
                       <FileText className="w-4 h-4 text-purple-600 flex-shrink-0" />
-                      <a href={doc.url} target="_blank" rel="noreferrer" className="text-sm text-purple-700 hover:underline flex-1">{doc.name}</a>
+                      <a
+                        href={getDocumentViewUrl(doc.url) || doc.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sm text-purple-700 hover:underline flex-1"
+                      >
+                        {doc.name}
+                      </a>
                       <button onClick={() => removeProtocol(i)} className="text-slate-400 hover:text-red-500">
                         <X className="w-4 h-4" />
                       </button>
@@ -912,6 +1043,28 @@ export default function AdminServiceTypes() {
               </Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={clearMdContractOpen} onOpenChange={setClearMdContractOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Remove MD contract for all services?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-slate-600">
+            This removes the <strong>shared MD contract</strong> from <strong>every service type</strong>, including any you add later until you upload a new one.
+          </p>
+          <p className="text-sm text-slate-500">
+            After you confirm, choose a new file to upload. That PDF will become the MD contract for all services.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setClearMdContractOpen(false)} disabled={clearingMdContract}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={confirmClearGlobalMdContract} disabled={clearingMdContract}>
+              {clearingMdContract ? "Removing…" : "Remove & upload new"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

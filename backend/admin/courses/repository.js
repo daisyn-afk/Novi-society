@@ -3,6 +3,7 @@ import {
   normalizeScheduledSessionDatesEntries,
   parseSessionDatesField,
 } from "../lib/sessionDateSeats.js";
+import { resolvePreCourseMaterials } from "../lib/preCourseMaterials.js";
 import { syncScheduledCourseSessionSeats, syncScheduledCoursesSessionSeats } from "./sessionSeatsSync.js";
 
 const COLUMNS = `
@@ -127,7 +128,7 @@ function mergeScheduledWithTemplate(scheduled, template) {
     requirements: template.requirements != null ? template.requirements : scheduled.requirements,
     what_to_bring: template.what_to_bring != null ? template.what_to_bring : scheduled.what_to_bring,
     getting_ready_info: template.getting_ready_info != null ? template.getting_ready_info : scheduled.getting_ready_info,
-    pre_course_materials: template.pre_course_materials != null ? template.pre_course_materials : scheduled.pre_course_materials,
+    pre_course_materials: resolvePreCourseMaterials(scheduled, template),
     tags: template.tags != null ? template.tags : scheduled.tags,
     instructor_name: nonempty(template.instructor_name) ? template.instructor_name : scheduled.instructor_name,
     instructor_bio: nonempty(template.instructor_bio) ? template.instructor_bio : scheduled.instructor_bio,

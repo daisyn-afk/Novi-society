@@ -18,6 +18,7 @@ import { isNowWithinSessionRedeemWindow } from "@/lib/classCodeWindow";
 import CourseCardDeck from "@/components/provider/CourseCardDeck";
 import { adminCoursesApi } from "@/api/adminCoursesApi";
 import { useAttendanceContext } from "@/components/provider/useAttendanceContext";
+import { coursePreCourseMaterials } from "@/lib/preCourseMaterials";
 
 const categoryMeta = {
   injectables:  { label: "Injectables",          color: "#FA6F30" },
@@ -178,7 +179,11 @@ export default function ProviderEnrollments() {
     queryFn: () => base44.entities.ServiceType.filter({ is_active: true }),
   });
 
-  const courseMap = Object.fromEntries(courses.map(c => [c.id, c]));
+  const enrichedCourses = courses.map((c) => ({
+    ...c,
+    pre_course_materials: coursePreCourseMaterials(c),
+  }));
+  const courseMap = Object.fromEntries(enrichedCourses.map((c) => [c.id, c]));
   const getCourseServiceTypeIds = (course) => {
     if (!course) return [];
     const direct = course.service_type_id ? [course.service_type_id] : [];
@@ -188,6 +193,22 @@ export default function ProviderEnrollments() {
       : [];
     return Array.from(new Set([...direct, ...linked, ...fromCerts].map((id) => String(id))));
   };
+  /** One pathway per track — avoid duplicating when a course links many service types. */
+  const getPrimaryServiceTypeId = (course) => {
+    if (!course) return null;
+    if (course.service_type_id) return String(course.service_type_id);
+    const linked = Array.isArray(course.linked_service_type_ids) ? course.linked_service_type_ids : [];
+    if (linked.length > 0) return String(linked[0]);
+    const fromCerts = Array.isArray(course.certifications_awarded)
+      ? course.certifications_awarded.map((entry) => entry?.service_type_id).filter(Boolean)
+      : [];
+    if (fromCerts.length > 0) return String(fromCerts[0]);
+    return null;
+  };
+  const resolveEnrollmentCourse = (enrollment) =>
+    courseMap[enrollment.course_id] ||
+    enrichedCourses.find((c) => String(c.id) === String(enrollment.course_id)) ||
+    null;
   const courseMatchesService = (course, serviceTypeId) => {
     if (!course || !serviceTypeId) return false;
     return getCourseServiceTypeIds(course).includes(String(serviceTypeId));
@@ -218,7 +239,7 @@ export default function ProviderEnrollments() {
     }
   }, [todayEnrollment, activeTab]);
 
-  const filteredCourses = courses.filter((course) => {
+  const filteredCourses = enrichedCourses.filter((course) => {
     if (!search) return true;
     const q = search.toLowerCase();
     return (
@@ -325,13 +346,15 @@ export default function ProviderEnrollments() {
               <div className="space-y-4">
                 <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.4)" }}>Your Certification Pathways</p>
                 {Array.from(new Set(
-                  activeEnrollments.flatMap(e =>
-                    getCourseServiceTypeIds(courseMap[e.course_id])
-                  )
+                  activeEnrollments
+                    .map((e) => getPrimaryServiceTypeId(resolveEnrollmentCourse(e)))
+                    .filter(Boolean)
                 )).map(serviceTypeId => {
                   const svcFromCatalog = serviceTypes.find((s) => s.id === serviceTypeId);
-                  const fallbackCourse = courses.find((course) =>
-                    courseMatchesService(course, serviceTypeId)
+                  const fallbackCourse = enrichedCourses.find((course) =>
+                    getPrimaryServiceTypeId(course) === String(serviceTypeId)
+                  ) || resolveEnrollmentCourse(
+                    activeEnrollments.find((e) => getPrimaryServiceTypeId(resolveEnrollmentCourse(e)) === String(serviceTypeId))
                   );
                   const svc = svcFromCatalog || {
                     id: serviceTypeId,
@@ -342,25 +365,20 @@ export default function ProviderEnrollments() {
                     <CertificationPathway
                       key={serviceTypeId}
                       serviceType={svc}
-                      courses={courses.filter((course) => courseMatchesService(course, svc.id))}
+                      courses={enrichedCourses.filter((course) => courseMatchesService(course, svc.id))}
                       userCerts={certs}
                       userMDSubs={myMDSubs}
                       enrolledCourseIds={enrolledCourseIds}
                       serviceEnrollments={activeEnrollments.filter((enrollment) => {
-                        const enrollmentCourse = courseMap[enrollment.course_id];
-                        if (!enrollmentCourse) return false;
-                        const linkedServiceIds = getCourseServiceTypeIds(enrollmentCourse);
-                        return linkedServiceIds.includes(serviceTypeId);
+                        const enrollmentCourse = resolveEnrollmentCourse(enrollment);
+                        return getPrimaryServiceTypeId(enrollmentCourse) === String(serviceTypeId);
                       })}
                       sessionByEnrollment={sessionByEnrollment}
                       initiallyExpandedCourseId={activeEnrollments.find((e) => {
-                        const course = courseMap[e.course_id];
-                        if (!course) return false;
-                        const linkedServiceIds = getCourseServiceTypeIds(course);
-                        return linkedServiceIds.includes(serviceTypeId);
+                        const course = resolveEnrollmentCourse(e);
+                        return getPrimaryServiceTypeId(course) === String(serviceTypeId);
                       })?.course_id || null}
                       onEnroll={() => setActiveTab("browse")}
-                      onViewEnrollment={() => {}}
                       onApplyMD={() => navigate(createPageUrl("ProviderCredentialsCoverage") + `?prompt_service=${serviceTypeId}`)}
                     />
                   );
@@ -383,14 +401,17 @@ export default function ProviderEnrollments() {
               <div className="grid sm:grid-cols-2 gap-5 max-w-4xl">
                 {activeEnrollments.map(e => (
                   (() => {
-                    const course = courseMap[e.course_id] || {
-                      id: e.course_id || `enrollment-${e.id}`,
-                      title: e.course_title || "Course",
-                      description: "",
-                      session_dates: e.session_date ? [{ date: e.session_date }] : [],
-                      linked_service_type_ids: [],
-                      certifications_awarded: [],
-                    };
+                    const course =
+                      courseMap[e.course_id] ||
+                      enrichedCourses.find((c) => String(c.id) === String(e.course_id)) || {
+                        id: e.course_id || `enrollment-${e.id}`,
+                        title: e.course_title || "Course",
+                        description: "",
+                        session_dates: e.session_date ? [{ date: e.session_date }] : [],
+                        linked_service_type_ids: [],
+                        certifications_awarded: [],
+                        pre_course_materials: [],
+                      };
                     const classDate = e.session_date || course?.session_dates?.find((d) => d?.date)?.date;
                     const showWizard = Boolean(
                       classDate &&
@@ -406,7 +427,7 @@ export default function ProviderEnrollments() {
                     session={sessionByEnrollment[e.id]}
                     certs={certs}
                     activeSubServiceIds={activeSubServiceIds}
-                    onViewMaterials={() => setPreMaterialsCourse(courseMap[e.course_id])}
+                    onViewMaterials={() => setPreMaterialsCourse(course)}
                     onCancel={() => { if (window.confirm("Cancel this enrollment?")) cancelEnrollment.mutate({ id: e.id }); }}
                     showClassWizardCta={showWizard}
                     onOpenClassWizard={() => setOnboardingEnrollment(e)}
@@ -424,14 +445,11 @@ export default function ProviderEnrollments() {
           </div>
         )}
 
-        {preMaterialsCourse && (
+        {preMaterialsCourse && coursePreCourseMaterials(preMaterialsCourse).length > 0 && (
           <PreCourseMaterials
+            open={!!preMaterialsCourse}
             course={preMaterialsCourse}
             onClose={() => setPreMaterialsCourse(null)}
-            onProceed={() => {
-              navigate(createPageUrl(`CourseCheckout?course_id=${preMaterialsCourse.id}`));
-              setPreMaterialsCourse(null);
-            }}
           />
         )}
 

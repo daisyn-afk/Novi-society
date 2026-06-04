@@ -21,12 +21,13 @@ function acceptsNewPatients(metadata) {
   return true;
 }
 
-const DEFAULT_BOOKING_DEPOSIT_USD = 50;
-
+/** Returns deposit amount for display, or null when provider requires no booking deposit. */
 function computeMarketplaceDeposit(metadata) {
-  const fixed = Number(metadataValue(metadata, "booking_deposit"));
+  const raw = metadataValue(metadata, "booking_deposit");
+  if (raw == null || raw === "") return null;
+  const fixed = Number(raw);
   if (Number.isFinite(fixed) && fixed > 0) return fixed;
-  return DEFAULT_BOOKING_DEPOSIT_USD;
+  return null;
 }
 
 function mapProviderRow(row) {
