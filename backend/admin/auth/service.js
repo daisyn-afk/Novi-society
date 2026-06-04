@@ -1,5 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { pool } from "../db.js";
+import { sendEmailFromTemplate } from "../emails/renderTemplate.js";
+import { assertValidUsPhone } from "../lib/usContactValidation.js";
 import {
   buildProviderMetadataUpdates,
   mapProviderProfileToMeExtras,
@@ -567,6 +569,18 @@ export async function signup(payload) {
     role
   });
 
+  if (role === "patient") {
+    void sendEmailFromTemplate("patient_signup_welcome", {
+      to: email,
+      first_name: firstName || "there",
+    }).then((result) => {
+      if (!result.ok && !result.skipped) {
+        // eslint-disable-next-line no-console
+        console.warn("[auth] patient signup welcome email:", result.error || result.reason);
+      }
+    });
+  }
+
   const { data: loginData, error: loginError } = await withMutedAuthJsFetchConsole(() =>
     authClient.auth.signInWithPassword({
       email,
@@ -975,6 +989,15 @@ export async function updateMe({ accessToken, updates }) {
       Object.prototype.hasOwnProperty.call(updates || {}, key)
     );
     if (sessionRole === "patient" || hasPatientProfileUpdates) {
+      if (Object.prototype.hasOwnProperty.call(updates || {}, "phone") && updates.phone) {
+        assertValidUsPhone(updates.phone);
+      }
+      if (
+        Object.prototype.hasOwnProperty.call(updates || {}, "emergency_contact_phone") &&
+        updates.emergency_contact_phone
+      ) {
+        assertValidUsPhone(updates.emergency_contact_phone);
+      }
       await upsertPatientProfile({ userId: userRow.id, updates: safeUpdates });
     }
   }

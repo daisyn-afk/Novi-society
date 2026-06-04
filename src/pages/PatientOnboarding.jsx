@@ -6,6 +6,8 @@ import { createPageUrl } from "@/utils";
 import { ArrowRight, ArrowLeft, CheckCircle2, Sparkles, Camera, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { formatUsPhoneInput, usPhoneValidationError } from "@/lib/phoneValidation";
+import { normalizeUsStateInput, usZipValidationError } from "@/lib/usAddressValidation";
 
 const TOTAL_STEPS = 6;
 const PATIENT_SELFIE_MAX_BYTES = 10 * 1024 * 1024;
@@ -92,6 +94,51 @@ function FieldLabel({ children, required }) {
   );
 }
 
+function FieldError({ message }) {
+  if (!message) return null;
+  return <p className="text-xs text-red-600 mt-1.5">{message}</p>;
+}
+
+/** Chip with reserved checkmark slot so width stays stable when toggling selection. */
+function SelectableChip({ selected, onClick, children }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium transition-colors"
+      style={{
+        background: selected ? "#1e2535" : "#fff",
+        color: selected ? "#fff" : "#1e2535",
+        border: `2px solid ${selected ? "#1e2535" : "#e8e6e1"}`,
+        boxShadow: selected ? "0 4px 16px rgba(30,37,53,0.08)" : "none",
+      }}
+    >
+      <CheckCircle2 className="w-3.5 h-3.5 shrink-0" style={{ opacity: selected ? 1 : 0 }} aria-hidden />
+      <span>{children}</span>
+    </button>
+  );
+}
+
+function SelectableOptionCard({ selected, onClick, emoji, label, sub }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="p-4 rounded-2xl text-left transition-colors"
+      style={{
+        background: "#fff",
+        border: `2px solid ${selected ? "#1e2535" : "#e8e6e1"}`,
+        boxShadow: selected ? "0 4px 16px rgba(30,37,53,0.08)" : "none",
+        color: "#1e2535",
+      }}
+    >
+      <span className="text-xl mb-2 block">{emoji}</span>
+      <p className="font-bold text-sm">{label}</p>
+      <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.5)" }}>{sub}</p>
+    </button>
+  );
+}
+
 function NavFooter({ step, isLast, canSkip, saving, onBack, onSkip, onNext }) {
   return (
     <div className="flex items-center justify-between gap-3 mt-8">
@@ -144,6 +191,7 @@ export default function PatientOnboarding() {
     state: "",
     zip: "",
   });
+  const [step0Errors, setStep0Errors] = useState({});
 
   const toggleItem = (list, setList, item) => {
     setList(prev => prev.includes(item) ? prev.filter(x => x !== item) : [...prev, item]);
@@ -237,15 +285,25 @@ export default function PatientOnboarding() {
   };
 
   const validateStep0 = () => {
-    if (!regForm.phone || !regForm.date_of_birth || !regForm.city || !regForm.state || !regForm.zip) {
-      alert("Please fill in all required fields.");
-      return false;
+    const errors = {};
+    const phoneErr = usPhoneValidationError(regForm.phone, { required: true });
+    if (phoneErr) errors.phone = phoneErr;
+    const zipErr = usZipValidationError(regForm.zip, { required: true });
+    if (zipErr) errors.zip = zipErr;
+    if (!regForm.date_of_birth) {
+      errors.date_of_birth = "Date of birth is required.";
+    } else if (calculateAge(regForm.date_of_birth) < 18) {
+      errors.date_of_birth = "You must be at least 18 years old to register.";
     }
-    if (calculateAge(regForm.date_of_birth) < 18) {
-      alert("You must be at least 18 years old to register.");
-      return false;
+    if (!regForm.city.trim()) errors.city = "City is required.";
+    const state = normalizeUsStateInput(regForm.state);
+    if (!state) {
+      errors.state = "State is required.";
+    } else if (!/^[A-Z]{2}$/.test(state)) {
+      errors.state = "Enter a 2-letter state code (e.g. TX).";
     }
-    return true;
+    setStep0Errors(errors);
+    return Object.keys(errors).length === 0;
   };
 
   const handleNext = () => {
@@ -265,11 +323,30 @@ export default function PatientOnboarding() {
         <div className="space-y-4">
           <div>
             <FieldLabel required>Phone</FieldLabel>
-            <Input type="tel" value={regForm.phone} onChange={(e) => setRegForm({ ...regForm, phone: e.target.value })} placeholder="(555) 123-4567" className="rounded-xl border-gray-200" />
+            <Input
+              type="tel"
+              value={regForm.phone}
+              onChange={(e) => {
+                setRegForm({ ...regForm, phone: formatUsPhoneInput(e.target.value) });
+                setStep0Errors((prev) => ({ ...prev, phone: "" }));
+              }}
+              placeholder="(555) 123-4567"
+              className="rounded-xl border-gray-200"
+            />
+            <FieldError message={step0Errors.phone} />
           </div>
           <div>
             <FieldLabel required>Date of Birth <span style={{ textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>(18+ only)</span></FieldLabel>
-            <Input type="date" value={regForm.date_of_birth} onChange={(e) => setRegForm({ ...regForm, date_of_birth: e.target.value })} className="rounded-xl border-gray-200" />
+            <Input
+              type="date"
+              value={regForm.date_of_birth}
+              onChange={(e) => {
+                setRegForm({ ...regForm, date_of_birth: e.target.value });
+                setStep0Errors((prev) => ({ ...prev, date_of_birth: "" }));
+              }}
+              className="rounded-xl border-gray-200"
+            />
+            <FieldError message={step0Errors.date_of_birth} />
           </div>
           <div>
             <FieldLabel>Street Address</FieldLabel>
@@ -278,15 +355,46 @@ export default function PatientOnboarding() {
           <div className="grid grid-cols-3 gap-3">
             <div>
               <FieldLabel required>City</FieldLabel>
-              <Input value={regForm.city} onChange={(e) => setRegForm({ ...regForm, city: e.target.value })} placeholder="Austin" className="rounded-xl border-gray-200" />
+              <Input
+                value={regForm.city}
+                onChange={(e) => {
+                  setRegForm({ ...regForm, city: e.target.value });
+                  setStep0Errors((prev) => ({ ...prev, city: "" }));
+                }}
+                placeholder="Austin"
+                className="rounded-xl border-gray-200"
+              />
+              <FieldError message={step0Errors.city} />
             </div>
             <div>
               <FieldLabel required>State</FieldLabel>
-              <Input value={regForm.state} onChange={(e) => setRegForm({ ...regForm, state: e.target.value })} placeholder="TX" maxLength={2} className="rounded-xl border-gray-200" />
+              <Input
+                value={regForm.state}
+                onChange={(e) => {
+                  setRegForm({ ...regForm, state: normalizeUsStateInput(e.target.value) });
+                  setStep0Errors((prev) => ({ ...prev, state: "" }));
+                }}
+                placeholder="TX"
+                maxLength={2}
+                className="rounded-xl border-gray-200"
+              />
+              <FieldError message={step0Errors.state} />
             </div>
             <div>
               <FieldLabel required>Zip</FieldLabel>
-              <Input value={regForm.zip} onChange={(e) => setRegForm({ ...regForm, zip: e.target.value })} placeholder="78701" className="rounded-xl border-gray-200" />
+              <Input
+                value={regForm.zip}
+                onChange={(e) => {
+                  const zip = e.target.value.replace(/[^\d-]/g, "").slice(0, 10);
+                  setRegForm({ ...regForm, zip });
+                  setStep0Errors((prev) => ({ ...prev, zip: "" }));
+                }}
+                placeholder="78701"
+                inputMode="numeric"
+                maxLength={10}
+                className="rounded-xl border-gray-200"
+              />
+              <FieldError message={step0Errors.zip} />
             </div>
           </div>
         </div>
@@ -300,20 +408,14 @@ export default function PatientOnboarding() {
       content: (
         <div className="grid grid-cols-2 gap-3">
           {EXPERIENCE_OPTIONS.map(opt => (
-            <button
+            <SelectableOptionCard
               key={opt.value}
-              type="button"
+              selected={experience === opt.value}
               onClick={() => setExperience(opt.value)}
-              className="p-4 rounded-2xl text-left transition-all"
-              style={experience === opt.value
-                ? { background: "#fff", border: "2px solid #1e2535", boxShadow: "0 4px 16px rgba(30,37,53,0.08)" }
-                : { background: "#fff", border: "1.5px solid #e8e6e1", color: "#1e2535" }
-              }
-            >
-              <span className="text-xl mb-2 block">{opt.emoji}</span>
-              <p className="font-bold text-sm">{opt.label}</p>
-              <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.5)" }}>{opt.sub}</p>
-            </button>
+              emoji={opt.emoji}
+              label={opt.label}
+              sub={opt.sub}
+            />
           ))}
         </div>
       ),
@@ -326,18 +428,13 @@ export default function PatientOnboarding() {
       content: (
         <div className="flex flex-wrap gap-2">
           {SKIN_CONCERNS.map(c => (
-            <button
+            <SelectableChip
               key={c}
-              type="button"
+              selected={concerns.includes(c)}
               onClick={() => toggleItem(concerns, setConcerns, c)}
-              className="px-4 py-2 rounded-full text-sm font-medium transition-all"
-              style={concerns.includes(c)
-                ? { background: "#1e2535", color: "#fff", border: "none" }
-                : { background: "#fff", color: "#1e2535", border: "1.5px solid #e8e6e1" }
-              }
             >
-              {concerns.includes(c) && <CheckCircle2 className="w-3.5 h-3.5 inline mr-1.5" />}{c}
-            </button>
+              {c}
+            </SelectableChip>
           ))}
         </div>
       ),
@@ -350,18 +447,13 @@ export default function PatientOnboarding() {
       content: (
         <div className="flex flex-wrap gap-2">
           {TREATMENT_GOALS.map(g => (
-            <button
+            <SelectableChip
               key={g}
-              type="button"
+              selected={goals.includes(g)}
               onClick={() => toggleItem(goals, setGoals, g)}
-              className="px-4 py-2 rounded-full text-sm font-medium transition-all"
-              style={goals.includes(g)
-                ? { background: "#1e2535", color: "#fff", border: "none" }
-                : { background: "#fff", color: "#1e2535", border: "1.5px solid #e8e6e1" }
-              }
             >
-              {goals.includes(g) && <CheckCircle2 className="w-3.5 h-3.5 inline mr-1.5" />}{g}
-            </button>
+              {g}
+            </SelectableChip>
           ))}
         </div>
       ),
@@ -374,20 +466,14 @@ export default function PatientOnboarding() {
       content: (
         <div className="grid grid-cols-2 gap-3">
           {BUDGET_OPTIONS.map(b => (
-            <button
+            <SelectableOptionCard
               key={b.value}
-              type="button"
+              selected={budget === b.value}
               onClick={() => setBudget(b.value)}
-              className="p-4 rounded-2xl text-left transition-all"
-              style={budget === b.value
-                ? { background: "#fff", border: "2px solid #1e2535", boxShadow: "0 4px 16px rgba(30,37,53,0.08)" }
-                : { background: "#fff", border: "1.5px solid #e8e6e1", color: "#1e2535" }
-              }
-            >
-              <span className="text-xl mb-2 block">{b.emoji}</span>
-              <p className="font-bold text-sm">{b.label}</p>
-              <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.5)" }}>{b.sub}</p>
-            </button>
+              emoji={b.emoji}
+              label={b.label}
+              sub={b.sub}
+            />
           ))}
         </div>
       ),
