@@ -38,6 +38,31 @@ export const FOUNDATION_STEP_PLAYBOOKS = {
     allowMarkDone: false,
   },
 
+  md_mpi: {
+    stepId: "md_mpi",
+    statusSource: "auto",
+    outcome:
+      "Adds your supervising medical director to your Medical Practice Information (MPI) so you're legally cleared to treat patients in most states.",
+    vendorLabel: "Internal system",
+    vendorName: "NOVI Practice Profile",
+    providerSteps: [
+      { title: "Step 1", body: "Identify your supervising medical director (or use a NOVI-provided MD where available)." },
+      { title: "Step 2", body: "Add the MD's details to your practice profile (MPI)." },
+      { title: "Step 3", body: "Confirm the medical director relationship is active." },
+    ],
+    whatHappensNext:
+      "Once your MD is added and active, you satisfy the medical director requirement and can continue toward treating patients on the platform.",
+    noviNote:
+      "This is one of two paths to MD coverage — add a Medical Director to your MPI OR carry Malpractice Insurance that includes Medical Director coverage (see the Malpractice Insurance step).",
+    primaryCta: {
+      type: "internal",
+      label: "Add MD to Practice Profile",
+      navigate_to: "ProviderPractice",
+      navigate_params: "?tab=profile",
+    },
+    allowMarkDone: false,
+  },
+
   cpr_bls: {
     stepId: "cpr_bls",
     statusSource: "cert",
@@ -425,7 +450,7 @@ export const FOUNDATION_STEP_PLAYBOOKS = {
       label: "Copy Booking Link",
       navigate_to: "ProviderProfile",
     },
-    allowMarkDone: false,
+    allowMarkDone: true,
   },
 
   cherry_financing: {
@@ -531,7 +556,7 @@ export const FOUNDATION_STEP_PLAYBOOKS = {
       navigate_to: "ProviderPractice",
       navigate_params: "?tab=profile",
     },
-    allowMarkDone: false,
+    allowMarkDone: true,
   },
 
   // ── Growth ──────────────────────────────────────────────────
