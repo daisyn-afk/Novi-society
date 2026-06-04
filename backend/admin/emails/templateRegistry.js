@@ -94,6 +94,31 @@ This link can be used only once. After you set your password, sign in at the NOV
     },
   },
   {
+    template_key: "patient_signup_welcome",
+    name: "Patient signup welcome",
+    category: "onboarding",
+    recipient_type: "patient",
+    subject: "Welcome to NOVI Society",
+    body_html: `Hi {{first_name}},
+
+Welcome to NOVI Society — we're glad you're here.
+
+Your patient account is ready. Complete your profile and explore providers matched to your goals.
+
+{{cta_button}}
+
+Questions? Reply to this email or contact us at hello@novisociety.com.`,
+    cta_label: "Complete your profile",
+    cta_url_path: "/PatientOnboarding",
+    placeholders: [
+      { tag: "{{first_name}}", desc: "Patient first name" },
+      { tag: "{{cta_button}}", desc: "Primary CTA button" },
+    ],
+    sample_vars: {
+      first_name: "Pat",
+    },
+  },
+  {
     template_key: "course_enrollment_confirmed",
     name: "Course enrollment confirmed",
     category: "onboarding",
