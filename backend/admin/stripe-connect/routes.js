@@ -36,9 +36,11 @@ stripeConnectRouter.get("/status", async (req, res, next) => {
   try {
     const { me } = await requireProvider(req);
     if (req.query.refresh === "true" && isStripeConnectConfigured()) {
-      await syncStripeAccountForProvider(me.id);
+      const status = await syncStripeAccountForProvider(me.id);
+      return res.json(status);
     }
-    const status = await getProviderStripeConnectStatus(me.id);
+    const live = req.query.live !== "false";
+    const status = await getProviderStripeConnectStatus(me.id, { live });
     res.json(status);
   } catch (error) {
     next(error);

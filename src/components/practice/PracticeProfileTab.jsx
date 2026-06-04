@@ -102,6 +102,7 @@ export default function PracticeProfileTab({
   activeServiceIds = new Set(),
   manufacturerApplications = [],
   focusSection,
+  stripeConnectPreferRefresh = false,
 }) {
   const qc = useQueryClient();
   const f = (key, val) => setForm(prev => ({ ...prev, [key]: val }));
@@ -327,7 +328,10 @@ export default function PracticeProfileTab({
       {/* ── Booking Link ── */}
       <BookingLinkCard me={me} />
 
-      <ProviderStripeConnectCard bookingDeposit={form.booking_deposit ?? me?.booking_deposit} />
+      <ProviderStripeConnectCard
+        bookingDeposit={form.booking_deposit ?? me?.booking_deposit}
+        preferRefresh={stripeConnectPreferRefresh}
+      />
 
       {/* ── Pricing & Availability ── */}
       <GlassCard>

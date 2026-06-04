@@ -9,6 +9,10 @@ import {
   getProviderStripeConnectByAccountId,
   updateProviderStripeConnectByAuthUserId,
 } from "./repository.js";
+import {
+  buildOnboardingMessaging,
+  buildStatusDetailsFromStripeAccount,
+} from "./statusDetails.js";
 
 function appBaseUrl() {
   return String(process.env.APP_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:5173").replace(
@@ -17,11 +21,17 @@ function appBaseUrl() {
   );
 }
 
-export function mapStripeConnectStatus(row, { configured = isStripeConnectConfigured() } = {}) {
-  const chargesEnabled = Boolean(row?.stripe_connect_charges_enabled);
-  const payoutsEnabled = Boolean(row?.stripe_connect_payouts_enabled);
-  const detailsSubmitted = Boolean(row?.stripe_connect_details_submitted);
-  const accountId = String(row?.stripe_connect_account_id || "").trim();
+export function mapStripeConnectStatus(row, { configured = isStripeConnectConfigured(), account = null } = {}) {
+  const chargesEnabled = Boolean(account?.charges_enabled ?? row?.stripe_connect_charges_enabled);
+  const payoutsEnabled = Boolean(account?.payouts_enabled ?? row?.stripe_connect_payouts_enabled);
+  const detailsSubmitted = Boolean(account?.details_submitted ?? row?.stripe_connect_details_submitted);
+  const accountId = String(account?.id || row?.stripe_connect_account_id || "").trim();
+  const readyForPayments = configured && chargesEnabled && Boolean(accountId);
+
+  const details = buildStatusDetailsFromStripeAccount(account, row, { configured });
+  const messaging = buildOnboardingMessaging(details.onboarding_state, {
+    requirementsDueLabels: details.requirements_due_labels,
+  });
 
   return {
     enabled: isStripeConnectEnabled(),
@@ -30,14 +40,38 @@ export function mapStripeConnectStatus(row, { configured = isStripeConnectConfig
     charges_enabled: chargesEnabled,
     payouts_enabled: payoutsEnabled,
     details_submitted: detailsSubmitted,
-    ready_for_payments: configured && chargesEnabled && Boolean(accountId),
+    ready_for_payments: readyForPayments,
     onboarded_at: row?.stripe_connect_onboarded_at || null,
+    onboarding_state: details.onboarding_state,
+    requirements_due: details.requirements_due,
+    requirements_due_labels: details.requirements_due_labels,
+    disabled_reason: details.disabled_reason,
+    status_title: messaging.title,
+    status_message: messaging.message,
+    action_label: messaging.action_label,
   };
 }
 
-export async function getProviderStripeConnectStatus(authUserId) {
+async function retrieveConnectAccount(accountId) {
+  const stripe = getConnectStripeClient();
+  const id = String(accountId || "").trim();
+  if (!stripe || !id) return null;
+  return stripe.accounts.retrieve(id);
+}
+
+export async function getProviderStripeConnectStatus(authUserId, { live = false } = {}) {
   const row = await getProviderStripeConnectByAuthUserId(authUserId);
-  return mapStripeConnectStatus(row);
+  const accountId = String(row?.stripe_connect_account_id || "").trim();
+  if (!live || !accountId || !isStripeConnectConfigured()) {
+    return mapStripeConnectStatus(row);
+  }
+
+  try {
+    const account = await retrieveConnectAccount(accountId);
+    return mapStripeConnectStatus(row, { account });
+  } catch {
+    return mapStripeConnectStatus(row);
+  }
 }
 
 export async function syncStripeAccountForProvider(authUserId) {
@@ -58,7 +92,7 @@ export async function syncStripeAccountForProvider(authUserId) {
     stripe_connect_onboarded_at: account.charges_enabled ? new Date().toISOString() : null,
   });
 
-  return mapStripeConnectStatus(updated);
+  return mapStripeConnectStatus(updated, { account });
 }
 
 async function createExpressAccount({ email, fullName }) {
@@ -124,11 +158,19 @@ export async function createStripeConnectOnboardingLink({
     refresh_url: refreshUrl,
   });
 
+  let status = mapStripeConnectStatus(row);
+  try {
+    const account = await stripe.accounts.retrieve(accountId);
+    status = mapStripeConnectStatus(row, { account });
+  } catch {
+    // best effort — link still works
+  }
+
   return {
     url: accountLink.url,
     account_id: accountId,
     expires_at: accountLink.expires_at,
-    status: mapStripeConnectStatus(row),
+    status,
   };
 }
 
