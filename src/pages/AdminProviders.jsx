@@ -3,6 +3,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import {
   ChevronLeft,
   ChevronRight,
+  Mail,
   Pencil,
   Plus,
   Search,
@@ -10,6 +11,7 @@ import {
   Users as UsersIcon
 } from "lucide-react";
 import { adminUsersApi } from "@/api/adminUsersApi";
+import { useToast } from "@/components/ui/use-toast";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -57,6 +59,7 @@ function formatDate(value) {
 
 export default function AdminProviders() {
   const qc = useQueryClient();
+  const { toast } = useToast();
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [activeFilter, setActiveFilter] = useState("all");
@@ -65,6 +68,7 @@ export default function AdminProviders() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [formError, setFormError] = useState("");
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [sendingPasswordResetId, setSendingPasswordResetId] = useState(null);
   const debouncedSearch = useDebounced(search, 300);
 
   const queryKey = [
@@ -126,6 +130,30 @@ export default function AdminProviders() {
       setDeleteTarget(null);
     }
   });
+
+  const passwordResetMutation = useMutation({
+    mutationFn: (id) => adminUsersApi.sendPasswordReset(id),
+    onSuccess: (data) => {
+      toast({
+        title: "Password reset email sent",
+        description: `A set-password link was sent to ${data?.email || "the provider"}.`
+      });
+    },
+    onError: (err) => {
+      toast({
+        title: "Could not send email",
+        description: err?.message || "Request failed. Try again.",
+        variant: "destructive"
+      });
+    },
+    onSettled: () => setSendingPasswordResetId(null)
+  });
+
+  const handleSendPasswordReset = (provider) => {
+    if (!provider?.id || !provider?.email) return;
+    setSendingPasswordResetId(provider.id);
+    passwordResetMutation.mutate(provider.id);
+  };
 
   const openCreate = () => {
     setEditing(null);
@@ -270,6 +298,15 @@ export default function AdminProviders() {
                         {formatDate(provider.created_at)}
                       </TableCell>
                       <TableCell className="text-right">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title="Send password reset email"
+                          disabled={sendingPasswordResetId === provider.id}
+                          onClick={() => handleSendPasswordReset(provider)}
+                        >
+                          <Mail className="w-4 h-4 text-slate-500" />
+                        </Button>
                         <Button variant="ghost" size="icon" onClick={() => openEdit(provider)}>
                           <Pencil className="w-4 h-4 text-slate-500" />
                         </Button>
@@ -388,6 +425,24 @@ export default function AdminProviders() {
                 Active
               </label>
             </div>
+
+            {editing ? (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <p className="text-xs text-slate-600 mb-2">
+                  Send a one-time link so this provider can set or reset their password.
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={sendingPasswordResetId === editing.id}
+                  onClick={() => handleSendPasswordReset(editing)}
+                >
+                  <Mail className="w-4 h-4 mr-1" />
+                  {sendingPasswordResetId === editing.id ? "Sending…" : "Send password reset email"}
+                </Button>
+              </div>
+            ) : null}
 
             {formError ? (
               <p className="text-sm text-red-600">{formError}</p>

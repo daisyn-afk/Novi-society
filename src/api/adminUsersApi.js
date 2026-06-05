@@ -35,5 +35,9 @@ export const adminUsersApi = {
   remove: (id) =>
     adminApiRequest(`/admin/users/${id}`, {
       method: "DELETE"
+    }),
+  sendPasswordReset: (id) =>
+    adminApiRequest(`/admin/users/${id}/send-password-reset`, {
+      method: "POST"
     })
 };
