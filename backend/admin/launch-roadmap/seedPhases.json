@@ -10,7 +10,7 @@
     "steps": [
       {
         "id": "license_verified",
-        "label": "License Verified by NOVI Admin",
+        "label": "Get License Verified by NOVI Admin",
         "desc": "Prerequisite for MD coverage. Upload your RN, NP, PA, or MD license for admin verification.",
         "priority": 10,
         "playbook": "license_verified",
@@ -24,8 +24,7 @@
         "desc": "Legally required in most states. Add your supervising medical director to your practice profile.",
         "priority": 20,
         "autoCheck": "md_mpi",
-        "navigate_to": "ProviderPractice",
-        "navigate_params": "?tab=profile"
+        "navigate_to": "ProviderCredentialsCoverage"
       },
       {
         "id": "cpr_bls",

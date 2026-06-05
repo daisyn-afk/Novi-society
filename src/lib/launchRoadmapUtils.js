@@ -166,6 +166,13 @@ export function mergeLaunchRoadmapPhases(dbPhases = [], staticPhases = getStatic
         ...dbStep,
         ...(staticStep.playbook ? { playbook: staticStep.playbook } : {}),
         ...(staticStep.desc && !dbStep.desc ? { desc: staticStep.desc } : {}),
+        ...(staticStep.label ? { label: staticStep.label } : {}),
+        ...(staticStep.navigate_to
+          ? {
+              navigate_to: staticStep.navigate_to,
+              navigate_params: staticStep.navigate_params ?? "",
+            }
+          : {}),
       };
     });
     const steps = [...mergedDbSteps, ...missingStaticSteps].sort(

@@ -18,13 +18,18 @@ const LOCAL_DEV_ORIGIN = "http://localhost:5173";
 const CANONICAL_LIVE_ORIGIN = "https://novisociety.com";
 
 const _isDev = !process.env.VERCEL && process.env.NODE_ENV !== "production";
+const _isLiveDeployment =
+  process.env.VERCEL_ENV === "production" ||
+  (process.env.VERCEL === "1" && process.env.NODE_ENV === "production");
 
 const CANONICAL_PRODUCTION_URL = CANONICAL_LIVE_ORIGIN;
 
 /** Resolved once at module load from explicit env only (never Vercel injection). */
 const _envBaseUrl = (() => {
   const explicit = String(process.env.APP_BASE_URL || "").trim().replace(/\/+$/, "");
-  if (explicit) return explicit;
+  if (!explicit) return "";
+  return toPublicFrontendBaseUrl(explicit);
+})();
 
 const TRUSTED_FRONTEND_HOSTS = new Set([
   "localhost",
@@ -128,7 +133,7 @@ function _readFrontendOriginFromReq(req) {
 /**
  * Resolve the public frontend base URL for a Supabase auth redirectTo value.
  *
- * @param {object|null} req  Express request object, or a plain {origin, referer}
+ * @param {object|null} req  Express request object, or a plain {origin, referer, body}
  *                           shape, or null for background/cron callers.
  * @returns {string}         e.g. "https://novisociety.com" or "http://localhost:5173"
  */
@@ -139,30 +144,39 @@ export function resolveAppBaseUrl(req) {
     return _envBaseUrl;
   }
 
-  // 3. Referer header (strip to origin)
-  const refererHeader =
-    (req?.headers?.referer) ||
-    (req?.referer) ||
-    "";
-  const fromReferer = _origin(refererHeader);
-  if (fromReferer && _isValidHttpUrl(fromReferer)) {
-    if (_isDev) {
-      // eslint-disable-next-line no-console
-      console.info(`[frontendBaseUrl] using referer origin: ${fromReferer}`);
-    }
-    return fromReferer;
+  // 2–3. Browser / client origin (body, Origin header, Referer)
+  const requestOrigin = _readFrontendOriginFromReq(req);
+  if (requestOrigin && _isTrustedFrontendOrigin(requestOrigin)) {
+    const resolved = toPublicFrontendBaseUrl(requestOrigin);
+    console.info(`[frontendBaseUrl] using request origin: ${resolved}`);
+    return resolved;
   }
 
-  // 4. Local dev fallback
+  // 4. Production API with no trusted origin → canonical live domain
+  if (_isLiveDeployment) {
+    console.info(`[frontendBaseUrl] using canonical production URL: ${CANONICAL_PRODUCTION_URL}`);
+    return CANONICAL_PRODUCTION_URL;
+  }
+
+  // 5. Local dev fallback
   if (_isDev) {
-    // eslint-disable-next-line no-console
     console.warn(
       "[frontendBaseUrl] APP_BASE_URL not set and no request origin available; " +
-        "falling back to http://localhost:5173. " +
+        `falling back to ${LOCAL_DEV_ORIGIN}. ` +
         "Set APP_BASE_URL in .env for consistent redirect URLs."
     );
+    return LOCAL_DEV_ORIGIN;
   }
-  return "http://localhost:5173";
+
+  // 6. Vercel preview / staging deployment URL
+  const vercel = process.env.VERCEL_URL || "";
+  if (vercel) {
+    const preview = `https://${vercel}`.replace(/\/+$/, "");
+    console.info(`[frontendBaseUrl] using Vercel preview URL: ${preview}`);
+    return preview;
+  }
+
+  return LOCAL_DEV_ORIGIN;
 }
 
 /**
@@ -173,22 +187,23 @@ export function resolveAppBaseUrl(req) {
  * @returns {string}         e.g. "https://novisociety.com/set-password"
  */
 export function resolveSetPasswordUrl(req) {
-  return `${resolveAppBaseUrl(req)}/set-password`;
+  const url = `${resolveAppBaseUrl(req)}/set-password`;
+  console.info(`[frontendBaseUrl] set-password redirectTo: ${url}`);
+  return url;
 }
 
 // ---------------------------------------------------------------------------
 // Legacy exports – kept so callers that haven't been migrated yet still compile.
-// They now delegate to the canonical helpers above.
 // ---------------------------------------------------------------------------
 
 /**
  * @deprecated Use resolveAppBaseUrl(req) instead.
  */
 export function resolveFrontendBaseUrl({ frontendOrigin, requestOrigin } = {}) {
-  // Build a minimal req-like object from the old positional args.
   const fakeReq = {
     origin: frontendOrigin || requestOrigin || "",
     referer: requestOrigin || "",
+    body: { frontend_origin: frontendOrigin || requestOrigin || "" },
   };
   return resolveAppBaseUrl(fakeReq);
 }
@@ -197,10 +212,8 @@ export function resolveFrontendBaseUrl({ frontendOrigin, requestOrigin } = {}) {
  * @deprecated Use resolveSetPasswordUrl(req) instead.
  */
 export function buildSetPasswordRedirectUrl(baseUrl) {
-  // When a concrete base URL is passed (old callers already resolved it),
-  // just append the path.  Otherwise fall back to the canonical resolver.
   if (baseUrl && _isValidHttpUrl(baseUrl)) {
-    return `${String(baseUrl).replace(/\/+$/, "")}/set-password`;
+    return `${toPublicFrontendBaseUrl(baseUrl)}/set-password`;
   }
   return resolveSetPasswordUrl(null);
 }

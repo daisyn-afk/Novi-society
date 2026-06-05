@@ -23,6 +23,11 @@ import { providerReviewAverage } from "@/lib/providerRating";
 import { galleryPairsForPatientDisplay } from "@/lib/galleryPhotos";
 import { BeforeAfterGallery } from "@/components/marketplace/BeforeAfterGallery";
 import { referralCodeMatchesProvider } from "@/lib/referralCode";
+import {
+  currentTimeInputValue,
+  isAppointmentInPast,
+  todayDateInputValue,
+} from "@/lib/repCallScheduling";
 
 /** Matches AI scan treatment categories → service_types.category (MD marketplace). */
 const JOURNEY_CATEGORY_SLUGS = new Set([
@@ -264,6 +269,12 @@ Based on my concerns and goals, which service types would be most relevant? Retu
         const code = String(activeProvider.referral_code || "").trim();
         const disc = activeProvider.referral_discount ? ` (${activeProvider.referral_discount})` : "";
         const err = new Error(`Enter proper referral code: ${code}${disc}.`);
+        err.isEligibilityError = true;
+        throw err;
+      }
+
+      if (isAppointmentInPast(bookForm.appointment_date, bookForm.appointment_time)) {
+        const err = new Error("Appointment date and time cannot be in the past.");
         err.isEligibilityError = true;
         throw err;
       }
@@ -1126,6 +1137,7 @@ function MarketplaceProviderCard({
 }
 
 function BookingForm({ provider, bookForm, setBookForm, services, bookingError, bookingLoading, onCancel, onSubmit }) {
+  const today = todayDateInputValue();
   const showReferral = provider?.referral_program_active && provider?.referral_code;
   const enteredReferral = bookForm.referral_code?.trim() || "";
   const referralMismatch =
@@ -1136,6 +1148,7 @@ function BookingForm({ provider, bookForm, setBookForm, services, bookingError, 
     !showReferral ||
     !enteredReferral ||
     referralCodeMatchesProvider(enteredReferral, provider.referral_code);
+  const appointmentInPast = isAppointmentInPast(bookForm.appointment_date, bookForm.appointment_time);
   const displayError = referralMismatch ? "" : bookingError;
 
   return (
@@ -1159,6 +1172,7 @@ function BookingForm({ provider, bookForm, setBookForm, services, bookingError, 
           <Input
             type="date"
             className="w-full min-w-0 max-w-full box-border"
+            min={today}
             value={bookForm.appointment_date}
             onChange={(e) => setBookForm({ ...bookForm, appointment_date: e.target.value })}
           />
@@ -1168,6 +1182,7 @@ function BookingForm({ provider, bookForm, setBookForm, services, bookingError, 
           <Input
             type="time"
             className="w-full min-w-0 max-w-full box-border"
+            min={bookForm.appointment_date === today ? currentTimeInputValue() : undefined}
             value={bookForm.appointment_time}
             onChange={(e) => setBookForm({ ...bookForm, appointment_time: e.target.value })}
           />
@@ -1223,7 +1238,7 @@ function BookingForm({ provider, bookForm, setBookForm, services, bookingError, 
         <Button
           style={{ background: "#FA6F30", color: "#fff" }}
           onClick={onSubmit}
-          disabled={!bookForm.service || !bookForm.appointment_date || bookingLoading || !referralOk}
+          disabled={!bookForm.service || !bookForm.appointment_date || appointmentInPast || bookingLoading || !referralOk}
         >
           {bookingLoading ? "Checking eligibility…" : "Request Appointment"}
         </Button>
