@@ -26,6 +26,7 @@ import MessageThread from "@/components/messaging/MessageThread";
 import MessageUnreadBadge from "@/components/messaging/MessageUnreadBadge";
 import { useAppointmentMessageUnread, unreadCountForThread } from "@/hooks/useAppointmentMessageUnread";
 import ConsentFormDialog from "@/components/appointments/ConsentFormDialog";
+import { appointmentPatientCanPayDeposit } from "@/lib/appointmentDisplay";
 import { subscribeAppointmentsRefresh, broadcastAppointmentsRefresh } from "@/lib/appointmentSync";
 import { redirectToStripeCheckout } from "@/lib/redirectToStripeCheckout";
 
@@ -339,13 +340,13 @@ export default function PatientAppointments() {
                             {a.appointment_date ? format(new Date(a.appointment_date), "MMM d, yyyy") : ""}
                           </span>
                           {a.appointment_time && <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5" />{a.appointment_time}</span>}
-                          {a.status === "awaiting_payment" && Number(a.deposit_amount) > 0 && depositLabel && (
-                            <span className="flex items-center gap-1"><DollarSign className="w-3.5 h-3.5" />${depositLabel} booking deposit</span>
+                          {appointmentPatientCanPayDeposit(a) && depositLabel && (
+                            <span className="flex items-center gap-1"><DollarSign className="w-3.5 h-3.5" />${depositLabel} booking deposit due</span>
                           )}
                         </div>
-                        {a.status === "awaiting_payment" && Number(a.deposit_amount) > 0 && (
+                        {appointmentPatientCanPayDeposit(a) && (
                           <p className="text-xs text-purple-700 mt-2">
-                            Your provider requires a ${depositLabel} booking deposit to confirm this visit.
+                            Your provider requires a ${depositLabel} booking deposit after your visit before treatment records can be completed.
                           </p>
                         )}
                         {treatmentDue && (
@@ -369,7 +370,7 @@ export default function PatientAppointments() {
                           {payTreatment.isPending ? "Redirecting…" : `Pay $${treatmentLabel}`}
                         </Button>
                       )}
-                      {a.status === "awaiting_payment" && Number(a.deposit_amount) > 0 && (
+                      {appointmentPatientCanPayDeposit(a) && (
                         <Button size="sm" style={{ background: "#7B8EC8", color: "#fff" }} onClick={() => payDeposit.mutate(a.id)} disabled={payDeposit.isPending} className="gap-1">
                           <DollarSign className="w-3.5 h-3.5" /> {payDeposit.isPending ? "Redirecting…" : `Pay $${depositLabel} Deposit`}
                         </Button>
@@ -404,6 +405,7 @@ export default function PatientAppointments() {
             past.map(a => {
               const record = getRecord(a.id);
               const reviewed = hasReviewed(a.id);
+              const depositLabel = appointmentDepositDisplay(a);
               const treatmentDue =
                 String(a.treatment_payment_status || "").toLowerCase() === "awaiting_payment" &&
                 Number(a.treatment_amount) > 0;
@@ -432,6 +434,11 @@ export default function PatientAppointments() {
                       </div>
 
                       <div className="flex gap-2 flex-wrap">
+                        {appointmentPatientCanPayDeposit(a) && (
+                          <Button size="sm" style={{ background: "#7B8EC8", color: "#fff" }} onClick={() => payDeposit.mutate(a.id)} disabled={payDeposit.isPending} className="gap-1">
+                            <DollarSign className="w-3.5 h-3.5" /> {payDeposit.isPending ? "Redirecting…" : `Pay $${depositLabel} Deposit`}
+                          </Button>
+                        )}
                         {treatmentDue && (
                           <Button
                             size="sm"
