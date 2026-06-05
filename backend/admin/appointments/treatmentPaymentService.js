@@ -160,6 +160,19 @@ export async function requestAppointmentTreatmentPayment({
     throw e;
   }
 
+  const bookingDeposit = Number(appt.deposit_amount);
+  if (
+    Number.isFinite(bookingDeposit) &&
+    bookingDeposit > 0 &&
+    String(appt.payment_status || "").toLowerCase() !== "paid"
+  ) {
+    const e = new Error(
+      "The patient must pay the booking deposit before you can send a treatment invoice for this visit."
+    );
+    e.statusCode = 409;
+    throw e;
+  }
+
   const treatmentPayStatus = String(appt.treatment_payment_status || "").toLowerCase();
   if (treatmentPayStatus === "paid") {
     const e = new Error(

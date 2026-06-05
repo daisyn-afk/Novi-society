@@ -18,6 +18,9 @@ import TreatmentDocumentDialog from "@/components/practice/TreatmentDocumentDial
 import GFEStatusBadge from "@/components/GFEStatusBadge";
 import AppointmentGfeProviderControls from "@/components/appointments/AppointmentGfeProviderControls";
 import {
+  appointmentDepositBlocksProvider,
+  appointmentDepositPaid,
+  appointmentHasBookingDeposit,
   appointmentServiceLabel,
   formatAppointmentDate,
   profileBookingDepositAmount,
@@ -106,6 +109,8 @@ function ApptDetail({
   const serviceLabel = appointmentServiceLabel(appt);
   const gfeStatus = appointmentGfeDisplayStatus(appt);
   const gfeLink = appointmentGfeLink(appt);
+  const depositBlocked = appointmentDepositBlocksProvider(appt);
+  const depositPaid = appointmentDepositPaid(appt);
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -261,9 +266,30 @@ function ApptDetail({
             Awaiting patient deposit{appt.deposit_amount ? ` ($${appt.deposit_amount})` : ""}
           </div>
         )}
+        {appt.status === "confirmed" && appointmentHasBookingDeposit(appt) && !depositPaid && (
+          <div
+            className="px-3 py-2.5 rounded-xl text-xs"
+            style={{ background: "rgba(200,230,60,0.15)", border: "1px solid rgba(200,230,60,0.35)", color: "#4a6b10" }}
+          >
+            Booking deposit of <strong>${appt.deposit_amount}</strong> is unpaid. The patient must pay after their visit before you can log treatment or mark this appointment done.
+          </div>
+        )}
+        {appt.status === "confirmed" && depositPaid && (
+          <div
+            className="px-3 py-2.5 rounded-xl text-xs"
+            style={{ background: "rgba(74,222,128,0.12)", border: "1px solid rgba(74,222,128,0.35)", color: "#166534" }}
+          >
+            Booking deposit paid (${appt.amount_paid || appt.deposit_amount}). This amount will be applied to the final treatment checkout.
+          </div>
+        )}
         {appt.status === "confirmed" && (
           <div className="grid grid-cols-2 gap-2">
-            <Button className="w-full gap-1.5" style={{ background: "rgba(200,230,60,0.2)", color: "#4a6b10", border: "1px solid rgba(200,230,60,0.4)" }} onClick={onComplete}>
+            <Button
+              className="w-full gap-1.5"
+              style={{ background: "rgba(200,230,60,0.2)", color: "#4a6b10", border: "1px solid rgba(200,230,60,0.4)" }}
+              onClick={onComplete}
+              disabled={depositBlocked}
+            >
               <CheckCircle className="w-4 h-4" />Mark Done
             </Button>
             <Button className="w-full gap-1.5" variant="outline" onClick={onCancel}>
@@ -281,8 +307,12 @@ function ApptDetail({
             Message Patient
             <MessageUnreadBadge count={messageUnreadCount} />
           </Button>
-          <Button className="w-full gap-1.5" style={{ background: "rgba(250,111,48,0.1)", color: "#FA6F30", border: "1px solid rgba(250,111,48,0.3)" }}
-            onClick={onDoc}>
+          <Button
+            className="w-full gap-1.5"
+            style={{ background: "rgba(250,111,48,0.1)", color: "#FA6F30", border: "1px solid rgba(250,111,48,0.3)" }}
+            onClick={onDoc}
+            disabled={depositBlocked && !hasRecord}
+          >
             <FileText className="w-4 h-4" />{hasRecord ? "View Record" : "Log Treatment"}
           </Button>
         </div>
@@ -388,11 +418,11 @@ export default function PracticeAppointmentsTab({
       setDetailOpen(false);
       setFilter("upcoming");
       toast({
-        title: profileBookingDeposit === 0 ? "Appointment confirmed" : "Payment requested",
+        title: "Appointment confirmed",
         description:
           profileBookingDeposit === 0
             ? "No booking deposit on your profile — the patient was notified."
-            : `The patient was notified to pay your $${profileBookingDeposit} booking deposit from Practice Profile.`,
+            : `The patient was notified. They will pay the $${profileBookingDeposit} booking deposit after their visit before you can log treatment.`,
         duration: 6000,
       });
     },
@@ -812,6 +842,14 @@ export default function PracticeAppointmentsTab({
               onConfirm={() => { openConfirmDialog(selectedAppt); setDetailOpen(false); }}
               onCancel={() => { setCancelDialog({ open: true, appt: selectedAppt, isDecline: selectedAppt.status === "requested" }); setDetailOpen(false); }}
               onComplete={() => {
+                if (appointmentDepositBlocksProvider(selectedAppt)) {
+                  toast({
+                    title: "Booking deposit required",
+                    description: "The patient must pay the booking deposit before you can mark this appointment done.",
+                    variant: "destructive",
+                  });
+                  return;
+                }
                 markComplete.mutate(
                   { id: selectedAppt.id },
                   {
@@ -824,6 +862,14 @@ export default function PracticeAppointmentsTab({
               onSendGFE={() => sendGFE(selectedAppt)}
               onDoc={() => {
                 const existing = treatmentRecords.find(r => r.appointment_id === selectedAppt.id);
+                if (appointmentDepositBlocksProvider(selectedAppt) && !existing) {
+                  toast({
+                    title: "Booking deposit required",
+                    description: "The patient must pay the booking deposit before you can log treatment for this visit.",
+                    variant: "destructive",
+                  });
+                  return;
+                }
                 setDocDialog({ open: true, appt: selectedAppt, existing: existing || null });
                 setDetailOpen(false);
               }}
@@ -844,7 +890,7 @@ export default function PracticeAppointmentsTab({
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle style={{ fontFamily: "'DM Serif Display', serif" }}>
-              {profileBookingDeposit > 0 ? "Confirm & Request Deposit" : "Confirm Appointment"}
+              Confirm Appointment
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-3 pt-1">
@@ -852,7 +898,7 @@ export default function PracticeAppointmentsTab({
             <p className="text-xs rounded-xl px-3 py-2" style={{ background: "rgba(250,111,48,0.08)", color: "rgba(30,37,53,0.65)" }}>
               {profileBookingDeposit > 0 ? (
                 <>
-                  Booking deposit: <strong>${profileBookingDeposit}</strong> from your Practice Profile. The patient will pay via Stripe before the visit is confirmed.
+                  Booking deposit: <strong>${profileBookingDeposit}</strong> from your Practice Profile. The patient will pay via Stripe after their visit. You cannot log treatment or mark done until it is paid. The deposit is deducted from the final treatment checkout.
                   {" "}To change this amount, update <strong>Practice Profile → Booking Deposit</strong>.
                 </>
               ) : (
@@ -871,7 +917,7 @@ export default function PracticeAppointmentsTab({
               <Button variant="outline" className="flex-1" onClick={() => setConfirmDialog({ open: false, appt: null })}>Back</Button>
               <Button className="flex-1 gap-1.5" style={{ background: "#FA6F30", color: "#fff" }}
                 onClick={() => confirmAppt.mutate({ id: confirmDialog.appt?.id })} disabled={confirmAppt.isPending}>
-                <CheckCircle className="w-4 h-4" />{confirmAppt.isPending ? "Sending…" : profileBookingDeposit > 0 ? "Send Payment Link" : "Confirm"}
+                <CheckCircle className="w-4 h-4" />{confirmAppt.isPending ? "Confirming…" : "Confirm"}
               </Button>
             </div>
           </div>
