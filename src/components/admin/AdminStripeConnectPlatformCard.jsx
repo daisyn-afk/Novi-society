@@ -115,17 +115,12 @@ export default function AdminStripeConnectPlatformCard() {
                   Fee transfer {feeTransferActive ? "active" : "inactive"}
                 </span>
                 <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full" style={{ background: "rgba(123,142,200,0.15)", color: "#5b6b9a" }}>
-                  Platform fee {status.application_fee_bps || 0} bps
+                  GFE fee ${Number(status.gfe_platform_fee_usd ?? 50).toFixed(0)} flat
                 </span>
               </div>
               {!status.fee_transfer_env_enabled && (
                 <p className="text-xs mt-2" style={{ color: "#b45309" }}>
-                  Set <code className="text-[10px]">STRIPE_CONNECT_LEGACY_FEE_TRANSFER_ENABLED=true</code> to send application fees after payment.
-                </p>
-              )}
-              {(status.application_fee_bps || 0) <= 0 && (
-                <p className="text-xs mt-2" style={{ color: "#b45309" }}>
-                  Set <code className="text-[10px]">STRIPE_CONNECT_APPLICATION_FEE_BPS</code> &gt; 0 so marketplace payments collect a platform fee to transfer.
+                  Set <code className="text-[10px]">STRIPE_CONNECT_LEGACY_FEE_TRANSFER_ENABLED=true</code> to send GFE fees to legacy after payment.
                 </p>
               )}
             </div>

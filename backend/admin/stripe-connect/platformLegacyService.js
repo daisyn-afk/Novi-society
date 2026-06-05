@@ -1,6 +1,6 @@
 import {
   getConnectStripeClient,
-  getConnectApplicationFeeBps,
+  getConnectGfePlatformFeeCents,
   isLegacyFeeTransferEnabled,
   isStripeConnectConfigured,
   isStripeConnectEnabled,
@@ -43,7 +43,8 @@ export function mapPlatformLegacyStatus(settings) {
     legacy_payouts_enabled: Boolean(settings?.legacy_payouts_enabled),
     legacy_details_submitted: Boolean(settings?.legacy_details_submitted),
     connected_at: settings?.connected_at || null,
-    application_fee_bps: getConnectApplicationFeeBps(),
+    gfe_platform_fee_cents: getConnectGfePlatformFeeCents(),
+    gfe_platform_fee_usd: getConnectGfePlatformFeeCents() / 100,
     fee_transfer_env_enabled: envFeeTransfer,
     fee_transfer_db_enabled: dbFeeTransfer,
     fee_transfer_active: envFeeTransfer && dbFeeTransfer && connected,
