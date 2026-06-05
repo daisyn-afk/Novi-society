@@ -20,6 +20,7 @@ import {
   formatUsd,
   getCombinedInjectableMenus,
   logTreatmentFormConfig,
+  maxPriceCapValidationError,
   menuRatesFromOffering,
   parseBillingQuantities,
   pricingModelLabel,
@@ -178,6 +179,11 @@ export default function TreatmentCheckoutDialog({
     areaRate,
     flatAmount,
   ]);
+
+  const maxPriceError = useMemo(
+    () => maxPriceCapValidationError(calc),
+    [calc]
+  );
 
   const computedTotal = manualTotal && finalTotal !== "" ? Number(finalTotal) || 0 : calc.total;
   const { discount: discountApplied, totalAfterDiscount } = useMemo(
@@ -370,6 +376,30 @@ export default function TreatmentCheckoutDialog({
               <span style={{ color: "#6B7DB3" }}>Subtotal</span>
               <span className="font-semibold">{formatUsd(calc.subtotal)}</span>
             </div>
+            {calc.priceCapApplied && (
+              <>
+                <div className="flex justify-between text-sm">
+                  <span style={{ color: "#6B7DB3" }}>
+                    Menu max price ({formatUsd(calc.maxPrice)})
+                  </span>
+                  <span style={{ color: "#6B7DB3" }}>
+                    −{formatUsd(calc.priceCapReduction)}
+                  </span>
+                </div>
+                <div className="flex justify-between text-sm font-semibold">
+                  <span style={{ color: "#243257" }}>Total</span>
+                  <span>{formatUsd(calc.total)}</span>
+                </div>
+              </>
+            )}
+            {maxPriceError && !manualTotal && (
+              <div
+                className="rounded-lg px-3 py-2.5 text-xs mt-1"
+                style={{ background: "rgba(254,226,226,0.85)", border: "1px solid rgba(220,38,38,0.35)", color: "#991b1b" }}
+              >
+                {maxPriceError}
+              </div>
+            )}
           </div>
         ) : (
           <p className="text-xs px-3 py-2 rounded-lg" style={{ background: "#F0EDE8", color: "#9a8f7e" }}>
@@ -455,7 +485,7 @@ export default function TreatmentCheckoutDialog({
           </Button>
           <Button
             style={{ background: "#FA6F30", color: "#fff" }}
-            disabled={sendPayment.isPending || amountDue <= 0 || treatmentAlreadyPaid}
+            disabled={sendPayment.isPending || amountDue <= 0 || treatmentAlreadyPaid || (Boolean(maxPriceError) && !manualTotal)}
             onClick={() => sendPayment.mutate()}
           >
             {sendPayment.isPending ? (

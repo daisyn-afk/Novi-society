@@ -22,6 +22,38 @@ const GLASS_INPUT = {
   color: "#1e2535",
 };
 
+/** Blank allowed; if set, must be a whole dollar amount of at least $1 (no 0 or negatives). */
+function normalizeOptionalPriceInput(raw) {
+  const str = String(raw ?? "").trim();
+  if (!str) return "";
+
+  const digits = str.replace(/\D/g, "");
+  if (!digits) return "";
+
+  const num = parseInt(digits, 10);
+  if (!Number.isFinite(num) || num < 1) return "";
+  return String(num);
+}
+
+function sanitizeOfferingPrices(offering) {
+  if (!offering || typeof offering !== "object") return offering;
+  return {
+    ...offering,
+    price: normalizeOptionalPriceInput(offering.price),
+    price_max: normalizeOptionalPriceInput(offering.price_max),
+    price_per_area: normalizeOptionalPriceInput(offering.price_per_area),
+  };
+}
+
+function sanitizePackagePrices(pkg) {
+  if (!pkg || typeof pkg !== "object") return pkg;
+  return {
+    ...pkg,
+    price: normalizeOptionalPriceInput(pkg.price),
+    original_price: normalizeOptionalPriceInput(pkg.original_price),
+  };
+}
+
 const categoryLabel = {
   injectables: "Injectables", fillers: "Fillers", laser: "Laser",
   skincare: "Skincare", body_contouring: "Body Contouring", prp: "PRP", other: "Other",
@@ -196,14 +228,14 @@ function SubServiceCard({ sub, data, onChange }) {
                 <label className="text-xs font-semibold flex items-center gap-1" style={{ color: "rgba(30,37,53,0.55)" }}>
                   <DollarSign className="w-3 h-3" />Starting Price ($)
                 </label>
-                <input type="number" placeholder="e.g. 300" value={data.price || ""} onChange={e => update("price", e.target.value)}
+                <input type="number" min={1} step={1} placeholder="e.g. 300" value={data.price || ""} onChange={e => update("price", normalizeOptionalPriceInput(e.target.value))}
                   className="w-full px-3 py-1.5 rounded-lg text-sm outline-none" style={GLASS_INPUT} />
               </div>
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold flex items-center gap-1" style={{ color: "rgba(30,37,53,0.55)" }}>
                   <DollarSign className="w-3 h-3" />Max Price ($) <span className="font-normal opacity-60">(optional)</span>
                 </label>
-                <input type="number" placeholder="e.g. 800" value={data.price_max || ""} onChange={e => update("price_max", e.target.value)}
+                <input type="number" min={1} step={1} placeholder="e.g. 800" value={data.price_max || ""} onChange={e => update("price_max", normalizeOptionalPriceInput(e.target.value))}
                   className="w-full px-3 py-1.5 rounded-lg text-sm outline-none" style={GLASS_INPUT} />
               </div>
               <div className="space-y-1.5">
@@ -242,9 +274,11 @@ function SubServiceCard({ sub, data, onChange }) {
                 </label>
                 <input
                   type="number"
+                  min={1}
+                  step={1}
                   placeholder={data.price ? `e.g. ${data.price}` : "Same as starting price"}
                   value={data.price_per_area || ""}
-                  onChange={(e) => update("price_per_area", e.target.value)}
+                  onChange={(e) => update("price_per_area", normalizeOptionalPriceInput(e.target.value))}
                   className="w-full px-3 py-1.5 rounded-lg text-sm outline-none"
                   style={GLASS_INPUT}
                 />
@@ -384,12 +418,12 @@ function StandardServiceCard({ st, data, onChange }) {
             <div className="grid sm:grid-cols-3 gap-3">
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold flex items-center gap-1" style={{ color: "rgba(30,37,53,0.55)" }}><DollarSign className="w-3 h-3" />Starting Price ($)</label>
-                <input type="number" placeholder="e.g. 500" value={data.price || ""} onChange={e => update("price", e.target.value)}
+                <input type="number" min={1} step={1} placeholder="e.g. 500" value={data.price || ""} onChange={e => update("price", normalizeOptionalPriceInput(e.target.value))}
                   className="w-full px-3 py-1.5 rounded-lg text-sm outline-none" style={GLASS_INPUT} />
               </div>
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold flex items-center gap-1" style={{ color: "rgba(30,37,53,0.55)" }}><DollarSign className="w-3 h-3" />Max Price ($) <span className="font-normal opacity-60">(opt.)</span></label>
-                <input type="number" placeholder="optional" value={data.price_max || ""} onChange={e => update("price_max", e.target.value)}
+                <input type="number" min={1} step={1} placeholder="optional" value={data.price_max || ""} onChange={e => update("price_max", normalizeOptionalPriceInput(e.target.value))}
                   className="w-full px-3 py-1.5 rounded-lg text-sm outline-none" style={GLASS_INPUT} />
               </div>
               <div className="space-y-1.5">
@@ -431,9 +465,11 @@ function StandardServiceCard({ st, data, onChange }) {
                 </label>
                 <input
                   type="number"
+                  min={1}
+                  step={1}
                   placeholder={data.price ? `e.g. ${data.price}` : "Same as starting price"}
                   value={data.price_per_area || ""}
-                  onChange={(e) => update("price_per_area", e.target.value)}
+                  onChange={(e) => update("price_per_area", normalizeOptionalPriceInput(e.target.value))}
                   className="w-full px-3 py-1.5 rounded-lg text-sm outline-none"
                   style={GLASS_INPUT}
                 />
@@ -626,13 +662,13 @@ function PackagesRewardsSection({ packages, onChange }) {
             <div className="grid grid-cols-3 gap-3">
               <div>
                 <p className="text-xs font-semibold mb-1.5" style={{ color: "rgba(30,37,53,0.55)" }}>Package Price ($)</p>
-                <input type="number" value={form.price} onChange={e => setForm(p => ({ ...p, price: e.target.value }))}
+                <input type="number" min={1} step={1} value={form.price} onChange={e => setForm(p => ({ ...p, price: normalizeOptionalPriceInput(e.target.value) }))}
                   placeholder="e.g. 500"
                   className="w-full px-3 py-1.5 rounded-lg text-sm outline-none" style={GLASS_INPUT} />
               </div>
               <div>
                 <p className="text-xs font-semibold mb-1.5" style={{ color: "rgba(30,37,53,0.55)" }}>Original Price ($) <span className="font-normal opacity-60">(opt)</span></p>
-                <input type="number" value={form.original_price} onChange={e => setForm(p => ({ ...p, original_price: e.target.value }))}
+                <input type="number" min={1} step={1} value={form.original_price} onChange={e => setForm(p => ({ ...p, original_price: normalizeOptionalPriceInput(e.target.value) }))}
                   placeholder="e.g. 600"
                   className="w-full px-3 py-1.5 rounded-lg text-sm outline-none" style={GLASS_INPUT} />
               </div>
@@ -671,8 +707,13 @@ export default function PracticeTreatmentsTab({ me, serviceTypes, activeServiceI
 
   useEffect(() => {
     if (me && !initialized) {
-      setOfferings(me.service_offerings_v2 || {});
-      setPackages(me.practice_packages || []);
+      const rawOfferings = me.service_offerings_v2 || {};
+      setOfferings(
+        Object.fromEntries(
+          Object.entries(rawOfferings).map(([key, value]) => [key, sanitizeOfferingPrices(value)])
+        )
+      );
+      setPackages((me.practice_packages || []).map(sanitizePackagePrices));
       setInitialized(true);
     }
   }, [me, initialized]);
@@ -766,7 +807,18 @@ export default function PracticeTreatmentsTab({ me, serviceTypes, activeServiceI
       {/* ── Packages & Rewards ── */}
       <PackagesRewardsSection packages={packages} onChange={setPackages} />
 
-      <Button onClick={() => onSave({ service_offerings_v2: offerings, practice_packages: packages })} disabled={saving} className="font-bold gap-2" style={{ background: "#FA6F30", color: "#fff", borderRadius: 12 }}>
+      <Button
+        onClick={() => {
+          const sanitizedOfferings = Object.fromEntries(
+            Object.entries(offerings).map(([key, value]) => [key, sanitizeOfferingPrices(value)])
+          );
+          const sanitizedPackages = packages.map(sanitizePackagePrices);
+          onSave({ service_offerings_v2: sanitizedOfferings, practice_packages: sanitizedPackages });
+        }}
+        disabled={saving}
+        className="font-bold gap-2"
+        style={{ background: "#FA6F30", color: "#fff", borderRadius: 12 }}
+      >
         {saved ? <><CheckCircle className="w-4 h-4" />Saved!</> : <><Save className="w-4 h-4" />Save Treatments</>}
       </Button>
     </div>
