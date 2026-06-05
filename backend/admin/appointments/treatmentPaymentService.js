@@ -17,7 +17,7 @@ import {
   resolveOfferingForAppointment,
 } from "../lib/treatmentPricing.js";
 import { createMarketplaceCheckoutSession, retrieveMarketplaceCheckoutSession } from "../stripe-connect/checkout.js";
-import { isStripeConnectConfigured } from "../stripe-connect/config.js";
+import { isStripeConnectConfigured, PAYMENT_TYPE_APPOINTMENT_TREATMENT } from "../stripe-connect/config.js";
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || "";
 const appBaseUrl = process.env.APP_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || "";
@@ -342,6 +342,26 @@ export async function createAppointmentTreatmentCheckout({
         ? `${serviceLabel} with ${providerName} (booking deposit of $${depositCredit.toFixed(2)} already applied)`
         : `${serviceLabel} with ${providerName}`;
 
+    let requiresGfe = false;
+    if (appt.service_type_id) {
+      const { rows: serviceTypeRows } = await query(
+        `select requires_gfe from public.service_type where id = $1 limit 1`,
+        [appt.service_type_id]
+      );
+      requiresGfe = serviceTypeRows[0]?.requires_gfe === true;
+    } else {
+      const gfeStatusesRequiringExam = new Set([
+        "not_sent",
+        "pending",
+        "approved",
+        "deferred",
+        "not_available",
+      ]);
+      requiresGfe = gfeStatusesRequiringExam.has(String(appt.gfe_status || "").toLowerCase());
+    }
+
+    const gfeStatus = String(appt.gfe_status || "");
+
     const treatmentMetadata = {
       checkout_type: "appointment_treatment",
       appointment_id: appointmentId,
@@ -352,12 +372,19 @@ export async function createAppointmentTreatmentCheckout({
       customer_name: customerName,
       service: serviceLabel,
       deposit_credit: String(depositCredit),
+      requires_gfe: String(requiresGfe),
+      gfe_status: gfeStatus,
     };
 
     const { session: checkoutSession } = await createMarketplaceCheckoutSession({
       legacyStripe: stripe,
       providerAuthUserId: String(appt.provider_id || ""),
       amountCents,
+      feeContext: {
+        paymentType: PAYMENT_TYPE_APPOINTMENT_TREATMENT,
+        requiresGfe,
+        gfeStatus,
+      },
       sessionCreateParams: {
         mode: "payment",
         payment_method_types: ["card"],
