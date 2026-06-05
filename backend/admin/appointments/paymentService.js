@@ -9,6 +9,8 @@ import {
   markAttemptFailed,
   PAYMENT_FLOW,
 } from "../payments/service.js";
+import { createMarketplaceCheckoutSession, retrieveMarketplaceCheckoutSession } from "../stripe-connect/checkout.js";
+import { isStripeConnectConfigured } from "../stripe-connect/config.js";
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || "";
 const appBaseUrl = process.env.APP_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || "";
@@ -288,7 +290,7 @@ export async function createAppointmentDepositCheckout({
       e.statusCode = 400;
       throw e;
     }
-    if (!stripe) {
+    if (!stripe && !isStripeConnectConfigured()) {
       const e = new Error("Stripe is not configured.");
       e.statusCode = 500;
       throw e;
@@ -354,27 +356,32 @@ export async function createAppointmentDepositCheckout({
       service: serviceLabel,
     };
 
-    const checkoutSession = await stripe.checkout.sessions.create({
-      mode: "payment",
-      payment_method_types: ["card"],
-      customer_email: customerEmail || undefined,
-      success_url: successUrl,
-      cancel_url: cancelUrl,
-      line_items: [
-        {
-          quantity: 1,
-          price_data: {
-            currency: "usd",
-            unit_amount: depositCents,
-            product_data: {
-              name: `${serviceLabel} — deposit`,
-              description: `Appointment deposit with ${providerName}`,
+    const { session: checkoutSession } = await createMarketplaceCheckoutSession({
+      legacyStripe: stripe,
+      providerAuthUserId: String(appt.provider_id || ""),
+      amountCents: depositCents,
+      sessionCreateParams: {
+        mode: "payment",
+        payment_method_types: ["card"],
+        customer_email: customerEmail || undefined,
+        success_url: successUrl,
+        cancel_url: cancelUrl,
+        line_items: [
+          {
+            quantity: 1,
+            price_data: {
+              currency: "usd",
+              unit_amount: depositCents,
+              product_data: {
+                name: `${serviceLabel} — deposit`,
+                description: `Appointment deposit with ${providerName}`,
+              },
             },
           },
-        },
-      ],
-      metadata: checkoutMetadata,
-      payment_intent_data: { metadata: checkoutMetadata },
+        ],
+        metadata: checkoutMetadata,
+        payment_intent_data: { metadata: checkoutMetadata },
+      },
     });
 
     const sessionUrl = checkoutSession.url;
@@ -545,7 +552,7 @@ export async function syncAppointmentDepositPayment({ token, appointmentId, stri
     e.statusCode = 400;
     throw e;
   }
-  if (!stripe) {
+  if (!stripe && !isStripeConnectConfigured()) {
     const e = new Error("Stripe is not configured.");
     e.statusCode = 500;
     throw e;
@@ -594,7 +601,10 @@ export async function syncAppointmentDepositPayment({ token, appointmentId, stri
     throw e;
   }
 
-  const session = await stripe.checkout.sessions.retrieve(sessionId);
+  const { session } = await retrieveMarketplaceCheckoutSession({
+    legacyStripe: stripe,
+    sessionId,
+  });
   const paid =
     String(session?.payment_status || "").toLowerCase() === "paid" ||
     String(session?.status || "").toLowerCase() === "complete";

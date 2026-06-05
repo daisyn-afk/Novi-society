@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import RequiredComplianceDocuments from "@/components/practice/RequiredComplianceDocuments.jsx";
+import ProviderStripeConnectCard from "@/components/provider/ProviderStripeConnectCard.jsx";
 import { providerReviewAverage } from "@/lib/providerRating";
 import { emptyGalleryPair } from "@/lib/galleryPhotos";
 
@@ -101,6 +102,7 @@ export default function PracticeProfileTab({
   activeServiceIds = new Set(),
   manufacturerApplications = [],
   focusSection,
+  stripeConnectPreferRefresh = false,
 }) {
   const qc = useQueryClient();
   const f = (key, val) => setForm(prev => ({ ...prev, [key]: val }));
@@ -325,6 +327,11 @@ export default function PracticeProfileTab({
 
       {/* ── Booking Link ── */}
       <BookingLinkCard me={me} />
+
+      <ProviderStripeConnectCard
+        bookingDeposit={form.booking_deposit ?? me?.booking_deposit}
+        preferRefresh={stripeConnectPreferRefresh}
+      />
 
       {/* ── Pricing & Availability ── */}
       <GlassCard>

@@ -1,4 +1,5 @@
 import { pool, query } from "../db.js";
+import { splitCustomerName } from "./providerSignupLink.js";
 
 export const PASSWORD_SETUP_STATUS = {
   PENDING: "password_reset_pending",
@@ -35,6 +36,34 @@ export async function getUserPasswordSetupByAuthUserId(authUserId) {
 /** True only after the user has actually set their password (not on first link click). */
 export function isPasswordResetLinkConsumed(userRow) {
   return userRow?.password_setup_status === PASSWORD_SETUP_STATUS.COMPLETED;
+}
+
+/**
+ * Looks up the most recent paid course pre-order for an email and returns
+ * customer names when auth metadata is missing (checkout invite gap).
+ */
+export async function lookupCustomerNamesFromPreOrders(email) {
+  const normalized = String(email || "").trim().toLowerCase();
+  if (!normalized) return { firstName: null, lastName: null };
+
+  const { rows } = await query(
+    `select first_name, last_name, customer_name
+     from public.pre_orders
+     where lower(customer_email) = lower($1)
+       and status in ('paid', 'completed')
+     order by coalesce(paid_at, updated_at, created_at) desc
+     limit 1`,
+    [normalized]
+  );
+  const row = rows[0];
+  if (!row) return { firstName: null, lastName: null };
+
+  const firstName = String(row.first_name || "").trim() || null;
+  const lastName = String(row.last_name || "").trim() || null;
+  if (firstName || lastName) {
+    return { firstName, lastName };
+  }
+  return splitCustomerName(row.customer_name);
 }
 
 /**

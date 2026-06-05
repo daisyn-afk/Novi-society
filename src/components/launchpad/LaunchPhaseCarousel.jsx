@@ -3,6 +3,8 @@ import { useNavigate } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { getPhaseTheme, LAUNCH_PAD } from "@/lib/launchRoadmapTheme";
 import { isPhaseComingSoon } from "@/lib/launchRoadmapUtils";
+import { hasFoundationPlaybook } from "@/lib/foundationStepProgress";
+import FoundationStepPlaybook from "@/components/launchpad/FoundationStepPlaybook";
 import { CheckCircle2, ExternalLink, Globe, Lock } from "lucide-react";
 import EmbeddedPricingTool from "../launchpad/EmbeddedPricingTool";
 import EmbeddedEducationHub from "../launchpad/EmbeddedEducationHub";
@@ -130,7 +132,16 @@ function PhaseComingSoonBlock({ phase, theme }) {
   );
 }
 
-export default function LaunchPhaseCarousel({ phase, onToggle, canToggle, me, focusStepId }) {
+export default function LaunchPhaseCarousel({
+  phase,
+  onToggle,
+  onUpdateChecklist = () => {},
+  canToggle,
+  me,
+  licenses = [],
+  certs = [],
+  focusStepId,
+}) {
   const navigate = useNavigate();
   const theme = getPhaseTheme(phase.id);
   const phaseLocked = isPhaseComingSoon(phase);
@@ -159,6 +170,8 @@ export default function LaunchPhaseCarousel({ phase, onToggle, canToggle, me, fo
   const actionUrl = step.navigate_to
     ? createPageUrl(step.navigate_to) + (step.navigate_params || "")
     : step.link;
+
+  const showPlaybook = hasFoundationPlaybook(step);
 
   return (
     <div className="space-y-4">
@@ -236,17 +249,28 @@ export default function LaunchPhaseCarousel({ phase, onToggle, canToggle, me, fo
             )}
           </div>
 
-          <p
-            className="text-sm mt-2 leading-relaxed"
-            style={{
-              color: isDone ? theme.completedText : "rgba(30,37,53,0.55)",
-              opacity: isDone ? 0.85 : 1,
-            }}
-          >
-            {step.desc}
-          </p>
+          {!showPlaybook && (
+            <p
+              className="text-sm mt-2 leading-relaxed"
+              style={{
+                color: isDone ? theme.completedText : "rgba(30,37,53,0.55)",
+                opacity: isDone ? 0.85 : 1,
+              }}
+            >
+              {step.desc}
+            </p>
+          )}
 
-          {!isDone && step.links?.length > 0 &&
+          {showPlaybook && (
+            <FoundationStepPlaybook
+              step={step}
+              accent={theme.color}
+              isDone={isDone}
+              onToggle={onToggle}
+            />
+          )}
+
+          {!showPlaybook && !isDone && step.links?.length > 0 &&
             step.links.map((item) => (
               <a
                 key={item.url}
@@ -266,7 +290,7 @@ export default function LaunchPhaseCarousel({ phase, onToggle, canToggle, me, fo
               </a>
             ))}
 
-          {!isDone && !step.links?.length && step.link && (
+          {!showPlaybook && !isDone && !step.links?.length && step.link && (
             <a
               href={step.link}
               target="_blank"
@@ -284,7 +308,7 @@ export default function LaunchPhaseCarousel({ phase, onToggle, canToggle, me, fo
             </a>
           )}
 
-          {!isDone && step.navigate_to && (
+          {!showPlaybook && !isDone && step.navigate_to && (
             <button
               type="button"
               onClick={() => navigate(actionUrl)}
@@ -349,52 +373,54 @@ export default function LaunchPhaseCarousel({ phase, onToggle, canToggle, me, fo
             </div>
           )}
 
-          <div className="mt-5">
-            {isDone ? (
-              <button
-                type="button"
-                disabled
-                className="w-full py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-1.5"
-                style={{
-                  background: theme.completedButtonBg,
-                  color: theme.completedButtonText,
-                  border: `1.5px solid ${theme.completedButtonBorder}`,
-                }}
-              >
-                Completed <CheckCircle2 className="w-4 h-4" />
-              </button>
-            ) : canToggle(step) && !step.coming_soon && !step.embedded_tool ? (
-              <button
-                type="button"
-                onClick={() => onToggle(step.id)}
-                className="w-full py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-1.5 transition-all hover:bg-slate-50"
-                style={{
-                  background: LAUNCH_PAD.white,
-                  border: `1.5px solid ${LAUNCH_PAD.greyBorder}`,
-                  color: "rgba(30,37,53,0.55)",
-                }}
-              >
-                Mark Done <CheckCircle2 className="w-4 h-4" />
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() =>
-                  actionUrl && (step.link ? window.open(actionUrl, "_blank") : navigate(actionUrl))
-                }
-                disabled={!actionUrl}
-                className="w-full py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-1.5 transition-all hover:bg-slate-50 disabled:opacity-40"
-                style={{
-                  background: LAUNCH_PAD.white,
-                  border: `1.5px solid ${LAUNCH_PAD.greyBorder}`,
-                  color: "rgba(30,37,53,0.55)",
-                }}
-              >
-                {step.autoCheck ? "Complete This Step" : "Mark Done"}{" "}
-                <CheckCircle2 className="w-4 h-4" />
-              </button>
-            )}
-          </div>
+          {(isDone || !showPlaybook) && (
+            <div className="mt-5">
+              {isDone ? (
+                <button
+                  type="button"
+                  disabled
+                  className="w-full py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-1.5"
+                  style={{
+                    background: theme.completedButtonBg,
+                    color: theme.completedButtonText,
+                    border: `1.5px solid ${theme.completedButtonBorder}`,
+                  }}
+                >
+                  Completed <CheckCircle2 className="w-4 h-4" />
+                </button>
+              ) : canToggle(step) && !step.coming_soon && !step.embedded_tool ? (
+                <button
+                  type="button"
+                  onClick={() => onToggle(step.id)}
+                  className="w-full py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-1.5 transition-all hover:bg-slate-50"
+                  style={{
+                    background: LAUNCH_PAD.white,
+                    border: `1.5px solid ${LAUNCH_PAD.greyBorder}`,
+                    color: "rgba(30,37,53,0.55)",
+                  }}
+                >
+                  Mark Done <CheckCircle2 className="w-4 h-4" />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() =>
+                    actionUrl && (step.link ? window.open(actionUrl, "_blank") : navigate(actionUrl))
+                  }
+                  disabled={!actionUrl}
+                  className="w-full py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-1.5 transition-all hover:bg-slate-50 disabled:opacity-40"
+                  style={{
+                    background: LAUNCH_PAD.white,
+                    border: `1.5px solid ${LAUNCH_PAD.greyBorder}`,
+                    color: "rgba(30,37,53,0.55)",
+                  }}
+                >
+                  {step.autoCheck ? "Complete This Step" : "Mark Done"}{" "}
+                  <CheckCircle2 className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
 

@@ -1,0 +1,21 @@
+{
+  "name": "NOVI Society",
+  "short_name": "NOVI",
+  "description": "The members-only platform for elite aesthetic providers.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1e2535",
+  "theme_color": "#1e2535",
+  "icons": [
+    {
+      "src": "/favicon.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    }
+  ]
+}

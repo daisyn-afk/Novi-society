@@ -116,7 +116,11 @@ export function useLaunchRoadmapStats({ enabled = true } = {}) {
 
   return {
     me,
-    stats,
+    stats: {
+      ...stats,
+      licenses,
+      certs,
+    },
     isLoading: enabled ? isLoading || !me : false,
   };
 }

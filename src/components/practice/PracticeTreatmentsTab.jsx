@@ -27,6 +27,25 @@ const categoryLabel = {
   skincare: "Skincare", body_contouring: "Body Contouring", prp: "PRP", other: "Other",
 };
 
+/** How checkout + log treatment calculate (same options as injectable sub-cards). */
+const PRICING_HINTS_BY_CATEGORY = {
+  fillers: ["Per syringe", "Per area", "Package price", "Flat fee"],
+  laser: ["Per area", "Flat fee", "Package price"],
+  skincare: ["Flat fee", "Per area", "Package price"],
+  body_contouring: ["Per area", "Flat fee", "Package price"],
+  prp: ["Flat fee", "Package price"],
+  other: ["Flat fee", "Per area", "Per unit", "Package price"],
+};
+
+function pricingHintsForService(st) {
+  const cat = String(st?.category || "other").toLowerCase();
+  const name = String(st?.name || "").toLowerCase();
+  if (name.includes("iv ") || name.includes("iv therapy") || name.includes("intravenous")) {
+    return ["Flat fee", "Package price"];
+  }
+  return PRICING_HINTS_BY_CATEGORY[cat] || PRICING_HINTS_BY_CATEGORY.other;
+}
+
 // Services that should be split into sub-services
 const INJECTABLE_SPLITS = [
   {
@@ -209,7 +228,28 @@ function SubServiceCard({ sub, data, onChange }) {
                   </button>
                 ))}
               </div>
+              <p className="text-[10px]" style={{ color: "rgba(30,37,53,0.45)" }}>
+                Log treatment and checkout use this model (units, areas, syringes, or flat fee).
+              </p>
             </div>
+            {(data.pricing_model === "Per area" ||
+              data.pricing_model === "Per unit" ||
+              data.pricing_model === "Per syringe") && (
+              <div className="mt-3 space-y-1.5 max-w-xs">
+                <label className="text-xs font-semibold flex items-center gap-1" style={{ color: "rgba(30,37,53,0.55)" }}>
+                  <DollarSign className="w-3 h-3" />
+                  Price per area ($) <span className="font-normal opacity-60">(optional)</span>
+                </label>
+                <input
+                  type="number"
+                  placeholder={data.price ? `e.g. ${data.price}` : "Same as starting price"}
+                  value={data.price_per_area || ""}
+                  onChange={(e) => update("price_per_area", e.target.value)}
+                  className="w-full px-3 py-1.5 rounded-lg text-sm outline-none"
+                  style={GLASS_INPUT}
+                />
+              </div>
+            )}
           </div>
 
           {/* Your Description */}
@@ -339,22 +379,79 @@ function StandardServiceCard({ st, data, onChange }) {
         <div className="px-5 py-5 space-y-5">
           {st.description && <p className="text-xs leading-relaxed" style={{ color: "rgba(30,37,53,0.5)" }}>{st.description}</p>}
 
-          <div className="grid sm:grid-cols-3 gap-3">
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold flex items-center gap-1" style={{ color: "rgba(30,37,53,0.55)" }}><DollarSign className="w-3 h-3" />Starting Price ($)</label>
-              <input type="number" placeholder="e.g. 500" value={data.price || ""} onChange={e => update("price", e.target.value)}
-                className="w-full px-3 py-1.5 rounded-lg text-sm outline-none" style={GLASS_INPUT} />
+          <div>
+            <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: "rgba(30,37,53,0.4)" }}>Pricing & Duration</p>
+            <div className="grid sm:grid-cols-3 gap-3">
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold flex items-center gap-1" style={{ color: "rgba(30,37,53,0.55)" }}><DollarSign className="w-3 h-3" />Starting Price ($)</label>
+                <input type="number" placeholder="e.g. 500" value={data.price || ""} onChange={e => update("price", e.target.value)}
+                  className="w-full px-3 py-1.5 rounded-lg text-sm outline-none" style={GLASS_INPUT} />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold flex items-center gap-1" style={{ color: "rgba(30,37,53,0.55)" }}><DollarSign className="w-3 h-3" />Max Price ($) <span className="font-normal opacity-60">(opt.)</span></label>
+                <input type="number" placeholder="optional" value={data.price_max || ""} onChange={e => update("price_max", e.target.value)}
+                  className="w-full px-3 py-1.5 rounded-lg text-sm outline-none" style={GLASS_INPUT} />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold flex items-center gap-1" style={{ color: "rgba(30,37,53,0.55)" }}><Clock className="w-3 h-3" />Duration (min)</label>
+                <input type="number" placeholder="60" value={data.duration_minutes || ""} onChange={e => update("duration_minutes", e.target.value)}
+                  className="w-full px-3 py-1.5 rounded-lg text-sm outline-none" style={GLASS_INPUT} />
+              </div>
             </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold flex items-center gap-1" style={{ color: "rgba(30,37,53,0.55)" }}><DollarSign className="w-3 h-3" />Max Price ($) <span className="font-normal opacity-60">(opt.)</span></label>
-              <input type="number" placeholder="optional" value={data.price_max || ""} onChange={e => update("price_max", e.target.value)}
-                className="w-full px-3 py-1.5 rounded-lg text-sm outline-none" style={GLASS_INPUT} />
+            <div className="mt-3 space-y-1.5">
+              <label className="text-xs font-semibold" style={{ color: "rgba(30,37,53,0.55)" }}>Pricing Model</label>
+              <div className="flex gap-2 flex-wrap">
+                {pricingHintsForService(st).map((hint) => (
+                  <button
+                    key={hint}
+                    type="button"
+                    onClick={() => update("pricing_model", hint)}
+                    className="text-xs px-3 py-1.5 rounded-full font-medium transition-all"
+                    style={
+                      data.pricing_model === hint
+                        ? { background: "#FA6F30", color: "#fff", border: "1px solid #FA6F30" }
+                        : { background: "rgba(255,255,255,0.65)", color: "#1e2535", border: "1px solid rgba(30,37,53,0.12)" }
+                    }
+                  >
+                    {hint}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px]" style={{ color: "rgba(30,37,53,0.45)" }}>
+                Drives document treatment + checkout (units, areas, syringes, or flat fee). Pick one per service.
+              </p>
             </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold flex items-center gap-1" style={{ color: "rgba(30,37,53,0.55)" }}><Clock className="w-3 h-3" />Duration (min)</label>
-              <input type="number" placeholder="60" value={data.duration_minutes || ""} onChange={e => update("duration_minutes", e.target.value)}
-                className="w-full px-3 py-1.5 rounded-lg text-sm outline-none" style={GLASS_INPUT} />
-            </div>
+            {(data.pricing_model === "Per area" ||
+              data.pricing_model === "Per unit" ||
+              data.pricing_model === "Per syringe") && (
+              <div className="mt-3 space-y-1.5 max-w-xs">
+                <label className="text-xs font-semibold flex items-center gap-1" style={{ color: "rgba(30,37,53,0.55)" }}>
+                  <DollarSign className="w-3 h-3" />
+                  Price per area ($) <span className="font-normal opacity-60">(optional)</span>
+                </label>
+                <input
+                  type="number"
+                  placeholder={data.price ? `e.g. ${data.price}` : "Same as starting price"}
+                  value={data.price_per_area || ""}
+                  onChange={(e) => update("price_per_area", e.target.value)}
+                  className="w-full px-3 py-1.5 rounded-lg text-sm outline-none"
+                  style={GLASS_INPUT}
+                />
+              </div>
+            )}
+            {(data.pricing_model === "Per area" || data.pricing_model === "Flat fee") && (
+              <div className="mt-3 space-y-1.5">
+                <label className="text-xs font-semibold" style={{ color: "rgba(30,37,53,0.55)" }}>
+                  Areas you treat <span className="font-normal opacity-60">(optional — for log treatment)</span>
+                </label>
+                <TagInput
+                  values={data.areas_offered || []}
+                  onChange={(val) => update("areas_offered", val)}
+                  placeholder="Type an area and press Enter…"
+                  suggestions={[]}
+                />
+              </div>
+            )}
           </div>
 
           <div className="space-y-1.5">

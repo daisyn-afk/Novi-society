@@ -33,13 +33,17 @@ export default function PracticeLaunchTab() {
     },
   });
 
+  const updateChecklist = (nextChecklist) => {
+    toggleMutation.mutate(nextChecklist);
+  };
+
   const toggle = (stepId) => {
     const updated = { ...stats.manualChecklist, [stepId]: !stats.manualChecklist[stepId] };
-    toggleMutation.mutate(updated);
+    updateChecklist(updated);
   };
 
   const canToggle = (step) =>
-    !step.autoCheck && !step.coming_soon && !step.embedded_tool;
+    !step.autoCheck && !step.coming_soon && !step.embedded_tool && !step.playbook;
 
   return (
     <div className="max-w-3xl space-y-10">
@@ -51,8 +55,11 @@ export default function PracticeLaunchTab() {
             key={phase.id}
             phase={phase}
             onToggle={toggle}
+            onUpdateChecklist={updateChecklist}
             canToggle={canToggle}
             me={me}
+            licenses={stats.licenses}
+            certs={stats.certs}
             focusStepId={phase.id === focusPhaseId ? focusStepId : undefined}
           />
         ))}

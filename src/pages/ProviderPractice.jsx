@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { subscribeAppointmentsRefresh } from "@/lib/appointmentSync";
+import { stripeConnectCallbackMessage, refreshStripeConnectStatus } from "@/lib/stripeConnectApi";
 import { buildProviderProfileForm, sanitizeProfileSavePayload } from "@/lib/providerProfileForm";
 import { useAppointmentMessageUnread, unreadMessagesByPatient } from "@/hooks/useAppointmentMessageUnread";
 
@@ -128,6 +129,9 @@ export default function ProviderPractice() {
   const [copied, setCopied] = useState(false);
   const [form, setForm] = useState(() => buildProviderProfileForm());
   const [initialized, setInitialized] = useState(false);
+  const [stripeConnectPreferRefresh, setStripeConnectPreferRefresh] = useState(
+    () => searchParams.get("stripe_connect") === "return"
+  );
 
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => base44.auth.me() });
 
@@ -214,6 +218,21 @@ export default function ProviderPractice() {
     setSearchParams(nextParams, { replace: true });
     setActivePanel("appointments");
   }, [searchParams, setSearchParams]);
+
+  useEffect(() => {
+    const banner = stripeConnectCallbackMessage(searchParams);
+    if (!banner) return;
+    if (banner.shouldRefresh) {
+      setStripeConnectPreferRefresh(true);
+      void refreshStripeConnectStatus().then(() => {
+        qc.invalidateQueries({ queryKey: ["stripe-connect-status"] });
+      });
+    }
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete("stripe_connect");
+    setSearchParams(nextParams, { replace: true });
+    if (banner.type === "success") setActivePanel("profile");
+  }, [searchParams, setSearchParams, qc]);
 
   const { data: messageUnreadSummary } = useAppointmentMessageUnread();
   const unreadMessagePatients = unreadMessagesByPatient(appointments, messageUnreadSummary);
@@ -673,6 +692,7 @@ export default function ProviderPractice() {
           serviceTypes={serviceTypes} activeServiceIds={activeServiceIds}
           manufacturerApplications={manufacturerApplications}
           focusSection={String(searchParams.get("step") || "").trim() || undefined}
+          stripeConnectPreferRefresh={stripeConnectPreferRefresh}
         />
       </PanelModal>
 
@@ -700,6 +720,7 @@ export default function ProviderPractice() {
         onClose={() => { setDocDialog({ open: false, appt: null, existing: null }); qc.invalidateQueries(["treatment-records"]); }}
         appointment={docDialog.appt}
         existingRecord={docDialog.existing}
+        providerMe={me}
       />
 
       <PanelModal open={activePanel === "performance"} onClose={closePanel} title="Performance">
