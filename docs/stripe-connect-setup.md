@@ -9,8 +9,8 @@ Provider marketplace payments (appointment **deposits** and **treatment** balanc
 | `STRIPE_CONNECT_ENABLED` | Yes (to turn on) | `true` enables Connect for marketplace checkouts |
 | `STRIPE_CONNECT_SECRET_KEY` | When enabled | Secret key (`sk_test_...` / `sk_live_...`) for the **new** Connect platform account |
 | `STRIPE_CONNECT_WEBHOOK_SECRET` | When enabled | Signing secret (`whsec_...`) for the Connect platform webhook endpoint |
-| `STRIPE_CONNECT_GFE_PLATFORM_FEE_USD` | No | Flat GFE platform fee in USD (default `1`; added on top for GFE-required treatment checkouts) |
-| `STRIPE_CONNECT_GFE_PLATFORM_FEE_CENTS` | No | Optional override in cents (e.g. `100`) |
+| `STRIPE_CONNECT_GFE_PLATFORM_FEE_USD` | No | Flat GFE platform fee in USD (default `50`; added on top for GFE-required treatment checkouts) |
+| `STRIPE_CONNECT_GFE_PLATFORM_FEE_CENTS` | No | Optional override in cents (e.g. `5000`) |
 | `STRIPE_CONNECT_CLIENT_ID` | For provider OAuth | Connect OAuth client id (`ca_...`) — enables one-click provider connect |
 | `STRIPE_CONNECT_PROVIDER_OAUTH_REDIRECT_URI` | No | Provider OAuth callback; default `{API_BASE}/admin/integrations/stripe-connect/oauth/callback` |
 
@@ -64,7 +64,7 @@ Use the printed `whsec_...` as `STRIPE_CONNECT_WEBHOOK_SECRET` (restart the back
 STRIPE_CONNECT_ENABLED=true
 STRIPE_CONNECT_SECRET_KEY=sk_test_...
 STRIPE_CONNECT_WEBHOOK_SECRET=whsec_...
-STRIPE_CONNECT_GFE_PLATFORM_FEE_USD=1
+STRIPE_CONNECT_GFE_PLATFORM_FEE_USD=50
 ```
 
 Leave `STRIPE_CONNECT_ENABLED=false` in production until staging E2E passes.
@@ -119,7 +119,7 @@ Until onboarding completes, patients see an error if they try to pay a deposit/t
 
 ## Legacy Stripe account (Standard OAuth) + platform fee transfer
 
-Admins can OAuth-connect the legacy Stripe account as a **Standard** connected account under the Connect platform. After marketplace payments succeed, the flat **GFE fee** ($1 default) can be transferred to that account.
+Admins can OAuth-connect the legacy Stripe account as a **Standard** connected account under the Connect platform. After marketplace payments succeed, the flat **GFE fee** ($50 default) can be transferred to that account.
 
 ### Additional env vars
 
@@ -127,7 +127,7 @@ Admins can OAuth-connect the legacy Stripe account as a **Standard** connected a
 |----------|---------|
 | `STRIPE_CONNECT_CLIENT_ID` | Connect OAuth client id (`ca_...`) |
 | `STRIPE_CONNECT_OAUTH_REDIRECT_URI` | Optional; default `{API_BASE}/admin/integrations/stripe-connect/platform/oauth/callback` |
-| `STRIPE_CONNECT_GFE_PLATFORM_FEE_USD` | Flat GFE fee added on treatment invoices for GFE-required services (default `1`) |
+| `STRIPE_CONNECT_GFE_PLATFORM_FEE_USD` | Flat GFE fee added on treatment invoices for GFE-required services (default `50`) |
 | `STRIPE_CONNECT_LEGACY_FEE_TRANSFER_ENABLED` | `true` to run split `transfers.create` on `payment_intent.succeeded` |
 | `STRIPE_CONNECT_OAUTH_STATE_SECRET` | Optional HMAC secret for OAuth state |
 
@@ -155,7 +155,7 @@ Apply:
 1. Patient pays on **Connect platform** (treatment + optional **GFE Fees** line item).
 2. Webhook `payment_intent.succeeded` → two `transfers.create` calls with `source_transaction`:
    - Provider payout → provider `acct_...`
-   - GFE fee (flat $1 when service requires GFE) → legacy Standard `acct_...`
+   - GFE fee (flat $50 when service requires GFE) → legacy Standard `acct_...`
 3. Idempotency tracked in `connect_marketplace_transfers` (per PaymentIntent + purpose).
 
 ## Deferred (not in v1)
