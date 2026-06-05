@@ -151,7 +151,7 @@ Apply `supabase/migrations/20260605120000_platform_stripe_connect_legacy.sql`.
 1. Patient pays deposit/treatment (Connect destination charge).
 2. Provider share → auto transfer to provider Express account.
 3. `application_fee_amount` → Connect platform balance.
-4. Webhook `payment_intent.succeeded` → `transfers.create` → legacy Standard `acct_...` (idempotent per PaymentIntent).
+4. Webhook `payment_intent.succeeded` → `transfers.create` from **platform balance** (no `source_transaction`) → legacy Standard `acct_...` (idempotent per PaymentIntent).
 
 ## Deferred (not in v1)
 
