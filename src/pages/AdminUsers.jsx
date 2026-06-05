@@ -5,6 +5,7 @@ import {
   ChevronRight,
   Eye,
   EyeOff,
+  Mail,
   Pencil,
   Plus,
   Search,
@@ -107,6 +108,7 @@ export default function AdminUsers() {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [showPassword, setShowPassword] = useState(false);
   const [savedPasswords, setSavedPasswords] = useState({});
+  const [sendingPasswordResetId, setSendingPasswordResetId] = useState(null);
 
   const debouncedSearch = useDebounced(search, 300);
 
@@ -186,6 +188,30 @@ export default function AdminUsers() {
       toast({ title: "Delete failed", description: err?.message || "Try again.", variant: "destructive" });
     }
   });
+
+  const passwordResetMutation = useMutation({
+    mutationFn: (id) => adminUsersApi.sendPasswordReset(id),
+    onSuccess: (data) => {
+      toast({
+        title: "Password reset email sent",
+        description: `A set-password link was sent to ${data?.email || "the user"}.`
+      });
+    },
+    onError: (err) => {
+      toast({
+        title: "Could not send email",
+        description: err?.message || "Request failed. Try again.",
+        variant: "destructive"
+      });
+    },
+    onSettled: () => setSendingPasswordResetId(null)
+  });
+
+  const handleSendPasswordReset = (user) => {
+    if (!user?.id || !user?.email) return;
+    setSendingPasswordResetId(user.id);
+    passwordResetMutation.mutate(user.id);
+  };
 
   const openCreate = () => {
     setEditing(null);
@@ -378,6 +404,15 @@ export default function AdminUsers() {
                         {formatDate(user.created_at)}
                       </TableCell>
                       <TableCell className="text-right">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title="Send password reset email"
+                          disabled={sendingPasswordResetId === user.id}
+                          onClick={() => handleSendPasswordReset(user)}
+                        >
+                          <Mail className="w-4 h-4 text-slate-500" />
+                        </Button>
                         <Button variant="ghost" size="icon" onClick={() => openEdit(user)}>
                           <Pencil className="w-4 h-4 text-slate-500" />
                         </Button>
@@ -588,6 +623,24 @@ export default function AdminUsers() {
                 </div>
               </div>
             )}
+
+            {editing ? (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <p className="text-xs text-slate-600 mb-2">
+                  Send a one-time link so this user can set or reset their password.
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={sendingPasswordResetId === editing.id}
+                  onClick={() => handleSendPasswordReset(editing)}
+                >
+                  <Mail className="w-4 h-4 mr-1" />
+                  {sendingPasswordResetId === editing.id ? "Sending…" : "Send password reset email"}
+                </Button>
+              </div>
+            ) : null}
 
             {formError ? (
               <p className="text-sm text-red-600">{formError}</p>
