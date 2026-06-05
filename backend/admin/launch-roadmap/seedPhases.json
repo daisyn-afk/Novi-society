@@ -24,8 +24,7 @@
         "desc": "Legally required in most states. Add your supervising medical director to your practice profile.",
         "priority": 20,
         "autoCheck": "md_mpi",
-        "navigate_to": "ProviderPractice",
-        "navigate_params": "?tab=profile"
+        "navigate_to": "ProviderCredentialsCoverage"
       },
       {
         "id": "cpr_bls",

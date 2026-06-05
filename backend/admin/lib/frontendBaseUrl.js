@@ -6,28 +6,23 @@
  *   1. APP_BASE_URL env var (canonicalized – vercel.app remapped in production)
  *   2. frontend_origin from API body (browser-sent by admin UI)
  *   3. Request Origin / Referer headers (trusted hosts only)
- *   4. Vercel production → https://novisocity.com
+ *   4. Vercel production → https://novisociety.com
  *   5. Local dev fallback (http://localhost:5173)
  *   6. Vercel preview URL (non-production deployments only)
  *
  * Email links must NEVER use *.vercel.app on the live site — users receive
- * novisocity.com links even when admins or env vars still reference Vercel.
+ * novisociety.com links even when admins or env vars still reference Vercel.
  */
 
 const LOCAL_DEV_ORIGIN = "http://localhost:5173";
-const CANONICAL_LIVE_ORIGIN = "https://novisocity.com";
+const CANONICAL_LIVE_ORIGIN = "https://novisociety.com";
 
 const _isDev = !process.env.VERCEL && process.env.NODE_ENV !== "production";
 const _isLiveDeployment =
   process.env.VERCEL_ENV === "production" ||
   (process.env.VERCEL === "1" && process.env.NODE_ENV === "production");
 
-const CANONICAL_PRODUCTION_URL = (() => {
-  const candidate = String(process.env.CANONICAL_APP_URL || "").trim().replace(/\/+$/, "");
-  if (!candidate) return CANONICAL_LIVE_ORIGIN;
-  if (_isVercelHost(_hostname(candidate))) return CANONICAL_LIVE_ORIGIN;
-  return candidate;
-})();
+const CANONICAL_PRODUCTION_URL = CANONICAL_LIVE_ORIGIN;
 
 /** Resolved once at module load from explicit env only (never Vercel injection). */
 const _envBaseUrl = (() => {
@@ -39,8 +34,8 @@ const _envBaseUrl = (() => {
 const TRUSTED_FRONTEND_HOSTS = new Set([
   "localhost",
   "127.0.0.1",
-  "novisocity.com",
-  "www.novisocity.com"
+  "novisociety.com",
+  "www.novisociety.com",
 ]);
 
 function _isValidHttpUrl(raw) {
@@ -79,14 +74,22 @@ function _isLocalHost(host) {
   return normalized === "localhost" || normalized === "127.0.0.1";
 }
 
-function _isProductionCanonicalHost(host) {
+function _isLegacyTypoHost(host) {
   const normalized = String(host || "").toLowerCase();
   return normalized === "novisocity.com" || normalized === "www.novisocity.com";
 }
 
+function _isProductionAliasHost(host) {
+  return String(host || "").toLowerCase() === "www.novisociety.com";
+}
+
+function _isProductionCanonicalHost(host) {
+  return String(host || "").toLowerCase() === "novisociety.com";
+}
+
 /**
  * Convert any candidate URL into the public frontend origin used in email links.
- * Live deployments never emit *.vercel.app — always novisocity.com instead.
+ * Live deployments never emit *.vercel.app — always novisociety.com instead.
  */
 export function toPublicFrontendBaseUrl(candidate) {
   const normalized = _origin(candidate) || String(candidate || "").trim().replace(/\/+$/, "");
@@ -99,7 +102,7 @@ export function toPublicFrontendBaseUrl(candidate) {
     return _isLiveDeployment || !_isDev ? CANONICAL_PRODUCTION_URL : normalized;
   }
 
-  if (_isProductionCanonicalHost(host)) {
+  if (_isLegacyTypoHost(host) || _isProductionAliasHost(host) || _isProductionCanonicalHost(host)) {
     return CANONICAL_PRODUCTION_URL;
   }
 
@@ -132,10 +135,10 @@ function _readFrontendOriginFromReq(req) {
  *
  * @param {object|null} req  Express request object, or a plain {origin, referer, body}
  *                           shape, or null for background/cron callers.
- * @returns {string}         e.g. "https://novisocity.com" or "http://localhost:5173"
+ * @returns {string}         e.g. "https://novisociety.com" or "http://localhost:5173"
  */
 export function resolveAppBaseUrl(req) {
-  // 1. Operator-configured env (canonicalized so vercel.app → novisocity.com)
+  // 1. Operator-configured env (canonicalized so vercel.app → novisociety.com)
   if (_envBaseUrl) {
     console.info(`[frontendBaseUrl] using APP_BASE_URL: ${_envBaseUrl}`);
     return _envBaseUrl;
@@ -181,7 +184,7 @@ export function resolveAppBaseUrl(req) {
  * This is the ONLY place `/set-password` should be appended.
  *
  * @param {object|null} req  Same as resolveAppBaseUrl.
- * @returns {string}         e.g. "https://novisocity.com/set-password"
+ * @returns {string}         e.g. "https://novisociety.com/set-password"
  */
 export function resolveSetPasswordUrl(req) {
   const url = `${resolveAppBaseUrl(req)}/set-password`;
@@ -200,7 +203,7 @@ export function resolveFrontendBaseUrl({ frontendOrigin, requestOrigin } = {}) {
   const fakeReq = {
     origin: frontendOrigin || requestOrigin || "",
     referer: requestOrigin || "",
-    body: { frontend_origin: frontendOrigin || requestOrigin || "" }
+    body: { frontend_origin: frontendOrigin || requestOrigin || "" },
   };
   return resolveAppBaseUrl(fakeReq);
 }
