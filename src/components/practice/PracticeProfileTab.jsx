@@ -350,7 +350,7 @@ export default function PracticeProfileTab({
               <FieldLabel><DollarSign className="w-3.5 h-3.5" /> Booking Deposit ($)</FieldLabel>
               <GlassInput type="number" min="0" placeholder="Leave empty for no deposit" value={form.booking_deposit || ""} onChange={e => f("booking_deposit", e.target.value)} />
               <p className="text-xs mt-1 text-gray-400">
-                Optional. If set, patients pay this via Stripe after you confirm their request (not at booking). Treatment is billed separately after the visit.
+                Optional. If set, patients pay this via Stripe after their visit (not at booking). You cannot log treatment or mark the appointment done until it is paid. The deposit is deducted from the final treatment checkout.
               </p>
             </div>
             <div>

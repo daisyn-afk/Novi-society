@@ -18,6 +18,9 @@ import NoviFooter from "@/components/NoviFooter";
 import { redirectToStripeCheckout } from "@/lib/redirectToStripeCheckout";
 import { normalizeScheduledSessionDatesEntries, parseSessionDatesField } from "@/lib/sessionDateSeats";
 
+const MODEL_SIGNUP_PRICE = "$1"; // change to "$50" when going live
+const MODEL_SIGNUP_PRICE_DECIMAL = "$1.00"; // change to "$50.00" when going live
+
 const TIME_SLOTS = [
   { label: "2:00 PM", value: "14:00" },
   { label: "3:00 PM", value: "15:00" },
@@ -994,7 +997,7 @@ export default function ModelSignup() {
                   </div>
 
                   <div className="space-y-3">
-                    <p className="text-xs font-bold uppercase tracking-wide" style={{ color: "#2D6B7F" }}>What's Included in $50</p>
+                    <p className="text-xs font-bold uppercase tracking-wide" style={{ color: "#2D6B7F" }}>What's Included in {MODEL_SIGNUP_PRICE}</p>
                     <div className="space-y-2 text-sm">
                       <div className="flex justify-between px-3 py-2 rounded-lg" style={{ background: "rgba(0,0,0,0.02)" }}>
                         <span style={{ color: "rgba(30,37,53,0.6)" }}>Good Faith Exam</span>
@@ -1023,7 +1026,7 @@ export default function ModelSignup() {
                 <div className="p-4 rounded-xl" style={{ background: "rgba(45,107,127,0.08)", border: "1px solid rgba(45,107,127,0.2)" }}>
                   <p className="font-semibold text-sm mb-2" style={{ color: "#2D6B7F" }}>Waitlist Terms</p>
                   <p className="text-xs leading-relaxed" style={{ color: "rgba(30,37,53,0.65)" }}>
-                    Your $50 payment reserves your spot on the waitlist. If a scheduled slot becomes available, we'll notify you via email and SMS within 24 hours. If no spot opens, your payment will be refunded in full.
+                    Your {MODEL_SIGNUP_PRICE} payment reserves your spot on the waitlist. If a scheduled slot becomes available, we'll notify you via email and SMS within 24 hours. If no spot opens, your payment will be refunded in full.
                   </p>
                 </div>
               )}
@@ -1036,7 +1039,7 @@ export default function ModelSignup() {
                   className="mt-0.5"
                 />
                 <Label htmlFor="non-refundable" className="text-xs leading-relaxed cursor-pointer flex-1" style={{ color: "rgba(30,37,53,0.7)" }}>
-                  I understand that this $50 booking is <strong>non-refundable</strong>{showWaitlist ? " unless no spot opens up" : ""} and reserves my {showWaitlist ? "waitlist position" : "time slot and spot"} in the training.
+                  I understand that this {MODEL_SIGNUP_PRICE} booking is <strong>non-refundable</strong>{showWaitlist ? " unless no spot opens up" : ""} and reserves my {showWaitlist ? "waitlist position" : "time slot and spot"} in the training.
                 </Label>
               </div>
 
@@ -1044,13 +1047,13 @@ export default function ModelSignup() {
                 <p className="text-xs font-semibold mb-1">Amount Due Today</p>
                 {promoApplied && promoState?.valid ? (
                   <div>
-                    <p className="text-sm line-through opacity-60">$50.00</p>
+                    <p className="text-sm line-through opacity-60">{MODEL_SIGNUP_PRICE_DECIMAL}</p>
                     <p className="text-2xl font-bold">${(promoState.final_cents / 100).toFixed(2)}</p>
                     <p className="text-xs mt-1 opacity-75">Promo applied ✓</p>
                   </div>
                 ) : (
                   <div>
-                    <p className="text-2xl font-bold">$50</p>
+                    <p className="text-2xl font-bold">{MODEL_SIGNUP_PRICE}</p>
                     <p className="text-xs mt-1 opacity-75">{showWaitlist ? "Waitlist Reservation" : "Good Faith Exam Included"}</p>
                   </div>
                 )}
@@ -1062,7 +1065,7 @@ export default function ModelSignup() {
                 disabled={!nonRefundableChecked || processingPayment}
                 onClick={handlePayment}
               >
-                {processingPayment ? "Processing..." : `Pay ${promoApplied && promoState?.valid ? `$${(promoState.final_cents / 100).toFixed(2)}` : "$50"} & Reserve Spot`}
+                {processingPayment ? "Processing..." : `Pay ${promoApplied && promoState?.valid ? `$${(promoState.final_cents / 100).toFixed(2)}` : MODEL_SIGNUP_PRICE} & Reserve Spot`}
               </Button>
 
               <Button variant="ghost" onClick={() => setStep("info")} className="w-full" style={{ color: "rgba(30,37,53,0.5)" }}>
@@ -1081,7 +1084,7 @@ export default function ModelSignup() {
                 You're Signed Up!
               </h3>
               <p className="text-base leading-relaxed max-w-sm mx-auto" style={{ color: "rgba(30,37,53,0.65)" }}>
-                Your $50 payment has been processed and your spot is reserved. We'll send you a confirmation email with next steps.
+                Your {MODEL_SIGNUP_PRICE} payment has been processed and your spot is reserved. We'll send you a confirmation email with next steps.
               </p>
               {selectedDate && (
                 <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full" style={{ background: "rgba(200,230,60,0.1)", border: "1px solid rgba(200,230,60,0.25)" }}>

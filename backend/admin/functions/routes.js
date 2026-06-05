@@ -1548,7 +1548,7 @@ functionsRouter.post("/validateModelPromo", async (req, res, next) => {
     if (hasPromoLimit && Number(promo.times_used || 0) >= Number(promo.max_uses)) {
       return res.json({ valid: false, error: "Promo code has reached its limit." });
     }
-    const baseCents = 5000;
+    const baseCents = 100; // model signup price in cents ($1). Change to 5000 for $50.
     let discountCents = 0;
     if (["percentage", "percent"].includes(String(promo.discount_type || "").toLowerCase())) {
       discountCents = Math.round((baseCents * Number(promo.discount_value || 0)) / 100);
@@ -1709,7 +1709,7 @@ functionsRouter.post("/createModelCheckout", async (req, res, next) => {
       }
     }
 
-    const baseCents = 5000;
+    const baseCents = 100; // model signup price in cents ($1). Change to 5000 for $50.
     let discountCents = 0;
     if (promo) {
       discountCents = String(promo.discount_type || "").toLowerCase() === "percentage"

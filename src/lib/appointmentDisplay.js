@@ -30,10 +30,31 @@ export function profileBookingDepositAmount(value) {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
-export function providerConfirmActionLabel(bookingDeposit) {
-  return profileBookingDepositAmount(bookingDeposit) > 0
-    ? "Confirm & Request Deposit"
-    : "Confirm Appointment";
+export function providerConfirmActionLabel() {
+  return "Confirm Appointment";
+}
+
+/** Appointment row has a booking deposit amount on file. */
+export function appointmentHasBookingDeposit(appt) {
+  const n = Number(appt?.deposit_amount);
+  return Number.isFinite(n) && n > 0;
+}
+
+/** Patient completed the booking deposit Stripe payment for this visit. */
+export function appointmentDepositPaid(appt) {
+  return String(appt?.payment_status || "").toLowerCase() === "paid";
+}
+
+/** Provider cannot log treatment or mark done until booking deposit is paid. */
+export function appointmentDepositBlocksProvider(appt) {
+  return appointmentHasBookingDeposit(appt) && !appointmentDepositPaid(appt);
+}
+
+/** Patient can pay booking deposit from their appointments list. */
+export function appointmentPatientCanPayDeposit(appt) {
+  if (!appointmentHasBookingDeposit(appt) || appointmentDepositPaid(appt)) return false;
+  const status = String(appt?.status || "").toLowerCase();
+  return status === "confirmed" || status === "awaiting_payment" || status === "completed";
 }
 
 export function appointmentServiceLabel(appt) {
