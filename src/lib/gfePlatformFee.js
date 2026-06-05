@@ -1,6 +1,6 @@
 export const GFE_FEE_LINE_LABEL = "GFE Fees";
 
-export const DEFAULT_GFE_PLATFORM_FEE_USD = 50;
+export const DEFAULT_GFE_PLATFORM_FEE_USD = 1;
 
 function parseMoney(value) {
   const n = Number(value);
