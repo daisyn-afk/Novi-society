@@ -785,12 +785,16 @@ export function calculateTreatmentTotal({
 
   const maxPrice = parseMoney(offering?.price_max);
   let capped = subtotal;
-  if (maxPrice > 0 && capped > maxPrice) capped = maxPrice;
+  const priceCapApplied = maxPrice > 0 && capped > maxPrice;
+  if (priceCapApplied) capped = maxPrice;
 
   return {
     lines,
     subtotal: Math.round(subtotal * 100) / 100,
     total: Math.round(capped * 100) / 100,
+    maxPrice: maxPrice > 0 ? maxPrice : null,
+    priceCapApplied,
+    priceCapReduction: priceCapApplied ? Math.round((subtotal - capped) * 100) / 100 : 0,
     unitPrice,
     areaPrice,
     flatPrice,
@@ -828,4 +832,10 @@ export function formatUsd(amount) {
   const n = Number(amount);
   if (!Number.isFinite(n)) return "$0.00";
   return n % 1 === 0 ? `$${n}` : `$${n.toFixed(2)}`;
+}
+
+/** When menu max price is lower than the calculated total, block invoicing until fixed. */
+export function maxPriceCapValidationError(estimate) {
+  if (!estimate?.priceCapApplied) return null;
+  return `Calculated total (${formatUsd(estimate.subtotal)}) exceeds your menu max price (${formatUsd(estimate.maxPrice)}). Go to Practice → Treatments and increase or clear Max Price ($) for this service, then try again.`;
 }
