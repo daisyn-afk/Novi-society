@@ -103,7 +103,43 @@ Until onboarding completes, patients see an error if they try to pay a deposit/t
 | Treatment checkout | `backend/admin/appointments/treatmentPaymentService.js` |
 | Provider UI | `src/components/provider/ProviderStripeConnectCard.jsx` |
 
+## Legacy Stripe account (Standard OAuth) + platform fee transfer
+
+Admins can OAuth-connect the legacy Stripe account as a **Standard** connected account under the Connect platform. After marketplace payments succeed, the **application fee** can be transferred to that account.
+
+### Additional env vars
+
+| Variable | Purpose |
+|----------|---------|
+| `STRIPE_CONNECT_CLIENT_ID` | Connect OAuth client id (`ca_...`) |
+| `STRIPE_CONNECT_OAUTH_REDIRECT_URI` | Optional; default `{API_BASE}/admin/integrations/stripe-connect/platform/oauth/callback` |
+| `STRIPE_CONNECT_APPLICATION_FEE_BPS` | Platform fee in basis points (must be > 0 to collect a fee) |
+| `STRIPE_CONNECT_LEGACY_FEE_TRANSFER_ENABLED` | `true` to run `transfers.create` on `payment_intent.succeeded` |
+| `STRIPE_CONNECT_OAUTH_STATE_SECRET` | Optional HMAC secret for OAuth state |
+
+### Stripe Dashboard (legacy OAuth)
+
+1. On the **Connect platform** account: **Developers → Connect settings** → copy **Client ID** (`ca_...`).
+2. Add redirect URI (production example):
+   `https://<your-domain>/api/admin/integrations/stripe-connect/platform/oauth/callback`
+3. Local dev (backend on 8787):
+   `http://127.0.0.1:8787/admin/integrations/stripe-connect/platform/oauth/callback`
+
+### Admin UI
+
+**Admin Dashboard** → **Stripe Connect — Legacy fee account** → **Connect legacy Stripe**.
+
+### Migration
+
+Apply `supabase/migrations/20260605120000_platform_stripe_connect_legacy.sql`.
+
+### Fee transfer flow
+
+1. Patient pays deposit/treatment (Connect destination charge).
+2. Provider share → auto transfer to provider Express account.
+3. `application_fee_amount` → Connect platform balance.
+4. Webhook `payment_intent.succeeded` → `transfers.create` → legacy Standard `acct_...` (idempotent per PaymentIntent).
+
 ## Deferred (not in v1)
 
-- Splitting a portion of each payment to the **legacy** Stripe account
 - Auto-completing launch roadmap `stripe_connected` step (still manual in roadmap UI)
