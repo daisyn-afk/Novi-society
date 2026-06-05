@@ -1,8 +1,16 @@
 import {
   getConnectStripeClient,
+  getFrontendBaseUrl,
+  getProviderStripeConnectOAuthRedirectUri,
   isStripeConnectConfigured,
   isStripeConnectEnabled,
 } from "./config.js";
+import {
+  buildConnectOAuthAuthorizeUrl,
+  exchangeConnectOAuthCode,
+  isStripeConnectOAuthConfigured,
+  OAUTH_PURPOSE_PROVIDER,
+} from "./connectOAuth.js";
 import {
   ensureProviderProfileForAuthUser,
   getProviderStripeConnectByAuthUserId,
@@ -15,10 +23,22 @@ import {
 } from "./statusDetails.js";
 
 function appBaseUrl() {
-  return String(process.env.APP_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:5173").replace(
-    /\/$/,
-    ""
-  );
+  return getFrontendBaseUrl();
+}
+
+function normalizeReturnPath(returnPath) {
+  const raw = String(returnPath || "/ProviderPractice").trim() || "/ProviderPractice";
+  return raw.startsWith("/") ? raw : `/${raw}`;
+}
+
+function providerPracticeRedirect(params = {}) {
+  const base = appBaseUrl();
+  const url = new URL("/ProviderPractice", base);
+  url.searchParams.set("tab", "profile");
+  Object.entries(params).forEach(([key, value]) => {
+    if (value != null && value !== "") url.searchParams.set(key, String(value));
+  });
+  return url.toString();
 }
 
 export function mapStripeConnectStatus(row, { configured = isStripeConnectConfigured(), account = null } = {}) {
@@ -36,6 +56,7 @@ export function mapStripeConnectStatus(row, { configured = isStripeConnectConfig
   return {
     enabled: isStripeConnectEnabled(),
     configured,
+    oauth_configured: isStripeConnectOAuthConfigured(),
     account_id: accountId || null,
     charges_enabled: chargesEnabled,
     payouts_enabled: payoutsEnabled,
@@ -118,10 +139,76 @@ async function createExpressAccount({ email, fullName }) {
   });
 }
 
-export async function createStripeConnectOnboardingLink({
+export function getProviderOAuthAuthorizeUrl(authUserId, returnPath = "/ProviderPractice") {
+  const path = normalizeReturnPath(returnPath);
+  const redirectUri = getProviderStripeConnectOAuthRedirectUri();
+  const url = buildConnectOAuthAuthorizeUrl({
+    redirectUri,
+    statePayload: {
+      providerAuthUserId: String(authUserId || ""),
+      returnPath: path,
+      exp: Date.now() + 15 * 60 * 1000,
+      purpose: OAUTH_PURPOSE_PROVIDER,
+    },
+  });
+  return { url, method: "oauth" };
+}
+
+export async function completeProviderOAuth({ code, providerAuthUserId }) {
+  const id = String(providerAuthUserId || "").trim();
+  if (!id) {
+    const err = new Error("Provider auth user id is required.");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const token = await exchangeConnectOAuthCode(code, getProviderStripeConnectOAuthRedirectUri());
+  if (!token.connectedAccountId) {
+    const err = new Error("Stripe OAuth did not return a connected account id.");
+    err.statusCode = 502;
+    throw err;
+  }
+
+  await ensureProviderProfileForAuthUser(id);
+
+  const stripe = getConnectStripeClient();
+  let chargesEnabled = false;
+  let payoutsEnabled = false;
+  let detailsSubmitted = false;
+
+  if (stripe) {
+    const account = await stripe.accounts.retrieve(token.connectedAccountId);
+    chargesEnabled = Boolean(account.charges_enabled);
+    payoutsEnabled = Boolean(account.payouts_enabled);
+    detailsSubmitted = Boolean(account.details_submitted);
+  }
+
+  const updated = await updateProviderStripeConnectByAuthUserId(id, {
+    stripe_connect_account_id: token.connectedAccountId,
+    stripe_connect_charges_enabled: chargesEnabled,
+    stripe_connect_payouts_enabled: payoutsEnabled,
+    stripe_connect_details_submitted: detailsSubmitted,
+    stripe_connect_onboarded_at: chargesEnabled ? new Date().toISOString() : null,
+  });
+
+  let status = mapStripeConnectStatus(updated);
+  if (stripe) {
+    try {
+      const account = await stripe.accounts.retrieve(token.connectedAccountId);
+      status = mapStripeConnectStatus(updated, { account });
+    } catch {
+      // best effort
+    }
+  }
+
+  return status;
+}
+
+export { providerPracticeRedirect };
+
+async function createStripeConnectAccountLink({
   authUserId,
-  email,
-  fullName,
+  accountId,
   returnPath = "/ProviderPractice",
 }) {
   const stripe = getConnectStripeClient();
@@ -131,25 +218,11 @@ export async function createStripeConnectOnboardingLink({
     throw err;
   }
 
-  await ensureProviderProfileForAuthUser(authUserId);
-  let row = await getProviderStripeConnectByAuthUserId(authUserId);
-  let accountId = String(row?.stripe_connect_account_id || "").trim();
-
-  if (!accountId) {
-    const account = await createExpressAccount({ email, fullName });
-    accountId = account.id;
-    await updateProviderStripeConnectByAuthUserId(authUserId, {
-      stripe_connect_account_id: accountId,
-      stripe_connect_charges_enabled: false,
-      stripe_connect_payouts_enabled: false,
-      stripe_connect_details_submitted: false,
-    });
-    row = await getProviderStripeConnectByAuthUserId(authUserId);
-  }
-
+  const path = normalizeReturnPath(returnPath);
+  const row = await getProviderStripeConnectByAuthUserId(authUserId);
   const base = appBaseUrl();
-  const returnUrl = `${base}${returnPath}?tab=profile&stripe_connect=return`;
-  const refreshUrl = `${base}${returnPath}?tab=profile&stripe_connect=refresh`;
+  const returnUrl = `${base}${path}?tab=profile&stripe_connect=return`;
+  const refreshUrl = `${base}${path}?tab=profile&stripe_connect=refresh`;
 
   const accountLink = await stripe.accountLinks.create({
     account: accountId,
@@ -171,7 +244,65 @@ export async function createStripeConnectOnboardingLink({
     account_id: accountId,
     expires_at: accountLink.expires_at,
     status,
+    method: "account_link",
   };
+}
+
+/** Continue setup on an existing connected account (Express or Standard OAuth). */
+export async function createStripeConnectContinueSetupLink({
+  authUserId,
+  returnPath = "/ProviderPractice",
+}) {
+  await ensureProviderProfileForAuthUser(authUserId);
+  const row = await getProviderStripeConnectByAuthUserId(authUserId);
+  const accountId = String(row?.stripe_connect_account_id || "").trim();
+  if (!accountId) {
+    const err = new Error("No Stripe account connected yet. Connect Stripe first.");
+    err.statusCode = 409;
+    throw err;
+  }
+
+  return createStripeConnectAccountLink({ authUserId, accountId, returnPath });
+}
+
+export async function createStripeConnectOnboardingLink({
+  authUserId,
+  email,
+  fullName,
+  returnPath = "/ProviderPractice",
+}) {
+  const stripe = getConnectStripeClient();
+  if (!stripe) {
+    const err = new Error("Stripe Connect is not configured.");
+    err.statusCode = 503;
+    throw err;
+  }
+
+  await ensureProviderProfileForAuthUser(authUserId);
+  let row = await getProviderStripeConnectByAuthUserId(authUserId);
+  let accountId = String(row?.stripe_connect_account_id || "").trim();
+
+  if (isStripeConnectOAuthConfigured()) {
+    if (!accountId) {
+      return getProviderOAuthAuthorizeUrl(authUserId, returnPath);
+    }
+    return createStripeConnectContinueSetupLink({ authUserId, returnPath });
+  }
+
+  if (!accountId) {
+    const account = await createExpressAccount({ email, fullName });
+    accountId = account.id;
+    await updateProviderStripeConnectByAuthUserId(authUserId, {
+      stripe_connect_account_id: accountId,
+      stripe_connect_charges_enabled: false,
+      stripe_connect_payouts_enabled: false,
+      stripe_connect_details_submitted: false,
+    });
+    row = await getProviderStripeConnectByAuthUserId(authUserId);
+  }
+
+  const result = await createStripeConnectAccountLink({ authUserId, accountId, returnPath });
+  return { ...result, method: "express" };
 }
 
 export async function assertProviderReadyForMarketplacePayments(providerAuthUserId) {

@@ -55,7 +55,14 @@ export default function ProviderStripeConnectCard({ bookingDeposit, preferRefres
       ? "Patients cannot pay booking deposits until you finish Stripe setup."
       : "Required before patients can pay treatment balances online via Stripe.");
 
-  const actionLabel = status?.action_label || (onboardingState === "not_started" ? "Connect Stripe" : "Continue Stripe setup");
+  const oauthConnect = Boolean(status?.oauth_configured);
+  const actionLabel =
+    status?.action_label ||
+    (onboardingState === "not_started"
+      ? oauthConnect
+        ? "Connect with Stripe"
+        : "Connect Stripe"
+      : "Continue Stripe setup");
 
   if (!connectEnabled && !isLoading) {
     return null;
