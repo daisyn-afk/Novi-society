@@ -18,6 +18,7 @@ import { Plus, Trash2, Upload, CheckCircle, AlertTriangle } from "lucide-react";
 import AftercarePlanDialog from "./AftercarePlanDialog";
 import TreatmentCheckoutDialog from "./TreatmentCheckoutDialog";
 import AreasTreatedField from "./AreasTreatedField";
+import { appointmentDepositBlocksProvider } from "@/lib/appointmentDisplay";
 import {
   areasForInjectableOffering,
   buildAutoInvoiceChargeModes,
@@ -387,6 +388,8 @@ export default function TreatmentDocumentDialog({
 
   if (!appointment) return null;
 
+  const depositBlocked = appointmentDepositBlocksProvider(appointment) && !existingRecord;
+
   return (
     <>
     <Dialog open={open && !showCheckout} onOpenChange={onClose}>
@@ -396,6 +399,16 @@ export default function TreatmentDocumentDialog({
             {isResubmitMode ? "Update & Resubmit Treatment Record" : "Document Treatment"}
           </DialogTitle>
         </DialogHeader>
+
+        {depositBlocked && (
+          <div
+            className="rounded-xl px-4 py-3 text-sm"
+            style={{ background: "rgba(254,226,226,0.85)", border: "1px solid rgba(220,38,38,0.35)", color: "#991b1b" }}
+          >
+            The patient must pay the ${appointment.deposit_amount} booking deposit before you can log treatment for this visit.
+            After they pay, the deposit will be deducted from the final treatment checkout.
+          </div>
+        )}
 
         {/* Autofilled header */}
         <div className="rounded-xl px-4 py-3 space-y-1" style={{ background: "#F0EDE8" }}>
@@ -732,10 +745,10 @@ export default function TreatmentDocumentDialog({
 
         <div className="flex gap-2 justify-end pt-2" style={{ borderTop: "1px solid rgba(198,190,168,0.3)" }}>
           <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button variant="outline" onClick={() => save.mutate("draft")} disabled={save.isPending}>
+          <Button variant="outline" onClick={() => save.mutate("draft")} disabled={save.isPending || depositBlocked}>
             Save Draft
           </Button>
-          <Button style={{ background: "#FA6F30", color: "#fff" }} onClick={handleSubmitForInvoice} disabled={save.isPending}>
+          <Button style={{ background: "#FA6F30", color: "#fff" }} onClick={handleSubmitForInvoice} disabled={save.isPending || depositBlocked}>
             <CheckCircle className="w-4 h-4 mr-1.5" />
             {existingRecord?.status === "flagged" || existingRecord?.status === "changes_requested"
               ? "Resubmit for MD Review"

@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
-import { ArrowRight, Star, BookOpen, Shield, MapPin, ChevronRight } from "lucide-react";
+import { ArrowRight, Star, BookOpen, Shield, MapPin, ChevronRight, Phone } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import NoviOfferingsPortal from "@/components/landing/NoviOfferingsPortal";
@@ -39,6 +39,7 @@ const PILLARS = [
   { number: "04", label: "Command", desc: "Run your practice from one obsessively crafted dashboard — bookings, records, reviews." },
 ];
 
+const CALL_NOW_LINK = "tel:8178936317";
 const SIGN_IN_PATH = "/login";
 const PROVIDER_JOIN_PATH = `${createPageUrl("Onboarding")}?from=provider`;
 const PATIENT_JOIN_PATH = createPageUrl("Onboarding");
@@ -184,6 +185,15 @@ export default function LandingPage() {
             <img src={NOVI_LOGO_SRC} alt="" width={180} height={52} style={{ height: 40, width: "auto", display: "block" }} />
           </Link>
           <div className="landing-nav-actions" style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <button
+              type="button"
+              onClick={() => { window.location.href = CALL_NOW_LINK; }}
+              className="btn-outline"
+              style={{ padding: "8px 22px", fontSize: 12 }}
+            >
+              <Phone style={{ width: 14, height: 14 }} />
+              Call Now
+            </button>
             <button
               type="button"
               onClick={() => {

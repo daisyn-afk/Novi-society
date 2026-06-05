@@ -80,15 +80,21 @@ export async function resolveProviderBookingDeposit(providerId) {
   return 0;
 }
 
-/** Deposit for an appointment. While awaiting payment, always use current Practice Profile. */
+/** Deposit for an appointment. Legacy awaiting_payment rows use current Practice Profile. */
 export async function resolveAppointmentDeposit(appointment) {
   const status = String(appointment?.status || "").toLowerCase();
   if (status === "awaiting_payment") {
     return resolveProviderBookingDeposit(appointment?.provider_id);
   }
   const saved = Number(appointment?.deposit_amount);
-  if (Number.isFinite(saved) && saved >= 0) return saved;
+  if (Number.isFinite(saved) && saved > 0) return saved;
   return resolveProviderBookingDeposit(appointment?.provider_id);
+}
+
+export function appointmentDepositBlocksProviderActions(appt) {
+  const deposit = Number(appt?.deposit_amount);
+  if (!Number.isFinite(deposit) || deposit <= 0) return false;
+  return String(appt?.payment_status || "").toLowerCase() !== "paid";
 }
 
 /**
@@ -103,8 +109,9 @@ export async function enrichAppointmentDepositFields(appointment) {
   const deposit = await resolveProviderBookingDeposit(appointment.provider_id);
   const id = String(appointment.id || "").trim();
 
+  const nowIso = new Date().toISOString();
+
   if (deposit <= 0 && id) {
-    const nowIso = new Date().toISOString();
     await query(
       `update public.appointments
           set status = 'confirmed',
@@ -127,17 +134,34 @@ export async function enrichAppointmentDepositFields(appointment) {
     };
   }
 
-  if (id && Number(appointment.deposit_amount) !== deposit) {
+  if (deposit > 0 && id) {
     await query(
-      `update public.appointments set deposit_amount = $2, updated_at = now() where id = $1`,
-      [id, deposit]
+      `update public.appointments
+          set status = 'confirmed',
+              deposit_amount = $2,
+              payment_status = case
+                when lower(coalesce(payment_status, '')) = 'paid' then payment_status
+                else 'unpaid'
+              end,
+              confirmed_at = coalesce(confirmed_at, $3::timestamptz),
+              updated_at = now()
+        where id = $1
+          and status = 'awaiting_payment'`,
+      [id, deposit, nowIso]
     );
+    return {
+      ...appointment,
+      status: "confirmed",
+      deposit_amount: deposit,
+      payment_status:
+        String(appointment.payment_status || "").toLowerCase() === "paid"
+          ? appointment.payment_status
+          : "unpaid",
+      confirmed_at: appointment.confirmed_at || nowIso,
+    };
   }
 
-  return {
-    ...appointment,
-    deposit_amount: deposit,
-  };
+  return appointment;
 }
 
 export async function processAppointmentCheckoutCompletedSession(session) {
@@ -311,8 +335,10 @@ export async function createAppointmentDepositCheckout({
       e.statusCode = 403;
       throw e;
     }
-    if (String(appt.status || "").toLowerCase() !== "awaiting_payment") {
-      const e = new Error("This appointment is not awaiting payment.");
+    const apptStatus = String(appt.status || "").toLowerCase();
+    const depositPayableStatuses = new Set(["awaiting_payment", "confirmed"]);
+    if (!depositPayableStatuses.has(apptStatus)) {
+      const e = new Error("This appointment is not eligible for deposit payment.");
       e.statusCode = 409;
       throw e;
     }
@@ -512,9 +538,11 @@ export async function requestAppointmentDeposit({ token, appointmentId, body = {
 
   const { rows } = await query(
     `update public.appointments
-        set status = 'awaiting_payment',
+        set status = 'confirmed',
             confirmed_at = coalesce(confirmed_at, $2::timestamptz),
             deposit_amount = $3,
+            payment_status = 'unpaid',
+            amount_paid = 0,
             updated_at = now()
       where id = $1
       returning *`,
@@ -528,7 +556,7 @@ export async function requestAppointmentDeposit({ token, appointmentId, body = {
     [
       updated.patient_id,
       updated.patient_email,
-      `Your appointment with ${updated.provider_name || "your provider"} has been confirmed! Please pay your $${formatDepositUsd(depositAmount)} deposit to secure your visit.`,
+      `Your appointment with ${updated.provider_name || "your provider"} on ${updated.appointment_date || "the scheduled date"} is confirmed. After your visit, please pay the $${formatDepositUsd(depositAmount)} booking deposit so your provider can complete your treatment records.`,
       "PatientAppointments",
     ]
   ).catch(() => {});

@@ -470,6 +470,16 @@ appointmentsRouter.patch("/:id", async (req, res, next) => {
       ? String(updates.status || "").trim().toLowerCase()
       : null;
     const prevStatusRaw = String(existing.status || "").trim().toLowerCase();
+    if (
+      nextStatusRaw === "completed" &&
+      Number(existing.deposit_amount) > 0 &&
+      String(existing.payment_status || "").toLowerCase() !== "paid"
+    ) {
+      return res.status(400).json({
+        error:
+          "The patient must pay the booking deposit before you can mark this appointment complete or log treatment.",
+      });
+    }
     const isProviderOwner =
       existing.provider_id === me.id && !hasAdminAccess(me.role);
     if (
@@ -479,7 +489,7 @@ appointmentsRouter.patch("/:id", async (req, res, next) => {
     ) {
       return res.status(400).json({
         error:
-          "Use Confirm & Request Payment so the patient pays their deposit before the appointment is confirmed.",
+          "Use Confirm Appointment so the booking deposit is recorded on this visit.",
       });
     }
     if (
