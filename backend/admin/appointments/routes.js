@@ -25,6 +25,7 @@ import {
   notifyProviderAppointmentCancelled,
 } from "../patientAppointmentEmails.js";
 import { migratePreBookingMessagesToAppointment } from "../appointment-messages/migratePreBookingThread.js";
+import { isAppointmentInPast } from "../lib/appointmentScheduling.js";
 
 export const appointmentsRouter = Router();
 
@@ -361,8 +362,12 @@ appointmentsRouter.post("/", async (req, res, next) => {
     const providerId = String(body.provider_id || "").trim();
     const service = String(body.service || "").trim();
     const appointmentDate = String(body.appointment_date || "").trim();
+    const appointmentTime = String(body.appointment_time || "09:00").trim() || "09:00";
     if (!providerId || !service || !appointmentDate) {
       return res.status(400).json({ error: "provider_id, service, and appointment_date are required." });
+    }
+    if (isAppointmentInPast(appointmentDate, appointmentTime)) {
+      return res.status(400).json({ error: "Appointment date and time cannot be in the past." });
     }
 
     const validation = await validateBookingScope({
@@ -410,7 +415,7 @@ appointmentsRouter.post("/", async (req, res, next) => {
         service,
         validation.service_type_id || body.service_type_id || null,
         appointmentDate,
-        String(body.appointment_time || "09:00").trim() || "09:00",
+        appointmentTime,
         body.patient_notes || null,
         validation.referral_code || null,
         String(body.status || "requested").trim() || "requested",
