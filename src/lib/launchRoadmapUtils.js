@@ -166,6 +166,7 @@ export function mergeLaunchRoadmapPhases(dbPhases = [], staticPhases = getStatic
         ...dbStep,
         ...(staticStep.playbook ? { playbook: staticStep.playbook } : {}),
         ...(staticStep.desc && !dbStep.desc ? { desc: staticStep.desc } : {}),
+        ...(staticStep.label ? { label: staticStep.label } : {}),
       };
     });
     const steps = [...mergedDbSteps, ...missingStaticSteps].sort(

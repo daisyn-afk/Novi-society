@@ -44,7 +44,7 @@ const _supabaseAdmin =
  * then dispatches via the shared Resend helper. Errors are swallowed so they never
  * block the user-creation response.
  */
-async function sendAdminUserSetupEmail(createdUser, req) {
+async function sendAdminUserSetupEmail(createdUser, req, { linkTypes = ["invite", "recovery"] } = {}) {
   const { auth_user_id: authUserId, email, first_name: firstName, last_name: lastName, role } = createdUser;
   if (!email) {
     // eslint-disable-next-line no-console
@@ -66,7 +66,7 @@ async function sendAdminUserSetupEmail(createdUser, req) {
     });
 
     let link = "";
-    for (const type of ["invite", "recovery"]) {
+    for (const type of linkTypes) {
       const { data, error } = await _supabaseAdmin.auth.admin.generateLink({
         type,
         email,
@@ -185,6 +185,42 @@ usersRouter.get("/", async (req, res, next) => {
     });
   } catch (error) {
     next(error);
+  }
+});
+
+usersRouter.post("/:id/send-password-reset", async (req, res, next) => {
+  try {
+    await requireUsersRouteAccess(req, res, async () => {
+      const me = req.me || {};
+      const user = await getUserById(req.params.id);
+      if (!user) return res.status(404).json({ error: "User not found." });
+      if (isProviderOnlyStaff(me) && String(user.role || "").toLowerCase() !== "provider") {
+        return res.status(403).json({ error: "Forbidden." });
+      }
+      if (!user.email) {
+        return res.status(400).json({ error: "User has no email address." });
+      }
+
+      const emailResult = await sendAdminUserSetupEmail(user, req, {
+        linkTypes: ["recovery", "invite"]
+      });
+      if (!emailResult?.sent) {
+        const statusCode =
+          emailResult?.reason === "missing_supabase_admin_client" ? 500 : 502;
+        return res.status(statusCode).json({
+          error: "Failed to send password reset email.",
+          reason: emailResult?.reason || "unknown_error"
+        });
+      }
+
+      return res.json({
+        ok: true,
+        email: user.email,
+        password_reset_email_sent_at: new Date().toISOString()
+      });
+    });
+  } catch (error) {
+    return next(error);
   }
 });
 
