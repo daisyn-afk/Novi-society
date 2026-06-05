@@ -45,6 +45,7 @@ const { providerRepCallsRouter } = await import("./manufacturers/providerRepCall
 const { googleCalendarRouter } = await import("./manufacturers/googleCalendarRoutes.js");
 const { gmailRouter } = await import("./manufacturers/gmailRoutes.js");
 const { stripeConnectRouter } = await import("./stripe-connect/routes.js");
+const { stripeConnectPlatformRouter } = await import("./stripe-connect/platformRoutes.js");
 const { mdMessagesRouter } = await import("./md-messages/routes.js");
 const { appointmentMessagesRouter } = await import("./appointment-messages/routes.js");
 const { marketplaceRouter } = await import("./marketplace/routes.js");
@@ -102,6 +103,7 @@ export function createAdminApp() {
   app.use("/admin/integrations/google-calendar", googleCalendarRouter);
   app.use("/admin/integrations/gmail", gmailRouter);
   app.use("/admin/integrations/stripe-connect", stripeConnectRouter);
+  app.use("/admin/integrations/stripe-connect/platform", stripeConnectPlatformRouter);
   app.use("/admin/md-messages", mdMessagesRouter);
   app.use("/admin/appointment-messages", appointmentMessagesRouter);
   app.use("/admin/marketplace", marketplaceRouter);

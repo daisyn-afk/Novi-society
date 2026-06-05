@@ -39,3 +39,32 @@ export function resolveConnectApplicationFeeCents(amountCents) {
   if (bps <= 0 || amountCents <= 0) return 0;
   return Math.min(amountCents, Math.round((amountCents * bps) / 10000));
 }
+
+export function getStripeConnectClientId() {
+  return String(process.env.STRIPE_CONNECT_CLIENT_ID || "").trim();
+}
+
+export function getStripeConnectOAuthRedirectUri() {
+  const explicit = String(process.env.STRIPE_CONNECT_OAUTH_REDIRECT_URI || "").trim();
+  if (explicit) return explicit;
+
+  const apiBase = String(
+    process.env.ADMIN_API_BASE_URL ||
+      process.env.API_BASE_URL ||
+      process.env.APP_BASE_URL ||
+      "http://127.0.0.1:8787"
+  ).replace(/\/$/, "");
+
+  return `${apiBase}/admin/integrations/stripe-connect/platform/oauth/callback`;
+}
+
+export function isLegacyFeeTransferEnabled() {
+  return String(process.env.STRIPE_CONNECT_LEGACY_FEE_TRANSFER_ENABLED || "").trim().toLowerCase() === "true";
+}
+
+export function getFrontendBaseUrl() {
+  return String(process.env.APP_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:5173").replace(
+    /\/$/,
+    ""
+  );
+}
