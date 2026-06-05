@@ -73,7 +73,7 @@ function formatSessionDateLabel(value) {
   return format(new Date(y, m - 1, d), "MMM d, yyyy");
 }
 
-/** Inline PDF URL for iframe preview (native browser PDF viewer). */
+/** Inline PDF URL for iframe preview (natived browser PDF viewer). */
 function mdContractViewerUrl(url) {
   const base = getDocumentViewUrl(url) || String(url || "").trim();
   if (!base) return "";

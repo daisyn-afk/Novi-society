@@ -32,6 +32,7 @@ import {
   getCombinedInjectableMenus,
   isCombinedInjectableLog,
   logTreatmentFormConfig,
+  maxPriceCapValidationError,
   resolveOfferingForAppointment,
   serializeBillingQuantities,
 } from "@/lib/treatmentPricing";
@@ -187,6 +188,11 @@ export default function TreatmentDocumentDialog({
     form.syringes_used,
     areas,
   ]);
+
+  const maxPriceError = useMemo(
+    () => maxPriceCapValidationError(liveEstimate),
+    [liveEstimate]
+  );
 
   useEffect(() => {
     if (!open || !menuOffering || existingRecord) return;
@@ -368,6 +374,14 @@ export default function TreatmentDocumentDialog({
   });
 
   const handleSubmitForInvoice = async () => {
+    if (maxPriceError && !treatmentAlreadyPaid) {
+      toast({
+        title: "Fix max price on treatment menu",
+        description: maxPriceError,
+        variant: "destructive",
+      });
+      return;
+    }
     try {
       const record = await save.mutateAsync("submitted");
       if (treatmentAlreadyPaid) {
@@ -519,9 +533,35 @@ export default function TreatmentDocumentDialog({
                     className="flex justify-between text-sm pt-1 border-t font-semibold"
                     style={{ borderColor: "rgba(250,111,48,0.2)", color: "#243257" }}
                   >
-                    <span>Subtotal</span>
-                    <span style={{ color: "#FA6F30" }}>{formatUsd(liveEstimate.total)}</span>
+                    <span>{liveEstimate.priceCapApplied ? "Subtotal" : "Total"}</span>
+                    <span style={{ color: "#FA6F30" }}>
+                      {formatUsd(liveEstimate.priceCapApplied ? liveEstimate.subtotal : liveEstimate.total)}
+                    </span>
                   </div>
+                  {liveEstimate.priceCapApplied && (
+                    <>
+                      <div className="flex justify-between text-sm">
+                        <span style={{ color: "#6B7DB3" }}>
+                          Menu max price ({formatUsd(liveEstimate.maxPrice)})
+                        </span>
+                        <span style={{ color: "#6B7DB3" }}>
+                          −{formatUsd(liveEstimate.priceCapReduction)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-sm font-semibold">
+                        <span>Total</span>
+                        <span style={{ color: "#FA6F30" }}>{formatUsd(liveEstimate.total)}</span>
+                      </div>
+                    </>
+                  )}
+                  {maxPriceError && (
+                    <div
+                      className="rounded-lg px-3 py-2.5 text-xs mt-1"
+                      style={{ background: "rgba(254,226,226,0.85)", border: "1px solid rgba(220,38,38,0.35)", color: "#991b1b" }}
+                    >
+                      {maxPriceError}
+                    </div>
+                  )}
                 </>
               ) : (
                 <p className="text-xs" style={{ color: "#9a8f7e" }}>
@@ -748,7 +788,7 @@ export default function TreatmentDocumentDialog({
           <Button variant="outline" onClick={() => save.mutate("draft")} disabled={save.isPending || depositBlocked}>
             Save Draft
           </Button>
-          <Button style={{ background: "#FA6F30", color: "#fff" }} onClick={handleSubmitForInvoice} disabled={save.isPending || depositBlocked}>
+          <Button style={{ background: "#FA6F30", color: "#fff" }} onClick={handleSubmitForInvoice} disabled={save.isPending || depositBlocked || (Boolean(maxPriceError) && !treatmentAlreadyPaid)}>
             <CheckCircle className="w-4 h-4 mr-1.5" />
             {existingRecord?.status === "flagged" || existingRecord?.status === "changes_requested"
               ? "Resubmit for MD Review"

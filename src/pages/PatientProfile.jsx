@@ -33,8 +33,6 @@ export default function PatientProfile() {
     "city",
     "state",
     "date_of_birth",
-    "emergency_contact_name",
-    "emergency_contact_phone",
   ]);
 
   useEffect(() => {
@@ -87,14 +85,8 @@ export default function PatientProfile() {
       nextErrors.date_of_birth = "You must be at least 18 years old";
     }
 
-    if (!data.emergency_contact_name?.trim()) {
-      nextErrors.emergency_contact_name = requiredMessage;
-    }
-
-    if (!data.emergency_contact_phone?.trim()) {
-      nextErrors.emergency_contact_phone = requiredMessage;
-    } else {
-      const emergencyPhoneError = usPhoneValidationError(data.emergency_contact_phone, { required: true });
+    if (data.emergency_contact_phone?.trim()) {
+      const emergencyPhoneError = usPhoneValidationError(data.emergency_contact_phone);
       if (emergencyPhoneError) nextErrors.emergency_contact_phone = emergencyPhoneError;
     }
 
