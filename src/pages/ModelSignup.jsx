@@ -18,8 +18,8 @@ import NoviFooter from "@/components/NoviFooter";
 import { redirectToStripeCheckout } from "@/lib/redirectToStripeCheckout";
 import { normalizeScheduledSessionDatesEntries, parseSessionDatesField } from "@/lib/sessionDateSeats";
 
-const MODEL_SIGNUP_PRICE = "$1"; // change to "$50" when going live
-const MODEL_SIGNUP_PRICE_DECIMAL = "$1.00"; // change to "$50.00" when going live
+const MODEL_SIGNUP_PRICE = "$50";
+const MODEL_SIGNUP_PRICE_DECIMAL = "$50.00";
 
 const TIME_SLOTS = [
   { label: "2:00 PM", value: "14:00" },
