@@ -3,32 +3,35 @@
  * Supabase auth email links (invite, recovery, password-reset redirectTo).
  *
  * Priority (highest → lowest):
- *   1. APP_BASE_URL env var (explicit operator config – always wins in production)
- *   2. VERCEL_PROJECT_PRODUCTION_URL / VERCEL_URL (Vercel runtime injection)
- *   3. Request origin header (browser-sent, exact value trusted)
- *   4. Hard localhost:5173 fallback (local dev only)
+ *   1. APP_BASE_URL env var (canonicalized – vercel.app remapped in production)
+ *   2. frontend_origin from API body (browser-sent by admin UI)
+ *   3. Request Origin / Referer headers (trusted hosts only)
+ *   4. Vercel production → https://novisociety.com
+ *   5. Local dev fallback (http://localhost:5173)
+ *   6. Vercel preview URL (non-production deployments only)
  *
- * The original `resolveFrontendBaseUrl` had an ambiguous two-argument signature
- * and silently dropped localhost origins when they arrived as `requestOrigin`
- * instead of `frontendOrigin`.  `resolveSetPasswordUrl` is the replacement for
- * all email-link `redirectTo` construction.
+ * Email links must NEVER use *.vercel.app on the live site — users receive
+ * novisociety.com links even when admins or env vars still reference Vercel.
  */
+
+const LOCAL_DEV_ORIGIN = "http://localhost:5173";
+const CANONICAL_LIVE_ORIGIN = "https://novisociety.com";
 
 const _isDev = !process.env.VERCEL && process.env.NODE_ENV !== "production";
 
-/** Resolved once at module load from env; never changes at runtime. */
+const CANONICAL_PRODUCTION_URL = CANONICAL_LIVE_ORIGIN;
+
+/** Resolved once at module load from explicit env only (never Vercel injection). */
 const _envBaseUrl = (() => {
   const explicit = String(process.env.APP_BASE_URL || "").trim().replace(/\/+$/, "");
   if (explicit) return explicit;
 
-  const vercel =
-    process.env.VERCEL_PROJECT_PRODUCTION_URL ||
-    process.env.VERCEL_URL ||
-    "";
-  if (vercel) return `https://${vercel}`.replace(/\/+$/, "");
-
-  return ""; // resolved at call-time from request origin or dev fallback
-})();
+const TRUSTED_FRONTEND_HOSTS = new Set([
+  "localhost",
+  "127.0.0.1",
+  "novisociety.com",
+  "www.novisociety.com",
+]);
 
 function _isValidHttpUrl(raw) {
   try {
@@ -49,29 +52,91 @@ function _origin(raw) {
   }
 }
 
+function _hostname(raw) {
+  try {
+    return new URL(String(raw || "").trim()).hostname.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function _isVercelHost(host) {
+  return String(host || "").toLowerCase().endsWith(".vercel.app");
+}
+
+function _isLocalHost(host) {
+  const normalized = String(host || "").toLowerCase();
+  return normalized === "localhost" || normalized === "127.0.0.1";
+}
+
+function _isLegacyTypoHost(host) {
+  const normalized = String(host || "").toLowerCase();
+  return normalized === "novisocity.com" || normalized === "www.novisocity.com";
+}
+
+function _isProductionAliasHost(host) {
+  return String(host || "").toLowerCase() === "www.novisociety.com";
+}
+
+function _isProductionCanonicalHost(host) {
+  return String(host || "").toLowerCase() === "novisociety.com";
+}
+
+/**
+ * Convert any candidate URL into the public frontend origin used in email links.
+ * Live deployments never emit *.vercel.app — always novisociety.com instead.
+ */
+export function toPublicFrontendBaseUrl(candidate) {
+  const normalized = _origin(candidate) || String(candidate || "").trim().replace(/\/+$/, "");
+  if (!normalized || !_isValidHttpUrl(normalized)) return "";
+
+  const host = _hostname(normalized);
+  if (_isLocalHost(host)) return normalized;
+
+  if (_isVercelHost(host)) {
+    return _isLiveDeployment || !_isDev ? CANONICAL_PRODUCTION_URL : normalized;
+  }
+
+  if (_isLegacyTypoHost(host) || _isProductionAliasHost(host) || _isProductionCanonicalHost(host)) {
+    return CANONICAL_PRODUCTION_URL;
+  }
+
+  return normalized;
+}
+
+function _isTrustedFrontendOrigin(origin) {
+  const host = _hostname(origin);
+  if (!host) return false;
+  if (TRUSTED_FRONTEND_HOSTS.has(host)) return true;
+  if (_isVercelHost(host)) return true;
+  return false;
+}
+
+function _readFrontendOriginFromReq(req) {
+  const fromBody = _origin(req?.body?.frontend_origin || req?.frontendOrigin || "");
+  if (fromBody) return fromBody;
+
+  const fromHeader = _origin(req?.headers?.origin || req?.origin || "");
+  if (fromHeader) return fromHeader;
+
+  const fromReferer = _origin(req?.headers?.referer || req?.referer || "");
+  if (fromReferer) return fromReferer;
+
+  return "";
+}
+
 /**
  * Resolve the public frontend base URL for a Supabase auth redirectTo value.
  *
  * @param {object|null} req  Express request object, or a plain {origin, referer}
  *                           shape, or null for background/cron callers.
- * @returns {string}         e.g. "https://app.novisociety.com" or "http://localhost:5173"
+ * @returns {string}         e.g. "https://novisociety.com" or "http://localhost:5173"
  */
 export function resolveAppBaseUrl(req) {
-  // 1. Operator-configured env (highest authority; always wins when set)
-  if (_envBaseUrl) return _envBaseUrl;
-
-  // 2. Origin header from the incoming request
-  const originHeader =
-    (req?.headers?.origin) ||
-    (req?.origin) ||
-    "";
-  const fromOrigin = _origin(originHeader);
-  if (fromOrigin) {
-    if (_isDev) {
-      // eslint-disable-next-line no-console
-      console.info(`[frontendBaseUrl] using request origin: ${fromOrigin}`);
-    }
-    return fromOrigin;
+  // 1. Operator-configured env (canonicalized so vercel.app → novisociety.com)
+  if (_envBaseUrl) {
+    console.info(`[frontendBaseUrl] using APP_BASE_URL: ${_envBaseUrl}`);
+    return _envBaseUrl;
   }
 
   // 3. Referer header (strip to origin)
@@ -105,7 +170,7 @@ export function resolveAppBaseUrl(req) {
  * This is the ONLY place `/set-password` should be appended.
  *
  * @param {object|null} req  Same as resolveAppBaseUrl.
- * @returns {string}         e.g. "https://app.novisociety.com/set-password"
+ * @returns {string}         e.g. "https://novisociety.com/set-password"
  */
 export function resolveSetPasswordUrl(req) {
   return `${resolveAppBaseUrl(req)}/set-password`;
