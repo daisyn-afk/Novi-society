@@ -1,5 +1,7 @@
 export const GFE_FEE_LINE_LABEL = "GFE Fees";
 
+export const DEFAULT_GFE_PLATFORM_FEE_USD = 50;
+
 function parseMoney(value) {
   const n = Number(value);
   return Number.isFinite(n) && n >= 0 ? n : 0;
@@ -8,15 +10,12 @@ function parseMoney(value) {
 export function computeTreatmentPaymentBreakdown({
   treatmentAmount,
   requiresGfe,
-  applicationFeeBps = 0,
+  gfePlatformFeeUsd = DEFAULT_GFE_PLATFORM_FEE_USD,
 }) {
   const treatment = parseMoney(treatmentAmount);
   const treatmentCents = Math.round(treatment * 100);
-  const bps = Number.isFinite(Number(applicationFeeBps)) ? Math.max(0, Math.floor(Number(applicationFeeBps))) : 0;
-  const platformFeeCents =
-    requiresGfe === true && bps > 0 && treatmentCents > 0
-      ? Math.round((treatmentCents * bps) / 10000)
-      : 0;
+  const feeUsd = requiresGfe === true ? parseMoney(gfePlatformFeeUsd) : 0;
+  const platformFeeCents = Math.round(feeUsd * 100);
   const chargeCents = treatmentCents + platformFeeCents;
 
   return {

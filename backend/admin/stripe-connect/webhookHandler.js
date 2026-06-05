@@ -1,7 +1,7 @@
 import Stripe from "stripe";
 import { getStripeConnectWebhookSecret } from "./config.js";
 import { handleConnectAccountUpdated } from "./service.js";
-import { transferPlatformFeeToLegacyAccount } from "./legacyFeeTransfer.js";
+import { processMarketplacePaymentSplit } from "./marketplaceSplitTransfers.js";
 import { handlePlatformLegacyAccountUpdated } from "./platformLegacyService.js";
 import { processAppointmentCheckoutCompletedSession } from "../appointments/paymentService.js";
 import { processAppointmentTreatmentCheckoutCompletedSession } from "../appointments/treatmentPaymentService.js";
@@ -57,7 +57,7 @@ export async function processStripeConnectWebhookEvent(event) {
   }
 
   if (event.type === "payment_intent.succeeded") {
-    await transferPlatformFeeToLegacyAccount(event.data.object);
+    await processMarketplacePaymentSplit(event.data.object);
     return;
   }
 

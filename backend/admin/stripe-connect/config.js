@@ -27,11 +27,27 @@ export function getConnectStripeClient() {
   return connectStripeClient;
 }
 
-/** Platform fee in basis points (0–10000). Default 0 = provider receives full transfer. */
+/** Flat GFE platform fee in cents. Default $50.00 */
+export const DEFAULT_GFE_PLATFORM_FEE_CENTS = 5000;
+
+export function getConnectGfePlatformFeeCents() {
+  const centsRaw = Number(process.env.STRIPE_CONNECT_GFE_PLATFORM_FEE_CENTS);
+  if (Number.isFinite(centsRaw) && centsRaw >= 0) {
+    return Math.floor(centsRaw);
+  }
+
+  const usdRaw = Number(process.env.STRIPE_CONNECT_GFE_PLATFORM_FEE_USD);
+  if (Number.isFinite(usdRaw) && usdRaw >= 0) {
+    return Math.round(usdRaw * 100);
+  }
+
+  // Legacy env: treat BPS env as disabled; flat fee is the source of truth.
+  return DEFAULT_GFE_PLATFORM_FEE_CENTS;
+}
+
+/** @deprecated Use getConnectGfePlatformFeeCents — kept for admin status compatibility */
 export function getConnectApplicationFeeBps() {
-  const raw = Number(process.env.STRIPE_CONNECT_APPLICATION_FEE_BPS);
-  if (!Number.isFinite(raw) || raw < 0) return 0;
-  return Math.min(10000, Math.floor(raw));
+  return 0;
 }
 
 export const PAYMENT_TYPE_APPOINTMENT_DEPOSIT = "appointment_deposit";
@@ -47,12 +63,15 @@ export function shouldApplyPlatformFee({ paymentType, requiresGfe } = {}) {
   return true;
 }
 
-/** Fee is calculated on the treatment subtotal only (added on top at checkout). */
-export function resolveConnectApplicationFeeCents(treatmentCents, feeContext = {}) {
+/** Flat GFE platform fee (added on top of treatment at checkout). */
+export function resolveConnectPlatformFeeCents(feeContext = {}) {
   if (!shouldApplyPlatformFee(feeContext)) return 0;
-  const bps = getConnectApplicationFeeBps();
-  if (bps <= 0 || treatmentCents <= 0) return 0;
-  return Math.round((treatmentCents * bps) / 10000);
+  return getConnectGfePlatformFeeCents();
+}
+
+/** @deprecated Alias for resolveConnectPlatformFeeCents */
+export function resolveConnectApplicationFeeCents(_treatmentCents, feeContext = {}) {
+  return resolveConnectPlatformFeeCents(feeContext);
 }
 
 export function getStripeConnectClientId() {

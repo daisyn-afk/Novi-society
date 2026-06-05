@@ -1,7 +1,7 @@
 import {
-  getConnectApplicationFeeBps,
+  getConnectGfePlatformFeeCents,
   PAYMENT_TYPE_APPOINTMENT_TREATMENT,
-  resolveConnectApplicationFeeCents,
+  resolveConnectPlatformFeeCents,
   shouldApplyPlatformFee,
 } from "./config.js";
 
@@ -28,7 +28,7 @@ export function computeTreatmentPaymentBreakdown({
     paymentType,
     requiresGfe: requiresGfe === true,
   };
-  const platformFeeCents = resolveConnectApplicationFeeCents(treatmentCents, feeContext);
+  const platformFeeCents = resolveConnectPlatformFeeCents(feeContext);
   const chargeCents = treatmentCents + platformFeeCents;
 
   return {
@@ -39,7 +39,7 @@ export function computeTreatmentPaymentBreakdown({
     platformFeeAmount: platformFeeCents / 100,
     totalChargeAmount: chargeCents / 100,
     feeApplied: platformFeeCents > 0,
-    applicationFeeBps: getConnectApplicationFeeBps(),
+    gfePlatformFeeCents: getConnectGfePlatformFeeCents(),
   };
 }
 

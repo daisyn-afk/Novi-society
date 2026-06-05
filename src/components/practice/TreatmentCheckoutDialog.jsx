@@ -201,9 +201,13 @@ export default function TreatmentCheckoutDialog({
       computeTreatmentPaymentBreakdown({
         treatmentAmount: amountDue,
         requiresGfe: appointment?.requires_gfe === true,
-        applicationFeeBps: connectStatus?.application_fee_bps ?? 0,
+        gfePlatformFeeUsd:
+          connectStatus?.gfe_platform_fee_usd ??
+          (connectStatus?.gfe_platform_fee_cents != null
+            ? connectStatus.gfe_platform_fee_cents / 100
+            : 50),
       }),
-    [amountDue, appointment?.requires_gfe, connectStatus?.application_fee_bps]
+    [amountDue, appointment?.requires_gfe, connectStatus?.gfe_platform_fee_usd, connectStatus?.gfe_platform_fee_cents]
   );
 
   const sendPayment = useMutation({

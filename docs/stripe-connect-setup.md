@@ -9,7 +9,8 @@ Provider marketplace payments (appointment **deposits** and **treatment** balanc
 | `STRIPE_CONNECT_ENABLED` | Yes (to turn on) | `true` enables Connect for marketplace checkouts |
 | `STRIPE_CONNECT_SECRET_KEY` | When enabled | Secret key (`sk_test_...` / `sk_live_...`) for the **new** Connect platform account |
 | `STRIPE_CONNECT_WEBHOOK_SECRET` | When enabled | Signing secret (`whsec_...`) for the Connect platform webhook endpoint |
-| `STRIPE_CONNECT_APPLICATION_FEE_BPS` | No | GFE platform fee in basis points on treatment subtotal (default `0`; added on top for GFE-required services) |
+| `STRIPE_CONNECT_GFE_PLATFORM_FEE_USD` | No | Flat GFE platform fee in USD (default `50`; added on top for GFE-required treatment checkouts) |
+| `STRIPE_CONNECT_GFE_PLATFORM_FEE_CENTS` | No | Optional override in cents (e.g. `5000`) |
 | `STRIPE_CONNECT_CLIENT_ID` | For provider OAuth | Connect OAuth client id (`ca_...`) — enables one-click provider connect |
 | `STRIPE_CONNECT_PROVIDER_OAUTH_REDIRECT_URI` | No | Provider OAuth callback; default `{API_BASE}/admin/integrations/stripe-connect/oauth/callback` |
 
@@ -63,7 +64,7 @@ Use the printed `whsec_...` as `STRIPE_CONNECT_WEBHOOK_SECRET` (restart the back
 STRIPE_CONNECT_ENABLED=true
 STRIPE_CONNECT_SECRET_KEY=sk_test_...
 STRIPE_CONNECT_WEBHOOK_SECRET=whsec_...
-STRIPE_CONNECT_APPLICATION_FEE_BPS=0
+STRIPE_CONNECT_GFE_PLATFORM_FEE_USD=50
 ```
 
 Leave `STRIPE_CONNECT_ENABLED=false` in production until staging E2E passes.
@@ -118,7 +119,7 @@ Until onboarding completes, patients see an error if they try to pay a deposit/t
 
 ## Legacy Stripe account (Standard OAuth) + platform fee transfer
 
-Admins can OAuth-connect the legacy Stripe account as a **Standard** connected account under the Connect platform. After marketplace payments succeed, the **application fee** can be transferred to that account.
+Admins can OAuth-connect the legacy Stripe account as a **Standard** connected account under the Connect platform. After marketplace payments succeed, the flat **GFE fee** ($50 default) can be transferred to that account.
 
 ### Additional env vars
 
@@ -126,8 +127,8 @@ Admins can OAuth-connect the legacy Stripe account as a **Standard** connected a
 |----------|---------|
 | `STRIPE_CONNECT_CLIENT_ID` | Connect OAuth client id (`ca_...`) |
 | `STRIPE_CONNECT_OAUTH_REDIRECT_URI` | Optional; default `{API_BASE}/admin/integrations/stripe-connect/platform/oauth/callback` |
-| `STRIPE_CONNECT_APPLICATION_FEE_BPS` | Platform fee in basis points (must be > 0 to collect a fee) |
-| `STRIPE_CONNECT_LEGACY_FEE_TRANSFER_ENABLED` | `true` to run `transfers.create` on `payment_intent.succeeded` |
+| `STRIPE_CONNECT_GFE_PLATFORM_FEE_USD` | Flat GFE fee added on treatment invoices for GFE-required services (default `50`) |
+| `STRIPE_CONNECT_LEGACY_FEE_TRANSFER_ENABLED` | `true` to run split `transfers.create` on `payment_intent.succeeded` |
 | `STRIPE_CONNECT_OAUTH_STATE_SECRET` | Optional HMAC secret for OAuth state |
 
 ### Stripe Dashboard (legacy OAuth)
@@ -144,14 +145,18 @@ Admins can OAuth-connect the legacy Stripe account as a **Standard** connected a
 
 ### Migration
 
-Apply `supabase/migrations/20260605120000_platform_stripe_connect_legacy.sql`.
+Apply:
 
-### Fee transfer flow
+- `supabase/migrations/20260605120000_platform_stripe_connect_legacy.sql`
+- `supabase/migrations/20260605140000_connect_marketplace_transfers.sql`
 
-1. Patient pays deposit/treatment (Connect destination charge).
-2. Provider share → auto transfer to provider Express account.
-3. `application_fee_amount` → Connect platform balance.
-4. Webhook `payment_intent.succeeded` → `transfers.create` from **platform balance** (no `source_transaction`) → legacy Standard `acct_...` (idempotent per PaymentIntent).
+### Payment split flow (platform charge)
+
+1. Patient pays on **Connect platform** (treatment + optional **GFE Fees** line item).
+2. Webhook `payment_intent.succeeded` → two `transfers.create` calls with `source_transaction`:
+   - Provider payout → provider `acct_...`
+   - GFE fee (flat $50 when service requires GFE) → legacy Standard `acct_...`
+3. Idempotency tracked in `connect_marketplace_transfers` (per PaymentIntent + purpose).
 
 ## Deferred (not in v1)
 
