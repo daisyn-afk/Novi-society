@@ -129,9 +129,10 @@ export default function ProviderPractice() {
   const [copied, setCopied] = useState(false);
   const [form, setForm] = useState(() => buildProviderProfileForm());
   const [initialized, setInitialized] = useState(false);
-  const [stripeConnectPreferRefresh, setStripeConnectPreferRefresh] = useState(
-    () => searchParams.get("stripe_connect") === "return"
-  );
+  const [stripeConnectPreferRefresh, setStripeConnectPreferRefresh] = useState(() => {
+    const sc = searchParams.get("stripe_connect");
+    return sc === "return" || sc === "connected";
+  });
 
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => base44.auth.me() });
 

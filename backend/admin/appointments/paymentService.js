@@ -10,7 +10,7 @@ import {
   PAYMENT_FLOW,
 } from "../payments/service.js";
 import { createMarketplaceCheckoutSession, retrieveMarketplaceCheckoutSession } from "../stripe-connect/checkout.js";
-import { isStripeConnectConfigured } from "../stripe-connect/config.js";
+import { isStripeConnectConfigured, PAYMENT_TYPE_APPOINTMENT_DEPOSIT } from "../stripe-connect/config.js";
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || "";
 const appBaseUrl = process.env.APP_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || "";
@@ -386,6 +386,7 @@ export async function createAppointmentDepositCheckout({
       legacyStripe: stripe,
       providerAuthUserId: String(appt.provider_id || ""),
       amountCents: depositCents,
+      feeContext: { paymentType: PAYMENT_TYPE_APPOINTMENT_DEPOSIT },
       sessionCreateParams: {
         mode: "payment",
         payment_method_types: ["card"],
