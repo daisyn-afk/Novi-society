@@ -4,7 +4,7 @@ import { MapPin, Phone, Mail, Clock, Send, CheckCircle2, Building2 } from "lucid
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { base44 } from "@/api/base44Client";
+import { adminApiRequest } from "@/api/adminApiRequest";
 import NoviFooter from "@/components/NoviFooter";
 
 const BLANK = { name: "", email: "", phone: "", subject: "", message: "" };
@@ -13,21 +13,31 @@ export default function ContactUs() {
   const [form, setForm] = useState(BLANK);
   const [submitted, setSubmitted] = useState(false);
   const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!form.name || !form.email || !form.message) return;
     setSending(true);
+    setError("");
     try {
-      await base44.integrations.Core.SendEmail({
-        to: "support@novisociety.com",
-        subject: `Contact Form: ${form.subject || "General Inquiry"} — ${form.name}`,
-        body: `Name: ${form.name}\nEmail: ${form.email}\nPhone: ${form.phone || "N/A"}\nSubject: ${form.subject || "N/A"}\n\nMessage:\n${form.message}`,
+      await adminApiRequest("/admin/contact", {
+        method: "POST",
+        body: JSON.stringify({
+          name: form.name,
+          email: form.email,
+          phone: form.phone,
+          subject: form.subject,
+          message: form.message,
+        }),
       });
       setSubmitted(true);
     } catch (err) {
       console.error(err);
-      alert("Something went wrong. Please email us directly at support@novisociety.com");
+      setError(
+        err?.message ||
+          "Something went wrong. Please email us directly at support@novisociety.com"
+      );
     } finally {
       setSending(false);
     }
@@ -140,7 +150,7 @@ export default function ContactUs() {
                   <p className="text-base max-w-sm mx-auto" style={{ color: "rgba(30,37,53,0.65)", lineHeight: 1.7 }}>
                     Thanks for reaching out. Our team will respond to <strong>{form.email}</strong> within 1–2 business days.
                   </p>
-                  <Button onClick={() => { setForm(BLANK); setSubmitted(false); }} className="mt-2 px-8 py-3 rounded-full font-bold" style={{ background: "#C8E63C", color: "#1a2540" }}>
+                  <Button onClick={() => { setForm(BLANK); setSubmitted(false); setError(""); }} className="mt-2 px-8 py-3 rounded-full font-bold" style={{ background: "#C8E63C", color: "#1a2540" }}>
                     Send Another Message
                   </Button>
                 </div>
@@ -212,6 +222,12 @@ export default function ContactUs() {
                         style={{ border: "1.5px solid rgba(0,0,0,0.1)", color: "#1e2535", fontFamily: "'DM Sans', sans-serif" }}
                       />
                     </div>
+
+                    {error && (
+                      <p className="text-sm rounded-xl px-3 py-2" style={{ background: "rgba(254,226,226,0.85)", border: "1px solid rgba(220,38,38,0.35)", color: "#991b1b" }}>
+                        {error}
+                      </p>
+                    )}
 
                     <Button
                       type="submit"

@@ -129,6 +129,10 @@ export default function ProviderPractice() {
   const [copied, setCopied] = useState(false);
   const [form, setForm] = useState(() => buildProviderProfileForm());
   const [initialized, setInitialized] = useState(false);
+  const [stripeConnectPreferRefresh, setStripeConnectPreferRefresh] = useState(() => {
+    const sc = searchParams.get("stripe_connect");
+    return sc === "return" || sc === "connected";
+  });
 
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => base44.auth.me() });
 
@@ -220,6 +224,7 @@ export default function ProviderPractice() {
     const banner = stripeConnectCallbackMessage(searchParams);
     if (!banner) return;
     if (banner.shouldRefresh) {
+      setStripeConnectPreferRefresh(true);
       void refreshStripeConnectStatus().then(() => {
         qc.invalidateQueries({ queryKey: ["stripe-connect-status"] });
       });
@@ -688,6 +693,7 @@ export default function ProviderPractice() {
           serviceTypes={serviceTypes} activeServiceIds={activeServiceIds}
           manufacturerApplications={manufacturerApplications}
           focusSection={String(searchParams.get("step") || "").trim() || undefined}
+          stripeConnectPreferRefresh={stripeConnectPreferRefresh}
         />
       </PanelModal>
 
@@ -715,6 +721,7 @@ export default function ProviderPractice() {
         onClose={() => { setDocDialog({ open: false, appt: null, existing: null }); qc.invalidateQueries(["treatment-records"]); }}
         appointment={docDialog.appt}
         existingRecord={docDialog.existing}
+        providerMe={me}
       />
 
       <PanelModal open={activePanel === "performance"} onClose={closePanel} title="Performance">

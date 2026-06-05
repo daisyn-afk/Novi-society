@@ -45,6 +45,7 @@ const { providerRepCallsRouter } = await import("./manufacturers/providerRepCall
 const { googleCalendarRouter } = await import("./manufacturers/googleCalendarRoutes.js");
 const { gmailRouter } = await import("./manufacturers/gmailRoutes.js");
 const { stripeConnectRouter } = await import("./stripe-connect/routes.js");
+const { stripeConnectPlatformRouter } = await import("./stripe-connect/platformRoutes.js");
 const { mdMessagesRouter } = await import("./md-messages/routes.js");
 const { appointmentMessagesRouter } = await import("./appointment-messages/routes.js");
 const { marketplaceRouter } = await import("./marketplace/routes.js");
@@ -54,6 +55,7 @@ const { reviewsRouter } = await import("./reviews/routes.js");
 const { complianceLogsRouter } = await import("./compliance-logs/routes.js");
 const { launchRoadmapRouter } = await import("./launch-roadmap/routes.js");
 const { emailTemplatesRouter } = await import("./email-templates/routes.js");
+const { contactRouter } = await import("./contact/routes.js");
 
 export function createAdminApp() {
   const app = express();
@@ -102,6 +104,7 @@ export function createAdminApp() {
   app.use("/admin/integrations/google-calendar", googleCalendarRouter);
   app.use("/admin/integrations/gmail", gmailRouter);
   app.use("/admin/integrations/stripe-connect", stripeConnectRouter);
+  app.use("/admin/integrations/stripe-connect/platform", stripeConnectPlatformRouter);
   app.use("/admin/md-messages", mdMessagesRouter);
   app.use("/admin/appointment-messages", appointmentMessagesRouter);
   app.use("/admin/marketplace", marketplaceRouter);
@@ -111,6 +114,7 @@ export function createAdminApp() {
   app.use("/admin/compliance-logs", complianceLogsRouter);
   app.use("/admin/launch-roadmap", launchRoadmapRouter);
   app.use("/admin/email-templates", emailTemplatesRouter);
+  app.use("/admin/contact", contactRouter);
   app.use("/functions", functionsRouter);
 
   app.use((error, _req, res, _next) => {

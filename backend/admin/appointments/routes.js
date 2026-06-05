@@ -15,6 +15,7 @@ import {
   requestAppointmentTreatmentPayment,
   syncAppointmentTreatmentPayment,
 } from "./treatmentPaymentService.js";
+import { computeTreatmentPaymentBreakdown } from "../stripe-connect/gfePlatformFee.js";
 import {
   sendAppointmentConfirmedPatientEmail,
   sendAppointmentCancelledPatientEmail,
@@ -245,6 +246,16 @@ function mapAppointmentRow(row) {
   const patientName =
     String(row.patient_name || row.patient_user_name || "").trim() || null;
   const { patient_user_email: _pe, patient_user_name: _pn, ...rest } = row;
+  const requiresGfe = row.requires_gfe === true;
+  const treatmentAmount = Number(row.treatment_amount);
+  const paymentBreakdown =
+    Number.isFinite(treatmentAmount) && treatmentAmount > 0
+      ? computeTreatmentPaymentBreakdown({
+          treatmentAmount,
+          requiresGfe,
+        })
+      : null;
+
   return {
     ...rest,
     id: row.id,
@@ -252,7 +263,11 @@ function mapAppointmentRow(row) {
     patient_name: patientName,
     service,
     service_type_name: serviceTypeName || row.service_type_name || null,
-    requires_gfe: row.requires_gfe === true,
+    requires_gfe: requiresGfe,
+    platform_fee_amount: paymentBreakdown?.platformFeeAmount ?? 0,
+    treatment_charge_total:
+      paymentBreakdown?.totalChargeAmount ??
+      (Number.isFinite(treatmentAmount) && treatmentAmount > 0 ? treatmentAmount : null),
     created_date: row.created_at,
     updated_date: row.updated_at,
   };
@@ -455,6 +470,16 @@ appointmentsRouter.patch("/:id", async (req, res, next) => {
       ? String(updates.status || "").trim().toLowerCase()
       : null;
     const prevStatusRaw = String(existing.status || "").trim().toLowerCase();
+    if (
+      nextStatusRaw === "completed" &&
+      Number(existing.deposit_amount) > 0 &&
+      String(existing.payment_status || "").toLowerCase() !== "paid"
+    ) {
+      return res.status(400).json({
+        error:
+          "The patient must pay the booking deposit before you can mark this appointment complete or log treatment.",
+      });
+    }
     const isProviderOwner =
       existing.provider_id === me.id && !hasAdminAccess(me.role);
     if (
@@ -464,7 +489,7 @@ appointmentsRouter.patch("/:id", async (req, res, next) => {
     ) {
       return res.status(400).json({
         error:
-          "Use Confirm & Request Payment so the patient pays their deposit before the appointment is confirmed.",
+          "Use Confirm Appointment so the booking deposit is recorded on this visit.",
       });
     }
     if (

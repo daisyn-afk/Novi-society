@@ -13,6 +13,18 @@ function sortByAppointmentDate(rows) {
     return av < bv ? 1 : av > bv ? -1 : 0;
   });
 }
+
+function treatmentPaymentSummary(appt) {
+  const due =
+    String(appt.treatment_payment_status || "").toLowerCase() === "awaiting_payment" &&
+    Number(appt.treatment_amount) > 0;
+  if (!due) return null;
+  const treatment = formatTreatmentChargeLabel(appt.treatment_amount);
+  const platformFee =
+    Number(appt.platform_fee_amount) > 0 ? formatTreatmentChargeLabel(appt.platform_fee_amount) : null;
+  const total = formatTreatmentChargeLabel(appt.treatment_charge_total ?? appt.treatment_amount);
+  return { treatment, platformFee, total };
+}
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,11 +33,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Calendar, Clock, User, MessageSquare, FileText, DollarSign, Star, Image as ImageIcon } from "lucide-react";
 import AppointmentGfePatientBlock from "@/components/appointments/AppointmentGfePatientBlock";
 import { appointmentGfeDisplayStatus, gfeReturnNotice } from "@/lib/appointmentGfe";
+import { GFE_FEE_LINE_LABEL, formatTreatmentChargeLabel } from "@/lib/gfePlatformFee";
 import { format } from "date-fns";
 import MessageThread from "@/components/messaging/MessageThread";
 import MessageUnreadBadge from "@/components/messaging/MessageUnreadBadge";
 import { useAppointmentMessageUnread, unreadCountForThread } from "@/hooks/useAppointmentMessageUnread";
 import ConsentFormDialog from "@/components/appointments/ConsentFormDialog";
+import { appointmentPatientCanPayDeposit } from "@/lib/appointmentDisplay";
 import { subscribeAppointmentsRefresh, broadcastAppointmentsRefresh } from "@/lib/appointmentSync";
 import { redirectToStripeCheckout } from "@/lib/redirectToStripeCheckout";
 
@@ -314,14 +328,8 @@ export default function PatientAppointments() {
           ) : (
             upcoming.map(a => {
               const depositLabel = appointmentDepositDisplay(a);
-              const treatmentDue =
-                String(a.treatment_payment_status || "").toLowerCase() === "awaiting_payment" &&
-                Number(a.treatment_amount) > 0;
-              const treatmentLabel = treatmentDue
-                ? a.treatment_amount % 1 === 0
-                  ? String(a.treatment_amount)
-                  : Number(a.treatment_amount).toFixed(2)
-                : null;
+              const paymentSummary = treatmentPaymentSummary(a);
+              const treatmentDue = Boolean(paymentSummary);
               return (
               <Card key={a.id}>
                 <CardContent className="pt-4 pb-4">
@@ -339,25 +347,29 @@ export default function PatientAppointments() {
                             {a.appointment_date ? format(new Date(a.appointment_date), "MMM d, yyyy") : ""}
                           </span>
                           {a.appointment_time && <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5" />{a.appointment_time}</span>}
-                          {a.status === "awaiting_payment" && Number(a.deposit_amount) > 0 && depositLabel && (
-                            <span className="flex items-center gap-1"><DollarSign className="w-3.5 h-3.5" />${depositLabel} booking deposit</span>
+                          {appointmentPatientCanPayDeposit(a) && depositLabel && (
+                            <span className="flex items-center gap-1"><DollarSign className="w-3.5 h-3.5" />${depositLabel} booking deposit due</span>
                           )}
                         </div>
-                        {a.status === "awaiting_payment" && Number(a.deposit_amount) > 0 && (
+                        {appointmentPatientCanPayDeposit(a) && (
                           <p className="text-xs text-purple-700 mt-2">
-                            Your provider requires a ${depositLabel} booking deposit to confirm this visit.
+                            Your provider requires a ${depositLabel} booking deposit after your visit before treatment records can be completed.
                           </p>
                         )}
-                        {treatmentDue && (
-                          <p className="text-xs mt-2 font-medium" style={{ color: "#FA6F30" }}>
-                            Treatment balance due: ${treatmentLabel}
-                          </p>
+                        {treatmentDue && paymentSummary && (
+                          <div className="text-xs mt-2 space-y-0.5 font-medium" style={{ color: "#FA6F30" }}>
+                            <p>Treatment balance due: ${paymentSummary.treatment}</p>
+                            {paymentSummary.platformFee && (
+                              <p>{GFE_FEE_LINE_LABEL}: ${paymentSummary.platformFee}</p>
+                            )}
+                            <p className="font-semibold">Total due: ${paymentSummary.total}</p>
+                          </div>
                         )}
                       </div>
                     </div>
 
                     <div className="flex gap-2 flex-wrap">
-                      {treatmentDue && (
+                      {treatmentDue && paymentSummary && (
                         <Button
                           size="sm"
                           style={{ background: "#FA6F30", color: "#fff" }}
@@ -366,10 +378,10 @@ export default function PatientAppointments() {
                           className="gap-1"
                         >
                           <DollarSign className="w-3.5 h-3.5" />
-                          {payTreatment.isPending ? "Redirecting…" : `Pay $${treatmentLabel}`}
+                          {payTreatment.isPending ? "Redirecting…" : `Pay $${paymentSummary.total}`}
                         </Button>
                       )}
-                      {a.status === "awaiting_payment" && Number(a.deposit_amount) > 0 && (
+                      {appointmentPatientCanPayDeposit(a) && (
                         <Button size="sm" style={{ background: "#7B8EC8", color: "#fff" }} onClick={() => payDeposit.mutate(a.id)} disabled={payDeposit.isPending} className="gap-1">
                           <DollarSign className="w-3.5 h-3.5" /> {payDeposit.isPending ? "Redirecting…" : `Pay $${depositLabel} Deposit`}
                         </Button>
@@ -404,14 +416,9 @@ export default function PatientAppointments() {
             past.map(a => {
               const record = getRecord(a.id);
               const reviewed = hasReviewed(a.id);
-              const treatmentDue =
-                String(a.treatment_payment_status || "").toLowerCase() === "awaiting_payment" &&
-                Number(a.treatment_amount) > 0;
-              const treatmentLabel = treatmentDue
-                ? a.treatment_amount % 1 === 0
-                  ? String(a.treatment_amount)
-                  : Number(a.treatment_amount).toFixed(2)
-                : null;
+              const depositLabel = appointmentDepositDisplay(a);
+              const paymentSummary = treatmentPaymentSummary(a);
+              const treatmentDue = Boolean(paymentSummary);
               return (
                 <Card key={a.id}>
                   <CardContent className="pt-4 pb-4">
@@ -428,11 +435,25 @@ export default function PatientAppointments() {
                               {a.appointment_date ? format(new Date(a.appointment_date), "MMM d, yyyy") : ""}
                             </span>
                           </div>
+                          {treatmentDue && paymentSummary && (
+                            <div className="text-xs mt-2 space-y-0.5 font-medium" style={{ color: "#FA6F30" }}>
+                              <p>Treatment balance due: ${paymentSummary.treatment}</p>
+                              {paymentSummary.platformFee && (
+                                <p>{GFE_FEE_LINE_LABEL}: ${paymentSummary.platformFee}</p>
+                              )}
+                              <p className="font-semibold">Total due: ${paymentSummary.total}</p>
+                            </div>
+                          )}
                         </div>
                       </div>
 
                       <div className="flex gap-2 flex-wrap">
-                        {treatmentDue && (
+                        {appointmentPatientCanPayDeposit(a) && (
+                          <Button size="sm" style={{ background: "#7B8EC8", color: "#fff" }} onClick={() => payDeposit.mutate(a.id)} disabled={payDeposit.isPending} className="gap-1">
+                            <DollarSign className="w-3.5 h-3.5" /> {payDeposit.isPending ? "Redirecting…" : `Pay $${depositLabel} Deposit`}
+                          </Button>
+                        )}
+                        {treatmentDue && paymentSummary && (
                           <Button
                             size="sm"
                             style={{ background: "#FA6F30", color: "#fff" }}
@@ -441,7 +462,7 @@ export default function PatientAppointments() {
                             className="gap-1"
                           >
                             <DollarSign className="w-3.5 h-3.5" />
-                            {payTreatment.isPending ? "Redirecting…" : `Pay $${treatmentLabel}`}
+                            {payTreatment.isPending ? "Redirecting…" : `Pay $${paymentSummary.total}`}
                           </Button>
                         )}
                         {record && (

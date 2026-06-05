@@ -9,12 +9,20 @@ import {
   markAttemptFailed,
 } from "../payments/service.js";
 import {
+  calculateCombinedInjectableTotal,
   calculateTreatmentTotal,
+  getCombinedInjectableMenus,
   loadProviderOfferings,
+  parseBillingQuantities,
   resolveOfferingForAppointment,
 } from "../lib/treatmentPricing.js";
 import { createMarketplaceCheckoutSession, retrieveMarketplaceCheckoutSession } from "../stripe-connect/checkout.js";
-import { isStripeConnectConfigured } from "../stripe-connect/config.js";
+import { isStripeConnectConfigured, PAYMENT_TYPE_APPOINTMENT_TREATMENT } from "../stripe-connect/config.js";
+import {
+  appointmentRequiresGfe,
+  buildTreatmentCheckoutLineItems,
+  computeTreatmentPaymentBreakdown,
+} from "../stripe-connect/gfePlatformFee.js";
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || "";
 const appBaseUrl = process.env.APP_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || "";
@@ -31,6 +39,99 @@ function depositAlreadyPaid(appt) {
   const status = String(appt?.payment_status || "").toLowerCase();
   if (status === "paid") return parseMoney(appt?.amount_paid || appt?.deposit_amount);
   return 0;
+}
+
+async function loadTreatmentLogContext(treatmentRecordId) {
+  const id = String(treatmentRecordId || "").trim();
+  if (!id) return null;
+  const { rows } = await query(
+    `select units_used, units_label, areas_treated
+       from public.treatment_records
+      where id = $1
+      limit 1`,
+    [id]
+  );
+  return rows[0] || null;
+}
+
+async function computeMenuTreatmentTotal({ appt, body = {}, invoice = {} }) {
+  const offerings = await loadProviderOfferings(appt.provider_id);
+  const tr = await loadTreatmentLogContext(body.treatment_record_id || appt.treatment_record_id);
+  const combinedBundle = getCombinedInjectableMenus(offerings, appt.service_type_id);
+  const isCombined = Boolean(combinedBundle);
+
+  if (isCombined && combinedBundle) {
+    const billing = parseBillingQuantities({
+      units_used: tr?.units_used ?? body.units_used ?? body.unitsUsed ?? invoice.units_used,
+      units_label: tr?.units_label ?? body.units_label ?? invoice.units_label,
+      syringes_used: body.syringes_used ?? invoice.syringes_used,
+    });
+    const unitsUsed = billing.units;
+    const syringesUsed = billing.syringes;
+    const areasTreated = tr?.areas_treated || body.areas_treated || body.areasTreated || invoice.areas_treated || [];
+    const calc = calculateCombinedInjectableTotal({
+      toxOffering: combinedBundle.tox.data,
+      fillerOffering: combinedBundle.filler.data,
+      unitsUsed,
+      syringesUsed,
+      areasTreated,
+    });
+    return {
+      resolved: { key: `${combinedBundle.stId}_combined`, data: combinedBundle.tox.data },
+      calc,
+    };
+  }
+
+  const billing = parseBillingQuantities({
+    units_used: tr?.units_used ?? body.units_used ?? body.unitsUsed ?? invoice.units_used,
+    units_label: tr?.units_label ?? body.units_label ?? invoice.units_label,
+  });
+
+  const resolved = resolveOfferingForAppointment({
+    serviceLabel: appt.service,
+    serviceTypeId: appt.service_type_id,
+    offerings,
+    injectableSubKey: invoice.injectable_sub_key || body.injectable_sub_key,
+    unitsLabel: tr?.units_label || body.units_label || body.unitsLabel || invoice.units_label,
+    unitsUsed: billing.units || billing.syringes,
+  });
+  if (!resolved?.data) return { resolved: null, calc: null };
+
+  const unitsUsed = billing.units || billing.syringes;
+  const areasTreated = tr?.areas_treated || body.areas_treated || body.areasTreated || invoice.areas_treated || [];
+  let chargeModes = invoice.charge_modes || body.charge_modes || body.chargeModes;
+  if (!chargeModes?.length && !invoice.manual_override) {
+    const hint = String(resolved.data?.pricing_model || "").toLowerCase();
+    const units = Number(unitsUsed) || 0;
+    const areaCount = Array.isArray(areasTreated) ? areasTreated.length : 0;
+    chargeModes = [];
+    if (hint.includes("per unit") || hint.includes("syringe")) {
+      if (units > 0) chargeModes.push("unit");
+      if (areaCount > 0) chargeModes.push("area");
+    } else if (hint.includes("per area")) {
+      if (areaCount > 0) chargeModes.push("area");
+    } else {
+      chargeModes.push("flat");
+    }
+    if (!chargeModes.length) {
+      if (units > 0) chargeModes.push("unit");
+      else if (areaCount > 0) chargeModes.push("area");
+      else chargeModes.push("flat");
+    }
+  }
+
+  const calc = calculateTreatmentTotal({
+    offering: resolved.data,
+    pricingModel: resolved.pricingModel,
+    unitsUsed,
+    areasTreated,
+    chargeModes,
+    unitRate: invoice.unit_rate ?? body.unit_rate ?? body.unitRate,
+    areaRate: invoice.area_rate ?? body.area_rate ?? body.areaRate,
+    flatAmount: invoice.flat_amount ?? body.flat_amount ?? body.flatAmount,
+    finalTotal: invoice.manual_override ? invoice.total : undefined,
+  });
+  return { resolved, calc };
 }
 
 export async function requestAppointmentTreatmentPayment({
@@ -64,8 +165,43 @@ export async function requestAppointmentTreatmentPayment({
     throw e;
   }
 
+  const bookingDeposit = Number(appt.deposit_amount);
+  if (
+    Number.isFinite(bookingDeposit) &&
+    bookingDeposit > 0 &&
+    String(appt.payment_status || "").toLowerCase() !== "paid"
+  ) {
+    const e = new Error(
+      "The patient must pay the booking deposit before you can send a treatment invoice for this visit."
+    );
+    e.statusCode = 409;
+    throw e;
+  }
+
+  const treatmentPayStatus = String(appt.treatment_payment_status || "").toLowerCase();
+  if (treatmentPayStatus === "paid") {
+    const e = new Error(
+      "This treatment balance has already been paid. You cannot send a new payment link for this visit."
+    );
+    e.statusCode = 409;
+    throw e;
+  }
+
   const invoice = body.invoice && typeof body.invoice === "object" ? body.invoice : {};
-  const treatmentTotal = parseMoney(invoice.total ?? body.total_amount);
+  const manualOverride = Boolean(invoice.manual_override);
+  let treatmentTotal = parseMoney(invoice.total ?? body.total_amount);
+
+  if (!manualOverride) {
+    const { resolved, calc } = await computeMenuTreatmentTotal({ appt, body, invoice });
+    if (calc && calc.total > 0) {
+      treatmentTotal = calc.total;
+      invoice.lines = calc.lines;
+      invoice.subtotal = calc.subtotal;
+      invoice.offering_key = resolved?.key || invoice.offering_key;
+      invoice.menu_pricing_model = resolved?.data?.pricing_model || invoice.menu_pricing_model;
+    }
+  }
+
   const discount = Math.min(
     parseMoney(body.discount ?? invoice.discount),
     treatmentTotal
@@ -183,7 +319,15 @@ export async function createAppointmentTreatmentCheckout({
       throw e;
     }
 
-    const { rows: apptRows } = await query(`select * from public.appointments where id = $1 limit 1`, [appointmentId]);
+    const { rows: apptRows } = await query(
+      `select a.*,
+              coalesce(st.requires_gfe, false) as requires_gfe
+         from public.appointments a
+         left join public.service_type st on st.id = a.service_type_id
+        where a.id = $1
+        limit 1`,
+      [appointmentId]
+    );
     const appt = apptRows[0];
     if (!appt) {
       const e = new Error("Appointment not found.");
@@ -208,7 +352,15 @@ export async function createAppointmentTreatmentCheckout({
       throw e;
     }
 
-    const amountCents = Math.round(amountDue * 100);
+    const requiresGfe = appointmentRequiresGfe(appt);
+    const gfeStatus = String(appt.gfe_status || "");
+    const paymentBreakdown = computeTreatmentPaymentBreakdown({
+      treatmentAmount: amountDue,
+      requiresGfe,
+      paymentType: PAYMENT_TYPE_APPOINTMENT_TREATMENT,
+    });
+    const { treatmentCents, platformFeeCents, chargeCents } = paymentBreakdown;
+
     const customerEmail = String(appt.patient_email || me.email || "").trim().toLowerCase();
     const customerName = String(appt.patient_name || me.full_name || "Patient").trim();
     const serviceLabel = String(appt.service || "Treatment").trim();
@@ -234,31 +386,35 @@ export async function createAppointmentTreatmentCheckout({
       customer_name: customerName,
       service: serviceLabel,
       deposit_credit: String(depositCredit),
+      requires_gfe: String(requiresGfe),
+      gfe_status: gfeStatus,
+      treatment_amount_cents: String(treatmentCents),
+      platform_fee_cents: String(platformFeeCents),
+      total_charge_cents: String(chargeCents),
     };
 
     const { session: checkoutSession } = await createMarketplaceCheckoutSession({
       legacyStripe: stripe,
       providerAuthUserId: String(appt.provider_id || ""),
-      amountCents,
+      amountCents: chargeCents,
+      feeContext: {
+        paymentType: PAYMENT_TYPE_APPOINTMENT_TREATMENT,
+        requiresGfe,
+        gfeStatus,
+        treatmentCents,
+      },
       sessionCreateParams: {
         mode: "payment",
         payment_method_types: ["card"],
         customer_email: customerEmail || undefined,
         success_url: successUrl,
         cancel_url: cancelUrl,
-        line_items: [
-          {
-            quantity: 1,
-            price_data: {
-              currency: "usd",
-              unit_amount: amountCents,
-              product_data: {
-                name: `Treatment — ${serviceLabel}`,
-                description,
-              },
-            },
-          },
-        ],
+        line_items: buildTreatmentCheckoutLineItems({
+          serviceLabel,
+          description,
+          treatmentCents,
+          platformFeeCents,
+        }),
         metadata: treatmentMetadata,
         payment_intent_data: { metadata: treatmentMetadata },
       },
@@ -285,6 +441,8 @@ export async function createAppointmentTreatmentCheckout({
       sessionId: checkoutSession.id,
       sessionUrl: checkoutSession.url,
       amountDue,
+      platformFeeAmount: paymentBreakdown.platformFeeAmount,
+      totalChargeAmount: paymentBreakdown.totalChargeAmount,
       depositCredit,
     };
   } catch (error) {
@@ -453,24 +611,18 @@ export async function previewTreatmentInvoice({ token, appointmentId, body = {} 
     throw e;
   }
 
-  const offerings = await loadProviderOfferings(appt.provider_id);
-  const resolved = resolveOfferingForAppointment({
-    serviceLabel: appt.service,
-    serviceTypeId: appt.service_type_id,
-    offerings,
-  });
-
-  const calc = calculateTreatmentTotal({
-    offering: resolved?.data || {},
-    pricingModel: resolved?.pricingModel,
-    unitsUsed: body.units_used ?? body.unitsUsed,
-    areasTreated: body.areas_treated || body.areasTreated || [],
-    chargeModes: body.charge_modes || body.chargeModes,
-    unitRate: body.unit_rate ?? body.unitRate,
-    areaRate: body.area_rate ?? body.areaRate,
-    flatAmount: body.flat_amount ?? body.flatAmount,
-    finalTotal: body.final_total ?? body.finalTotal,
-  });
+  const { resolved, calc } = await computeMenuTreatmentTotal({ appt, body });
+  if (!calc) {
+    return {
+      offering_key: null,
+      pricing_model: null,
+      lines: [],
+      subtotal: 0,
+      total: 0,
+      deposit_credit: depositAlreadyPaid(appt),
+      amount_due: 0,
+    };
+  }
 
   const depositCredit = depositAlreadyPaid(appt);
   const amountDue = Math.max(0, Math.round((calc.total - depositCredit) * 100) / 100);
@@ -478,6 +630,7 @@ export async function previewTreatmentInvoice({ token, appointmentId, body = {} 
   return {
     offering_key: resolved?.key || null,
     pricing_model: resolved?.pricingModel || null,
+    menu_pricing_model: resolved?.data?.pricing_model || null,
     lines: calc.lines,
     subtotal: calc.subtotal,
     total: calc.total,

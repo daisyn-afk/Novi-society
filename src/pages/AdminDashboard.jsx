@@ -1,4 +1,6 @@
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import { base44 } from "@/api/base44Client";
 import { coursePaymentsAdminApi } from "@/api/coursePaymentsAdminApi";
 import {
@@ -11,6 +13,8 @@ import { createPageUrl } from "@/utils";
 import { subDays, isAfter } from "date-fns";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { hasStaffModulePermission, normalizeRole } from "@/lib/routeAccessPolicy";
+import AdminStripeConnectPlatformCard from "@/components/admin/AdminStripeConnectPlatformCard.jsx";
+import { platformLegacyCallbackMessage } from "@/lib/stripeConnectPlatformApi";
 
 const CARD = { background: "rgba(255,255,255,0.22)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)", border: "1px solid rgba(255,255,255,0.35)", boxShadow: "0 4px 24px rgba(0,0,0,0.06)" };
 
@@ -93,6 +97,9 @@ const PIE_COLORS = ["#7B8EC8", "#C8E63C", "#FA6F30", "#DA6A63", "#2D6B7F", "#a8c
 const PAID_ENROLLMENT_STATUSES = new Set(["paid", "confirmed", "attended", "completed"]);
 
 export default function AdminDashboard() {
+  const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [platformBanner, setPlatformBanner] = useState(null);
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => base44.auth.me(), retry: false });
   const { data: preOrders = [] } = useQuery({ queryKey: ["pre-orders-dash"], queryFn: () => base44.entities.PreOrder.list("-created_date", 100) });
   const { data: enrollments = [] } = useQuery({ queryKey: ["enrollments"], queryFn: () => base44.entities.Enrollment.list() });
@@ -115,6 +122,20 @@ export default function AdminDashboard() {
   const { data: serviceTypes = [] } = useQuery({ queryKey: ["service-types"], queryFn: () => base44.entities.ServiceType.list() });
   const normalizedRole = normalizeRole(me?.role);
   const isStaff = normalizedRole === "staff";
+  const isFullAdmin = ["admin", "super_admin", "owner"].includes(normalizedRole);
+
+  useEffect(() => {
+    const banner = platformLegacyCallbackMessage(searchParams);
+    if (!banner) return;
+    setPlatformBanner(banner);
+    queryClient.invalidateQueries({ queryKey: ["stripe-connect-platform-status"] });
+    const next = new URLSearchParams(searchParams);
+    next.delete("stripe_platform_legacy");
+    next.delete("reason");
+    setSearchParams(next, { replace: true });
+    const t = setTimeout(() => setPlatformBanner(null), banner.type === "error" ? 8000 : 5000);
+    return () => clearTimeout(t);
+  }, [searchParams, setSearchParams, queryClient]);
   const hasSectionAccess = (...moduleKeys) => {
     if (!isStaff) return true;
     if (moduleKeys.length === 0) return true;
@@ -237,6 +258,21 @@ export default function AdminDashboard() {
           </Link>
         );
       })()}
+
+      {platformBanner && (
+        <div
+          className="px-5 py-4 rounded-2xl text-sm font-semibold"
+          style={
+            platformBanner.type === "success"
+              ? { background: "#dcfce7", border: "1px solid #86efac", color: "#166534" }
+              : { background: "#fee2e2", border: "1px solid #fca5a5", color: "#991b1b" }
+          }
+        >
+          {platformBanner.message}
+        </div>
+      )}
+
+      {isFullAdmin && <AdminStripeConnectPlatformCard />}
 
       {/* ── Section: Platform Overview ── */}
       <div>

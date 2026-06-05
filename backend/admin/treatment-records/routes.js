@@ -80,6 +80,28 @@ async function providerOwnsRecord(me, providerId) {
   return aliases.includes(String(me.id || ""));
 }
 
+async function assertBookingDepositPaidForAppointment(appointmentId) {
+  const id = String(appointmentId || "").trim();
+  if (!id) return;
+  const { rows } = await query(
+    `select deposit_amount, payment_status
+       from public.appointments
+      where id = $1
+      limit 1`,
+    [id]
+  );
+  const appt = rows[0];
+  if (!appt) return;
+  const deposit = Number(appt.deposit_amount);
+  if (!Number.isFinite(deposit) || deposit <= 0) return;
+  if (String(appt.payment_status || "").toLowerCase() === "paid") return;
+  const err = new Error(
+    "The patient must pay the booking deposit before you can log or submit treatment for this appointment."
+  );
+  err.statusCode = 409;
+  throw err;
+}
+
 async function supervisedProviderIdsForMd(mdAuthUserId) {
   const { rows } = await query(
     `select provider_id::text as provider_id
@@ -175,6 +197,9 @@ treatmentRecordsRouter.post("/", async (req, res, next) => {
       return res.status(403).json({ error: "Forbidden." });
     }
     const p = buildPayload({ ...body, provider_id: providerId });
+    if (!hasAdminAccess(me.role)) {
+      await assertBookingDepositPaidForAppointment(p.appointment_id);
+    }
     const { rows } = await query(
       `insert into public.treatment_records (
         appointment_id, provider_id, provider_email, provider_name,
@@ -263,6 +288,10 @@ treatmentRecordsRouter.patch("/:id", async (req, res, next) => {
       delete body.md_review_notes;
       delete body.md_reviewed_by;
       delete body.md_reviewed_at;
+
+      if (!hasAdminAccess(me.role)) {
+        await assertBookingDepositPaidForAppointment(existing.appointment_id);
+      }
 
       if (Object.prototype.hasOwnProperty.call(body, "status")) {
         const nextStatus = String(body.status || "").trim();

@@ -117,8 +117,6 @@ async function buildContractPdfDocument({ contractPdfUrl }) {
     pdfDoc,
     contentBottomY: placement.contentBottomY,
     pageHeight: placement.pageHeight,
-    firstExhibitY: placement.firstExhibitY,
-    exhibitBandTop: placement.exhibitBandTop,
   };
 }
 
@@ -126,8 +124,6 @@ async function buildContractPdfDocument({ contractPdfUrl }) {
 async function drawSignatureBelowContent(pdfDoc, {
   contentBottomY,
   pageHeight,
-  firstExhibitY = null,
-  exhibitBandTop = null,
   providerName,
   serviceTypeName,
   contractName,
@@ -138,9 +134,9 @@ async function drawSignatureBelowContent(pdfDoc, {
     throw new Error("Contract PDF has no pages.");
   }
 
-  const sigPage = pdfDoc.getPage(pdfDoc.getPageCount() - 1);
-  const pageWidth = sigPage.getWidth();
-  const pageH = pageHeight || sigPage.getHeight();
+  const lastPage = pdfDoc.getPage(pdfDoc.getPageCount() - 1);
+  const pageWidth = lastPage.getWidth();
+  const pageH = pageHeight || lastPage.getHeight();
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
@@ -153,14 +149,21 @@ async function drawSignatureBelowContent(pdfDoc, {
   const imgWidth = Math.min(220, pageWidth - marginX * 2);
   const imgHeight = Math.min(70, (embeddedImage.height / embeddedImage.width) * imgWidth);
   const blockHeight = imgHeight + 88;
-  let y = signatureBlockTopBaseline({
+  const placement = signatureBlockTopBaseline({
     contentBottomY,
     pageHeight: pageH,
     blockHeight,
-    firstExhibitY,
-    exhibitBandTop,
-    gapBelowContent: 56,
+    gapBelowContent: 28,
   });
+
+  let sigPage = lastPage;
+  let y;
+  if (placement.needsNewPage) {
+    sigPage = pdfDoc.addPage([pageWidth, pageH]);
+    y = pageH - 48;
+  } else {
+    y = placement.topBaseline;
+  }
 
   sigPage.drawText("Provider Signature", {
     x: marginX,
@@ -255,15 +258,11 @@ export async function generateAndUploadSignedMdContract({
   let pdfDoc;
   let contentBottomY;
   let pageHeight;
-  let firstExhibitY = null;
-  let exhibitBandTop = null;
   if (isUsableDocumentUrl(templateUrl)) {
     const built = await buildContractPdfDocument({ contractPdfUrl: templateUrl });
     pdfDoc = built.pdfDoc;
     contentBottomY = built.contentBottomY;
     pageHeight = built.pageHeight;
-    firstExhibitY = built.firstExhibitY;
-    exhibitBandTop = built.exhibitBandTop;
   } else {
     const built = await buildStandaloneAgreementPdf({
       agreementText: agreementBody,
@@ -286,8 +285,6 @@ export async function generateAndUploadSignedMdContract({
   await drawSignatureBelowContent(pdfDoc, {
     contentBottomY,
     pageHeight,
-    firstExhibitY,
-    exhibitBandTop,
     providerName,
     serviceTypeName,
     contractName: contractInfo.name,
