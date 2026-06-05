@@ -10,6 +10,8 @@ Provider marketplace payments (appointment **deposits** and **treatment** balanc
 | `STRIPE_CONNECT_SECRET_KEY` | When enabled | Secret key (`sk_test_...` / `sk_live_...`) for the **new** Connect platform account |
 | `STRIPE_CONNECT_WEBHOOK_SECRET` | When enabled | Signing secret (`whsec_...`) for the Connect platform webhook endpoint |
 | `STRIPE_CONNECT_APPLICATION_FEE_BPS` | No | Platform fee in basis points (default `0` = provider receives full transfer) |
+| `STRIPE_CONNECT_CLIENT_ID` | For provider OAuth | Connect OAuth client id (`ca_...`) — enables one-click provider connect |
+| `STRIPE_CONNECT_PROVIDER_OAUTH_REDIRECT_URI` | No | Provider OAuth callback; default `{API_BASE}/admin/integrations/stripe-connect/oauth/callback` |
 
 **Unchanged (legacy):**
 
@@ -66,12 +68,23 @@ STRIPE_CONNECT_APPLICATION_FEE_BPS=0
 
 Leave `STRIPE_CONNECT_ENABLED=false` in production until staging E2E passes.
 
-### 5. Provider onboarding flow
+### 5. Provider onboarding flow (Standard OAuth)
+
+When `STRIPE_CONNECT_CLIENT_ID` is set, providers connect via **Stripe OAuth** (same one-click flow as admin legacy connect). New providers without a Stripe account can create one during OAuth.
 
 1. Provider opens **Practice → Profile**.
-2. Clicks **Connect Stripe** (visible when Connect is enabled and configured).
-3. Completes Stripe Express onboarding.
+2. Clicks **Connect with Stripe**.
+3. Signs into Stripe (or creates an account) and authorizes Novi.
 4. Status shows **Stripe connected** when `charges_enabled` is true.
+
+**Stripe Dashboard:** register the provider OAuth redirect URI:
+
+- Production: `https://<your-domain>/api/admin/integrations/stripe-connect/oauth/callback`
+- Local (backend on 8787): `http://127.0.0.1:8787/admin/integrations/stripe-connect/oauth/callback`
+
+Optional override: `STRIPE_CONNECT_PROVIDER_OAUTH_REDIRECT_URI`
+
+If `STRIPE_CONNECT_CLIENT_ID` is not set, providers fall back to **Express** account-link onboarding (legacy behavior).
 
 Until onboarding completes, patients see an error if they try to pay a deposit/treatment while Connect is enabled.
 
