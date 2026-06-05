@@ -10,7 +10,7 @@
       "steps": [
         {
           "id": "license_verified",
-          "label": "License Verified by NOVI Admin",
+          "label": "Get License Verified by NOVI Admin",
           "desc": "Prerequisite for MD coverage. Upload your RN, NP, PA, or MD license for admin verification.",
           "priority": 10,
           "playbook": "license_verified",
