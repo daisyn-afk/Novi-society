@@ -58,20 +58,22 @@ export async function transferPlatformFeeToLegacyAccount(paymentIntent) {
 
   if (!row?.id) {
     const again = await findLegacyFeeTransferByPaymentIntent(paymentIntent.id);
-    if (again?.status === "created") return again;
+    if (again?.status === "created" && again?.stripe_transfer_id) return again;
     row = again;
   }
   if (!row?.id) return null;
 
   try {
+    // Transfer from platform balance (application fee). Do not use source_transaction —
+    // destination charges lock source_transaction to the provider destination account only.
     const transfer = await stripe.transfers.create(
       {
         amount: feeCents,
         currency: String(paymentIntent.currency || "usd"),
         destination: legacyAccountId,
-        ...(chargeId ? { source_transaction: chargeId } : {}),
         metadata: {
           payment_intent_id: paymentIntent.id,
+          stripe_charge_id: chargeId || "",
           checkout_type: String(paymentIntent.metadata?.checkout_type || ""),
           transfer_purpose: "platform_application_fee",
         },
