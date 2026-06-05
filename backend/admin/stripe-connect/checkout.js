@@ -17,6 +17,7 @@ export async function createMarketplaceCheckoutSession({
   providerAuthUserId,
   sessionCreateParams,
   amountCents,
+  feeContext = {},
 }) {
   const route = await assertProviderReadyForMarketplacePayments(providerAuthUserId);
 
@@ -32,12 +33,21 @@ export async function createMarketplaceCheckoutSession({
 
   const stripe = route.stripe || getConnectStripeClient();
   const destination = route.connectAccountId;
-  const feeCents = resolveConnectApplicationFeeCents(amountCents);
+  const feeCents = resolveConnectApplicationFeeCents(amountCents, feeContext);
+
+  const feeAuditMetadata = {
+    platform_fee_applied: String(feeCents > 0),
+    platform_fee_cents: String(feeCents),
+    ...(feeContext.paymentType ? { payment_type: String(feeContext.paymentType) } : {}),
+    ...(feeContext.requiresGfe != null ? { requires_gfe: String(feeContext.requiresGfe) } : {}),
+    ...(feeContext.gfeStatus != null ? { gfe_status: String(feeContext.gfeStatus) } : {}),
+  };
 
   const metadata = {
     ...(sessionCreateParams.metadata || {}),
     stripe_platform: STRIPE_PLATFORM_CONNECT,
     stripe_connect_account_id: destination,
+    ...feeAuditMetadata,
   };
 
   const paymentIntentData = {

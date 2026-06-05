@@ -34,7 +34,21 @@ export function getConnectApplicationFeeBps() {
   return Math.min(10000, Math.floor(raw));
 }
 
-export function resolveConnectApplicationFeeCents(amountCents) {
+export const PAYMENT_TYPE_APPOINTMENT_DEPOSIT = "appointment_deposit";
+export const PAYMENT_TYPE_APPOINTMENT_TREATMENT = "appointment_treatment";
+
+/**
+ * Platform fee applies only on approved-GFE treatment checkouts (never deposits).
+ */
+export function shouldApplyPlatformFee({ paymentType, requiresGfe, gfeStatus } = {}) {
+  if (paymentType !== PAYMENT_TYPE_APPOINTMENT_TREATMENT) return false;
+  if (requiresGfe !== true) return false;
+  if (String(gfeStatus || "").toLowerCase() !== "approved") return false;
+  return true;
+}
+
+export function resolveConnectApplicationFeeCents(amountCents, feeContext = {}) {
+  if (!shouldApplyPlatformFee(feeContext)) return 0;
   const bps = getConnectApplicationFeeBps();
   if (bps <= 0 || amountCents <= 0) return 0;
   return Math.min(amountCents, Math.round((amountCents * bps) / 10000));
