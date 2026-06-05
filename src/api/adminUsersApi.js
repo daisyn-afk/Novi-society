@@ -1,5 +1,9 @@
 import { adminApiRequest } from "./adminApiRequest";
 
+function browserFrontendOrigin() {
+  return typeof window !== "undefined" ? window.location.origin : "";
+}
+
 function buildQueryString(params = {}) {
   const entries = Object.entries(params).filter(
     ([, v]) => v !== undefined && v !== null && v !== ""
@@ -25,7 +29,10 @@ export const adminUsersApi = {
   create: (payload) =>
     adminApiRequest("/admin/users", {
       method: "POST",
-      body: JSON.stringify(payload)
+      body: JSON.stringify({
+        ...payload,
+        frontend_origin: payload?.frontend_origin || browserFrontendOrigin()
+      })
     }),
   update: (id, payload) =>
     adminApiRequest(`/admin/users/${id}`, {
@@ -38,6 +45,9 @@ export const adminUsersApi = {
     }),
   sendPasswordReset: (id) =>
     adminApiRequest(`/admin/users/${id}/send-password-reset`, {
-      method: "POST"
+      method: "POST",
+      body: JSON.stringify({
+        frontend_origin: browserFrontendOrigin()
+      })
     })
 };
