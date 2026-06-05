@@ -27,8 +27,8 @@ export function getConnectStripeClient() {
   return connectStripeClient;
 }
 
-/** Flat GFE platform fee in cents. Default $50.00 */
-export const DEFAULT_GFE_PLATFORM_FEE_CENTS = 5000;
+/** Flat GFE platform fee in cents. Default $1.00 */
+export const DEFAULT_GFE_PLATFORM_FEE_CENTS = 100;
 
 export function getConnectGfePlatformFeeCents() {
   const centsRaw = Number(process.env.STRIPE_CONNECT_GFE_PLATFORM_FEE_CENTS);
