@@ -12,6 +12,7 @@ import {
   ensureSignedContractForSubscription,
   finalizeMdBoardCoverage,
 } from "../mdBillingService.js";
+import { buildFilledContractPreviewBytes } from "../mdContractPdfService.js";
 import {
   isAllowlistedMdCoverageTestProvider,
   isMdCoverageTestPricingEnabled,
@@ -936,6 +937,39 @@ async function createCertificationsForEnrollment(enrollment, course, me) {
  * Stripe Checkout for recurring MD Board coverage, or immediate success when amount is $0.
  * Success return URL must match ProviderCredentialsCoverage Stripe handler (?md_payment_status=success&service_type_id=...).
  */
+functionsRouter.post("/previewMdBoardContract", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ success: false, error: "Missing bearer token." });
+    const me = await getMeFromAccessToken(token);
+    if (String(me.role || "").trim().toLowerCase() !== "provider") {
+      return res.status(403).json({ success: false, error: "Only providers can preview MD coverage contracts." });
+    }
+
+    const serviceTypeId = String(req.body?.service_type_id || "").trim();
+    if (!serviceTypeId) {
+      return res.status(400).json({ success: false, error: "service_type_id is required." });
+    }
+
+    const bytes = await buildFilledContractPreviewBytes({
+      serviceTypeId,
+      providerId: me.id,
+      providerName: me.full_name,
+    });
+    if (!bytes) {
+      return res.json({ success: false, error: "No MD contract is available for this service yet." });
+    }
+
+    return res.json({
+      success: true,
+      pdf_base64: Buffer.from(bytes).toString("base64"),
+      content_type: "application/pdf",
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => {
   try {
     const token = getBearerToken(req);

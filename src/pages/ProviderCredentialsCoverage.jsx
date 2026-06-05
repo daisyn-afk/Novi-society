@@ -310,6 +310,8 @@ export default function ProviderCredentialsCoverage() {
   const [expandedServiceCard, setExpandedServiceCard] = useState(null);
   const [pricingOpen, setPricingOpen] = useState(false);
   const [activateError, setActivateError] = useState("");
+  const [filledContractUrl, setFilledContractUrl] = useState("");
+  const [filledContractLoading, setFilledContractLoading] = useState(false);
   const canvasRef = useRef(null);
   const isDrawing = useRef(false);
   const qc = useQueryClient();
@@ -1147,6 +1149,46 @@ export default function ProviderCredentialsCoverage() {
     },
     onError: (err) => setActivateError(err?.message || "Something went wrong. Please try again."),
   });
+
+  // Build a personalized (provider details filled in) preview of the MD contract
+  // for the review/sign step so "Open full PDF" and the inline viewer show the
+  // same values that will appear on the signed agreement.
+  useEffect(() => {
+    if (!activateDialog || step !== 2 || !selectedServiceTypeId || !selectedServiceContractUrl) {
+      return undefined;
+    }
+    let cancelled = false;
+    let objectUrl = "";
+    setFilledContractUrl("");
+    setFilledContractLoading(true);
+    (async () => {
+      try {
+        const res = await base44.functions.invoke("previewMdBoardContract", {
+          service_type_id: selectedServiceTypeId,
+        });
+        const base64 = res?.data?.pdf_base64;
+        if (cancelled || !base64) return;
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+        const blob = new Blob([bytes], { type: "application/pdf" });
+        objectUrl = URL.createObjectURL(blob);
+        if (cancelled) {
+          URL.revokeObjectURL(objectUrl);
+          return;
+        }
+        setFilledContractUrl(objectUrl);
+      } catch {
+        // Fall back to the un-personalized template already shown.
+      } finally {
+        if (!cancelled) setFilledContractLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [activateDialog, step, selectedServiceTypeId, selectedServiceContractUrl]);
 
   const openCancelDialog = (sub) => {
     setCancelDialog({ open: true, sub });
@@ -2389,10 +2431,14 @@ export default function ProviderCredentialsCoverage() {
                     <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-start justify-between gap-3">
                       <div>
                         <p className="text-xs font-semibold text-slate-700 uppercase tracking-wide">1. Review agreement</p>
-                        <p className="text-xs text-slate-500 mt-0.5">Read the MD Board contract for {selectedService?.name || "this service"}.</p>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          {filledContractLoading
+                            ? "Personalizing the contract with your details…"
+                            : `Read the MD Board contract for ${selectedService?.name || "this service"}.`}
+                        </p>
                       </div>
                       <a
-                        href={getDocumentViewUrl(selectedServiceContractUrl) || selectedServiceContractUrl}
+                        href={filledContractUrl || getDocumentViewUrl(selectedServiceContractUrl) || selectedServiceContractUrl}
                         target="_blank"
                         rel="noreferrer"
                         className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg flex-shrink-0 whitespace-nowrap"
@@ -2403,7 +2449,11 @@ export default function ProviderCredentialsCoverage() {
                     </div>
                     <div className="bg-slate-100">
                       <iframe
-                        src={mdContractViewerUrl(selectedServiceContractUrl)}
+                        src={
+                          filledContractUrl
+                            ? `${filledContractUrl}#toolbar=0&navpanes=0&scrollbar=1&view=FitH`
+                            : mdContractViewerUrl(selectedServiceContractUrl)
+                        }
                         title={`${selectedService?.name || "Service"} MD Board Coverage Agreement`}
                         className="w-full h-[min(42vh,360px)] min-h-[240px] bg-white block"
                       />
