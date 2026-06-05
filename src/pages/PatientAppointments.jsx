@@ -13,6 +13,18 @@ function sortByAppointmentDate(rows) {
     return av < bv ? 1 : av > bv ? -1 : 0;
   });
 }
+
+function treatmentPaymentSummary(appt) {
+  const due =
+    String(appt.treatment_payment_status || "").toLowerCase() === "awaiting_payment" &&
+    Number(appt.treatment_amount) > 0;
+  if (!due) return null;
+  const treatment = formatTreatmentChargeLabel(appt.treatment_amount);
+  const platformFee =
+    Number(appt.platform_fee_amount) > 0 ? formatTreatmentChargeLabel(appt.platform_fee_amount) : null;
+  const total = formatTreatmentChargeLabel(appt.treatment_charge_total ?? appt.treatment_amount);
+  return { treatment, platformFee, total };
+}
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,6 +33,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Calendar, Clock, User, MessageSquare, FileText, DollarSign, Star, Image as ImageIcon } from "lucide-react";
 import AppointmentGfePatientBlock from "@/components/appointments/AppointmentGfePatientBlock";
 import { appointmentGfeDisplayStatus, gfeReturnNotice } from "@/lib/appointmentGfe";
+import { GFE_FEE_LINE_LABEL, formatTreatmentChargeLabel } from "@/lib/gfePlatformFee";
 import { format } from "date-fns";
 import MessageThread from "@/components/messaging/MessageThread";
 import MessageUnreadBadge from "@/components/messaging/MessageUnreadBadge";
@@ -314,14 +327,8 @@ export default function PatientAppointments() {
           ) : (
             upcoming.map(a => {
               const depositLabel = appointmentDepositDisplay(a);
-              const treatmentDue =
-                String(a.treatment_payment_status || "").toLowerCase() === "awaiting_payment" &&
-                Number(a.treatment_amount) > 0;
-              const treatmentLabel = treatmentDue
-                ? a.treatment_amount % 1 === 0
-                  ? String(a.treatment_amount)
-                  : Number(a.treatment_amount).toFixed(2)
-                : null;
+              const paymentSummary = treatmentPaymentSummary(a);
+              const treatmentDue = Boolean(paymentSummary);
               return (
               <Card key={a.id}>
                 <CardContent className="pt-4 pb-4">
@@ -348,16 +355,20 @@ export default function PatientAppointments() {
                             Your provider requires a ${depositLabel} booking deposit to confirm this visit.
                           </p>
                         )}
-                        {treatmentDue && (
-                          <p className="text-xs mt-2 font-medium" style={{ color: "#FA6F30" }}>
-                            Treatment balance due: ${treatmentLabel}
-                          </p>
+                        {treatmentDue && paymentSummary && (
+                          <div className="text-xs mt-2 space-y-0.5 font-medium" style={{ color: "#FA6F30" }}>
+                            <p>Treatment balance due: ${paymentSummary.treatment}</p>
+                            {paymentSummary.platformFee && (
+                              <p>{GFE_FEE_LINE_LABEL}: ${paymentSummary.platformFee}</p>
+                            )}
+                            <p className="font-semibold">Total due: ${paymentSummary.total}</p>
+                          </div>
                         )}
                       </div>
                     </div>
 
                     <div className="flex gap-2 flex-wrap">
-                      {treatmentDue && (
+                      {treatmentDue && paymentSummary && (
                         <Button
                           size="sm"
                           style={{ background: "#FA6F30", color: "#fff" }}
@@ -366,7 +377,7 @@ export default function PatientAppointments() {
                           className="gap-1"
                         >
                           <DollarSign className="w-3.5 h-3.5" />
-                          {payTreatment.isPending ? "Redirecting…" : `Pay $${treatmentLabel}`}
+                          {payTreatment.isPending ? "Redirecting…" : `Pay $${paymentSummary.total}`}
                         </Button>
                       )}
                       {a.status === "awaiting_payment" && Number(a.deposit_amount) > 0 && (
@@ -404,14 +415,8 @@ export default function PatientAppointments() {
             past.map(a => {
               const record = getRecord(a.id);
               const reviewed = hasReviewed(a.id);
-              const treatmentDue =
-                String(a.treatment_payment_status || "").toLowerCase() === "awaiting_payment" &&
-                Number(a.treatment_amount) > 0;
-              const treatmentLabel = treatmentDue
-                ? a.treatment_amount % 1 === 0
-                  ? String(a.treatment_amount)
-                  : Number(a.treatment_amount).toFixed(2)
-                : null;
+              const paymentSummary = treatmentPaymentSummary(a);
+              const treatmentDue = Boolean(paymentSummary);
               return (
                 <Card key={a.id}>
                   <CardContent className="pt-4 pb-4">
@@ -428,11 +433,20 @@ export default function PatientAppointments() {
                               {a.appointment_date ? format(new Date(a.appointment_date), "MMM d, yyyy") : ""}
                             </span>
                           </div>
+                          {treatmentDue && paymentSummary && (
+                            <div className="text-xs mt-2 space-y-0.5 font-medium" style={{ color: "#FA6F30" }}>
+                              <p>Treatment balance due: ${paymentSummary.treatment}</p>
+                              {paymentSummary.platformFee && (
+                                <p>{GFE_FEE_LINE_LABEL}: ${paymentSummary.platformFee}</p>
+                              )}
+                              <p className="font-semibold">Total due: ${paymentSummary.total}</p>
+                            </div>
+                          )}
                         </div>
                       </div>
 
                       <div className="flex gap-2 flex-wrap">
-                        {treatmentDue && (
+                        {treatmentDue && paymentSummary && (
                           <Button
                             size="sm"
                             style={{ background: "#FA6F30", color: "#fff" }}
@@ -441,7 +455,7 @@ export default function PatientAppointments() {
                             className="gap-1"
                           >
                             <DollarSign className="w-3.5 h-3.5" />
-                            {payTreatment.isPending ? "Redirecting…" : `Pay $${treatmentLabel}`}
+                            {payTreatment.isPending ? "Redirecting…" : `Pay $${paymentSummary.total}`}
                           </Button>
                         )}
                         {record && (

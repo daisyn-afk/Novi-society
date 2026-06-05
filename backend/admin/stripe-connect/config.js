@@ -38,20 +38,21 @@ export const PAYMENT_TYPE_APPOINTMENT_DEPOSIT = "appointment_deposit";
 export const PAYMENT_TYPE_APPOINTMENT_TREATMENT = "appointment_treatment";
 
 /**
- * Platform fee applies only on approved-GFE treatment checkouts (never deposits).
+ * GFE platform fee applies on treatment checkouts when the service requires GFE (never deposits).
+ * Patient exam completion/approval does not affect whether the fee applies.
  */
-export function shouldApplyPlatformFee({ paymentType, requiresGfe, gfeStatus } = {}) {
+export function shouldApplyPlatformFee({ paymentType, requiresGfe } = {}) {
   if (paymentType !== PAYMENT_TYPE_APPOINTMENT_TREATMENT) return false;
   if (requiresGfe !== true) return false;
-  if (String(gfeStatus || "").toLowerCase() !== "approved") return false;
   return true;
 }
 
-export function resolveConnectApplicationFeeCents(amountCents, feeContext = {}) {
+/** Fee is calculated on the treatment subtotal only (added on top at checkout). */
+export function resolveConnectApplicationFeeCents(treatmentCents, feeContext = {}) {
   if (!shouldApplyPlatformFee(feeContext)) return 0;
   const bps = getConnectApplicationFeeBps();
-  if (bps <= 0 || amountCents <= 0) return 0;
-  return Math.min(amountCents, Math.round((amountCents * bps) / 10000));
+  if (bps <= 0 || treatmentCents <= 0) return 0;
+  return Math.round((treatmentCents * bps) / 10000);
 }
 
 export function getStripeConnectClientId() {

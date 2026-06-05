@@ -18,6 +18,11 @@ import {
 } from "../lib/treatmentPricing.js";
 import { createMarketplaceCheckoutSession, retrieveMarketplaceCheckoutSession } from "../stripe-connect/checkout.js";
 import { isStripeConnectConfigured, PAYMENT_TYPE_APPOINTMENT_TREATMENT } from "../stripe-connect/config.js";
+import {
+  appointmentRequiresGfe,
+  buildTreatmentCheckoutLineItems,
+  computeTreatmentPaymentBreakdown,
+} from "../stripe-connect/gfePlatformFee.js";
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || "";
 const appBaseUrl = process.env.APP_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || "";
@@ -301,7 +306,15 @@ export async function createAppointmentTreatmentCheckout({
       throw e;
     }
 
-    const { rows: apptRows } = await query(`select * from public.appointments where id = $1 limit 1`, [appointmentId]);
+    const { rows: apptRows } = await query(
+      `select a.*,
+              coalesce(st.requires_gfe, false) as requires_gfe
+         from public.appointments a
+         left join public.service_type st on st.id = a.service_type_id
+        where a.id = $1
+        limit 1`,
+      [appointmentId]
+    );
     const appt = apptRows[0];
     if (!appt) {
       const e = new Error("Appointment not found.");
@@ -326,7 +339,15 @@ export async function createAppointmentTreatmentCheckout({
       throw e;
     }
 
-    const amountCents = Math.round(amountDue * 100);
+    const requiresGfe = appointmentRequiresGfe(appt);
+    const gfeStatus = String(appt.gfe_status || "");
+    const paymentBreakdown = computeTreatmentPaymentBreakdown({
+      treatmentAmount: amountDue,
+      requiresGfe,
+      paymentType: PAYMENT_TYPE_APPOINTMENT_TREATMENT,
+    });
+    const { treatmentCents, platformFeeCents, chargeCents } = paymentBreakdown;
+
     const customerEmail = String(appt.patient_email || me.email || "").trim().toLowerCase();
     const customerName = String(appt.patient_name || me.full_name || "Patient").trim();
     const serviceLabel = String(appt.service || "Treatment").trim();
@@ -342,26 +363,6 @@ export async function createAppointmentTreatmentCheckout({
         ? `${serviceLabel} with ${providerName} (booking deposit of $${depositCredit.toFixed(2)} already applied)`
         : `${serviceLabel} with ${providerName}`;
 
-    let requiresGfe = false;
-    if (appt.service_type_id) {
-      const { rows: serviceTypeRows } = await query(
-        `select requires_gfe from public.service_type where id = $1 limit 1`,
-        [appt.service_type_id]
-      );
-      requiresGfe = serviceTypeRows[0]?.requires_gfe === true;
-    } else {
-      const gfeStatusesRequiringExam = new Set([
-        "not_sent",
-        "pending",
-        "approved",
-        "deferred",
-        "not_available",
-      ]);
-      requiresGfe = gfeStatusesRequiringExam.has(String(appt.gfe_status || "").toLowerCase());
-    }
-
-    const gfeStatus = String(appt.gfe_status || "");
-
     const treatmentMetadata = {
       checkout_type: "appointment_treatment",
       appointment_id: appointmentId,
@@ -374,16 +375,20 @@ export async function createAppointmentTreatmentCheckout({
       deposit_credit: String(depositCredit),
       requires_gfe: String(requiresGfe),
       gfe_status: gfeStatus,
+      treatment_amount_cents: String(treatmentCents),
+      platform_fee_cents: String(platformFeeCents),
+      total_charge_cents: String(chargeCents),
     };
 
     const { session: checkoutSession } = await createMarketplaceCheckoutSession({
       legacyStripe: stripe,
       providerAuthUserId: String(appt.provider_id || ""),
-      amountCents,
+      amountCents: chargeCents,
       feeContext: {
         paymentType: PAYMENT_TYPE_APPOINTMENT_TREATMENT,
         requiresGfe,
         gfeStatus,
+        treatmentCents,
       },
       sessionCreateParams: {
         mode: "payment",
@@ -391,19 +396,12 @@ export async function createAppointmentTreatmentCheckout({
         customer_email: customerEmail || undefined,
         success_url: successUrl,
         cancel_url: cancelUrl,
-        line_items: [
-          {
-            quantity: 1,
-            price_data: {
-              currency: "usd",
-              unit_amount: amountCents,
-              product_data: {
-                name: `Treatment — ${serviceLabel}`,
-                description,
-              },
-            },
-          },
-        ],
+        line_items: buildTreatmentCheckoutLineItems({
+          serviceLabel,
+          description,
+          treatmentCents,
+          platformFeeCents,
+        }),
         metadata: treatmentMetadata,
         payment_intent_data: { metadata: treatmentMetadata },
       },
@@ -430,6 +428,8 @@ export async function createAppointmentTreatmentCheckout({
       sessionId: checkoutSession.id,
       sessionUrl: checkoutSession.url,
       amountDue,
+      platformFeeAmount: paymentBreakdown.platformFeeAmount,
+      totalChargeAmount: paymentBreakdown.totalChargeAmount,
       depositCredit,
     };
   } catch (error) {

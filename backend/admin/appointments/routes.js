@@ -15,6 +15,7 @@ import {
   requestAppointmentTreatmentPayment,
   syncAppointmentTreatmentPayment,
 } from "./treatmentPaymentService.js";
+import { computeTreatmentPaymentBreakdown } from "../stripe-connect/gfePlatformFee.js";
 import {
   sendAppointmentConfirmedPatientEmail,
   sendAppointmentCancelledPatientEmail,
@@ -245,6 +246,16 @@ function mapAppointmentRow(row) {
   const patientName =
     String(row.patient_name || row.patient_user_name || "").trim() || null;
   const { patient_user_email: _pe, patient_user_name: _pn, ...rest } = row;
+  const requiresGfe = row.requires_gfe === true;
+  const treatmentAmount = Number(row.treatment_amount);
+  const paymentBreakdown =
+    Number.isFinite(treatmentAmount) && treatmentAmount > 0
+      ? computeTreatmentPaymentBreakdown({
+          treatmentAmount,
+          requiresGfe,
+        })
+      : null;
+
   return {
     ...rest,
     id: row.id,
@@ -252,7 +263,11 @@ function mapAppointmentRow(row) {
     patient_name: patientName,
     service,
     service_type_name: serviceTypeName || row.service_type_name || null,
-    requires_gfe: row.requires_gfe === true,
+    requires_gfe: requiresGfe,
+    platform_fee_amount: paymentBreakdown?.platformFeeAmount ?? 0,
+    treatment_charge_total:
+      paymentBreakdown?.totalChargeAmount ??
+      (Number.isFinite(treatmentAmount) && treatmentAmount > 0 ? treatmentAmount : null),
     created_date: row.created_at,
     updated_date: row.updated_at,
   };

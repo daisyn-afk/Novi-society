@@ -9,7 +9,7 @@ Provider marketplace payments (appointment **deposits** and **treatment** balanc
 | `STRIPE_CONNECT_ENABLED` | Yes (to turn on) | `true` enables Connect for marketplace checkouts |
 | `STRIPE_CONNECT_SECRET_KEY` | When enabled | Secret key (`sk_test_...` / `sk_live_...`) for the **new** Connect platform account |
 | `STRIPE_CONNECT_WEBHOOK_SECRET` | When enabled | Signing secret (`whsec_...`) for the Connect platform webhook endpoint |
-| `STRIPE_CONNECT_APPLICATION_FEE_BPS` | No | Platform fee in basis points (default `0` = provider receives full transfer) |
+| `STRIPE_CONNECT_APPLICATION_FEE_BPS` | No | GFE platform fee in basis points on treatment subtotal (default `0`; added on top for GFE-required services) |
 | `STRIPE_CONNECT_CLIENT_ID` | For provider OAuth | Connect OAuth client id (`ca_...`) — enables one-click provider connect |
 | `STRIPE_CONNECT_PROVIDER_OAUTH_REDIRECT_URI` | No | Provider OAuth callback; default `{API_BASE}/admin/integrations/stripe-connect/oauth/callback` |
 

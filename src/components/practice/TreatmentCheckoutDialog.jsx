@@ -25,6 +25,8 @@ import {
   pricingModelLabel,
   resolveOfferingForAppointment,
 } from "@/lib/treatmentPricing";
+import { fetchStripeConnectStatus } from "@/lib/stripeConnectApi";
+import { computeTreatmentPaymentBreakdown, GFE_FEE_LINE_LABEL } from "@/lib/gfePlatformFee";
 
 export default function TreatmentCheckoutDialog({
   open,
@@ -45,6 +47,12 @@ export default function TreatmentCheckoutDialog({
     initialData: providerProfile ?? undefined,
   });
   const offerings = (me ?? providerProfile)?.service_offerings_v2 || {};
+  const { data: connectStatus } = useQuery({
+    queryKey: ["stripe-connect-status", "checkout-fee-bps"],
+    queryFn: () => fetchStripeConnectStatus({ live: false }),
+    enabled: open,
+    staleTime: 60_000,
+  });
   const combinedBundle = useMemo(
     () => getCombinedInjectableMenus(offerings, appointment?.service_type_id),
     [offerings, appointment?.service_type_id]
@@ -188,6 +196,16 @@ export default function TreatmentCheckoutDialog({
     depositPaid: depositCredit,
   });
 
+  const paymentBreakdown = useMemo(
+    () =>
+      computeTreatmentPaymentBreakdown({
+        treatmentAmount: amountDue,
+        requiresGfe: appointment?.requires_gfe === true,
+        applicationFeeBps: connectStatus?.application_fee_bps ?? 0,
+      }),
+    [amountDue, appointment?.requires_gfe, connectStatus?.application_fee_bps]
+  );
+
   const sendPayment = useMutation({
     mutationFn: () =>
       appointmentsApi.requestTreatmentPayment(appointment.id, {
@@ -216,9 +234,12 @@ export default function TreatmentCheckoutDialog({
         },
       }),
     onSuccess: () => {
+      const chargeTotal = paymentBreakdown.totalChargeAmount;
+      const feeNote =
+        paymentBreakdown.feeApplied ? ` (includes ${formatUsd(paymentBreakdown.platformFeeAmount)} ${GFE_FEE_LINE_LABEL})` : "";
       toast({
         title: "Payment link sent",
-        description: `Patient will be notified to pay ${formatUsd(amountDue)}.`,
+        description: `Patient will be notified to pay ${formatUsd(chargeTotal)}${feeNote}.`,
         duration: 6000,
       });
       onSent?.();
@@ -393,16 +414,35 @@ export default function TreatmentCheckoutDialog({
         )}
 
         <div
-          className="flex items-center justify-between rounded-xl px-4 py-3"
+          className="rounded-xl px-4 py-3 space-y-2"
           style={{ background: "rgba(250,111,48,0.08)", border: "1px solid rgba(250,111,48,0.25)" }}
         >
-          <span className="text-sm font-semibold flex items-center gap-1.5" style={{ color: "#243257" }}>
-            <DollarSign className="w-4 h-4" style={{ color: "#FA6F30" }} />
-            Patient pays
-          </span>
-          <span className="text-xl font-bold" style={{ color: "#FA6F30" }}>
-            {formatUsd(amountDue)}
-          </span>
+          <div className="flex items-center justify-between text-sm">
+            <span style={{ color: "#243257" }}>Treatment</span>
+            <span className="font-semibold" style={{ color: "#243257" }}>
+              {formatUsd(amountDue)}
+            </span>
+          </div>
+          {paymentBreakdown.feeApplied && (
+            <div className="flex items-center justify-between text-sm">
+              <span style={{ color: "#243257" }}>{GFE_FEE_LINE_LABEL}</span>
+              <span className="font-semibold" style={{ color: "#243257" }}>
+                {formatUsd(paymentBreakdown.platformFeeAmount)}
+              </span>
+            </div>
+          )}
+          <div
+            className="flex items-center justify-between pt-2 border-t"
+            style={{ borderColor: "rgba(250,111,48,0.2)" }}
+          >
+            <span className="text-sm font-semibold flex items-center gap-1.5" style={{ color: "#243257" }}>
+              <DollarSign className="w-4 h-4" style={{ color: "#FA6F30" }} />
+              Patient pays
+            </span>
+            <span className="text-xl font-bold" style={{ color: "#FA6F30" }}>
+              {formatUsd(paymentBreakdown.totalChargeAmount)}
+            </span>
+          </div>
         </div>
 
         <div className="flex gap-2 justify-end pt-2">
