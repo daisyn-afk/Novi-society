@@ -1,4 +1,5 @@
 import {
+  getConnectApplicationFeeBps,
   getConnectStripeClient,
   getFrontendBaseUrl,
   getProviderStripeConnectOAuthRedirectUri,
@@ -57,6 +58,7 @@ export function mapStripeConnectStatus(row, { configured = isStripeConnectConfig
     enabled: isStripeConnectEnabled(),
     configured,
     oauth_configured: isStripeConnectOAuthConfigured(),
+    application_fee_bps: getConnectApplicationFeeBps(),
     account_id: accountId || null,
     charges_enabled: chargesEnabled,
     payouts_enabled: payoutsEnabled,
