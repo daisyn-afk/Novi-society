@@ -211,7 +211,7 @@ export default function TreatmentCheckoutDialog({
           connectStatus?.gfe_platform_fee_usd ??
           (connectStatus?.gfe_platform_fee_cents != null
             ? connectStatus.gfe_platform_fee_cents / 100
-            : 50),
+            : 1),
       }),
     [amountDue, appointment?.requires_gfe, connectStatus?.gfe_platform_fee_usd, connectStatus?.gfe_platform_fee_cents]
   );

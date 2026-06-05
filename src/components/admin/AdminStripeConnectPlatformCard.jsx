@@ -115,7 +115,7 @@ export default function AdminStripeConnectPlatformCard() {
                   Fee transfer {feeTransferActive ? "active" : "inactive"}
                 </span>
                 <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full" style={{ background: "rgba(123,142,200,0.15)", color: "#5b6b9a" }}>
-                  GFE fee ${Number(status.gfe_platform_fee_usd ?? 50).toFixed(0)} flat
+                  GFE fee ${Number(status.gfe_platform_fee_usd ?? 1).toFixed(0)} flat
                 </span>
               </div>
               {!status.fee_transfer_env_enabled && (
