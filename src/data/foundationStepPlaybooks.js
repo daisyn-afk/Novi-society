@@ -56,9 +56,8 @@ export const FOUNDATION_STEP_PLAYBOOKS = {
       "This is one of two paths to MD coverage — add a Medical Director to your MPI OR carry Malpractice Insurance that includes Medical Director coverage (see the Malpractice Insurance step).",
     primaryCta: {
       type: "internal",
-      label: "Add MD to Practice Profile",
-      navigate_to: "ProviderPractice",
-      navigate_params: "?tab=profile",
+      label: "Apply for MD Coverage",
+      navigate_to: "ProviderCredentialsCoverage",
     },
     allowMarkDone: false,
   },
