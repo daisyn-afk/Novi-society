@@ -61,6 +61,7 @@ import {
   createAppointmentDepositCheckout,
   processAppointmentCheckoutCompletedSession,
 } from "../appointments/paymentService.js";
+import { resolveAppBaseUrl } from "../lib/frontendBaseUrl.js";
 
 export { processAppointmentCheckoutCompletedSession };
 
@@ -1063,7 +1064,7 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
       signedByName: me.full_name,
     });
 
-    const base = String(appBaseUrl || "http://localhost:5173").replace(/\/$/, "");
+    const base = resolveAppBaseUrl(req).replace(/\/$/, "");
     const successParams = new URLSearchParams({
       md_payment_status: "success",
       service_type_id: serviceTypeId,

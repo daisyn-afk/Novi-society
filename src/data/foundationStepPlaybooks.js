@@ -451,18 +451,8 @@ export const FOUNDATION_STEP_PLAYBOOKS = {
     ],
     whatHappensNext:
       "Cherry reviews the provider application and onboarding eligibility directly.",
-    infoLists: [
-      {
-        title: "Resources",
-        items: ["Cherry social assets", "One-pager", "Financing education", "Provider onboarding materials"],
-      },
-    ],
     resources: [
       { label: "Cherry × NOVI onboarding", url: "https://withcherry.com/partnerships/novi-society" },
-      {
-        label: "Cherry setup guide (doc)",
-        url: "https://docs.google.com/document/d/1JS7xrf8LYJAs_MXGoZG_SSJf_LHhmGfBdu3qtyM_1xc/edit?usp=sharing",
-      },
     ],
     statusOptions: [
       { key: "not_started", label: "Not Started" },
