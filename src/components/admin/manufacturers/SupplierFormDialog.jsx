@@ -22,7 +22,7 @@ import NetworkContractsSection from "./sections/NetworkContractsSection";
 import ApplicationFormBuilderSection from "./sections/ApplicationFormBuilderSection";
 import BusinessRulesSection from "./sections/BusinessRulesSection";
 
-import { EMPTY_SUPPLIER, EMPTY_NETWORK_TIER } from "./constants";
+import { EMPTY_SUPPLIER, EMPTY_NETWORK_TIER, normalizeCustomFieldForClient } from "./constants";
 
 const SECTIONS = [
   {
@@ -102,14 +102,15 @@ function mergeSupplier(initial) {
       ...tier,
       requires_contract_signature: tier?.requires_contract_signature === true,
     })),
-    custom_fields:
+    custom_fields: (
       initial?.custom_fields ??
       (initial?.required_fields || []).map((label) => ({
         label,
         input_type: "text",
         placeholder: "",
         required: true,
-      })),
+      }))
+    ).map(normalizeCustomFieldForClient),
     required_fields: initial?.required_fields ?? [],
     required_service_type_ids: initial?.required_service_type_ids ?? [],
     jotform_application_url: src.jotform_application_url ?? "",
@@ -129,6 +130,7 @@ export default function SupplierFormDialog({
   const [uploadingKey, setUploadingKey] = useState(null);
   const [pendingUploads, setPendingUploads] = useState(0);
   const formRef = useRef(form);
+  const formBuilderRef = useRef(null);
 
   // Reset form only when the dialog opens for a different supplier (or new),
   // not on every parent re-render — otherwise in-flight logo/cover uploads get wiped.
@@ -187,24 +189,35 @@ export default function SupplierFormDialog({
     return null;
   }, [form.name, form.account_rep_email, form.required_service_type_ids]);
 
-  const buildPayload = (source) => ({
-    ...source,
-    logo_url: String(source.logo_url || "").trim(),
-    cover_image_url: String(source.cover_image_url || "").trim(),
-    jotform_application_url: String(source.jotform_application_url || "").trim(),
-    required_fields: (source.custom_fields || [])
-      .filter((f) => f.required)
-      .map((f) => f.label),
-  });
+  const buildPayload = (source) => {
+    const customFields = (source.custom_fields || []).map(normalizeCustomFieldForClient);
+    return {
+      ...source,
+      logo_url: String(source.logo_url || "").trim(),
+      cover_image_url: String(source.cover_image_url || "").trim(),
+      jotform_application_url: String(source.jotform_application_url || "").trim(),
+      custom_fields: customFields,
+      required_fields: customFields.filter((f) => f.required).map((f) => f.label),
+    };
+  };
 
   const handleSubmit = () => {
     if (uploadsInFlight) return;
-    setForm((currentForm) => {
-      const payload = buildPayload(currentForm);
-      formRef.current = currentForm;
-      onSubmit(payload);
-      return currentForm;
-    });
+
+    let source = { ...formRef.current };
+    const flushedFields = formBuilderRef.current?.flushPendingDraft?.();
+    if (flushedFields?.length) {
+      const customFields = flushedFields.map(normalizeCustomFieldForClient);
+      source = {
+        ...source,
+        custom_fields: customFields,
+        required_fields: customFields.filter((f) => f.required).map((f) => f.label),
+      };
+      formRef.current = source;
+      setForm(source);
+    }
+
+    onSubmit(buildPayload(source));
   };
 
   return (
@@ -229,12 +242,20 @@ export default function SupplierFormDialog({
               open={openSection === id}
               onToggle={() => setOpenSection(openSection === id ? null : id)}
             >
-              <Component
-                form={form}
-                update={update}
-                onUploadFile={handleUploadFile}
-                uploadingKey={uploadingKey}
-              />
+              {id === "form" ? (
+                <ApplicationFormBuilderSection
+                  ref={formBuilderRef}
+                  form={form}
+                  update={update}
+                />
+              ) : (
+                <Component
+                  form={form}
+                  update={update}
+                  onUploadFile={handleUploadFile}
+                  uploadingKey={uploadingKey}
+                />
+              )}
             </SectionShell>
           ))}
         </div>

@@ -211,8 +211,16 @@ export async function buildManufacturerApplicationPayload({ me, formData = {} })
       ? formData.additional_fields
       : {};
 
+  const customFieldResponses =
+    additionalFromForm.custom_field_responses &&
+    typeof additionalFromForm.custom_field_responses === "object" &&
+    !Array.isArray(additionalFromForm.custom_field_responses)
+      ? additionalFromForm.custom_field_responses
+      : {};
+
   const additionalFields = {
     ...additionalFromForm,
+    custom_field_responses: customFieldResponses,
     provider_id: providerId || additionalFromForm.provider_id || null,
     phone: practicePhone || null,
     practice_address_full: practiceAddress || null,

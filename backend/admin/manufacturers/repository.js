@@ -60,12 +60,17 @@ function asJsonbArray(value) {
   return Array.isArray(value) ? value : [];
 }
 
-// Custom fields shape: { label, input_type, placeholder, required }
+// Custom fields shape: { label, input_type, placeholder, options, required }
 function normalizeCustomField(field = {}) {
+  const inputType = asString(field.input_type, "text");
+  const options = Array.isArray(field.options)
+    ? [...new Set(field.options.map((o) => asString(o, "").trim()).filter(Boolean))]
+    : [];
   return {
     label: asString(field.label, "").trim(),
-    input_type: asString(field.input_type, "text"),
+    input_type: inputType,
     placeholder: asString(field.placeholder, ""),
+    options: inputType === "select" ? options : [],
     required: asBoolean(field.required, false),
   };
 }
@@ -562,10 +567,20 @@ function applicationRowToApi(row) {
     license_state: row.license_state ?? "",
     supervising_physician_name: row.supervising_physician_name ?? "",
     supervising_physician_email: row.supervising_physician_email ?? "",
-    additional_fields:
-      row.additional_fields && typeof row.additional_fields === "object"
-        ? row.additional_fields
-        : {},
+    additional_fields: (() => {
+      const raw = row.additional_fields;
+      if (!raw) return {};
+      if (typeof raw === "object" && !Array.isArray(raw)) return raw;
+      if (typeof raw === "string") {
+        try {
+          const parsed = JSON.parse(raw);
+          return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+        } catch {
+          return {};
+        }
+      }
+      return {};
+    })(),
     status: row.status ?? "submitted",
     admin_notes: row.admin_notes ?? "",
     submitted_at: row.submitted_at,

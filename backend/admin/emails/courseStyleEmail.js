@@ -262,6 +262,42 @@ export function buildHighlightBlock({ title, body, tone = "info" } = {}) {
           </div>`;
 }
 
+export function buildCustomFieldsQABlock({ title = "Application form responses", items = [] } = {}) {
+  const cleaned = (Array.isArray(items) ? items : [])
+    .map((item) => {
+      const question = String(item?.question ?? item?.label ?? "").trim();
+      const answer = item?.answer == null ? "" : String(item.answer).trim();
+      if (!question || !answer) return null;
+      return { question, answer };
+    })
+    .filter(Boolean);
+  if (!cleaned.length) return "";
+
+  const itemsHtml = cleaned
+    .map(({ question, answer }, idx) => {
+      const divider =
+        idx > 0
+          ? "border-top:1px solid rgba(0,0,0,0.06);padding-top:14px;margin-top:14px;"
+          : "";
+      return `
+            <div style="${divider}">
+              <p style="margin:0 0 6px;font-size:13px;color:#6b7280;line-height:1.5"><strong style="color:#2D6B7F">Q:</strong> ${escapeHtml(question)}</p>
+              <p style="margin:0;font-size:14px;color:#111827;line-height:1.6"><strong style="color:#4a6b10">A:</strong> ${escapeHtml(answer)}</p>
+            </div>`;
+    })
+    .join("");
+
+  const titleHtml = title
+    ? `<p style="margin:0 0 16px;font-size:13px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#2D6B7F">${escapeHtml(title)}</p>`
+    : "";
+
+  return `
+          <div style="background:#f9f8f6;border-radius:12px;padding:24px;margin-bottom:24px;border:1px solid rgba(0,0,0,0.07)">
+            ${titleHtml}
+            ${itemsHtml}
+          </div>`;
+}
+
 export function buildMessageQuoteBlock(message = "") {
   const trimmed = String(message || "").trim();
   if (!trimmed) return "";

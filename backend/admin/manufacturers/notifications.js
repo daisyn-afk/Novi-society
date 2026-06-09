@@ -129,7 +129,75 @@ const SKIP_ADDITIONAL_KEYS = new Set([
   "verified_licenses",
   "certifications",
   "supervising_md_details",
+  "custom_field_responses",
 ]);
+
+function normalizeAdditionalFields(raw) {
+  if (!raw) return {};
+  if (typeof raw === "object" && !Array.isArray(raw)) return raw;
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+function resolveCustomFieldResponses(additional) {
+  const raw = additional?.custom_field_responses;
+  if (!raw) return {};
+  if (typeof raw === "object" && !Array.isArray(raw)) return raw;
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+function formatCustomFieldResponseValue(value, inputType = "") {
+  if (value === null || value === undefined || value === "") return null;
+  if (inputType === "checkbox") {
+    if (value === true) return "Yes";
+    if (value === false) return "No";
+  }
+  return String(value).trim() || null;
+}
+
+function buildCustomFieldResponseItems(responses = {}, customFields = []) {
+  if (!responses || typeof responses !== "object") return [];
+
+  const fieldMetaByLabel = new Map(
+    (Array.isArray(customFields) ? customFields : [])
+      .map((field) => [String(field?.label || "").trim(), field])
+      .filter(([label]) => label)
+  );
+
+  const orderedLabels = [
+    ...(Array.isArray(customFields) ? customFields : [])
+      .map((field) => String(field?.label || "").trim())
+      .filter((label) => label && Object.hasOwn(responses, label)),
+    ...Object.keys(responses).filter((label) => !fieldMetaByLabel.has(label)),
+  ];
+
+  const items = [];
+  for (const label of orderedLabels) {
+    const field = fieldMetaByLabel.get(label);
+    const answer = formatCustomFieldResponseValue(
+      responses[label],
+      field?.input_type || ""
+    );
+    if (!answer) continue;
+    items.push({ question: label, answer });
+  }
+  return items;
+}
 
 function formatAdditionalValue(value) {
   if (value === null || value === undefined || value === "") return null;
@@ -157,12 +225,12 @@ function formatAdditionalValue(value) {
   return String(value);
 }
 
-function buildSummaryBullets({ application, manufacturer }) {
-  const additional = application?.additional_fields || {};
+function buildApplicationEmailContent({ application, manufacturer }) {
+  const additional = normalizeAdditionalFields(application?.additional_fields);
   const providerId =
     application?.provider_id || additional.provider_id || null;
 
-  const lines = [
+  const summaryLines = [
     `Supplier: ${manufacturer?.name || application?.manufacturer_name || "Unknown"}`,
     providerId ? `NOVI Provider ID: ${providerId}` : null,
     `Provider: ${application?.provider_name || application?.provider_email || "Unknown"}`,
@@ -193,9 +261,15 @@ function buildSummaryBullets({ application, manufacturer }) {
     const formatted = formatAdditionalValue(value);
     if (!formatted) continue;
     const label = ADDITIONAL_FIELD_LABELS[key] || key.replace(/_/g, " ");
-    lines.push(`${label}: ${formatted}`);
+    summaryLines.push(`${label}: ${formatted}`);
   }
-  return lines;
+
+  const customFieldItems = buildCustomFieldResponseItems(
+    resolveCustomFieldResponses(additional),
+    manufacturer?.custom_fields
+  );
+
+  return { summaryLines, customFieldItems };
 }
 
 function normalizeOrderItemsForEmail(orderItems) {
@@ -218,7 +292,10 @@ export async function notifyAdminsOfManufacturerApplication({
   const admins = await listAdminRecipients();
   if (!admins.length) return;
 
-  const summary = buildSummaryBullets({ application, manufacturer });
+  const { summaryLines, customFieldItems } = buildApplicationEmailContent({
+    application,
+    manufacturer,
+  });
   const manufacturerName = manufacturer?.name || application?.manufacturer_name || "Unknown";
 
   for (const admin of admins) {
@@ -239,7 +316,8 @@ export async function notifyAdminsOfManufacturerApplication({
       to: adminEmail,
       first_name: greetingName,
       manufacturer_name: manufacturerName,
-      summary_lines: summary,
+      summary_lines: summaryLines,
+      custom_field_items: customFieldItems,
     });
   }
 }
@@ -251,12 +329,16 @@ export async function notifyRepOfManufacturerApplication({
   const repEmail = String(manufacturer?.account_rep_email || "").trim();
   if (!repEmail || !isValidEmail(repEmail)) return;
 
-  const summary = buildSummaryBullets({ application, manufacturer });
+  const { summaryLines, customFieldItems } = buildApplicationEmailContent({
+    application,
+    manufacturer,
+  });
   await sendEmailFromTemplate("manufacturer_application_rep", {
     to: repEmail,
     first_name: manufacturer?.account_rep_name || "there",
     manufacturer_name: manufacturer?.name || application?.manufacturer_name || "your account",
-    summary_lines: summary,
+    summary_lines: summaryLines,
+    custom_field_items: customFieldItems,
   });
 }
 

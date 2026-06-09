@@ -3,12 +3,13 @@ import { Link } from "react-router-dom";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   CheckCircle, XCircle, CheckCircle2, ChevronDown, ChevronUp,
   TrendingUp, MapPin, FileText, GraduationCap, Sparkles,
   ShieldCheck, Lock, ArrowRight,
 } from "lucide-react";
-import { PRICE_TIER_LABELS } from "@/components/admin/manufacturers/constants";
+import { PRICE_TIER_LABELS, normalizeCustomFieldForClient } from "@/components/admin/manufacturers/constants";
 import { toExternalUrl } from "@/lib/utils";
 import { createPageUrl } from "@/utils";
 import {
@@ -563,6 +564,41 @@ function CustomFieldInput({ field, value, onChange, showError }) {
     );
   }
 
+  if (field.input_type === "select") {
+    const options = (field.options || []).filter((o) => String(o || "").trim());
+    const selectPlaceholder = placeholder || "Select an option";
+
+    return (
+      <div>
+        <label htmlFor={inputId} className="text-xs font-semibold mb-1.5 block" style={{ color: "#1e2535" }}>
+          {label}{field.required ? <span style={{ color: "#DA6A63" }}> *</span> : null}
+        </label>
+        {options.length > 0 ? (
+          <Select value={value || undefined} onValueChange={onChange}>
+            <SelectTrigger
+              id={inputId}
+              className="h-10 text-sm"
+              style={errorStyle}
+            >
+              <SelectValue placeholder={selectPlaceholder} />
+            </SelectTrigger>
+            <SelectContent>
+              {options.map((option) => (
+                <SelectItem key={option} value={option}>
+                  {option}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : (
+          <p className="text-xs px-3 py-2 rounded-lg" style={{ color: "rgba(30,37,53,0.5)", background: "rgba(30,37,53,0.04)" }}>
+            No options configured for this field.
+          </p>
+        )}
+      </div>
+    );
+  }
+
   const inputType = field.input_type === "number" ? "number"
     : field.input_type === "email" ? "email"
     : field.input_type === "phone" ? "tel"
@@ -894,7 +930,9 @@ export function SupplierCoverageBlockedButton({ className = "" }) {
 }
 
 export function SupplierCustomFieldsForm({ fields = [], values = {}, onChange, showErrors = false }) {
-  const activeFields = (fields || []).filter((f) => f.label?.trim());
+  const activeFields = (fields || [])
+    .map(normalizeCustomFieldForClient)
+    .filter((f) => f.label?.trim());
   if (!activeFields.length) return null;
 
   const setValue = (label, val) => onChange({ ...values, [label]: val });

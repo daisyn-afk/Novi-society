@@ -523,6 +523,8 @@ A NOVI provider just applied to one of your suppliers. Full details are below â€
 
 {{summary_list}}
 
+{{custom_fields_block}}
+
 {{cta_button}}`,
     cta_label: "Open admin portal",
     cta_url_path: "/AdminManufacturers",
@@ -530,6 +532,7 @@ A NOVI provider just applied to one of your suppliers. Full details are below â€
       { tag: "{{first_name}}", desc: "Admin first name" },
       { tag: "{{manufacturer_name}}", desc: "Manufacturer / supplier name" },
       { tag: "{{summary_list}}", desc: "Application summary bullets" },
+      { tag: "{{custom_fields_block}}", desc: "Boxed Q&A list of custom form responses" },
       { tag: "{{cta_button}}", desc: "Primary CTA button" },
     ],
     sample_vars: {
@@ -539,6 +542,10 @@ A NOVI provider just applied to one of your suppliers. Full details are below â€
         "Provider: Sam Provider",
         "Email: sam@example.com",
         "Practice: Glow Med Spa",
+      ],
+      custom_field_items: [
+        { question: "Best deal", answer: "Option 2" },
+        { question: "What is your name?", answer: "Sam Provider" },
       ],
     },
   },
@@ -552,11 +559,14 @@ A NOVI provider just applied to one of your suppliers. Full details are below â€
 
 A verified NOVI provider has applied to open an account with {{manufacturer_name}}. Their credentials, license, and practice details are below â€” reply directly to follow up.
 
-{{summary_list}}`,
+{{summary_list}}
+
+{{custom_fields_block}}`,
     placeholders: [
       { tag: "{{first_name}}", desc: "Rep first name" },
       { tag: "{{manufacturer_name}}", desc: "Manufacturer name" },
       { tag: "{{summary_list}}", desc: "Application summary bullets" },
+      { tag: "{{custom_fields_block}}", desc: "Boxed Q&A list of custom form responses" },
     ],
     sample_vars: {
       first_name: "Alex",
@@ -564,6 +574,10 @@ A verified NOVI provider has applied to open an account with {{manufacturer_name
       summary_lines: [
         "Provider: Sam Provider",
         "Email: sam@example.com",
+      ],
+      custom_field_items: [
+        { question: "Best deal", answer: "Option 2" },
+        { question: "What is your name?", answer: "Sam Provider" },
       ],
     },
   },
