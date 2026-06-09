@@ -22,7 +22,7 @@ export function filterProtocolDocuments(docs) {
     .filter((doc) => doc.name && isUsableDocumentUrl(doc.url));
 }
 
-/** Protocol docs configured on a service type (tier-aware). */
+/** Protocol docs configured on a service type (tier first, then root-level list). */
 export function resolveProtocolDocumentsFromServiceType(serviceTypeRow, coverageTier = 1) {
   const tiers = Array.isArray(serviceTypeRow?.coverage_tiers) ? serviceTypeRow.coverage_tiers : [];
   const tierNum = Number(coverageTier) || 1;
@@ -31,7 +31,8 @@ export function resolveProtocolDocumentsFromServiceType(serviceTypeRow, coverage
       tiers.find((t) => Number(t?.tier_number) === tierNum) ||
       tiers.find((t) => Number(t?.tier_number) === 1) ||
       tiers[0];
-    return filterProtocolDocuments(tierDef?.protocol_document_urls);
+    const tierDocs = filterProtocolDocuments(tierDef?.protocol_document_urls);
+    if (tierDocs.length) return tierDocs;
   }
   return filterProtocolDocuments(serviceTypeRow?.protocol_document_urls);
 }
@@ -49,13 +50,9 @@ export async function fetchServiceTypeProtocolSnapshot(serviceTypeId, coverageTi
   return resolveProtocolDocumentsFromServiceType(rows[0], coverageTier);
 }
 
-export function resolveProtocolDocumentsForSubscription(subscriptionRow, serviceTypeRow) {
-  const snapshot = filterProtocolDocuments(subscriptionRow?.protocol_document_urls);
-  if (snapshot.length) return snapshot;
-  return resolveProtocolDocumentsFromServiceType(
-    serviceTypeRow,
-    subscriptionRow?.coverage_tier || 1
-  );
+/** Signed protocol list only — frozen on md_subscription at MD agreement sign-up. */
+export function resolveProtocolDocumentsForSubscription(subscriptionRow) {
+  return filterProtocolDocuments(subscriptionRow?.protocol_document_urls);
 }
 
 export async function snapshotProtocolDocumentsOnSubscription(subscriptionId, serviceTypeId, coverageTier = 1) {
@@ -63,7 +60,6 @@ export async function snapshotProtocolDocumentsOnSubscription(subscriptionId, se
   const stId = String(serviceTypeId || "").trim();
   if (!id || !stId) return [];
   const docs = await fetchServiceTypeProtocolSnapshot(stId, coverageTier);
-  if (!docs.length) return [];
   await query(
     `update public.md_subscription
         set protocol_document_urls = $2::jsonb,

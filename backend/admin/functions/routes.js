@@ -6,6 +6,7 @@ import { notifyAdminsOfPendingCourseCertIssuance } from "../certificationNotific
 import { sendEmailFromTemplate } from "../emails/renderTemplate.js";
 import { listEligibleMedicalDirectorsForService } from "../mdEligibleDirectors.js";
 import { submitMdBoardCoverageAssignment } from "../mdAssignmentService.js";
+import { formatDisplayTime } from "../timeDisplay.js";
 import {
   attachCheckoutSessionToMdSubscription,
   createPendingMdSubscriptionForCheckout,
@@ -466,12 +467,7 @@ function fmtDateLocal(dateString) {
 
 function fmtTimeLabel(timeSlot) {
   if (!timeSlot || typeof timeSlot !== "string") return "Waitlisted";
-  const [hRaw, mRaw] = timeSlot.slice(0, 5).split(":");
-  const h = Number(hRaw);
-  const m = Number(mRaw);
-  if (!Number.isFinite(h) || !Number.isFinite(m)) return timeSlot;
-  const ampm = h >= 12 ? "PM" : "AM";
-  return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${ampm}`;
+  return formatDisplayTime(timeSlot) || timeSlot;
 }
 
 function extractUsStateAbbr(raw) {
@@ -2966,6 +2962,83 @@ async function handleComplianceChecks(_req, res, next) {
     return next(error);
   }
 }
+
+/** Patient Journey Premium — $19/mo Stripe subscription */
+functionsRouter.post("/createPatientSubscription", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ error: "Missing bearer token." });
+    const me = await getMeFromAccessToken(token);
+    const role = String(me.role || "").toLowerCase();
+    if (role !== "patient" && !hasAdminAccess(me.role)) {
+      return res.status(403).json({ error: "Only patients can subscribe to Journey Premium." });
+    }
+    const { createPatientSubscriptionCheckout } = await import("../patient-journey/subscriptionService.js");
+    const result = await createPatientSubscriptionCheckout({
+      patientId: me.id,
+      patientEmail: me.email,
+      req,
+    });
+    return res.json({ url: result.url, session_id: result.session_id });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+functionsRouter.post("/cancelPatientSubscription", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ error: "Missing bearer token." });
+    const me = await getMeFromAccessToken(token);
+    const { cancelPatientSubscriptionForUser } = await import("../patient-journey/subscriptionService.js");
+    const result = await cancelPatientSubscriptionForUser({ patientId: me.id });
+    return res.json(result);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+functionsRouter.post("/adverseReactionEscalation", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ error: "Missing bearer token." });
+    await getMeFromAccessToken(token);
+    const treatmentRecordId = String(req.body?.treatment_record_id || "").trim();
+    if (!treatmentRecordId) {
+      return res.status(400).json({ error: "treatment_record_id is required." });
+    }
+    const { processAdverseReactionEscalation } = await import(
+      "../patient-journey/adverseReactionEscalationService.js"
+    );
+    const result = await processAdverseReactionEscalation({ treatmentRecordId });
+    return res.json(result);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+functionsRouter.post("/patientCheckinEscalation", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ error: "Missing bearer token." });
+    await getMeFromAccessToken(token);
+    const body = req.body || {};
+    const journeyId = String(body.journey_id || "").trim();
+    const checkin = body.checkin || {};
+    if (!journeyId) {
+      return res.status(400).json({ error: "journey_id is required." });
+    }
+    const { processPatientCheckinEscalation } = await import("../patient-journey/escalationService.js");
+    const result = await processPatientCheckinEscalation({
+      journeyId,
+      checkin,
+      treatmentRecordId: body.treatment_record_id || null,
+    });
+    return res.json(result);
+  } catch (error) {
+    return next(error);
+  }
+});
 
 functionsRouter.post("/checkExpirations", requireCronOrAdminCompliance, handleCheckExpirations);
 functionsRouter.get("/checkExpirations", requireCronOrAdminCompliance, handleCheckExpirations);

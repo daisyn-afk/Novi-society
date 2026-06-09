@@ -1,5 +1,6 @@
 import { Clock, MapPin, Award } from "lucide-react";
 import { formatMinAvailableSeatsLabel, isCourseFullySoldOut } from "@/lib/sessionDateSeats";
+import { formatSessionScheduleLine } from "@/lib/appointmentDisplay";
 
 const categoryMeta = {
   botox: { color: "#DA6A63", image: "https://images.unsplash.com/photo-1576091160550-2173dba999ef?w=1000&q=80" },
@@ -16,7 +17,9 @@ const categoryMeta = {
 export default function CourseBrowseCard({ course, isEnrolled, onSelect, enrollmentStatusLoading = false }) {
   const meta = categoryMeta[course?.category] || categoryMeta.other;
   const heroImage = course.cover_image_url || meta.image;
-  const nextDate = course.session_dates?.find(d => d.date)?.date;
+  const nextSession = course.session_dates?.find((d) => d.date);
+  const nextDate = nextSession?.date;
+  const nextScheduleLine = formatSessionScheduleLine(nextSession);
   const seatsLabel = formatMinAvailableSeatsLabel(course);
   const isFull = isCourseFullySoldOut(course);
 
@@ -96,6 +99,11 @@ export default function CourseBrowseCard({ course, isEnrolled, onSelect, enrollm
             <span>{new Date(nextDate).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
           )}
         </div>
+        {nextScheduleLine && (
+          <p className="text-xs whitespace-nowrap overflow-hidden text-ellipsis" style={{ color: "rgba(30,37,53,0.55)" }}>
+            {nextScheduleLine}
+          </p>
+        )}
 
         {/* Location */}
         {course.location && (

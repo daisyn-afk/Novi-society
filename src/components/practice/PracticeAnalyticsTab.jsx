@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { format, subMonths, startOfMonth, endOfMonth, eachMonthOfInterval, isWithinInterval } from "date-fns";
+import { parseAppointmentDateLocal } from "@/lib/appointmentDisplay";
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import {
   DollarSign, Users, Star, Repeat, TrendingUp, TrendingDown,
@@ -130,10 +131,16 @@ export default function PracticeAnalyticsTab({ appointments, reviews }) {
 
   const totalRevenue = completedAppts.reduce((s, a) => s + (a.amount_paid || 0), 0);
   const thisMonthRevenue = completedAppts
-    .filter(a => a.appointment_date && isWithinInterval(new Date(a.appointment_date), thisMonth))
+    .filter((a) => {
+      const d = parseAppointmentDateLocal(a.appointment_date);
+      return d && isWithinInterval(d, thisMonth);
+    })
     .reduce((s, a) => s + (a.amount_paid || 0), 0);
   const prevMonthRevenue = completedAppts
-    .filter(a => a.appointment_date && isWithinInterval(new Date(a.appointment_date), prevMonth))
+    .filter((a) => {
+      const d = parseAppointmentDateLocal(a.appointment_date);
+      return d && isWithinInterval(d, prevMonth);
+    })
     .reduce((s, a) => s + (a.amount_paid || 0), 0);
   const revTrend = prevMonthRevenue > 0 ? Math.round(((thisMonthRevenue - prevMonthRevenue) / prevMonthRevenue) * 100) : null;
   const avgPerAppt = completedAppts.length > 0 ? Math.round(totalRevenue / completedAppts.length) : 0;
@@ -170,7 +177,10 @@ export default function PracticeAnalyticsTab({ appointments, reviews }) {
   // ── Monthly chart data ──
   const monthlyData = useMemo(() => last6.map(month => {
     const start = startOfMonth(month), end = endOfMonth(month);
-    const inMonth = appointments.filter(a => a.appointment_date && isWithinInterval(new Date(a.appointment_date), { start, end }));
+    const inMonth = appointments.filter((a) => {
+      const d = parseAppointmentDateLocal(a.appointment_date);
+      return d && isWithinInterval(d, { start, end });
+    });
     const comp = inMonth.filter(a => a.status === "completed");
     return {
       month: format(month, "MMM"),

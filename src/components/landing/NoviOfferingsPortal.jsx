@@ -21,6 +21,7 @@ import {
   normalizeScheduledSessionDatesEntries,
   parseSessionDatesField,
 } from "@/lib/sessionDateSeats";
+import { formatSessionScheduleLine } from "@/lib/appointmentDisplay";
 import {
   Sparkles, ArrowRight, Check,
   Clock, MapPin, ChevronRight, Calendar, CheckCircle2, User, Upload, ImageIcon,
@@ -515,11 +516,9 @@ export default function NoviOfferingsPortal({ children }) {
                                 <p className="font-semibold text-sm" style={{ color: dateSoldOut ? muted : strong }}>
                                   {new Date(String(session.date || session.session_date || "").split("T")[0] + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
                                 </p>
-                                {(session.start_time || session.end_time) && (
-                                  <p className="text-xs mt-0.5" style={{ color: dateSoldOut ? muted : "rgba(30,37,53,0.5)" }}>
-                                    {session.start_time}
-                                    {session.end_time ? ` – ${session.end_time}` : ""}
-                                    {session.location ? ` · ${session.location}` : ""}
+                                {(session.start_time || session.end_time || session.location) && (
+                                  <p className="text-xs mt-0.5 whitespace-nowrap overflow-hidden text-ellipsis" style={{ color: dateSoldOut ? muted : "rgba(30,37,53,0.5)" }}>
+                                    {formatSessionScheduleLine(session)}
                                   </p>
                                 )}
                                 {!dateSoldOut && (

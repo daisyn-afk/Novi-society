@@ -17,6 +17,7 @@ import {
 import NoviFooter from "@/components/NoviFooter";
 import { redirectToStripeCheckout } from "@/lib/redirectToStripeCheckout";
 import { normalizeScheduledSessionDatesEntries, parseSessionDatesField } from "@/lib/sessionDateSeats";
+import { formatDisplayTime, formatTimeRange } from "@/lib/appointmentDisplay";
 
 const MODEL_SIGNUP_PRICE = "$50";
 const MODEL_SIGNUP_PRICE_DECIMAL = "$50.00";
@@ -727,7 +728,7 @@ export default function ModelSignup() {
                           </div>
                           {(s.start_time || s.end_time) && (
                             <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.45)" }}>
-                              {s.start_time}{s.end_time ? ` – ${s.end_time}` : ""}
+                              {formatTimeRange(s.start_time, s.end_time)}
                               {s.location ? ` · ${s.location}` : ""}
                             </p>
                           )}

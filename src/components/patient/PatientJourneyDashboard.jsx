@@ -9,11 +9,14 @@ import {
 } from "lucide-react";
 import { format, differenceInDays, parseISO } from "date-fns";
 import DailyCheckIn from "./DailyCheckIn";
+import JourneyInsights from "./JourneyInsights";
+import { calculateCheckinStreak } from "@/lib/journeyStreak";
 
 const TABS = [
   { id: "overview", label: "Overview" },
   { id: "recovery", label: "Recovery" },
   { id: "scan", label: "NOVI Scan" },
+  { id: "insights", label: "Insights" },
   { id: "history", label: "History" },
 ];
 
@@ -76,8 +79,7 @@ export default function PatientJourneyDashboard({
   const daysSince = latestAppt?.completed_at ? differenceInDays(new Date(), parseISO(latestAppt.completed_at)) : null;
   const recoveryScore = latestCheckin?.ai_texture_score ?? 85;
 
-  // Calculate streak
-  const streak = checkins.length > 0 ? checkins.length : 0;
+  const streak = calculateCheckinStreak(checkins);
   const checkedInToday = latestCheckin?.date === format(new Date(), "yyyy-MM-dd");
 
   const { data: aftercarePlan } = useQuery({
@@ -524,48 +526,108 @@ export default function PatientJourneyDashboard({
         </div>
       )}
 
+      {/* ── INSIGHTS TAB ── */}
+      {activeTab === "insights" && (
+        <JourneyInsights
+          journey={journey}
+          appointments={appointments}
+          isPremium={isPremium}
+          onUpgrade={onUpgrade}
+        />
+      )}
+
       {/* ── HISTORY TAB ── */}
       {activeTab === "history" && (
-        <div className="space-y-3">
-          {completedAppts.length === 0 ? (
-            <div className="py-14 text-center">
-              <Clock className="w-8 h-8 mx-auto mb-3" style={{ color: "rgba(30,37,53,0.12)" }} />
-              <p className="text-sm" style={{ color: "rgba(30,37,53,0.4)" }}>No treatment history yet</p>
+        <div className="space-y-5">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-widest mb-3 px-1" style={{ color: "rgba(30,37,53,0.35)", letterSpacing: "0.12em" }}>
+              Treatments
+            </p>
+            {completedAppts.length === 0 ? (
+              <div className="py-10 text-center rounded-2xl" style={{ background: "#fff", border: "1px solid rgba(30,37,53,0.07)" }}>
+                <Clock className="w-8 h-8 mx-auto mb-3" style={{ color: "rgba(30,37,53,0.12)" }} />
+                <p className="text-sm" style={{ color: "rgba(30,37,53,0.4)" }}>No treatment history yet</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {completedAppts.map((a, idx) => (
+                  <div key={a.id} className="p-4 rounded-2xl flex items-center gap-4"
+                    style={{ background: "#fff", border: "1px solid rgba(30,37,53,0.07)" }}>
+                    <div className="flex flex-col items-center self-stretch">
+                      <div className="w-2.5 h-2.5 rounded-full flex-shrink-0 mt-1"
+                        style={{ background: idx === 0 ? "#b8d060" : "rgba(30,37,53,0.12)" }} />
+                      {idx < completedAppts.length - 1 && (
+                        <div className="w-px flex-1 mt-1" style={{ background: "rgba(30,37,53,0.07)", minHeight: 20 }} />
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-semibold text-gray-900 truncate">{a.service}</p>
+                        {idx === 0 && <span className="text-xs px-2 py-0.5 rounded-full flex-shrink-0 font-semibold"
+                          style={{ background: "rgba(180,210,100,0.12)", color: "#5a7a20" }}>Latest</span>}
+                      </div>
+                      <p className="text-xs mt-0.5 flex items-center gap-1.5" style={{ color: "rgba(30,37,53,0.4)" }}>
+                        <Calendar className="w-3 h-3" />
+                        {a.completed_at ? format(parseISO(a.completed_at), "MMM d, yyyy") : a.appointment_date}
+                        {a.provider_name && <> · {a.provider_name}</>}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {(journey?.scans?.length > 0) && (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-widest mb-3 px-1" style={{ color: "rgba(30,37,53,0.35)", letterSpacing: "0.12em" }}>
+                NOVI Scans
+              </p>
+              <div className="space-y-2">
+                {[...(journey.scans || [])].reverse().map((scan, idx) => (
+                  <div key={`${scan.scan_url}-${idx}`} className="p-4 rounded-2xl flex items-center gap-3"
+                    style={{ background: "#fff", border: "1px solid rgba(30,37,53,0.07)" }}>
+                    {scan.scan_url && (
+                      <img src={scan.scan_url} alt="" className="w-12 h-12 rounded-xl object-cover flex-shrink-0" />
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-gray-900">{scan.label || `Scan ${journey.scans.length - idx}`}</p>
+                      <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.4)" }}>
+                        {scan.ai_analysis?.overall_skin_health || "Analyzed"}
+                        {scan.scanned_at && <> · {format(parseISO(scan.scanned_at), "MMM d, yyyy")}</>}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
-          ) : (
-            <>
-              {completedAppts.map((a, idx) => (
-                <div key={a.id} className="p-4 rounded-2xl flex items-center gap-4"
-                  style={{ background: "#fff", border: "1px solid rgba(30,37,53,0.07)" }}>
-                  <div className="flex flex-col items-center self-stretch">
-                    <div className="w-2.5 h-2.5 rounded-full flex-shrink-0 mt-1"
-                      style={{ background: idx === 0 ? "#b8d060" : "rgba(30,37,53,0.12)" }} />
-                    {idx < completedAppts.length - 1 && (
-                      <div className="w-px flex-1 mt-1" style={{ background: "rgba(30,37,53,0.07)", minHeight: 20 }} />
+          )}
+
+          {(checkins.length > 0) && (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-widest mb-3 px-1" style={{ color: "rgba(30,37,53,0.35)", letterSpacing: "0.12em" }}>
+                Recovery Check-ins
+              </p>
+              <div className="space-y-2">
+                {[...checkins].reverse().slice(0, 10).map((c, idx) => (
+                  <div key={`${c.date}-${idx}`} className="p-4 rounded-2xl"
+                    style={{ background: "#fff", border: "1px solid rgba(30,37,53,0.07)" }}>
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <p className="text-sm font-semibold text-gray-900">Day {c.day_number} · {c.treatment_name || "Recovery"}</p>
+                      {c.ai_recovery_stage && (
+                        <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: "rgba(123,142,200,0.1)", color: "#7B8EC8" }}>
+                          {c.ai_recovery_stage}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs" style={{ color: "rgba(30,37,53,0.4)" }}>{c.date}</p>
+                    {c.ai_feedback && (
+                      <p className="text-xs mt-2 leading-relaxed" style={{ color: "rgba(30,37,53,0.55)" }}>{c.ai_feedback}</p>
                     )}
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="text-sm font-semibold text-gray-900 truncate">{a.service}</p>
-                      {idx === 0 && <span className="text-xs px-2 py-0.5 rounded-full flex-shrink-0 font-semibold"
-                        style={{ background: "rgba(180,210,100,0.12)", color: "#5a7a20" }}>Latest</span>}
-                    </div>
-                    <p className="text-xs mt-0.5 flex items-center gap-1.5" style={{ color: "rgba(30,37,53,0.4)" }}>
-                      <Calendar className="w-3 h-3" />
-                      {a.completed_at ? format(parseISO(a.completed_at), "MMM d, yyyy") : a.appointment_date}
-                      {a.provider_name && <> · {a.provider_name}</>}
-                    </p>
-                  </div>
-                </div>
-              ))}
-              {completedAppts.length >= 5 && (
-                <button onClick={() => navigate(createPageUrl("PatientAppointments"))}
-                  className="w-full py-3 text-xs font-semibold text-center"
-                  style={{ color: "rgba(30,37,53,0.35)" }}>
-                  View all in Appointments →
-                </button>
-              )}
-            </>
+                ))}
+              </div>
+            </div>
           )}
         </div>
       )}

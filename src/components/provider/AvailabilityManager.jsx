@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Clock, Plus, Trash2 } from "lucide-react";
+import { formatTimeRange } from "@/lib/appointmentDisplay";
 
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
@@ -78,7 +79,7 @@ export default function AvailabilityManager() {
                   {slots.map(slot => (
                     <div key={slot.id} className="flex items-center gap-2 text-sm">
                       <Badge variant={slot.is_active ? "default" : "outline"} className="font-mono text-xs">
-                        {slot.start_time} - {slot.end_time}
+                        {formatTimeRange(slot.start_time, slot.end_time)}
                       </Badge>
                       <Switch
                         checked={slot.is_active}

@@ -50,10 +50,20 @@ export default function CourseTemplateForm({ open, onOpenChange, form, setForm, 
     return (selectedSupplyList?.items || []).filter((item) => ids.has(item.id));
   }, [selectedSupplyList, form.trainer_prep_supply_item_ids]);
 
-  const eligibleServiceTypes = serviceTypes.filter(s =>
-    s.is_active && s.md_agreement_text?.trim() &&
-    ((s.scope_rules?.length > 0) || (s.allowed_areas?.length > 0))
+  /** Active rows from Admin → Service Types (membership catalog). */
+  const liveServiceTypes = useMemo(
+    () =>
+      (serviceTypes || [])
+        .filter((s) => s.is_active !== false)
+        .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""))),
+    [serviceTypes]
   );
+
+  const isServiceTypeScopeReady = (s) =>
+    Boolean(
+      s?.md_agreement_text?.trim() &&
+        ((s?.scope_rules?.length > 0) || (s?.allowed_areas?.length > 0))
+    );
 
   const addCert = () => {
     if (!newCert.service_type_id) return;
@@ -378,23 +388,52 @@ export default function CourseTemplateForm({ open, onOpenChange, form, setForm, 
                 <p className="font-semibold text-sm text-slate-800">Linked Services (Scope Coverage)</p>
                 <p className="text-xs text-slate-500 mt-0.5">Completing this course qualifies providers to apply for MD coverage on these services.</p>
               </div>
-              {serviceTypes.length === 0 && (
+              {liveServiceTypes.length === 0 && (
                 <div className="rounded-xl p-3 text-xs text-amber-700 bg-amber-50 border border-amber-200">
-                  ⚠️ No service types configured yet. Go to <strong>Service Types</strong> in the admin sidebar first.
+                  ⚠️ No active service types yet. Add them under <strong>Admin → Service Types</strong> first.
                 </div>
               )}
+              {liveServiceTypes.length > 0 && (
+                <p className="text-xs text-slate-500">
+                  Pulled from active memberships in <strong>Admin → Service Types</strong>.
+                </p>
+              )}
               <div className="flex flex-wrap gap-2">
-                {eligibleServiceTypes.map(st => {
+                {liveServiceTypes.map((st) => {
                   const selected = (form.linked_service_type_ids || []).includes(st.id);
+                  const scopeReady = isServiceTypeScopeReady(st);
                   return (
-                    <button key={st.id} onClick={() => toggleServiceType(st.id)}
-                      className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${selected ? "border-blue-500 bg-blue-100 text-blue-800" : "border-slate-200 text-slate-600 hover:border-slate-300"}`}>
-                      {selected ? "✓ " : ""}{st.name}
-                      <span className={`ml-1 opacity-60 capitalize ${selected ? "" : "hidden"}`}>· {st.category?.replace("_"," ")}</span>
+                    <button
+                      key={st.id}
+                      type="button"
+                      onClick={() => toggleServiceType(st.id)}
+                      title={
+                        scopeReady
+                          ? undefined
+                          : "Scope or MD agreement not fully configured in Service Types yet"
+                      }
+                      className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${
+                        selected
+                          ? "border-blue-500 bg-blue-100 text-blue-800"
+                          : scopeReady
+                            ? "border-slate-200 text-slate-600 hover:border-slate-300"
+                            : "border-dashed border-amber-300 text-slate-600 hover:border-amber-400"
+                      }`}
+                    >
+                      {selected ? "✓ " : ""}
+                      {st.name}
+                      <span className={`ml-1 opacity-60 capitalize ${selected ? "" : "hidden"}`}>
+                        · {st.category?.replace("_", " ")}
+                      </span>
                     </button>
                   );
                 })}
               </div>
+              {liveServiceTypes.some((s) => !isServiceTypeScopeReady(s)) && (
+                <p className="text-xs text-amber-700">
+                  Dashed options are active memberships but still need scope areas/rules or MD agreement text in Service Types.
+                </p>
+              )}
 
               {/* Show scope preview for selected services */}
               {(form.linked_service_type_ids || []).length > 0 && (
@@ -465,7 +504,11 @@ export default function CourseTemplateForm({ open, onOpenChange, form, setForm, 
                 <Select value={newCert.service_type_id} onValueChange={v => setNewCert(c => ({ ...c, service_type_id: v }))}>
                   <SelectTrigger><SelectValue placeholder="Select Service Type *" /></SelectTrigger>
                   <SelectContent>
-                    {eligibleServiceTypes.map(st => <SelectItem key={st.id} value={st.id}>{st.name}</SelectItem>)}
+                    {liveServiceTypes.map((st) => (
+                      <SelectItem key={st.id} value={st.id}>
+                        {st.name}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
                 <Input placeholder="Custom cert name (optional)" value={newCert.cert_name} onChange={e => setNewCert(c => ({ ...c, cert_name: e.target.value }))} />

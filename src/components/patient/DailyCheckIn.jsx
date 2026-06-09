@@ -5,6 +5,7 @@ import { useNavigate } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { AlertTriangle, Camera, Sparkles, CheckCircle, ChevronRight, ChevronLeft, Package, ArrowRight, Calendar, Flame, TrendingUp, Clock } from "lucide-react";
 import { format, differenceInDays, parseISO } from "date-fns";
+import { calculateCheckinStreak } from "@/lib/journeyStreak";
 
 const DEFAULT_SYMPTOMS = ["Swelling", "Bruising", "Redness", "Tenderness", "Tightness", "Itching", "None"];
 
@@ -266,7 +267,7 @@ function ResultCard({ checkin, aiRecommendations, aftercarePlan, latestAppt, esc
         <div className="flex items-start gap-3 rounded-2xl p-4" style={{ background: "rgba(218,106,99,0.07)", border: "1px solid rgba(218,106,99,0.25)" }}>
           <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: "#DA6A63" }} />
           <div>
-            <p className="text-sm font-bold" style={{ color: "#1e2535" }}>Your provider has been notified</p>
+            <p className="text-sm font-bold" style={{ color: "#1e2535" }}>🚨 Your provider has been notified</p>
             <p className="text-xs mt-0.5 leading-relaxed" style={{ color: "rgba(30,37,53,0.6)" }}>Some symptoms today are outside the typical recovery range. Your medical director has been alerted and will follow up.</p>
           </div>
         </div>
@@ -399,7 +400,7 @@ export default function DailyCheckIn({ journey, appointments }) {
   const today = new Date().toISOString().split("T")[0];
   const checkedInToday = checkins.some(c => c.date === today);
   const selectedAppt = completedAppts.find(a => a.id === form.treatment_id) || completedAppts[0];
-  const streak = checkins.length;
+  const streak = calculateCheckinStreak(checkins);
   const latest = checkins[checkins.length - 1];
   const prev = checkins[checkins.length - 2];
   const recoveryDelta = latest?.ai_texture_score != null && prev?.ai_texture_score != null
@@ -585,7 +586,11 @@ ${hasPhoto ? `- visual_findings: {swelling_visible, bruising_color, texture_note
     } catch { /* non-fatal */ }
 
     try {
-      const escRes = await base44.functions.invoke("patientCheckinEscalation", { journey_id: journey.id, checkin: newCheckin });
+      const escRes = await base44.functions.invoke("patientCheckinEscalation", {
+        journey_id: journey.id,
+        checkin: newCheckin,
+        treatment_record_id: appt?.treatment_record_id || null,
+      });
       if (escRes.data?.escalated) setEscalated(true);
     } catch { /* non-fatal */ }
 

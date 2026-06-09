@@ -10,7 +10,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { FileText } from "lucide-react";
-import { appointmentServiceLabel, formatAppointmentDate } from "@/lib/appointmentDisplay";
+import { appointmentServiceLabel, formatAppointmentDate, formatAppointmentTime } from "@/lib/appointmentDisplay";
 
 function patientKey(appt) {
   return String(appt?.patient_id || appt?.patient_email || "").trim();
@@ -39,7 +39,7 @@ function buildPatientsFromAppointments(appointments) {
 function formatApptOptionLabel(appt, hasRecord) {
   const service = appointmentServiceLabel(appt) || "Appointment";
   const date = formatAppointmentDate(appt.appointment_date, "MMM d, yyyy");
-  const time = appt.appointment_time ? ` · ${appt.appointment_time}` : "";
+  const time = appt.appointment_time ? ` · ${formatAppointmentTime(appt.appointment_time)}` : "";
   const suffix = hasRecord ? " (has record)" : "";
   return `${service} — ${date}${time}${suffix}`;
 }

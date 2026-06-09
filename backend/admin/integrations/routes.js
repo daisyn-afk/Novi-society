@@ -11,7 +11,7 @@ function getBearerToken(req) {
 
 /**
  * OpenAI vision + JSON (used by patient "My Journey" skin analysis and optional chat).
- * Set OPENAI_API_KEY. Optional: OPENAI_VISION_MODEL (default gpt-4o-mini).
+ * Set OPENAI_API_KEY and OPENAI_VISION_MODEL (e.g. gpt-4o-mini for dev, gpt-4o for production).
  */
 integrationsRouter.post("/invoke-llm", async (req, res, next) => {
   try {

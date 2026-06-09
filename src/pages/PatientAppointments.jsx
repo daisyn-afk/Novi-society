@@ -39,7 +39,11 @@ import MessageThread from "@/components/messaging/MessageThread";
 import MessageUnreadBadge from "@/components/messaging/MessageUnreadBadge";
 import { useAppointmentMessageUnread, unreadCountForThread } from "@/hooks/useAppointmentMessageUnread";
 import ConsentFormDialog from "@/components/appointments/ConsentFormDialog";
-import { appointmentPatientCanPayDeposit } from "@/lib/appointmentDisplay";
+import {
+  appointmentPatientCanPayDeposit,
+  formatAppointmentDate,
+  formatAppointmentTime,
+} from "@/lib/appointmentDisplay";
 import { subscribeAppointmentsRefresh, broadcastAppointmentsRefresh } from "@/lib/appointmentSync";
 import { redirectToStripeCheckout } from "@/lib/redirectToStripeCheckout";
 
@@ -344,9 +348,9 @@ export default function PatientAppointments() {
                         <div className="flex gap-3 text-sm text-slate-500 mt-1 flex-wrap">
                           <span className="flex items-center gap-1"><User className="w-3.5 h-3.5" />{a.provider_name}</span>
                           <span className="flex items-center gap-1"><Calendar className="w-3.5 h-3.5" />
-                            {a.appointment_date ? format(new Date(a.appointment_date), "MMM d, yyyy") : ""}
+                            {formatAppointmentDate(a.appointment_date, "MMM d, yyyy")}
                           </span>
-                          {a.appointment_time && <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5" />{a.appointment_time}</span>}
+                          {a.appointment_time && <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5" />{formatAppointmentTime(a.appointment_time)}</span>}
                           {appointmentPatientCanPayDeposit(a) && depositLabel && (
                             <span className="flex items-center gap-1"><DollarSign className="w-3.5 h-3.5" />${depositLabel} booking deposit due</span>
                           )}
@@ -432,7 +436,7 @@ export default function PatientAppointments() {
                           <div className="flex gap-3 text-sm text-slate-500 mt-1 flex-wrap">
                             <span className="flex items-center gap-1"><User className="w-3.5 h-3.5" />{a.provider_name}</span>
                             <span className="flex items-center gap-1"><Calendar className="w-3.5 h-3.5" />
-                              {a.appointment_date ? format(new Date(a.appointment_date), "MMM d, yyyy") : ""}
+                              {formatAppointmentDate(a.appointment_date, "MMM d, yyyy")}
                             </span>
                           </div>
                           {treatmentDue && paymentSummary && (

@@ -14,6 +14,7 @@ import {
   Calendar, CheckCircle, Eye, EyeOff, RefreshCw, CalendarDays, LayoutTemplate, Clock, Package, MapPin, Key, ChevronDown, ChevronRight
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
+import { formatTimeRange } from "@/lib/appointmentDisplay";
 import CourseTemplateForm, { EMPTY_TEMPLATE } from "@/components/admin/CourseTemplateForm";
 import ScheduleCourseForm from "@/components/admin/ScheduleCourseForm";
 import { EMPTY_SCHEDULED } from "@/components/admin/scheduleScheduledCourseConstants";
@@ -129,7 +130,10 @@ export default function Admincourses() {
   });
   const { data: enrollments = [], isLoading: loadingEnrollments } = useQuery({ queryKey: ["enrollments"], queryFn: () => base44.entities.Enrollment.list("-created_date") });
   const { data: sessions = [], isLoading: loadingSessions } = useQuery({ queryKey: ["class-sessions"], queryFn: () => base44.entities.ClassSession.list("-created_date") });
-  const { data: serviceTypes = [] } = useQuery({ queryKey: ["service-types"], queryFn: () => base44.entities.ServiceType.list() });
+  const { data: serviceTypes = [] } = useQuery({
+    queryKey: ["service-types", "active"],
+    queryFn: () => base44.entities.ServiceType.filter({ is_active: true }),
+  });
 
   const scheduledCourses = allCourses.filter((c) => c.type === "scheduled");
   const courseMap = Object.fromEntries([...templates, ...scheduledCourses].map((c) => [c.id, c]));
@@ -618,7 +622,7 @@ export default function Admincourses() {
                                       <Calendar className="w-3 h-3 flex-shrink-0" style={{ color: "#4a5fa0" }} />
                                       <span className="text-xs font-bold" style={{ color: "#4a5fa0" }}>{dayLabel}</span>
                                       <span className="text-xs font-medium" style={{ color: "#1a2540" }}>{d.date}</span>
-                                      {(d.start_time || d.end_time) && <span className="text-xs" style={{ color: "#8891a8" }}>{d.start_time}{d.end_time ? `–${d.end_time}` : ""}</span>}
+                                      {(d.start_time || d.end_time) && <span className="text-xs whitespace-nowrap" style={{ color: "#8891a8" }}>{formatTimeRange(d.start_time, d.end_time, "–")}</span>}
                                       {d.location && <span className="text-xs" style={{ color: "#8891a8" }}>· {d.location}</span>}
                                       {hasValidSessionSeatEntry(d) && (
                                         <span

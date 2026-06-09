@@ -1,18 +1,30 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  AlertCircle,
+  BookOpen,
+  CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  Clock,
+  FileCheck,
   Mail,
   Pencil,
   Plus,
   Search,
+  Shield,
   Trash2,
+  TrendingUp,
   Users as UsersIcon
 } from "lucide-react";
+import { base44 } from "@/api/base44Client";
 import { adminUsersApi } from "@/api/adminUsersApi";
+import {
+  ADMIN_PROVIDER_LIFECYCLE_FILTERS,
+  buildAdminProviderLifecycleIndex,
+  classifyAdminProviderLifecycle,
+} from "@/lib/adminProviderLifecycle";
 import { useToast } from "@/components/ui/use-toast";
-import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -40,6 +52,17 @@ const EMPTY_FORM = {
 };
 
 const PAGE_SIZE = 10;
+const PROVIDER_FETCH_LIMIT = 500;
+
+const LIFECYCLE_FILTER_ICONS = {
+  no_license: AlertCircle,
+  license_pending_review: Clock,
+  license_verified_no_course: BookOpen,
+  cert_pending_review: FileCheck,
+  applied_md_coverage: Shield,
+  enrolled_no_subscription: TrendingUp,
+  fully_active: CheckCircle2,
+};
 
 function useDebounced(value, delay = 300) {
   const [debounced, setDebounced] = useState(value);
@@ -63,6 +86,7 @@ export default function AdminProviders() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [activeFilter, setActiveFilter] = useState("all");
+  const [lifecycleFilter, setLifecycleFilter] = useState("all");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
@@ -71,27 +95,75 @@ export default function AdminProviders() {
   const [sendingPasswordResetId, setSendingPasswordResetId] = useState(null);
   const debouncedSearch = useDebounced(search, 300);
 
-  const queryKey = [
-    "admin-providers",
-    { page, pageSize: PAGE_SIZE, q: debouncedSearch, isActive: activeFilter }
-  ];
-
-  const { data, isLoading, isFetching, error } = useQuery({
-    queryKey,
-    queryFn: () =>
-      adminUsersApi.list({
-        page,
-        pageSize: PAGE_SIZE,
-        q: debouncedSearch,
-        role: "provider",
-        isActive: activeFilter === "all" ? "" : activeFilter
-      }),
-    placeholderData: keepPreviousData
+  const { data: allMdSubscriptions = [] } = useQuery({
+    queryKey: ["admin-all-md-subscriptions"],
+    queryFn: () => base44.entities.MDSubscription.list(),
   });
 
-  const providers = data?.data || [];
-  const total = data?.total || 0;
-  const totalPages = data?.totalPages || 1;
+  const { data: allLicenses = [] } = useQuery({
+    queryKey: ["admin-provider-licenses"],
+    queryFn: () => base44.entities.License.list("-created_date", PROVIDER_FETCH_LIMIT),
+  });
+
+  const { data: allCerts = [] } = useQuery({
+    queryKey: ["admin-provider-certs"],
+    queryFn: () => base44.entities.Certification.list(),
+  });
+
+  const { data: allEnrollments = [] } = useQuery({
+    queryKey: ["admin-provider-enrollments"],
+    queryFn: () => base44.entities.Enrollment.list("-created_date", PROVIDER_FETCH_LIMIT),
+  });
+
+  const { data: coursePreOrders = [] } = useQuery({
+    queryKey: ["admin-provider-preorders"],
+    queryFn: () => base44.entities.PreOrder.list("-created_date", PROVIDER_FETCH_LIMIT),
+  });
+
+  const lifecycleDatasets = useMemo(
+    () => ({
+      licenses: allLicenses,
+      certs: allCerts,
+      enrollments: allEnrollments,
+      preOrders: coursePreOrders,
+      mdSubs: allMdSubscriptions,
+    }),
+    [allLicenses, allCerts, allEnrollments, coursePreOrders, allMdSubscriptions]
+  );
+
+  const { data, isLoading, isFetching, error } = useQuery({
+    queryKey: ["admin-providers", { q: debouncedSearch, isActive: activeFilter }],
+    queryFn: () =>
+      adminUsersApi.list({
+        page: 1,
+        pageSize: PROVIDER_FETCH_LIMIT,
+        q: debouncedSearch,
+        role: "provider",
+        isActive: activeFilter === "all" ? "" : activeFilter,
+      }),
+    placeholderData: keepPreviousData,
+  });
+
+  const allProviders = data?.data || [];
+
+  const lifecycleIndex = useMemo(
+    () => buildAdminProviderLifecycleIndex(allProviders, lifecycleDatasets),
+    [allProviders, lifecycleDatasets]
+  );
+
+  const filteredProviders = useMemo(() => {
+    if (lifecycleFilter === "all") return allProviders;
+    return allProviders.filter(
+      (provider) => classifyAdminProviderLifecycle(provider, lifecycleDatasets).stage === lifecycleFilter
+    );
+  }, [allProviders, lifecycleFilter, lifecycleDatasets]);
+
+  const total = filteredProviders.length;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const providers = useMemo(() => {
+    const start = (page - 1) * PAGE_SIZE;
+    return filteredProviders.slice(start, start + PAGE_SIZE);
+  }, [filteredProviders, page]);
 
   const saveMutation = useMutation({
     mutationFn: async (payload) => {
@@ -206,9 +278,11 @@ export default function AdminProviders() {
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h2 className="text-2xl font-bold text-slate-900">Providers</h2>
-          <p className="text-slate-500 text-sm mt-1">
-            Manage provider accounts with search, pagination, and full CRUD.
+          <h2 className="text-2xl font-bold" style={{ fontFamily: "'DM Serif Display', serif", color: "#1e2535" }}>
+            Providers
+          </h2>
+          <p className="text-sm mt-1" style={{ color: "rgba(30,37,53,0.5)" }}>
+            {allProviders.length} provider{allProviders.length === 1 ? "" : "s"} on the platform
           </p>
         </div>
         <Button onClick={openCreate} style={{ background: "#C8E63C", color: "#1a2540" }}>
@@ -216,39 +290,79 @@ export default function AdminProviders() {
         </Button>
       </div>
 
-      <Card>
-        <CardContent className="p-4 space-y-4">
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="relative flex-1 min-w-[240px]">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <Input
-                value={search}
-                onChange={(e) => {
-                  setSearch(e.target.value);
-                  setPage(1);
-                }}
-                placeholder="Search providers by name or email"
-                className="pl-9"
-              />
-            </div>
-            <select
-              className="h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
-              value={activeFilter}
-              onChange={(e) => {
-                setActiveFilter(e.target.value);
+      <div className="flex flex-wrap gap-2">
+        {ADMIN_PROVIDER_LIFECYCLE_FILTERS.map((filter) => {
+          const Icon = LIFECYCLE_FILTER_ICONS[filter.id] || AlertCircle;
+          const count = lifecycleIndex.counts[filter.id] || 0;
+          const active = lifecycleFilter === filter.id;
+          return (
+            <button
+              key={filter.id}
+              type="button"
+              onClick={() => {
+                setLifecycleFilter(active ? "all" : filter.id);
                 setPage(1);
               }}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all"
+              style={{
+                background: active ? filter.bg : "rgba(255,255,255,0.5)",
+                color: active ? filter.color : "rgba(30,37,53,0.55)",
+                border: `1px solid ${active ? `${filter.color}40` : "rgba(255,255,255,0.6)"}`,
+                boxShadow: "0 1px 4px rgba(30,37,53,0.05)",
+              }}
             >
-              <option value="all">All statuses</option>
-              <option value="true">Active</option>
-              <option value="false">Inactive</option>
-            </select>
-          </div>
+              <Icon className="w-3 h-3 flex-shrink-0" />
+              {filter.label}
+              <span className="font-black ml-0.5 tabular-nums">{count}</span>
+            </button>
+          );
+        })}
+      </div>
 
-          <div className="rounded-xl border border-slate-200 overflow-hidden">
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="relative flex-1 min-w-[240px]">
+          <Search
+            className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2"
+            style={{ color: "rgba(30,37,53,0.3)" }}
+          />
+          <Input
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPage(1);
+            }}
+            placeholder="Search by name or email..."
+            className="pl-9"
+            style={{ background: "rgba(255,255,255,0.6)", border: "1px solid rgba(255,255,255,0.7)" }}
+          />
+        </div>
+        <select
+          className="h-10 rounded-xl px-3 py-2 text-sm"
+          style={{ background: "rgba(255,255,255,0.6)", border: "1px solid rgba(255,255,255,0.7)" }}
+          value={activeFilter}
+          onChange={(e) => {
+            setActiveFilter(e.target.value);
+            setPage(1);
+          }}
+        >
+          <option value="all">All statuses</option>
+          <option value="true">Active</option>
+          <option value="false">Inactive</option>
+        </select>
+      </div>
+
+      <div
+        className="rounded-2xl overflow-hidden"
+        style={{
+          background: "rgba(255,255,255,0.6)",
+          backdropFilter: "blur(20px)",
+          border: "1px solid rgba(255,255,255,0.7)",
+          boxShadow: "0 2px 10px rgba(30,37,53,0.06)",
+        }}
+      >
             <Table>
               <TableHeader>
-                <TableRow className="bg-slate-50">
+                <TableRow style={{ background: "rgba(30,37,53,0.04)" }}>
                   <TableHead>Name</TableHead>
                   <TableHead>Email</TableHead>
                   <TableHead>Status</TableHead>
@@ -273,9 +387,16 @@ export default function AdminProviders() {
                   ))
                 ) : providers.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center py-10">
-                      <UsersIcon className="w-8 h-8 mx-auto text-slate-300 mb-2" />
-                      <p className="text-slate-500 text-sm">No providers found.</p>
+                    <TableCell colSpan={5} className="text-center py-16">
+                      <UsersIcon className="w-10 h-10 mx-auto mb-3" style={{ color: "rgba(30,37,53,0.2)" }} />
+                      <p className="font-semibold text-sm" style={{ color: "rgba(30,37,53,0.5)" }}>
+                        No providers found
+                      </p>
+                      <p className="text-sm mt-1" style={{ color: "rgba(30,37,53,0.35)" }}>
+                        {search || lifecycleFilter !== "all" || activeFilter !== "all"
+                          ? "Try adjusting your filters."
+                          : "Create a provider to get started."}
+                      </p>
                     </TableCell>
                   </TableRow>
                 ) : (
@@ -319,38 +440,39 @@ export default function AdminProviders() {
                 )}
               </TableBody>
             </Table>
-          </div>
 
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <div className="text-xs text-slate-500">
-              {total === 0
-                ? "No results"
-                : `Showing ${from}-${to} of ${total}${isFetching ? " (updating...)" : ""}`}
-            </div>
-            <div className="flex items-center gap-1">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={page <= 1}
-              >
-                <ChevronLeft className="w-4 h-4" /> Prev
-              </Button>
-              <span className="text-xs text-slate-600 px-2">
-                Page {page} of {totalPages}
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={page >= totalPages}
-              >
-                Next <ChevronRight className="w-4 h-4" />
-              </Button>
-            </div>
+        <div
+          className="flex items-center justify-between flex-wrap gap-2 px-4 py-3 border-t"
+          style={{ borderColor: "rgba(30,37,53,0.06)" }}
+        >
+          <div className="text-xs" style={{ color: "rgba(30,37,53,0.5)" }}>
+            {total === 0
+              ? "No results"
+              : `Showing ${from}-${to} of ${total}${isFetching ? " (updating...)" : ""}`}
           </div>
-        </CardContent>
-      </Card>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page <= 1}
+            >
+              <ChevronLeft className="w-4 h-4" /> Prev
+            </Button>
+            <span className="text-xs px-2" style={{ color: "rgba(30,37,53,0.6)" }}>
+              Page {page} of {totalPages}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={page >= totalPages}
+            >
+              Next <ChevronRight className="w-4 h-4" />
+            </Button>
+          </div>
+        </div>
+      </div>
 
       <Dialog
         open={dialogOpen}

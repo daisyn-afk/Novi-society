@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format, parseISO } from "date-fns";
+import { formatTimeRange } from "@/lib/appointmentDisplay";
 import { MapPin, CheckSquare, Square, ChevronDown, ChevronUp, Users, Clock, Package, AlertCircle } from "lucide-react";
 import { trainerPrepApi } from "@/api/trainerPrepApi";
 
@@ -136,7 +137,7 @@ export default function TrainerPrepView({ scheduledCourses = [], enrollments = [
                           <div className="flex-1">
                             {sd.label && <p className="text-xs font-bold mb-0.5" style={{ color: "#4a5fa0" }}>{sd.label}</p>}
                             <div className="flex gap-3 text-xs flex-wrap" style={{ color: "#8891a8" }}>
-                              {(sd.start_time || sd.end_time) && <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{sd.start_time}{sd.end_time ? `–${sd.end_time}` : ""}</span>}
+                              {(sd.start_time || sd.end_time) && <span className="flex items-center gap-1 whitespace-nowrap"><Clock className="w-3 h-3" />{formatTimeRange(sd.start_time, sd.end_time, "–")}</span>}
                               {(sd.location || course.location) && <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{sd.location || course.location}</span>}
                             </div>
                           </div>
