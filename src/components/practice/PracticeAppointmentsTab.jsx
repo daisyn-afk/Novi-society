@@ -13,16 +13,21 @@ import {
   ShieldCheck, ChevronLeft, ChevronRight, LayoutList, LayoutGrid,
   AlertCircle, DollarSign, Zap, Plus, Phone, Mail, Eye, Stethoscope
 } from "lucide-react";
-import { format, isToday, isTomorrow, startOfWeek, addDays, isSameDay, parseISO, addWeeks, subWeeks } from "date-fns";
+import { format, isToday, isTomorrow, startOfWeek, addDays, parseISO, addWeeks, subWeeks } from "date-fns";
 import TreatmentDocumentDialog from "@/components/practice/TreatmentDocumentDialog.jsx";
 import GFEStatusBadge from "@/components/GFEStatusBadge";
 import AppointmentGfeProviderControls from "@/components/appointments/AppointmentGfeProviderControls";
 import {
+  appointmentDateKey,
   appointmentDepositBlocksProvider,
   appointmentDepositPaid,
   appointmentHasBookingDeposit,
   appointmentServiceLabel,
   formatAppointmentDate,
+  formatAppointmentTime,
+  isAppointmentDateToday,
+  isSameAppointmentDay,
+  parseAppointmentDateLocal,
   profileBookingDepositAmount,
   providerConfirmActionLabel,
 } from "@/lib/appointmentDisplay";
@@ -44,16 +49,27 @@ const HOURS = Array.from({ length: 13 }, (_, i) => i + 7); // 7am–7pm
 
 function dateLabel(d) {
   if (!d) return "";
-  const dt = typeof d === "string" ? parseISO(d) : d;
+  const dt = parseAppointmentDateLocal(d);
+  if (!dt) return String(d);
   if (isToday(dt)) return "Today";
   if (isTomorrow(dt)) return "Tomorrow";
   return format(dt, "EEE, MMM d");
 }
 
-function timeToFraction(timeStr) {
+function appointmentHour(timeStr) {
   if (!timeStr) return null;
-  const [h, m] = timeStr.split(":").map(Number);
-  return (h + m / 60 - 7) / 12; // fraction of 7am–7pm
+  const match = String(timeStr).trim().match(/^(\d{1,2})/);
+  return match ? parseInt(match[1], 10) : null;
+}
+
+function appointmentsOnDay(appointments, day) {
+  return appointments
+    .filter((a) => a.appointment_date && isSameAppointmentDay(a.appointment_date, day))
+    .sort((a, b) => (a.appointment_time || "").localeCompare(b.appointment_time || ""));
+}
+
+function formatHourLabel(h) {
+  return formatAppointmentTime(`${String(h).padStart(2, "0")}:00`);
 }
 
 // ── Stat card ──────────────────────────────────────────────────────
@@ -72,16 +88,54 @@ function StatCard({ icon: Icon, color, label, value, sub }) {
   );
 }
 
-// ── Mini appointment pill for calendar ────────────────────────────
+// ── Mini appointment pill for calendar grid ───────────────────────
 function CalApptPill({ appt, onClick }) {
   const sc = STATUS[appt.status] || STATUS.confirmed;
   const serviceLabel = appointmentServiceLabel(appt);
+  const timeLabel = appt.appointment_time ? formatAppointmentTime(appt.appointment_time) : "TBD";
   return (
-    <button onClick={() => onClick(appt)}
-      className="w-full text-left px-2 py-1 rounded-lg text-[11px] font-semibold truncate transition-all hover:opacity-80"
-      style={{ background: sc.bg, color: sc.text, border: `1px solid ${sc.border}` }}>
-      {appt.appointment_time ? `${appt.appointment_time} · ` : ""}{appt.patient_name?.split(" ")[0] || "Patient"}
-      {serviceLabel ? <span className="font-normal ml-1 opacity-70 truncate">{serviceLabel}</span> : null}
+    <button
+      type="button"
+      onClick={() => onClick(appt)}
+      className="w-full min-w-0 max-w-full text-left px-1.5 py-1 rounded-md transition-all hover:opacity-80 overflow-hidden"
+      style={{ background: sc.bg, color: sc.text, border: `1px solid ${sc.border}` }}
+    >
+      <p className="text-[10px] font-bold leading-tight truncate">{timeLabel}</p>
+      <p className="text-[10px] font-semibold leading-tight truncate">{appt.patient_name?.split(" ")[0] || "Patient"}</p>
+      {serviceLabel ? (
+        <p className="text-[9px] font-normal leading-tight truncate opacity-75">{serviceLabel}</p>
+      ) : null}
+    </button>
+  );
+}
+
+// ── Week agenda row (mobile) ──────────────────────────────────────
+function WeekAgendaCard({ appt, onClick }) {
+  const sc = STATUS[appt.status] || STATUS.confirmed;
+  const serviceLabel = appointmentServiceLabel(appt);
+  const timeLabel = appt.appointment_time ? formatAppointmentTime(appt.appointment_time) : "Time TBD";
+  return (
+    <button
+      type="button"
+      onClick={() => onClick(appt)}
+      className="w-full text-left rounded-xl px-3 py-2.5 flex items-center gap-3 transition-all hover:shadow-sm"
+      style={{ background: sc.bg, border: `1px solid ${sc.border}` }}
+    >
+      <div className="min-w-[4.75rem] flex-shrink-0 text-center">
+        <p className="text-sm font-bold whitespace-nowrap leading-tight" style={{ color: sc.text }}>{timeLabel}</p>
+        {appt.duration_minutes ? (
+          <p className="text-[10px] opacity-70" style={{ color: sc.text }}>{appt.duration_minutes}m</p>
+        ) : null}
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-semibold truncate" style={{ color: "#1e2535" }}>{appt.patient_name || appt.patient_email || "Patient"}</p>
+        {serviceLabel ? (
+          <p className="text-xs truncate mt-0.5" style={{ color: "rgba(30,37,53,0.55)" }}>{serviceLabel}</p>
+        ) : null}
+      </div>
+      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full flex-shrink-0" style={{ background: "rgba(255,255,255,0.55)", color: sc.text }}>
+        {sc.label}
+      </span>
     </button>
   );
 }
@@ -123,7 +177,7 @@ function ApptDetail({
           <div className="flex items-center gap-2 mt-1 flex-wrap">
             <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full" style={{ background: sc.bg, color: sc.text, border: `1px solid ${sc.border}` }}>{sc.label}</span>
             <GFEStatusBadge status={gfeStatus} examUrl={gfeLink || undefined} />
-            {appt.appointment_date && isToday(parseISO(appt.appointment_date)) && (
+            {appt.appointment_date && isAppointmentDateToday(appt.appointment_date) && (
               <span className="text-xs font-bold px-2.5 py-0.5 rounded-full" style={{ background: "rgba(200,230,60,0.2)", color: "#4a6b10" }}>TODAY</span>
             )}
           </div>
@@ -161,7 +215,7 @@ function ApptDetail({
           </div>
           {appt.appointment_time && (
             <div className="flex items-center gap-1.5 text-xs" style={{ color: "rgba(30,37,53,0.55)" }}>
-              <Clock className="w-3.5 h-3.5 flex-shrink-0" />{appt.appointment_time}
+              <Clock className="w-3.5 h-3.5 flex-shrink-0" />{formatAppointmentTime(appt.appointment_time)}
             </div>
           )}
           {appt.duration_minutes && (
@@ -401,6 +455,8 @@ export default function PracticeAppointmentsTab({
   const confirmActionLabel = providerConfirmActionLabel(defaultBookingDeposit);
 
   const openConfirmDialog = (appt) => {
+    const existingTime = appt?.appointment_time ? String(appt.appointment_time).slice(0, 5) : "";
+    setConfirmTime(existingTime);
     setConfirmDialog({ open: true, appt });
   };
 
@@ -506,22 +562,22 @@ export default function PracticeAppointmentsTab({
   });
 
   // Stats
-  const todayAppts = appointments.filter(a => a.appointment_date && isToday(parseISO(a.appointment_date)));
+  const todayAppts = appointments.filter((a) => a.appointment_date && isAppointmentDateToday(a.appointment_date));
   const pendingReqs = appointments.filter(a => a.status === "requested");
-  const weekAppts = appointments.filter(a => {
-    if (!a.appointment_date) return false;
-    const d = parseISO(a.appointment_date);
+  const weekAppts = appointments.filter((a) => {
+    const d = parseAppointmentDateLocal(a.appointment_date);
+    if (!d) return false;
     return d >= weekStart && d < addDays(weekStart, 7);
   });
-  const weekRevenue = weekAppts.filter(a => a.status === "completed").reduce((s, a) => s + (a.total_amount || 0), 0);
+  const weekRevenue = weekAppts.filter(a => a.status === "completed").reduce((s, a) => s + (Number(a.amount_paid) || 0), 0);
 
   // Week days
   const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
 
   // Filtered list
-  const filtered = appointments.filter(a => {
+  const filtered = appointments.filter((a) => {
     if (filter === "upcoming") return ["confirmed","requested","awaiting_payment","awaiting_consent"].includes(a.status);
-    if (filter === "today") return a.appointment_date && isToday(parseISO(a.appointment_date));
+    if (filter === "today") return a.appointment_date && isAppointmentDateToday(a.appointment_date);
     if (filter === "requests") return a.status === "requested";
     if (filter === "completed") return a.status === "completed";
     return true;
@@ -529,6 +585,12 @@ export default function PracticeAppointmentsTab({
     const da = a.appointment_date || "", db = b.appointment_date || "";
     if (da !== db) return da.localeCompare(db);
     return (a.appointment_time || "").localeCompare(b.appointment_time || "");
+  });
+
+  const weekFiltered = filtered.filter((a) => {
+    const d = parseAppointmentDateLocal(a.appointment_date);
+    if (!d) return false;
+    return d >= weekStart && d < addDays(weekStart, 7);
   });
 
   const openDetail = (appt) => {
@@ -609,7 +671,7 @@ export default function PracticeAppointmentsTab({
               {/* Group by date */}
               {Object.entries(
                 filtered.reduce((acc, a) => {
-                  const key = a.appointment_date || "unscheduled";
+                  const key = appointmentDateKey(a.appointment_date) || "unscheduled";
                   if (!acc[key]) acc[key] = [];
                   acc[key].push(a);
                   return acc;
@@ -618,7 +680,7 @@ export default function PracticeAppointmentsTab({
                 <div key={date}>
                   <p className="text-xs font-bold uppercase tracking-wider mb-2 mt-4 first:mt-0" style={{ color: "rgba(30,37,53,0.4)" }}>
                     {date === "unscheduled" ? "Unscheduled" : dateLabel(date)}
-                    {date !== "unscheduled" && isToday(parseISO(date)) && (
+                    {date !== "unscheduled" && isAppointmentDateToday(date) && (
                       <span className="ml-2 px-2 py-0.5 rounded-full text-[10px] font-black" style={{ background: "rgba(200,230,60,0.2)", color: "#4a6b10" }}>TODAY</span>
                     )}
                   </p>
@@ -641,10 +703,10 @@ export default function PracticeAppointmentsTab({
                           <div className="w-1 self-stretch rounded-full flex-shrink-0" style={{ background: sc.dot, minHeight: 40 }} />
 
                           {/* Time block */}
-                          <div className="w-12 text-center flex-shrink-0">
+                          <div className="min-w-[4.75rem] text-center flex-shrink-0">
                             {a.appointment_time ? (
                               <>
-                                <p className="text-sm font-bold" style={{ color: "#1e2535" }}>{a.appointment_time.slice(0,5)}</p>
+                                <p className="text-sm font-bold whitespace-nowrap leading-tight" style={{ color: "#1e2535" }}>{formatAppointmentTime(a.appointment_time)}</p>
                                 <p className="text-[10px]" style={{ color: "rgba(30,37,53,0.4)" }}>{a.duration_minutes ? `${a.duration_minutes}m` : ""}</p>
                               </>
                             ) : (
@@ -718,7 +780,6 @@ export default function PracticeAppointmentsTab({
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     openConfirmDialog(a);
-                                    setConfirmTime("");
                                   }}
                                   className="w-8 h-8 rounded-xl flex items-center justify-center transition-all hover:opacity-80"
                                   style={{ background: "rgba(200,230,60,0.2)", color: "#4a6b10", border: "1px solid rgba(200,230,60,0.4)" }}
@@ -766,60 +827,126 @@ export default function PracticeAppointmentsTab({
       {view === "week" && (
         <div className="rounded-2xl overflow-hidden" style={{ background: "rgba(255,255,255,0.7)", border: "1px solid rgba(30,37,53,0.08)" }}>
           {/* Week nav */}
-          <div className="flex items-center justify-between px-5 py-3" style={{ borderBottom: "1px solid rgba(30,37,53,0.07)" }}>
-            <button onClick={() => setWeekStart(d => subWeeks(d, 1))} className="p-1.5 rounded-lg hover:bg-slate-100" style={{ color: "rgba(30,37,53,0.4)" }}>
+          <div className="flex items-center justify-between px-4 sm:px-5 py-3" style={{ borderBottom: "1px solid rgba(30,37,53,0.07)" }}>
+            <button type="button" onClick={() => setWeekStart((d) => subWeeks(d, 1))} className="p-1.5 rounded-lg hover:bg-slate-100" style={{ color: "rgba(30,37,53,0.4)" }}>
               <ChevronLeft className="w-4 h-4" />
             </button>
-            <p className="text-sm font-semibold" style={{ color: "#1e2535" }}>
-              {format(weekStart, "MMM d")} – {format(addDays(weekStart, 6), "MMM d, yyyy")}
-            </p>
-            <button onClick={() => setWeekStart(d => addWeeks(d, 1))} className="p-1.5 rounded-lg hover:bg-slate-100" style={{ color: "rgba(30,37,53,0.4)" }}>
+            <div className="text-center">
+              <p className="text-sm font-semibold" style={{ color: "#1e2535" }}>
+                {format(weekStart, "MMM d")} – {format(addDays(weekStart, 6), "MMM d, yyyy")}
+              </p>
+              <p className="text-[11px] mt-0.5" style={{ color: "rgba(30,37,53,0.45)" }}>
+                {weekFiltered.length} appointment{weekFiltered.length !== 1 ? "s" : ""} this week
+              </p>
+            </div>
+            <button type="button" onClick={() => setWeekStart((d) => addWeeks(d, 1))} className="p-1.5 rounded-lg hover:bg-slate-100" style={{ color: "rgba(30,37,53,0.4)" }}>
               <ChevronRight className="w-4 h-4" />
             </button>
           </div>
 
-          {/* Day headers */}
-          <div className="grid" style={{ gridTemplateColumns: "40px repeat(7, 1fr)" }}>
-            <div />
-            {weekDays.map(d => (
-              <div key={d.toISOString()} className="px-2 py-2.5 text-center" style={{ borderLeft: "1px solid rgba(30,37,53,0.06)", background: isToday(d) ? "rgba(200,230,60,0.08)" : "transparent" }}>
-                <p className="text-[10px] font-bold uppercase tracking-wider" style={{ color: isToday(d) ? "#4a6b10" : "rgba(30,37,53,0.4)" }}>{format(d, "EEE")}</p>
-                <p className="font-bold text-lg leading-tight" style={{ fontFamily: "'DM Sans', sans-serif", color: isToday(d) ? "#C8E63C" : "#1e2535" }}>{format(d, "d")}</p>
-                {appointments.filter(a => a.appointment_date && isSameDay(parseISO(a.appointment_date), d)).length > 0 && (
-                  <div className="w-1.5 h-1.5 rounded-full mx-auto mt-0.5" style={{ background: isToday(d) ? "#C8E63C" : "#FA6F30" }} />
-                )}
-              </div>
-            ))}
-          </div>
-
-          {/* Time grid */}
-          <div className="overflow-y-auto" style={{ maxHeight: 480 }}>
-            {HOURS.map(h => (
-              <div key={h} className="grid" style={{ gridTemplateColumns: "40px repeat(7, 1fr)", minHeight: 56 }}>
-                <div className="flex items-start justify-end pr-2 pt-1">
-                  <span className="text-[10px] font-medium" style={{ color: "rgba(30,37,53,0.3)" }}>
-                    {h === 12 ? "12p" : h > 12 ? `${h-12}p` : `${h}a`}
-                  </span>
-                </div>
-                {weekDays.map(d => {
-                  const dayAppts = appointments.filter(a => {
-                    if (!a.appointment_date || !isSameDay(parseISO(a.appointment_date), d)) return false;
-                    if (!a.appointment_time) return h === 9; // default slot for unscheduled
-                    const apptH = parseInt(a.appointment_time.split(":")[0]);
-                    return apptH === h;
-                  });
+          {weekFiltered.length === 0 ? (
+            <div className="text-center py-16 px-6">
+              <Calendar className="w-10 h-10 mx-auto mb-3" style={{ color: "rgba(30,37,53,0.18)" }} />
+              <p className="font-semibold" style={{ color: "#1e2535" }}>No appointments this week</p>
+              <p className="text-sm mt-1" style={{ color: "rgba(30,37,53,0.4)" }}>Try another week or switch filters.</p>
+            </div>
+          ) : (
+            <>
+              {/* Mobile: day-by-day agenda */}
+              <div className="md:hidden px-4 py-4 space-y-4">
+                {weekDays.map((d) => {
+                  const dayAppts = appointmentsOnDay(weekFiltered, d);
+                  if (dayAppts.length === 0) return null;
                   return (
-                    <div key={d.toISOString()} className="px-1 py-0.5 space-y-0.5 relative"
-                      style={{ borderLeft: "1px solid rgba(30,37,53,0.06)", borderTop: "1px solid rgba(30,37,53,0.04)", background: isToday(d) ? "rgba(200,230,60,0.03)" : "transparent" }}>
-                      {dayAppts.map(a => (
-                        <CalApptPill key={a.id} appt={a} onClick={openDetail} />
-                      ))}
+                    <div key={d.toISOString()}>
+                      <div
+                        className="flex items-center gap-2 mb-2 px-1"
+                        style={isToday(d) ? { color: "#4a6b10" } : { color: "rgba(30,37,53,0.55)" }}
+                      >
+                        <p className="text-xs font-bold uppercase tracking-wider">{format(d, "EEE")}</p>
+                        <p className="text-lg font-bold leading-none" style={{ color: isToday(d) ? "#1e2535" : "#1e2535" }}>
+                          {format(d, "MMM d")}
+                        </p>
+                        {isToday(d) && (
+                          <span className="text-[10px] font-black px-2 py-0.5 rounded-full" style={{ background: "rgba(200,230,60,0.2)", color: "#4a6b10" }}>
+                            TODAY
+                          </span>
+                        )}
+                      </div>
+                      <div className="space-y-2">
+                        {dayAppts.map((a) => (
+                          <WeekAgendaCard key={a.id} appt={a} onClick={openDetail} />
+                        ))}
+                      </div>
                     </div>
                   );
                 })}
               </div>
-            ))}
-          </div>
+
+              {/* Desktop: time grid */}
+              <div className="hidden md:block overflow-x-auto">
+                <div className="min-w-[720px]">
+                  <div className="grid" style={{ gridTemplateColumns: "48px repeat(7, minmax(0, 1fr))" }}>
+                    <div />
+                    {weekDays.map((d) => {
+                      const dayCount = appointmentsOnDay(weekFiltered, d).length;
+                      return (
+                        <div
+                          key={d.toISOString()}
+                          className="px-2 py-2.5 text-center min-w-0"
+                          style={{ borderLeft: "1px solid rgba(30,37,53,0.06)", background: isToday(d) ? "rgba(200,230,60,0.08)" : "transparent" }}
+                        >
+                          <p className="text-[10px] font-bold uppercase tracking-wider" style={{ color: isToday(d) ? "#4a6b10" : "rgba(30,37,53,0.4)" }}>
+                            {format(d, "EEE")}
+                          </p>
+                          <p className="font-bold text-lg leading-tight" style={{ color: isToday(d) ? "#4a6b10" : "#1e2535" }}>
+                            {format(d, "d")}
+                          </p>
+                          {dayCount > 0 && (
+                            <div className="w-1.5 h-1.5 rounded-full mx-auto mt-0.5" style={{ background: isToday(d) ? "#C8E63C" : "#FA6F30" }} />
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="overflow-y-auto" style={{ maxHeight: 520 }}>
+                    {HOURS.map((h) => (
+                      <div key={h} className="grid" style={{ gridTemplateColumns: "4.75rem repeat(7, minmax(0, 1fr))", minHeight: 52 }}>
+                        <div className="flex items-start justify-end pr-2 pt-1">
+                          <span className="text-[10px] font-medium whitespace-nowrap" style={{ color: "rgba(30,37,53,0.3)" }}>
+                            {formatHourLabel(h)}
+                          </span>
+                        </div>
+                        {weekDays.map((d) => {
+                          const dayAppts = appointmentsOnDay(weekFiltered, d).filter((a) => {
+                            const apptH = appointmentHour(a.appointment_time);
+                            if (apptH == null) return h === 9;
+                            return apptH === h;
+                          });
+                          return (
+                            <div
+                              key={d.toISOString()}
+                              className="px-1 py-0.5 space-y-0.5 min-w-0 overflow-hidden"
+                              style={{
+                                borderLeft: "1px solid rgba(30,37,53,0.06)",
+                                borderTop: "1px solid rgba(30,37,53,0.04)",
+                                background: isToday(d) ? "rgba(200,230,60,0.03)" : "transparent",
+                              }}
+                            >
+                              {dayAppts.map((a) => (
+                                <CalApptPill key={a.id} appt={a} onClick={openDetail} />
+                              ))}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -894,7 +1021,10 @@ export default function PracticeAppointmentsTab({
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-3 pt-1">
-            <p className="text-sm" style={{ color: "rgba(30,37,53,0.6)" }}>{appointmentServiceLabel(confirmDialog.appt)} · {confirmDialog.appt?.patient_name} · {formatAppointmentDate(confirmDialog.appt?.appointment_date)}</p>
+            <p className="text-sm" style={{ color: "rgba(30,37,53,0.6)" }}>
+              {appointmentServiceLabel(confirmDialog.appt)} · {confirmDialog.appt?.patient_name} · {formatAppointmentDate(confirmDialog.appt?.appointment_date)}
+              {confirmDialog.appt?.appointment_time ? ` · ${formatAppointmentTime(confirmDialog.appt.appointment_time)}` : ""}
+            </p>
             <p className="text-xs rounded-xl px-3 py-2" style={{ background: "rgba(250,111,48,0.08)", color: "rgba(30,37,53,0.65)" }}>
               {profileBookingDeposit > 0 ? (
                 <>

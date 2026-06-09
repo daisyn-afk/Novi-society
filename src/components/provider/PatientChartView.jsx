@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { User, Calendar, FileText, Image as ImageIcon, Activity, Sparkles } from "lucide-react";
 import { format } from "date-fns";
+import { formatAppointmentDate, formatAppointmentTime } from "@/lib/appointmentDisplay";
 import PatientCheckInsPanel from "./PatientCheckInsPanel";
 import PatientAIInsightsTab from "./PatientAIInsightsTab";
 
@@ -182,7 +183,7 @@ export default function PatientChartView({ patientId }) {
                     <Badge variant="outline">{a.status}</Badge>
                   </div>
                   <p className="text-xs text-slate-500">
-                    {a.appointment_date ? format(new Date(a.appointment_date), "MMM d, yyyy") : ""} {a.appointment_time && `at ${a.appointment_time}`}
+                    {formatAppointmentDate(a.appointment_date, "MMM d, yyyy")} {a.appointment_time ? `at ${formatAppointmentTime(a.appointment_time)}` : ""}
                   </p>
                   {a.patient_notes && <p className="text-xs text-slate-600 mt-1">Notes: {a.patient_notes}</p>}
                 </CardContent>

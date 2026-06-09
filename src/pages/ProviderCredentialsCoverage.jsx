@@ -30,7 +30,9 @@ import {
   getMdContractUrl,
   getMdContractDisplayName,
   getSignedMdContractFileName,
+  findServiceTypeForSubscription,
   getProtocolDocumentsForSubscription,
+  resolveProtocolDocumentsFromServiceType,
   subscriptionHasMdAgreement,
   pickGlobalMdContractUrl,
   filterProtocolDocuments,
@@ -489,11 +491,11 @@ export default function ProviderCredentialsCoverage() {
       status: "active",
       md_contract_url: pending?.md_contract_url || getMdContractUrl(st, { allServiceTypes: serviceTypes }) || null,
       md_agreement_text: pending?.md_agreement_text || st?.md_agreement_text || null,
-      protocol_document_urls:
-        pending?.protocol_document_urls || getProtocolDocumentsForSubscription({}, st),
+      protocol_document_urls: pending?.protocol_document_urls || [],
     });
     clearMdCoveragePending(stId);
     qc.invalidateQueries({ queryKey: ["my-md-relationships"] });
+    qc.invalidateQueries({ queryKey: ["my-md-subscriptions"] });
     return data;
   }
 
@@ -643,7 +645,8 @@ export default function ProviderCredentialsCoverage() {
       .filter(Boolean)
   );
   const unlockedServiceTypeIds = new Set([...earnedServiceTypeIds, ...activeCertServiceTypeIds]);
-  const availableServices = serviceTypes.filter((s) => !alreadyActiveServices.includes(s.id) && unlockedServiceTypeIds.has(s.id));
+  const applyableServiceTypes = serviceTypes.filter((s) => !alreadyActiveServices.includes(s.id));
+  const availableServices = applyableServiceTypes.filter((s) => unlockedServiceTypeIds.has(s.id));
   const selectedService = serviceTypes.find(s => s.id === selectedServiceTypeId);
   const selectedServiceContractUrl = getMdContractUrl(selectedService, {
     allServiceTypes: serviceTypes,
@@ -1124,7 +1127,7 @@ export default function ProviderCredentialsCoverage() {
             signed_at: new Date().toISOString(),
             md_contract_url: getMdContractUrl(st, { allServiceTypes: serviceTypes }) || null,
             md_agreement_text: st?.md_agreement_text || null,
-            protocol_document_urls: getProtocolDocumentsForSubscription({}, st),
+            protocol_document_urls: resolveProtocolDocumentsFromServiceType(st, 1),
           });
         } catch { /* ignore */ }
         window.location.href = res.data.url;
@@ -1608,7 +1611,7 @@ export default function ProviderCredentialsCoverage() {
                 )}
               </div>
               {activeSubscriptions.map((sub, idx) => {
-                const st = serviceTypes.find(s => s.id === sub.service_type_id);
+                const st = findServiceTypeForSubscription(sub, serviceTypes);
                 const isExp = expandedService === sub.id;
                 return (
                   <GlassCard key={sub.id}>
@@ -1634,9 +1637,7 @@ export default function ProviderCredentialsCoverage() {
                       const nextTierDef = tiers.find(t => t.tier_number === currentTierNum + 1);
                       const effectiveAreas = hasTiers ? (currentTierDef?.allowed_areas || []) : (st.allowed_areas || []);
                       const effectiveUnits = hasTiers ? currentTierDef?.max_units_per_session : st.max_units_per_session;
-                      const effectiveDocs = filterProtocolDocuments(
-                        hasTiers ? (currentTierDef?.protocol_document_urls || []) : (st.protocol_document_urls || [])
-                      );
+                      const effectiveDocs = getProtocolDocumentsForSubscription(sub);
                       const activatedDate = sub.activated_at ? new Date(sub.activated_at) : null;
                       const monthlyAmount = Number(sub.service_type_monthly_fee ?? (idx === 0 ? FIRST_SERVICE_PRICE : ADDON_SERVICE_PRICE));
                       const today = new Date();
@@ -1847,7 +1848,7 @@ export default function ProviderCredentialsCoverage() {
               ) : (
                 <div className="space-y-3">
                   {documentSubscriptions.map((sub) => {
-                    const st = serviceTypes.find((s) => String(s.id) === String(sub.service_type_id));
+                    const st = findServiceTypeForSubscription(sub, serviceTypes);
                     const contractMeta = {
                       ...(st || {}),
                       name: st?.name || sub.service_type_name,
@@ -1909,7 +1910,7 @@ export default function ProviderCredentialsCoverage() {
                             </div>
                           )}
                           {(() => {
-                            const docs = getProtocolDocumentsForSubscription(sub, st);
+                            const docs = getProtocolDocumentsForSubscription(sub);
                             return docs.length > 0 ? (
                               <div>
                                 <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: "rgba(30,37,53,0.45)" }}>Protocol Documents</p>
@@ -2319,7 +2320,11 @@ export default function ProviderCredentialsCoverage() {
                     <div className="col-span-2">
                       <label className="text-xs font-semibold text-slate-600 mb-1.5 block">Service Applying For *</label>
                       <div className="space-y-1.5 max-h-40 overflow-y-auto">
-                        {serviceTypes.map(s => (
+                        {applyableServiceTypes.length === 0 ? (
+                          <p className="text-xs text-slate-500 px-3 py-2.5 rounded-lg border border-slate-200 bg-slate-50">
+                            You already have active MD coverage for all available services.
+                          </p>
+                        ) : applyableServiceTypes.map(s => (
                           <button key={s.id} onClick={() => setCertForm(f => ({ ...f, service_type_id: s.id, service_type_name: s.name }))} className={`w-full text-left px-3 py-2.5 rounded-lg border transition-all ${certForm.service_type_id === s.id ? "border-orange-400 bg-orange-50" : "border-slate-200 hover:border-slate-300"}`}>
                             <p className="text-sm font-medium text-slate-900">{s.name}</p>
                             <p className="text-xs text-slate-400 capitalize">{s.category?.replace("_", " ")}</p>
@@ -2338,7 +2343,7 @@ export default function ProviderCredentialsCoverage() {
                   {!isUsableUploadedUrl(certFileUrl) && !uploadingCert && !uploadCertError && (
                     <p className="text-xs text-slate-500">Certification file is required before submit.</p>
                   )}
-                  <Button onClick={() => submitExternalCertMutation.mutate()} disabled={!certForm.cert_name || !certForm.issuing_school || !isUsableUploadedUrl(certFileUrl) || !certForm.service_type_id || submitExternalCertMutation.isPending} className="w-full" style={{ background: "#FA6F30", color: "#fff" }}>
+                  <Button onClick={() => submitExternalCertMutation.mutate()} disabled={!certForm.cert_name || !certForm.issuing_school || !isUsableUploadedUrl(certFileUrl) || !certForm.service_type_id || applyableServiceTypes.length === 0 || submitExternalCertMutation.isPending} className="w-full" style={{ background: "#FA6F30", color: "#fff" }}>
                     {submitExternalCertMutation.isPending ? "Submitting..." : "Submit for Review"}
                   </Button>
                 </div>
@@ -2687,7 +2692,11 @@ export default function ProviderCredentialsCoverage() {
             <div className="space-y-4 pt-1">
               <p className="text-sm text-slate-500">Which service are you applying to provide on NOVI?</p>
               <div className="space-y-2 max-h-64 overflow-y-auto">
-                {serviceTypes.map(s => (
+                {applyableServiceTypes.length === 0 ? (
+                  <p className="text-sm text-slate-500 px-4 py-3 rounded-xl border border-slate-200 bg-slate-50">
+                    You already have active MD coverage for all available services.
+                  </p>
+                ) : applyableServiceTypes.map(s => (
                   <button key={s.id} onClick={() => { setSubmitExtCertError(""); setExtCertForm(f => ({ ...f, service_type_id: s.id, service_type_name: s.name })); }} className={`w-full text-left px-4 py-3 rounded-xl border-2 transition-all flex items-center justify-between ${extCertForm.service_type_id === s.id ? "border-orange-400 bg-orange-50" : "border-slate-100 hover:border-slate-300"}`}>
                     <div><p className="text-sm font-semibold text-slate-900">{s.name}</p><p className="text-xs text-slate-400 capitalize">{s.category?.replace("_", " ")}</p></div>
                     {extCertForm.service_type_id === s.id && <CheckCircle className="w-5 h-5 text-orange-500 flex-shrink-0" />}
@@ -2697,7 +2706,7 @@ export default function ProviderCredentialsCoverage() {
               {submitExtCertError && <p className="text-xs text-red-500">{submitExtCertError}</p>}
               <div className="flex gap-2">
                 <Button variant="outline" onClick={() => { setSubmitExtCertError(""); setCertSubmitStep(0); }} className="flex-1">Back</Button>
-                <Button onClick={() => submitExtCertMutation.mutate()} disabled={!extCertForm.service_type_id || submitExtCertMutation.isPending} className="flex-1" style={{ background: "#FA6F30", color: "#fff" }}>
+                <Button onClick={() => submitExtCertMutation.mutate()} disabled={!extCertForm.service_type_id || applyableServiceTypes.length === 0 || submitExtCertMutation.isPending} className="flex-1" style={{ background: "#FA6F30", color: "#fff" }}>
                   {submitExtCertMutation.isPending ? "Submitting..." : "Submit for Review"}
                 </Button>
               </div>

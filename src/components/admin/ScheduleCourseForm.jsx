@@ -10,6 +10,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { adminLocationsApi } from "@/api/adminLocationsApi";
 import { normalizeScheduledSessionDatesEntries, isDisallowedPastSessionDate, todaySessionDateKey } from "@/lib/sessionDateSeats";
+import { formatTimeRange } from "@/lib/appointmentDisplay";
 import { X, Calendar, Plus, ChevronDown, ChevronRight, Check, Loader2 } from "lucide-react";
 
 const EMPTY_DATE_DRAFT = { date: "", start_time: "", end_time: "", location: "", label: "", max_seats: "", available_seats: "" };
@@ -470,7 +471,7 @@ export default function ScheduleCourseForm({
                               <div className="flex-1 min-w-0">
                                 {s.label && <span className="font-semibold text-xs mr-2" style={{ color: "#4a5fa0" }}>{s.label}</span>}
                                 <span className="font-medium" style={{ color: "#1a2540" }}>{s.date}</span>
-                                {(s.start_time || s.end_time) && <span className="ml-2" style={{ color: "#8891a8" }}>{s.start_time}{s.end_time ? ` – ${s.end_time}` : ""}</span>}
+                                {(s.start_time || s.end_time) && <span className="ml-2 whitespace-nowrap" style={{ color: "#8891a8" }}>{formatTimeRange(s.start_time, s.end_time)}</span>}
                                 {s.location && <span className="ml-2" style={{ color: "#8891a8" }}>· {s.location}</span>}
                                 {Number.isFinite(Number(s.max_seats)) && Number.isFinite(Number(s.available_seats)) && (
                                   <span

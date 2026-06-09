@@ -9,6 +9,7 @@ import {
   Moon, Apple, Dumbbell, Brain, Package, Clock
 } from "lucide-react";
 import { format } from "date-fns";
+import { formatAppointmentDate, formatAppointmentTime } from "@/lib/appointmentDisplay";
 import TreatmentDocumentDialog from "@/components/practice/TreatmentDocumentDialog.jsx";
 import PatientAIInsightsTab from "@/components/provider/PatientAIInsightsTab";
 
@@ -763,8 +764,8 @@ Return this exact JSON structure:
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold truncate" style={{ color: "#1e2535" }}>{a.service}</p>
                         <p className="text-xs" style={{ color: "rgba(30,37,53,0.5)" }}>
-                          {a.appointment_date ? format(new Date(a.appointment_date), "MMM d, yyyy") : ""}
-                          {a.appointment_time ? ` · ${a.appointment_time}` : ""}
+                          {formatAppointmentDate(a.appointment_date, "MMM d, yyyy")}
+                          {a.appointment_time ? ` · ${formatAppointmentTime(a.appointment_time)}` : ""}
                         </p>
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">

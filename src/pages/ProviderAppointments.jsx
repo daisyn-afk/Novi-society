@@ -25,6 +25,7 @@ import { subscribeAppointmentsRefresh } from "@/lib/appointmentSync";
 import {
   appointmentServiceLabel,
   formatAppointmentDate,
+  formatAppointmentTime,
   providerConfirmActionLabel,
 } from "@/lib/appointmentDisplay";
 import { createPageUrl } from "@/utils";
@@ -126,7 +127,7 @@ function AppointmentCard({
               {a.appointment_time && (
                 <span className="flex items-center gap-1">
                   <Clock className="w-3.5 h-3.5" />
-                  {String(a.appointment_time).slice(0, 5)}
+                  {formatAppointmentTime(a.appointment_time)}
                 </span>
               )}
             </div>

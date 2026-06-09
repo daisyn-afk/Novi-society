@@ -7,10 +7,7 @@ import {
   mdHasActiveSupervisionOf,
 } from "../mdSupervisedAccess.js";
 import { getGlobalMdContractUrl, isUsableMdContractUrl } from "../lib/globalMdContract.js";
-import {
-  filterProtocolDocuments,
-  resolveProtocolDocumentsForSubscription,
-} from "../lib/mdSubscriptionProtocolDocs.js";
+import { resolveProtocolDocumentsForSubscription } from "../lib/mdSubscriptionProtocolDocs.js";
 import { enrichMdSubscriptionMonthlyFees, monthlyFeeForNewMdService } from "../mdMembershipPricing.js";
 import { ensureSignedContractForSubscription, finalizeMdBoardCoverage } from "../mdBillingService.js";
 
@@ -53,13 +50,11 @@ async function respondWithSubscriptions(res, rows) {
     const mdContractUrl = isUsableMdContractUrl(st?.md_contract_url)
       ? st.md_contract_url
       : globalMdContractUrl || null;
-    const protocolDocs = resolveProtocolDocumentsForSubscription(row, st);
-    const snapshotDocs = filterProtocolDocuments(row?.protocol_document_urls);
     return {
       ...rest,
       md_contract_url: mdContractUrl,
       md_agreement_text: st?.md_agreement_text || null,
-      protocol_document_urls: snapshotDocs.length ? snapshotDocs : protocolDocs,
+      protocol_document_urls: resolveProtocolDocumentsForSubscription(row),
     };
   });
   return res.json(enrichMdSubscriptionMonthlyFees(sanitized));
