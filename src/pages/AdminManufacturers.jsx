@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { Button } from "@/components/ui/button";
+import { useToast } from "@/components/ui/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { HorizontalScrollAffordance } from "@/components/ui/horizontal-scroll-affordance";
@@ -23,6 +24,7 @@ const PENDING_APPLICATION_STATUSES = new Set([
 ]);
 
 export default function AdminManufacturers() {
+  const { toast } = useToast();
   const qc = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -40,6 +42,17 @@ export default function AdminManufacturers() {
     queryFn: () => base44.entities.ManufacturerApplication.list("-submitted_at"),
   });
 
+  const lockedRequiredServiceTypeIds = useMemo(() => {
+    if (!editing?.id) return [];
+    const hasActiveProviders = applications.some(
+      (app) =>
+        String(app.manufacturer_id) === String(editing.id) &&
+        String(app.status || "").toLowerCase() === "approved"
+    );
+    if (!hasActiveProviders) return [];
+    return (editing.required_service_type_ids || []).map(String);
+  }, [applications, editing]);
+
   const saveMutation = useMutation({
     mutationFn: async (data) => {
       if (editing) return base44.entities.Manufacturer.update(editing.id, data);
@@ -50,6 +63,13 @@ export default function AdminManufacturers() {
       qc.invalidateQueries({ queryKey: ["manufacturers"] });
       setDialogOpen(false);
       setEditing(null);
+    },
+    onError: (err) => {
+      toast({
+        title: "Save failed",
+        description: err?.message || "Try again.",
+        variant: "destructive",
+      });
     },
   });
 
@@ -490,6 +510,7 @@ export default function AdminManufacturers() {
         open={dialogOpen}
         onOpenChange={handleDialogChange}
         initial={editing}
+        lockedRequiredServiceTypeIds={lockedRequiredServiceTypeIds}
         isSubmitting={saveMutation.isPending}
         onSubmit={(payload) => saveMutation.mutate(payload)}
         onUploadFile={uploadFile}

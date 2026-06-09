@@ -10,7 +10,8 @@
  * Substitutes:
  *   - simple {{var}} placeholders from `vars`
  *   - block placeholders the registry knows about (cta_button, summary_list,
- *     details_block, order_table, message_block, rejection_block, reset_link)
+ *     custom_fields_block, details_block, order_table, message_block,
+ *     rejection_block, reset_link)
  *
  * Wraps the resulting body in the canonical course-style shell and (optionally)
  * dispatches via Resend.
@@ -19,6 +20,7 @@
 import {
   buildCourseStyleEmailHtml,
   buildCtaButtonBlock,
+  buildCustomFieldsQABlock,
   buildDetailListBlock,
   buildSummaryListBlock,
   buildOrderTableBlock,
@@ -119,6 +121,7 @@ function substituteSimpleVars(template, vars) {
 const BLOCK_PLACEHOLDERS = new Set([
   "cta_button",
   "summary_list",
+  "custom_fields_block",
   "details_block",
   "order_table",
   "message_block",
@@ -147,6 +150,10 @@ function buildBlocks({ definition, override, vars }) {
   });
 
   const summary_list = buildSummaryListBlock(vars.summary_lines || []);
+  const custom_fields_block = buildCustomFieldsQABlock({
+    title: vars.custom_fields_title || "Application form responses",
+    items: vars.custom_field_items || [],
+  });
   const details_block = buildDetailListBlock({
     title: vars.details_title || "",
     rows: vars.details || [],
@@ -164,6 +171,7 @@ function buildBlocks({ definition, override, vars }) {
   return {
     cta_button,
     summary_list,
+    custom_fields_block,
     details_block,
     order_table,
     message_block,
@@ -176,6 +184,19 @@ function substituteBlocks(template, blocks) {
     if (Object.hasOwn(blocks, key)) return blocks[key];
     return match;
   });
+}
+
+function ensureCustomFieldsPlaceholder(templateBody, customFieldItems = []) {
+  const body = String(templateBody || "");
+  if (!Array.isArray(customFieldItems) || customFieldItems.length === 0) return body;
+  if (body.includes("custom_fields_block")) return body;
+  if (body.includes("{{summary_list}}")) {
+    return body.replace(
+      "{{summary_list}}",
+      "{{summary_list}}\n\n{{custom_fields_block}}"
+    );
+  }
+  return `${body}\n\n{{custom_fields_block}}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -311,7 +332,11 @@ export async function renderEmailTemplate(templateKey, vars = {}, options = {}) 
   });
 
   const subject = substituteSimpleVars(effective.subject, mergedVars).trim();
-  const bodyWithVars = substituteSimpleVars(effective.body_html, mergedVars);
+  const templateBody = ensureCustomFieldsPlaceholder(
+    effective.body_html,
+    mergedVars.custom_field_items
+  );
+  const bodyWithVars = substituteSimpleVars(templateBody, mergedVars);
   // Convert the plain-text (markdown-lite) body into styled HTML. Block
   // placeholder lines and any legacy HTML lines pass through untouched.
   const richBody = renderRichTextBody(bodyWithVars);

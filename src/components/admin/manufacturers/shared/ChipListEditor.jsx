@@ -18,8 +18,10 @@ export default function ChipListEditor({
     setDraft("");
   };
 
-  const remove = (idx) =>
-    onChange((items || []).filter((_, i) => i !== idx));
+  const remove = (idx) => {
+    const next = (items || []).filter((_, i) => i !== idx);
+    onChange(next);
+  };
 
   const tone = {
     slate: {
