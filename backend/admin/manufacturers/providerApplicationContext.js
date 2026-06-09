@@ -97,6 +97,46 @@ async function fetchMdRelationships(providerId) {
   );
 }
 
+function normalizeRequiredServiceTypeIds(manufacturer) {
+  const ids = manufacturer?.required_service_type_ids;
+  if (!Array.isArray(ids)) return [];
+  return ids.map((id) => asTrimmed(String(id))).filter(Boolean);
+}
+
+export function manufacturerCoverageSatisfied(manufacturer, activeServiceTypeIds = []) {
+  const required = normalizeRequiredServiceTypeIds(manufacturer);
+  if (!required.length) return true;
+  const active = new Set(activeServiceTypeIds.map((id) => asTrimmed(String(id))).filter(Boolean));
+  return required.some((id) => active.has(id));
+}
+
+export async function assertProviderManufacturerCoverage({ providerId, manufacturer }) {
+  const activeIds = providerId
+    ? await fetchActiveMdSubscriptionServiceTypeIds(providerId)
+    : [];
+  if (!manufacturerCoverageSatisfied(manufacturer, activeIds)) {
+    const err = new Error(
+      "Active MD coverage is required before applying to this supplier. Add the required membership under Credentials & Coverage."
+    );
+    err.statusCode = 403;
+    throw err;
+  }
+  return activeIds;
+}
+
+async function fetchActiveMdSubscriptionServiceTypeIds(providerId) {
+  const rows = await safeQuery(
+    `select service_type_id
+     from public.md_subscription
+     where provider_id::text = $1
+       and lower(coalesce(status, '')) = 'active'`,
+    [providerId]
+  );
+  return rows
+    .map((row) => asTrimmed(String(row?.service_type_id || "")))
+    .filter(Boolean);
+}
+
 async function fetchActiveCertifications(providerId) {
   return safeQuery(
     `select certification_name, cert_name, issued_by, status, category, certificate_number

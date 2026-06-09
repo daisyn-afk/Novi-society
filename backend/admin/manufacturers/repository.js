@@ -147,6 +147,7 @@ function rowToApi(row) {
 
     custom_fields: asJsonbArray(row.custom_fields),
     required_fields: asJsonbArray(row.required_fields),
+    required_service_type_ids: asJsonbArray(row.required_service_type_ids),
 
     min_order_amount: row.min_order_amount === null || row.min_order_amount === undefined
       ? null
@@ -195,6 +196,20 @@ function normalizeManufacturerPayload(payload = {}) {
   // regardless of what the client sent.
   const requiredFields = customFields.filter((f) => f.required).map((f) => f.label);
 
+  const requiredServiceTypeIds = Array.isArray(payload.required_service_type_ids)
+    ? [...new Set(
+        payload.required_service_type_ids
+          .map((id) => asTrimmedString(id))
+          .filter(Boolean)
+      )]
+    : [];
+
+  if (requiredServiceTypeIds.length === 0) {
+    const err = new Error("At least one required MD membership must be selected.");
+    err.statusCode = 400;
+    throw err;
+  }
+
   return {
     name,
     category,
@@ -239,6 +254,7 @@ function normalizeManufacturerPayload(payload = {}) {
 
     custom_fields: customFields,
     required_fields: requiredFields,
+    required_service_type_ids: requiredServiceTypeIds,
 
     min_order_amount: asNumberOrNull(payload.min_order_amount),
     ships_to_states: asString(payload.ships_to_states, ""),
@@ -279,6 +295,7 @@ const MANUFACTURER_COLUMNS = `
   network_tiers,
   custom_fields,
   required_fields,
+  required_service_type_ids,
   min_order_amount,
   ships_to_states,
   is_active,
@@ -337,7 +354,7 @@ export async function createManufacturer(payload) {
        training_approved, is_featured, price_tier, sort_order,
        account_rep_name, account_rep_email, jotform_application_url,
        uses_network_tiers, network_tiers,
-       custom_fields, required_fields,
+       custom_fields, required_fields, required_service_type_ids,
        min_order_amount, ships_to_states, is_active
      )
      values (
@@ -350,8 +367,8 @@ export async function createManufacturer(payload) {
        $21, $22, $23, $24,
        $25, $26, $27,
        $28, $29::jsonb,
-       $30::jsonb, $31::jsonb,
-       $32, $33, $34
+       $30::jsonb, $31::jsonb, $32::jsonb,
+       $33, $34, $35
      )
      returning ${MANUFACTURER_COLUMNS}`,
     [
@@ -386,6 +403,7 @@ export async function createManufacturer(payload) {
       JSON.stringify(data.network_tiers),
       JSON.stringify(data.custom_fields),
       JSON.stringify(data.required_fields),
+      JSON.stringify(data.required_service_type_ids),
       data.min_order_amount,
       data.ships_to_states,
       data.is_active,
@@ -432,9 +450,10 @@ export async function updateManufacturer(id, payload) {
          network_tiers = $30::jsonb,
          custom_fields = $31::jsonb,
          required_fields = $32::jsonb,
-         min_order_amount = $33,
-         ships_to_states = $34,
-         is_active = $35,
+         required_service_type_ids = $33::jsonb,
+         min_order_amount = $34,
+         ships_to_states = $35,
+         is_active = $36,
          updated_at = now()
      where id = $1
      returning ${MANUFACTURER_COLUMNS}`,
@@ -471,6 +490,7 @@ export async function updateManufacturer(id, payload) {
       JSON.stringify(data.network_tiers),
       JSON.stringify(data.custom_fields),
       JSON.stringify(data.required_fields),
+      JSON.stringify(data.required_service_type_ids),
       data.min_order_amount,
       data.ships_to_states,
       data.is_active,

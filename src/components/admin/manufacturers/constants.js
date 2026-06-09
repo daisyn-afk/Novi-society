@@ -82,6 +82,7 @@ export const EMPTY_SUPPLIER = {
 
   custom_fields: [],
   required_fields: [],
+  required_service_type_ids: [],
 
   min_order_amount: "",
   ships_to_states: "",

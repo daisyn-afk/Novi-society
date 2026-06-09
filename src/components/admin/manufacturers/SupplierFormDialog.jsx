@@ -111,6 +111,7 @@ function mergeSupplier(initial) {
         required: true,
       })),
     required_fields: initial?.required_fields ?? [],
+    required_service_type_ids: initial?.required_service_type_ids ?? [],
     jotform_application_url: src.jotform_application_url ?? "",
   };
 }
@@ -175,14 +176,16 @@ export default function SupplierFormDialog({
   const canSubmit =
     form.name.trim() &&
     form.account_rep_email.trim() &&
+    (form.required_service_type_ids || []).length > 0 &&
     !isSubmitting &&
     !uploadsInFlight;
 
   const missingHint = useMemo(() => {
     if (!form.name.trim()) return "Supplier name required";
     if (!form.account_rep_email.trim()) return "Rep email required";
+    if (!(form.required_service_type_ids || []).length) return "At least one required MD membership";
     return null;
-  }, [form.name, form.account_rep_email]);
+  }, [form.name, form.account_rep_email, form.required_service_type_ids]);
 
   const buildPayload = (source) => ({
     ...source,

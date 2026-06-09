@@ -1,10 +1,15 @@
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { base44 } from "@/api/base44Client";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
-import { Upload, ImageIcon, Globe } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Upload, ImageIcon, Globe, ShieldCheck } from "lucide-react";
 import FieldLabel from "../shared/FieldLabel";
 import ChipListEditor from "../shared/ChipListEditor";
+import InfoBanner from "../shared/InfoBanner";
 import { CATEGORIES, CATEGORY_LABELS } from "../constants";
 
 function UploadField({ label, value, onChange, onUpload, uploading, accept = ".png,.jpg,.jpeg,.svg,.webp" }) {
@@ -53,6 +58,36 @@ function UploadField({ label, value, onChange, onUpload, uploading, accept = ".p
 }
 
 export default function DisplaySection({ form, update, onUploadFile, uploadingKey }) {
+  const [membershipSearch, setMembershipSearch] = useState("");
+
+  const { data: serviceTypes = [] } = useQuery({
+    queryKey: ["service-types-active-admin"],
+    queryFn: () => base44.entities.ServiceType.filter({ is_active: true }),
+  });
+
+  const selectedIds = form.required_service_type_ids || [];
+
+  const filteredServiceTypes = useMemo(() => {
+    const q = membershipSearch.trim().toLowerCase();
+    const sorted = [...serviceTypes].sort((a, b) =>
+      String(a?.name || "").localeCompare(String(b?.name || ""))
+    );
+    if (!q) return sorted;
+    return sorted.filter((st) => {
+      const name = String(st?.name || "").toLowerCase();
+      const category = String(st?.category || "").toLowerCase();
+      return name.includes(q) || category.includes(q);
+    });
+  }, [serviceTypes, membershipSearch]);
+
+  const toggleMembership = (id) => {
+    const key = String(id);
+    const next = selectedIds.map(String).includes(key)
+      ? selectedIds.filter((value) => String(value) !== key)
+      : [...selectedIds.map(String), key];
+    update({ required_service_type_ids: next });
+  };
+
   const handleUpload = async (key, file) => {
     if (!onUploadFile) return;
     const url = await onUploadFile(file, key);
@@ -72,29 +107,88 @@ export default function DisplaySection({ form, update, onUploadFile, uploadingKe
         />
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <FieldLabel required className="mb-1">Category</FieldLabel>
-          <Select value={form.category} onValueChange={(v) => update({ category: v })}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {CATEGORIES.map((c) => (
-                <SelectItem key={c} value={c}>{CATEGORY_LABELS[c]}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+      <div>
+        <FieldLabel required className="mb-1">Category</FieldLabel>
+        <Select value={form.category} onValueChange={(v) => update({ category: v })}>
+          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {CATEGORIES.map((c) => (
+              <SelectItem key={c} value={c}>{CATEGORY_LABELS[c]}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div>
+        <FieldLabel
+          required
+          className="mb-1"
+          hint="Providers need at least one of these active MD memberships to activate this supplier."
+        >
+          Required MD Memberships
+        </FieldLabel>
+        <InfoBanner tone="info" icon={<ShieldCheck className="w-4 h-4" />}>
+          Select which <strong>Credentials &amp; Coverage</strong> memberships unlock this supplier on
+          the provider marketplace. Providers see these requirements on cards and detail pages.
+        </InfoBanner>
+        <Input
+          value={membershipSearch}
+          onChange={(e) => setMembershipSearch(e.target.value)}
+          placeholder="Search memberships..."
+          className="mb-2"
+        />
+        <div
+          className="rounded-xl border border-slate-200 bg-white max-h-44 overflow-y-auto divide-y divide-slate-100"
+        >
+          {filteredServiceTypes.length === 0 ? (
+            <p className="text-xs text-slate-400 text-center py-4">
+              {serviceTypes.length === 0 ? "No active memberships found." : "No matches."}
+            </p>
+          ) : (
+            filteredServiceTypes.map((st) => {
+              const checked = selectedIds.map(String).includes(String(st.id));
+              return (
+                <label
+                  key={st.id}
+                  className="flex items-start gap-3 px-3 py-2.5 cursor-pointer hover:bg-slate-50"
+                >
+                  <Checkbox
+                    checked={checked}
+                    onCheckedChange={() => toggleMembership(st.id)}
+                    className="mt-0.5"
+                  />
+                  <span className="min-w-0">
+                    <span className="text-sm font-semibold text-slate-800 block truncate">
+                      {st.name}
+                    </span>
+                    {st.category ? (
+                      <span className="text-xs text-slate-500 capitalize">{st.category}</span>
+                    ) : null}
+                  </span>
+                </label>
+              );
+            })
+          )}
         </div>
-        <div>
-          <FieldLabel className="mb-1">Website</FieldLabel>
-          <div className="relative">
-            <Globe className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
-            <Input
-              className="pl-8"
-              value={form.website_url}
-              onChange={(e) => update({ website_url: e.target.value })}
-              placeholder="https://supplier.com"
-            />
-          </div>
+        {selectedIds.length > 0 ? (
+          <p className="text-xs text-slate-500 mt-1.5">
+            {selectedIds.length} selected — provider needs any one active
+          </p>
+        ) : (
+          <p className="text-xs text-red-500 mt-1.5">Select at least one membership</p>
+        )}
+      </div>
+
+      <div>
+        <FieldLabel className="mb-1">Website</FieldLabel>
+        <div className="relative">
+          <Globe className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+          <Input
+            className="pl-8"
+            value={form.website_url}
+            onChange={(e) => update({ website_url: e.target.value })}
+            placeholder="https://supplier.com"
+          />
         </div>
       </div>
 

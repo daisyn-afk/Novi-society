@@ -48,7 +48,10 @@ import {
   notifyRepOfManufacturerApplication,
   notifyRepOfContactRequest,
 } from "../manufacturers/notifications.js";
-import { buildManufacturerApplicationPayload } from "../manufacturers/providerApplicationContext.js";
+import {
+  assertProviderManufacturerCoverage,
+  buildManufacturerApplicationPayload,
+} from "../manufacturers/providerApplicationContext.js";
 import { validateBookingScope } from "../bookingValidation.js";
 import { sendAppointmentGfeInviteEmail, notifyPatientGfeInvite } from "../patientAppointmentEmails.js";
 import { handleQualiphyExamWebhook, resolveQualiphyWebhookUrl } from "../qualiphy/webhookHandler.js";
@@ -2740,6 +2743,13 @@ functionsRouter.post("/sendManufacturerInquiry", async (req, res, next) => {
     const manufacturer = await getManufacturerById(manufacturerId);
     if (!manufacturer) {
       return res.status(404).json({ ok: false, error: "Manufacturer not found." });
+    }
+
+    try {
+      await assertProviderManufacturerCoverage({ providerId: me?.id, manufacturer });
+    } catch (coverageError) {
+      const status = coverageError?.statusCode || 403;
+      return res.status(status).json({ ok: false, error: coverageError?.message || "MD coverage required." });
     }
 
     const formData = body.form_data && typeof body.form_data === "object" ? body.form_data : {};

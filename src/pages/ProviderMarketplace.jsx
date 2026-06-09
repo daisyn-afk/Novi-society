@@ -8,6 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { HorizontalScrollAffordance } from "@/components/ui/horizontal-scroll-affordance";
 import ProviderSalesLock from "@/components/ProviderSalesLock";
 import { useProviderAccess } from "@/components/useProviderAccess";
+import { useServiceAccess } from "@/components/useServiceAccess";
 import { openRepMailto } from "@/lib/repMailto";
 import ScheduleCallDialog from "@/components/provider/ScheduleCallDialog";
 import UpcomingRepCalls from "@/components/provider/UpcomingRepCalls";
@@ -15,6 +16,20 @@ import RepInfoModal from "@/components/provider/RepInfoModal";
 import OrderRequestDialog from "@/components/provider/OrderRequestDialog";
 import SaveRepContactForm, { resolveRepDisplay } from "@/components/provider/SaveRepContactForm";
 import ProviderInventoryTab from "@/components/provider/ProviderInventoryTab";
+import {
+  DEFAULT_NOVI_UNLOCK_BENEFITS,
+  SupplierCardTeaser,
+  SupplierPromoBadge,
+  SupplierPositioningBadges,
+  SupplierMarketingContent,
+  SupplierInfoCollapsible,
+  SupplierCustomFieldsForm,
+  SupplierCoverageBadges,
+  SupplierCoveragePanel,
+  SupplierCoverageBlockedButton,
+  areCustomFieldsComplete,
+} from "@/components/provider/SupplierMarketplaceSections";
+import { providerHasManufacturerCoverage } from "@/lib/manufacturerCoverage";
 import {
   Search, CheckCircle, Send, Building2, ChevronRight, Star, Globe, ExternalLink,
   Sparkles, ShieldCheck, Zap, Award, Users, Package, ArrowLeft,
@@ -135,13 +150,6 @@ function getSupplierCoverUrl(mfr) {
 }
 
 const SUPPLIER_CARD_HEIGHT = 320;
-
-const DEFAULT_NOVI_UNLOCK_BENEFITS = [
-  "Exclusive NOVI member pricing",
-  "Device financing programs",
-  "Clinical training & certification",
-  "Practice marketing support",
-];
 
 const ACTIVATE_ACCESS_TRUST_ITEMS = ["No paperwork", "Pre-approved", "Fast approval"];
 
@@ -312,6 +320,9 @@ function SupplierMarketplaceCard({
   applied,
   appStatus,
   onOpen,
+  serviceTypes = [],
+  activeServiceIds,
+  hasCoverage = true,
 }) {
   const photo = getSupplierCoverUrl(mfr);
   const isApproved = applied?.status === "approved";
@@ -332,7 +343,12 @@ function SupplierMarketplaceCard({
       className="group text-left overflow-hidden w-full bg-white cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-[rgba(30,37,53,0.35)] focus-visible:ring-offset-2"
       style={{
         borderRadius: 16,
-        boxShadow: "0 4px 20px rgba(30,37,53,0.14)",
+        boxShadow: !hasCoverage && !isApproved
+          ? "0 6px 24px rgba(250,111,48,0.2)"
+          : "0 4px 20px rgba(30,37,53,0.14)",
+        border: !hasCoverage && !isApproved
+          ? "2px solid rgba(250,111,48,0.4)"
+          : "2px solid transparent",
         transition: "transform 0.25s ease, box-shadow 0.25s ease",
       }}
       onMouseEnter={(e) => {
@@ -360,6 +376,10 @@ function SupplierMarketplaceCard({
             }}
           />
         ) : null}
+
+        <div className="absolute bottom-3 right-3 pointer-events-none">
+          <SupplierPromoBadge mfr={mfr} />
+        </div>
 
         <button
           type="button"
@@ -402,7 +422,8 @@ function SupplierMarketplaceCard({
             >
               {mfr.name}
             </p>
-            {mfr.products?.length > 0 ? (
+            <SupplierCardTeaser mfr={mfr} />
+            {!mfr.sales_headline && mfr.products?.length > 0 ? (
               <p
                 className="text-xs mt-1 line-clamp-2 leading-relaxed"
                 style={{ color: "rgba(30,37,53,0.45)" }}
@@ -410,7 +431,7 @@ function SupplierMarketplaceCard({
                 {mfr.products.slice(0, 3).join(" · ")}
                 {mfr.products.length > 3 ? ` · +${mfr.products.length - 3}` : ""}
               </p>
-            ) : mfr.description ? (
+            ) : !mfr.sales_headline && mfr.description ? (
               <p
                 className="text-xs mt-1 line-clamp-2 leading-relaxed"
                 style={{ color: "rgba(30,37,53,0.45)" }}
@@ -420,6 +441,13 @@ function SupplierMarketplaceCard({
             ) : null}
           </div>
         </div>
+
+        <SupplierCoverageBadges
+          mfr={mfr}
+          serviceTypes={serviceTypes}
+          activeServiceIds={activeServiceIds}
+          compact
+        />
 
         {isApproved ? (
           <div
@@ -452,6 +480,8 @@ function SupplierMarketplaceCard({
               {appStatus.label}
             </span>
           </div>
+        ) : !hasCoverage ? (
+          <SupplierCoverageBlockedButton />
         ) : (
           <button
             type="button"
@@ -968,6 +998,7 @@ function ApprovedSupplierDetailView({
   brandRecords,
   totalUnits,
   usedLots,
+  providerState,
 }) {
   const col = CATEGORY_COLORS[mfr.category] || CATEGORY_COLORS.other;
   const perks = mfr.benefits?.length > 0 ? mfr.benefits : DEFAULT_NOVI_UNLOCK_BENEFITS;
@@ -1135,12 +1166,26 @@ function ApprovedSupplierDetailView({
           )}
         </div>
       </GlassCard>
+
+      <SupplierInfoCollapsible mfr={mfr} providerState={providerState} />
     </div>
   );
 }
 
 // ─── Supplier Detail Panel ───────────────────────────────────────────────────
-function SupplierDetailView({ mfr, onBack, onApply, application, me, treatmentRecords = [], certifications = [] }) {
+function SupplierDetailView({
+  mfr,
+  onBack,
+  onApply,
+  application,
+  me,
+  treatmentRecords = [],
+  certifications = [],
+  providerState,
+  serviceTypes = [],
+  activeServiceIds,
+  hasCoverage = true,
+}) {
   const col = CATEGORY_COLORS[mfr.category] || CATEGORY_COLORS.other;
   const app = application;
   const statusCfg = app ? (APP_STATUS_CONFIG[app.status] || APP_STATUS_CONFIG.pending) : null;
@@ -1160,6 +1205,7 @@ function SupplierDetailView({ mfr, onBack, onApply, application, me, treatmentRe
         brandRecords={brandRecords}
         totalUnits={totalUnits}
         usedLots={usedLots}
+        providerState={providerState}
       />
     );
   }
@@ -1216,12 +1262,25 @@ function SupplierDetailView({ mfr, onBack, onApply, application, me, treatmentRe
       {/* Main content card */}
       <div className="rounded-b-2xl overflow-hidden" style={{ background: "rgba(255,255,255,0.9)", backdropFilter: "blur(20px)", border: "1px solid rgba(255,255,255,0.9)", borderTop: "none", boxShadow: "0 8px 32px rgba(30,37,53,0.1)" }}>
 
+        <div className="px-6 pt-5 pb-2">
+          <SupplierCoveragePanel
+            mfr={mfr}
+            serviceTypes={serviceTypes}
+            activeServiceIds={activeServiceIds}
+            prominent
+          />
+        </div>
+
         {/* Description + stats */}
-        <div className="px-6 pt-5 pb-4">
+        <div className="px-6 pt-3 pb-4">
+          {mfr.sales_headline ? (
+            <p className="text-sm font-semibold mb-2" style={{ color: "#4a6b10" }}>{mfr.sales_headline}</p>
+          ) : null}
           {mfr.description && (
             <p className="text-sm leading-relaxed mb-4" style={{ color: "rgba(30,37,53,0.65)", maxWidth: 620 }}>{mfr.description}</p>
           )}
-          <div className="grid grid-cols-3 gap-3">
+          <SupplierPositioningBadges mfr={mfr} />
+          <div className="grid grid-cols-3 gap-3 mt-4">
             {[
               { label: "Products", value: mfr.products?.length || "—", icon: Package },
               { label: "Min. Order", value: mfr.min_order_amount ? `$${mfr.min_order_amount}` : "Contact rep", icon: Tag },
@@ -1246,9 +1305,13 @@ function SupplierDetailView({ mfr, onBack, onApply, application, me, treatmentRe
             </a>
           )}
 
-          {!app && (
+          {!app && hasCoverage ? (
             <ActivateAccessCTA onClick={onApply} className="mt-5" />
-          )}
+          ) : !app && !hasCoverage ? (
+            <div className="mt-5">
+              <SupplierCoverageBlockedButton />
+            </div>
+          ) : null}
         </div>
 
         <div className="h-px mx-6" style={{ background: "rgba(30,37,53,0.07)" }} />
@@ -1287,34 +1350,7 @@ function SupplierDetailView({ mfr, onBack, onApply, application, me, treatmentRe
           )}
         </div>
 
-        <div className="h-px mx-6" style={{ background: "rgba(30,37,53,0.07)" }} />
-
-        {/* What You Unlock */}
-        <div className="mx-6 my-5 overflow-hidden rounded-2xl" style={{ border: "1px solid rgba(30,37,53,0.08)", boxShadow: "0 2px 12px rgba(30,37,53,0.06)" }}>
-          <div className="flex items-start justify-between gap-4 px-5 py-4" style={{ background: "linear-gradient(135deg, #1e2535 0%, #2a3355 100%)" }}>
-            <div>
-              <p className="text-xs font-black uppercase tracking-widest mb-1" style={{ color: "#C8E63C", letterSpacing: "0.14em" }}>
-                What You Unlock
-              </p>
-              <p style={{ fontFamily: "'DM Serif Display', serif", fontStyle: "italic", fontSize: 20, color: "#fff", lineHeight: 1.2 }}>
-                Exclusive NOVI benefits
-              </p>
-            </div>
-            <ShieldCheck className="w-5 h-5 flex-shrink-0 mt-1" style={{ color: "rgba(255,255,255,0.35)" }} />
-          </div>
-          <div className="px-5 py-4" style={{ background: "#fff" }}>
-            <div className="grid sm:grid-cols-2 gap-x-6 gap-y-2.5">
-              {DEFAULT_NOVI_UNLOCK_BENEFITS.map((item, i) => (
-                <div key={i} className="flex items-start gap-2">
-                  <div className="w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5" style={{ background: "rgba(200,230,60,0.2)" }}>
-                    <CheckCircle className="w-2.5 h-2.5" style={{ color: "#5a7a20" }} />
-                  </div>
-                  <p className="text-sm" style={{ color: "rgba(30,37,53,0.75)" }}>{item}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
+        <SupplierMarketingContent mfr={mfr} providerState={providerState} showUnlock />
 
         <div className="h-px mx-6" style={{ background: "rgba(30,37,53,0.07)" }} />
 
@@ -1385,7 +1421,7 @@ function SupplierDetailView({ mfr, onBack, onApply, application, me, treatmentRe
         </GlassCard>
       )}
 
-      {!isApproved && !app && (
+      {!isApproved && !app && hasCoverage ? (
         <div className="mt-4 rounded-2xl overflow-hidden px-6 py-8 text-center" style={{ background: "linear-gradient(135deg, #1e2535 0%, #2a3355 100%)", boxShadow: "0 8px 32px rgba(30,37,53,0.12)" }}>
           <p className="text-xs font-black uppercase tracking-widest mb-2" style={{ color: "#C8E63C", letterSpacing: "0.14em" }}>
             Ready to get started?
@@ -1395,7 +1431,7 @@ function SupplierDetailView({ mfr, onBack, onApply, application, me, treatmentRe
           </p>
           <ActivateAccessCTA onClick={onApply} variant="dark" />
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -1403,6 +1439,7 @@ function SupplierDetailView({ mfr, onBack, onApply, application, me, treatmentRe
 // ─── Main Page ───────────────────────────────────────────────────────────────
 export default function ProviderMarketplace() {
   const { status: accessStatus } = useProviderAccess();
+  const { activeServiceIds } = useServiceAccess();
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [selectedManufacturer, setSelectedManufacturer] = useState(null);
@@ -1411,6 +1448,7 @@ export default function ProviderMarketplace() {
   const [submitted, setSubmitted] = useState(false);
   const [lastApplication, setLastApplication] = useState(null);
   const [jotformFormConfirmed, setJotformFormConfirmed] = useState(false);
+  const [applyFieldErrors, setApplyFieldErrors] = useState(false);
   const [myAccountsSubview, setMyAccountsSubview] = useState("accounts");
   const qc = useQueryClient();
 
@@ -1419,6 +1457,11 @@ export default function ProviderMarketplace() {
   const { data: manufacturersRaw = [], isLoading } = useQuery({
     queryKey: ["manufacturers"],
     queryFn: () => base44.entities.Manufacturer.filter({ is_active: true }),
+  });
+
+  const { data: serviceTypes = [] } = useQuery({
+    queryKey: ["service-types-active-marketplace"],
+    queryFn: () => base44.entities.ServiceType.filter({ is_active: true }),
   });
 
   const manufacturers = useMemo(
@@ -1536,12 +1579,12 @@ export default function ProviderMarketplace() {
           .map((cert) => cert.certification_name || cert.course_title)
           .filter(Boolean)
           .join("; "),
+        custom_field_responses: {},
       },
     });
+    setApplyFieldErrors(false);
     setViewMode("apply");
   };
-
-  const canActivateSupplier = jotformFormConfirmed;
 
   const activateManufacturer = useMemo(() => {
     if (!selectedManufacturer) return null;
@@ -1549,6 +1592,16 @@ export default function ProviderMarketplace() {
   }, [manufacturers, selectedManufacturer]);
 
   const activateHasJotform = hasJotformApplicationUrl(activateManufacturer);
+  const activateCustomFields = activateManufacturer?.custom_fields || [];
+  const customFieldResponses = formData.additional_fields?.custom_field_responses || {};
+  const customFieldsComplete = areCustomFieldsComplete(activateCustomFields, customFieldResponses);
+  const activateHasCoverage = activateManufacturer
+    ? providerHasManufacturerCoverage(activateManufacturer, activeServiceIds)
+    : true;
+  const canActivateSupplier = jotformFormConfirmed && customFieldsComplete && activateHasCoverage;
+  const activateUnlockBenefits = (activateManufacturer?.novi_access?.length > 0
+    ? activateManufacturer.novi_access
+    : DEFAULT_NOVI_UNLOCK_BENEFITS);
 
   const searchMatched = manufacturers.filter((m) => {
     if (!search) return true;
@@ -1788,11 +1841,33 @@ export default function ProviderMarketplace() {
                             Activate {selectedManufacturer.name}
                           </h3>
                           <p className="text-xs mt-1" style={{ color: "rgba(30,37,53,0.5)" }}>
-                            {activateHasJotform
-                              ? "Complete the supplier application form, then confirm below"
-                              : "Your credentials will be forwarded automatically"}
+                            {activateHasJotform && activateCustomFields.length > 0
+                              ? "Answer the questions below, complete the external form, then confirm"
+                              : activateHasJotform
+                                ? "Complete the supplier application form, then confirm below"
+                                : activateCustomFields.length > 0
+                                  ? "Answer the supplier questions below, then confirm"
+                                  : "Your credentials will be forwarded automatically"}
                           </p>
                         </div>
+
+                        {activateCustomFields.length > 0 ? (
+                          <SupplierCustomFieldsForm
+                            fields={activateCustomFields}
+                            values={customFieldResponses}
+                            onChange={(responses) => {
+                              setFormData((prev) => ({
+                                ...prev,
+                                additional_fields: {
+                                  ...prev.additional_fields,
+                                  custom_field_responses: responses,
+                                },
+                              }));
+                              if (applyFieldErrors) setApplyFieldErrors(false);
+                            }}
+                            showErrors={applyFieldErrors}
+                          />
+                        ) : null}
 
                         {activateHasJotform ? (
                           <JotformApplicationLink mfr={activateManufacturer} />
@@ -1834,7 +1909,7 @@ export default function ProviderMarketplace() {
                             What You Unlock
                           </p>
                           <div className="flex flex-wrap gap-2">
-                            {DEFAULT_NOVI_UNLOCK_BENEFITS.map((item, i) => (
+                            {activateUnlockBenefits.map((item, i) => (
                               <span
                                 key={i}
                                 className="text-xs font-medium px-3 py-1.5 rounded-full"
@@ -1871,9 +1946,23 @@ export default function ProviderMarketplace() {
                               borderRadius: 9999,
                               boxShadow: "0 4px 16px rgba(200, 230, 60, 0.35)",
                             }}
-                            onClick={() => submitMutation.mutate()}
+                            onClick={() => {
+                              if (!customFieldsComplete) {
+                                setApplyFieldErrors(true);
+                                return;
+                              }
+                              submitMutation.mutate();
+                            }}
                             disabled={submitMutation.isPending || !canActivateSupplier}
-                            title={!canActivateSupplier ? (activateHasJotform ? "Complete the application form and confirm above" : "Confirm above to continue") : undefined}
+                            title={
+                              !canActivateSupplier
+                                ? !customFieldsComplete
+                                  ? "Complete all required supplier questions"
+                                  : activateHasJotform
+                                    ? "Complete the application form and confirm above"
+                                    : "Confirm above to continue"
+                                : undefined
+                            }
                           >
                             <Zap className="w-4 h-4 shrink-0" fill="#1e2535" style={{ color: "#1e2535" }} />
                             {submitMutation.isPending ? "Activating..." : "Activate Access — It's Free"}
@@ -1893,6 +1982,10 @@ export default function ProviderMarketplace() {
                   me={me}
                   treatmentRecords={treatmentRecords}
                   certifications={certifications}
+                  providerState={me?.state}
+                  serviceTypes={serviceTypes}
+                  activeServiceIds={activeServiceIds}
+                  hasCoverage={providerHasManufacturerCoverage(selectedManufacturer, activeServiceIds)}
                 />
               )
             ) : (
@@ -1944,6 +2037,9 @@ export default function ProviderMarketplace() {
                           applied={applied}
                           appStatus={appStatus}
                           onOpen={() => openDetail(mfr)}
+                          serviceTypes={serviceTypes}
+                          activeServiceIds={activeServiceIds}
+                          hasCoverage={providerHasManufacturerCoverage(mfr, activeServiceIds)}
                         />
                       );
                     })}
