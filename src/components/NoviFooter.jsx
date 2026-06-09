@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { LEGAL_FOOTER_LINKS } from "@/lib/legalFooterLinks";
 
 export default function NoviFooter() {
   return (
@@ -21,56 +22,21 @@ export default function NoviFooter() {
           </p>
 
           {/* Links */}
-          <div className="flex items-center gap-4">
-            <Link
-              to="/PrivacyPolicy"
-              className="text-xs font-medium"
-              style={{ color: "rgba(200,230,60,0.65)", textDecoration: "none" }}
-              onMouseEnter={e => e.target.style.color = "#C8E63C"}
-              onMouseLeave={e => e.target.style.color = "rgba(200,230,60,0.65)"}
-            >
-              Privacy Policy
-            </Link>
-            <span style={{ color: "rgba(255,255,255,0.15)" }}>·</span>
-            <Link
-              to="/TermsAndConditions"
-              className="text-xs font-medium"
-              style={{ color: "rgba(200,230,60,0.65)", textDecoration: "none" }}
-              onMouseEnter={e => e.target.style.color = "#C8E63C"}
-              onMouseLeave={e => e.target.style.color = "rgba(200,230,60,0.65)"}
-            >
-              Terms &amp; Conditions
-            </Link>
-            <span style={{ color: "rgba(255,255,255,0.15)" }}>·</span>
-            <Link
-              to="/RefundPolicy"
-              className="text-xs font-medium"
-              style={{ color: "rgba(200,230,60,0.65)", textDecoration: "none" }}
-              onMouseEnter={e => e.target.style.color = "#C8E63C"}
-              onMouseLeave={e => e.target.style.color = "rgba(200,230,60,0.65)"}
-            >
-              Refund Policy
-            </Link>
-            <span style={{ color: "rgba(255,255,255,0.15)" }}>·</span>
-            <Link
-              to="/SMSTerms"
-              className="text-xs font-medium"
-              style={{ color: "rgba(200,230,60,0.65)", textDecoration: "none" }}
-              onMouseEnter={e => e.target.style.color = "#C8E63C"}
-              onMouseLeave={e => e.target.style.color = "rgba(200,230,60,0.65)"}
-            >
-              SMS Terms
-            </Link>
-            <span style={{ color: "rgba(255,255,255,0.15)" }}>·</span>
-            <Link
-              to="/ContactUs"
-              className="text-xs font-medium"
-              style={{ color: "rgba(200,230,60,0.65)", textDecoration: "none" }}
-              onMouseEnter={e => e.target.style.color = "#C8E63C"}
-              onMouseLeave={e => e.target.style.color = "rgba(200,230,60,0.65)"}
-            >
-              Contact Us
-            </Link>
+          <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
+            {LEGAL_FOOTER_LINKS.map(({ label, page }, index) => (
+              <span key={page} className="flex items-center gap-4">
+                {index > 0 && <span style={{ color: "rgba(255,255,255,0.15)" }}>·</span>}
+                <Link
+                  to={`/${page}`}
+                  className="text-xs font-medium"
+                  style={{ color: "rgba(200,230,60,0.65)", textDecoration: "none" }}
+                  onMouseEnter={e => { e.target.style.color = "#C8E63C"; }}
+                  onMouseLeave={e => { e.target.style.color = "rgba(200,230,60,0.65)"; }}
+                >
+                  {label}
+                </Link>
+              </span>
+            ))}
           </div>
         </div>
       </div>
