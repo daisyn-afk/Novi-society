@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, isSameMonth, addMonths, subMonths, parseISO } from "date-fns";
+import { formatTimeRange } from "@/lib/appointmentDisplay";
 import { ChevronLeft, ChevronRight, MapPin, Users, Clock } from "lucide-react";
 
 export default function TrainingCalendarView({ scheduledCourses = [], enrollments = [] }) {
@@ -99,7 +100,7 @@ export default function TrainingCalendarView({ scheduledCourses = [], enrollment
               </div>
               <div className="flex flex-wrap gap-3 text-xs" style={{ color: "#8891a8" }}>
                 {(e.start_time || e.end_time) && (
-                  <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{e.start_time}{e.end_time ? `–${e.end_time}` : ""}</span>
+                  <span className="flex items-center gap-1 whitespace-nowrap"><Clock className="w-3 h-3" />{formatTimeRange(e.start_time, e.end_time, "–")}</span>
                 )}
                 {e.location && <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{e.location}</span>}
                 {e.instructor && <span className="flex items-center gap-1"><Users className="w-3 h-3" />Trainer: {e.instructor}</span>}
@@ -130,7 +131,7 @@ export default function TrainingCalendarView({ scheduledCourses = [], enrollment
                   <p className="font-semibold text-sm truncate" style={{ color: "#1a2540" }}>{e.courseTitle}</p>
                   <div className="flex gap-3 text-xs mt-0.5" style={{ color: "#8891a8" }}>
                     {e.location && <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{e.location}</span>}
-                    {(e.start_time || e.end_time) && <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{e.start_time}{e.end_time ? `–${e.end_time}` : ""}</span>}
+                    {(e.start_time || e.end_time) && <span className="flex items-center gap-1 whitespace-nowrap"><Clock className="w-3 h-3" />{formatTimeRange(e.start_time, e.end_time, "–")}</span>}
                   </div>
                 </div>
                 <span className="text-xs px-2.5 py-1 rounded-full font-semibold flex-shrink-0" style={{ background: "rgba(74,95,160,0.1)", color: "#4a5fa0" }}>

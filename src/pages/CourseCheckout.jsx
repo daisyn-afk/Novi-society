@@ -1,16 +1,17 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { BookOpen, Clock, MapPin, Award, CheckCircle, ArrowLeft, CreditCard, Calendar } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Clock, MapPin, Award, ArrowLeft, CreditCard, Calendar } from "lucide-react";
 import { format } from "date-fns";
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { courseCheckoutApi } from "@/api/courseCheckoutApi";
 import { redirectToStripeCheckout } from "@/lib/redirectToStripeCheckout";
 import { CHECKOUT_RETURN_PROVIDER, stashCheckoutReturnTo } from "@/lib/checkoutReturnPath";
+import { formatSessionScheduleLine } from "@/lib/appointmentDisplay";
 
 export default function CourseCheckout() {
   const params = new URLSearchParams(window.location.search);
@@ -38,6 +39,29 @@ export default function CourseCheckout() {
   const alreadyEnrolled = myEnrollments.some(e => e.course_id === courseId && e.status !== "cancelled");
 
   const [selectedDate, setSelectedDate] = useState("");
+  const [promoCode, setPromoCode] = useState("");
+  const [promoPreview, setPromoPreview] = useState(null);
+
+  const selectedSession = course?.session_dates?.find((s) => s.date === selectedDate) || null;
+  const basePrice = Number(course?.price || 0);
+  const discountAmount = promoPreview ? Number(promoPreview.discount_amount || 0) : 0;
+  const checkoutTotal = promoPreview ? Number(promoPreview.total ?? basePrice) : basePrice;
+  const isValidPromoApplied = Boolean(promoPreview?.code);
+
+  const promoMutation = useMutation({
+    mutationFn: () =>
+      courseCheckoutApi.validatePromoCode({
+        course_id: courseId,
+        promo_code: promoCode.trim(),
+      }),
+    onSuccess: (result) => setPromoPreview(result),
+  });
+
+  const clearPromoCode = () => {
+    setPromoCode("");
+    setPromoPreview(null);
+    promoMutation.reset();
+  };
 
   const checkout = useMutation({
     mutationFn: async () => {
@@ -46,10 +70,14 @@ export default function CourseCheckout() {
         checkout_return_to: CHECKOUT_RETURN_PROVIDER,
         course_id: courseId,
         course_date: selectedDate || null,
+        course_session_id: selectedSession?.session_id || null,
+        course_start_time: selectedSession?.start_time || null,
+        course_end_time: selectedSession?.end_time || null,
         customer_name: me?.full_name || "",
         first_name: me?.first_name || me?.full_name?.split(" ")[0] || "",
         last_name: me?.last_name || me?.full_name?.split(" ").slice(1).join(" ") || "",
         customer_email: me?.email || "",
+        promo_code: isValidPromoApplied ? promoPreview.code : null,
         terms_confirmed: true,
         refund_policy_confirmed: true,
       });
@@ -100,9 +128,8 @@ export default function CourseCheckout() {
                   <div className="font-medium" style={{ color: "#1e2535" }}>
                     {format(new Date(s.date + "T12:00:00"), "EEEE, MMMM d, yyyy")}
                   </div>
-                  <div className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.5)" }}>
-                    {s.start_time && s.end_time ? `${s.start_time} – ${s.end_time}` : s.start_time || ""}
-                    {s.location && ` · ${s.location}`}
+                  <div className="text-xs mt-0.5 whitespace-nowrap overflow-hidden text-ellipsis" style={{ color: "rgba(30,37,53,0.5)" }}>
+                    {formatSessionScheduleLine(s)}
                   </div>
                 </button>
               ))}
@@ -137,9 +164,76 @@ export default function CourseCheckout() {
              <span className="text-sm font-bold" style={{ color: "#1e2535" }}>🎓 {course.certification_name}</span>
            </div>
           )}
-          <div className="border-t pt-4 flex items-center justify-between" style={{ borderColor: "rgba(30,37,53,0.08)" }}>
-           <span className="font-medium" style={{ color: "rgba(30,37,53,0.7)" }}>Total</span>
-           <span className="text-3xl font-bold" style={{ color: "#1e2535" }}>${Number(course.price || 0).toLocaleString()}</span>
+          <div className="border-t pt-4 space-y-4" style={{ borderColor: "rgba(30,37,53,0.08)" }}>
+            <div>
+              <Label className="text-sm font-semibold mb-1.5 block" style={{ color: "#2D6B7F" }}>
+                Promo Code (Optional)
+              </Label>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <Input
+                  value={promoCode}
+                  onChange={(e) => {
+                    setPromoCode(e.target.value);
+                    setPromoPreview(null);
+                    promoMutation.reset();
+                  }}
+                  placeholder="Enter promo code"
+                  className="h-11 rounded-xl"
+                  style={{ border: "1.5px solid rgba(0,0,0,0.1)" }}
+                  disabled={isValidPromoApplied}
+                />
+                {!isValidPromoApplied ? (
+                  <Button
+                    type="button"
+                    className="h-11 rounded-xl px-5 font-bold sm:w-auto w-full"
+                    style={{
+                      background: "#2D6B7F",
+                      color: "#fff",
+                      opacity: promoCode.trim() ? 1 : 0.45,
+                    }}
+                    onClick={() => promoMutation.mutate()}
+                    disabled={!promoCode.trim() || promoMutation.isPending}
+                  >
+                    {promoMutation.isPending ? "Applying..." : "Apply"}
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-11 rounded-xl px-5 font-bold sm:w-auto w-full"
+                    onClick={clearPromoCode}
+                    disabled={promoMutation.isPending}
+                  >
+                    Remove
+                  </Button>
+                )}
+              </div>
+              {promoMutation.error && (
+                <p className="text-xs mt-2" style={{ color: "#DA6A63" }}>{promoMutation.error.message}</p>
+              )}
+              {isValidPromoApplied && (
+                <div className="mt-2 text-xs rounded-lg p-2.5" style={{ background: "rgba(200,230,60,0.1)", border: "1px solid rgba(200,230,60,0.3)", color: "#3d5a0a" }}>
+                  Promo <strong>{promoPreview.code}</strong> applied: -${discountAmount.toLocaleString()}
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-sm" style={{ color: "rgba(30,37,53,0.6)" }}>
+                <span>Subtotal</span>
+                <span>${basePrice.toLocaleString()}</span>
+              </div>
+              {isValidPromoApplied && discountAmount > 0 && (
+                <div className="flex items-center justify-between text-sm font-semibold" style={{ color: "#3d5a0a" }}>
+                  <span>Discount</span>
+                  <span>-${discountAmount.toLocaleString()}</span>
+                </div>
+              )}
+              <div className="flex items-center justify-between pt-1">
+                <span className="font-medium" style={{ color: "rgba(30,37,53,0.7)" }}>Total</span>
+                <span className="text-3xl font-bold" style={{ color: "#1e2535" }}>${checkoutTotal.toLocaleString()}</span>
+              </div>
+            </div>
           </div>
           </div>
           </div>
@@ -156,7 +250,7 @@ export default function CourseCheckout() {
           onClick={() => checkout.mutate()}
           disabled={checkout.isPending || alreadyEnrolled || (course?.session_dates?.length > 0 && !selectedDate)}
         >
-          {checkout.isPending ? "Redirecting to payment..." : course?.session_dates?.length > 0 && !selectedDate ? "Select a Date to Continue" : `Pay $${Number(course.price || 0).toLocaleString()} & Enroll`}
+          {checkout.isPending ? "Redirecting to payment..." : course?.session_dates?.length > 0 && !selectedDate ? "Select a Date to Continue" : `Pay $${checkoutTotal.toLocaleString()} & Enroll`}
         </Button>
         <p className="text-xs text-center mt-3" style={{ color: "rgba(30,37,53,0.5)" }}>
           By enrolling you agree to our terms of service. Refunds within 48 hours of purchase.

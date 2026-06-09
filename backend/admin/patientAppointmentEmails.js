@@ -1,5 +1,6 @@
 import { sendEmailFromTemplate } from "./emails/renderTemplate.js";
 import { query } from "./db.js";
+import { formatDisplayTime } from "./timeDisplay.js";
 
 export function fmtAppointmentDateLocal(dateString) {
   if (!dateString) return "";
@@ -11,12 +12,7 @@ export function fmtAppointmentDateLocal(dateString) {
 
 export function fmtAppointmentTimeLabel(timeSlot) {
   if (!timeSlot || typeof timeSlot !== "string") return "—";
-  const [hRaw, mRaw] = timeSlot.slice(0, 5).split(":");
-  const h = Number(hRaw);
-  const m = Number(mRaw);
-  if (!Number.isFinite(h) || !Number.isFinite(m)) return String(timeSlot);
-  const ampm = h >= 12 ? "PM" : "AM";
-  return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${ampm}`;
+  return formatDisplayTime(timeSlot) || String(timeSlot);
 }
 
 function buildAppointmentDetailRows({ serviceLabel, providerName, appointmentDate, appointmentTime }) {

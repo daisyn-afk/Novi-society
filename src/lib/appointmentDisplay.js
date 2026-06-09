@@ -1,23 +1,133 @@
-import { format, parseISO } from "date-fns";
+import { format, isSameDay, isToday, isTomorrow, isYesterday } from "date-fns";
 
 /**
- * Calendar date for display (local timezone).
- * DB may store `appointment_date` as timestamptz; raw ISO strings look like the wrong day
- * when pasted into UI vs list rows that use parseISO + local format.
+ * Parse appointment calendar date as a local day (not UTC).
+ * `appointment_date` is stored as a date column (`YYYY-MM-DD`); ISO strings with a
+ * midnight UTC suffix must not shift to the previous day in US timezones.
+ */
+export function parseAppointmentDateLocal(dateValue) {
+  if (dateValue == null || dateValue === "") return null;
+  if (dateValue instanceof Date) {
+    if (Number.isNaN(dateValue.getTime())) return null;
+    return new Date(dateValue.getFullYear(), dateValue.getMonth(), dateValue.getDate());
+  }
+  const s = String(dateValue).trim();
+  const datePart = s.length >= 10 ? s.slice(0, 10) : s;
+  const [year, month, day] = datePart.split("-").map(Number);
+  if (!year || !month || !day) return null;
+  const dt = new Date(year, month - 1, day);
+  return Number.isNaN(dt.getTime()) ? null : dt;
+}
+
+/** Stable `YYYY-MM-DD` key for grouping/sorting appointment rows. */
+export function appointmentDateKey(dateValue) {
+  const dt = parseAppointmentDateLocal(dateValue);
+  if (!dt) {
+    const s = String(dateValue || "").trim();
+    return s || "unscheduled";
+  }
+  return format(dt, "yyyy-MM-dd");
+}
+
+/**
+ * Calendar date for display in the provider/patient's local timezone.
  */
 export function formatAppointmentDate(dateValue, pattern = "EEE, MMM d, yyyy") {
-  if (!dateValue) return "";
-  try {
-    const dt = typeof dateValue === "string" ? parseISO(dateValue) : dateValue;
-    if (Number.isNaN(dt.getTime())) {
-      const s = String(dateValue).trim();
-      return s.length >= 10 ? s.slice(0, 10) : s;
-    }
-    return format(dt, pattern);
-  } catch {
+  const dt = parseAppointmentDateLocal(dateValue);
+  if (!dt) {
     const s = String(dateValue || "").trim();
     return s.length >= 10 ? s.slice(0, 10) : s;
   }
+  return format(dt, pattern);
+}
+
+/**
+ * 24h `HH:mm` (or `HH:mm:ss`) from DB/HTML inputs → `h:mm AM/PM`.
+ * Use this (or `formatDisplayTime`) for any clock-time string shown in UI.
+ */
+export function formatAppointmentTime(timeValue) {
+  if (timeValue == null || timeValue === "") return "";
+  const raw = String(timeValue).trim();
+  const [hRaw, mRaw] = raw.slice(0, 5).split(":");
+  const h = Number(hRaw);
+  const m = Number(mRaw);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return raw;
+  const ampm = h >= 12 ? "PM" : "AM";
+  return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${ampm}`;
+}
+
+/** Alias for `formatAppointmentTime` — preferred name for non-appointment clock times. */
+export const formatDisplayTime = formatAppointmentTime;
+
+/** ISO timestamp / Date → `h:mm AM/PM` (or custom pattern). */
+export function formatTimestampTime(value, pattern = "h:mm a") {
+  if (value == null || value === "") return "";
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  return format(d, pattern);
+}
+
+/** ISO timestamp / Date → `MMM d, yyyy at h:mm AM/PM`. */
+export function formatTimestampDateTime(value, pattern = "MMM d, yyyy 'at' h:mm a") {
+  return formatTimestampTime(value, pattern);
+}
+
+/** Chat bubble timestamp for today. */
+export function formatMessageTime(ts) {
+  return formatTimestampTime(ts);
+}
+
+/** Chat thread list: time today, otherwise date label. */
+export function formatMessageThreadTime(ts) {
+  if (!ts) return "";
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return "";
+  if (isToday(d)) return format(d, "h:mm a");
+  if (isYesterday(d)) return "Yesterday";
+  return format(d, "MMM d");
+}
+
+/** Course/session slot times on one line, e.g. `5:25 PM – 10:22 PM`. */
+export function formatTimeRange(startTime, endTime, separator = " – ") {
+  const start = formatAppointmentTime(startTime);
+  const end = formatAppointmentTime(endTime);
+  if (start && end) return `${start}${separator}${end}`;
+  return start || end || "";
+}
+
+export function formatSessionScheduleLine({ start_time, end_time, location } = {}) {
+  const time = formatTimeRange(start_time, end_time);
+  if (!time && !location) return "";
+  if (!time) return String(location || "");
+  if (!location) return time;
+  return `${time} · ${location}`;
+}
+
+export function sessionEntryForDate(courseOrDates, dateValue) {
+  if (!dateValue) return null;
+  const key = String(dateValue).slice(0, 10);
+  const rows = Array.isArray(courseOrDates)
+    ? courseOrDates
+    : courseOrDates?.session_dates || [];
+  return (
+    rows.find((d) => String(d?.date || d?.session_date || "").slice(0, 10) === key) || null
+  );
+}
+
+export function isAppointmentDateToday(dateValue) {
+  const dt = parseAppointmentDateLocal(dateValue);
+  return dt ? isToday(dt) : false;
+}
+
+export function isAppointmentDateTomorrow(dateValue) {
+  const dt = parseAppointmentDateLocal(dateValue);
+  return dt ? isTomorrow(dt) : false;
+}
+
+export function isSameAppointmentDay(dateValue, day) {
+  const dt = parseAppointmentDateLocal(dateValue);
+  if (!dt || !day) return false;
+  return isSameDay(dt, day);
 }
 
 /**

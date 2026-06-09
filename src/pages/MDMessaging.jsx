@@ -13,23 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { MessageSquare, Plus, Send, X, Loader2, ChevronLeft } from "lucide-react";
-import { format, isToday, isYesterday } from "date-fns";
-
-function formatMsgTime(ts) {
-  if (!ts) return "";
-  const d = new Date(ts);
-  if (isNaN(d)) return "";
-  return format(d, "HH:mm");
-}
-
-function formatThreadTime(ts) {
-  if (!ts) return "";
-  const d = new Date(ts);
-  if (isNaN(d)) return "";
-  if (isToday(d)) return format(d, "HH:mm");
-  if (isYesterday(d)) return "Yesterday";
-  return format(d, "MMM d");
-}
+import { formatMessageTime as formatMsgTime, formatMessageThreadTime as formatThreadTime } from "@/lib/appointmentDisplay";
 
 function getInitials(name) {
   if (!name) return "?";

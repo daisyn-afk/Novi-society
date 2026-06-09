@@ -135,6 +135,9 @@ webhooksRouter.post("/stripe", async (req, res, next) => {
         await processAppointmentTreatmentCheckoutCompletedSession(session);
       } else if (checkoutType === "md_board_coverage") {
         await processMdBoardStripeEvent(event);
+      } else if (checkoutType === "patient_journey_premium") {
+        const { activatePatientJourneyFromStripeSession } = await import("../patient-journey/subscriptionService.js");
+        await activatePatientJourneyFromStripeSession(session);
       } else {
         await processCompletedCheckoutSession(session);
       }
@@ -146,6 +149,16 @@ webhooksRouter.post("/stripe", async (req, res, next) => {
       } else if (asyncType === "appointment_treatment") {
         await processAppointmentTreatmentCheckoutCompletedSession(session);
       }
+    } else if (
+      event.type === "customer.subscription.updated" ||
+      event.type === "customer.subscription.deleted"
+    ) {
+      const { processPatientJourneyStripeEvent } = await import("../patient-journey/subscriptionService.js");
+      const patientResult = await processPatientJourneyStripeEvent(event);
+      if (!patientResult?.skipped) {
+        return res.json({ received: true });
+      }
+      await processMdBoardStripeEvent(event);
     } else {
       await processMdBoardStripeEvent(event);
     }

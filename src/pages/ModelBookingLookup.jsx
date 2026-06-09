@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Calendar, Mail, Phone, Clock, MapPin, AlertCircle, CheckCircle2, XCircle, Search, Copy } from "lucide-react";
 import NoviFooter from "@/components/NoviFooter";
+import { formatDisplayTime } from "@/lib/appointmentDisplay";
 
 export default function ModelBookingLookup() {
   const queryClient = useQueryClient();
@@ -178,7 +179,7 @@ export default function ModelBookingLookup() {
                       {booking.model_time_slot && !booking.is_waitlist && (
                         <div className="flex items-center gap-2" style={{ color: "rgba(30,37,53,0.65)" }}>
                           <Clock className="w-4 h-4 flex-shrink-0" />
-                          {booking.model_time_slot}
+                          {formatDisplayTime(booking.model_time_slot)}
                         </div>
                       )}
                       <div className="flex items-center gap-2" style={{ color: "rgba(30,37,53,0.65)" }}>
@@ -238,7 +239,7 @@ export default function ModelBookingLookup() {
                   {selectedBooking.model_time_slot && !selectedBooking.is_waitlist && (
                     <div className="flex justify-between">
                       <span style={{ color: "rgba(30,37,53,0.6)" }}>Time Slot:</span>
-                      <span className="font-semibold" style={{ color: "#1e2535" }}>{selectedBooking.model_time_slot}</span>
+                      <span className="font-semibold" style={{ color: "#1e2535" }}>{formatDisplayTime(selectedBooking.model_time_slot)}</span>
                     </div>
                   )}
                   <div className="flex justify-between">

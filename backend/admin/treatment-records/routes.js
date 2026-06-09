@@ -36,6 +36,10 @@ function mapRow(row) {
     before_photo_urls: Array.isArray(row.before_photo_urls) ? row.before_photo_urls : [],
     after_photo_urls: Array.isArray(row.after_photo_urls) ? row.after_photo_urls : [],
     gfe_questions_answers: Array.isArray(row.gfe_questions_answers) ? row.gfe_questions_answers : [],
+    patient_checkins: Array.isArray(row.patient_checkins) ? row.patient_checkins : [],
+    has_flagged_checkins: row.has_flagged_checkins === true,
+    last_checkin_date: row.last_checkin_date ?? null,
+    last_checkin_stage: row.last_checkin_stage ?? null,
     created_date: row.created_at,
     updated_date: row.updated_at,
   };
@@ -272,16 +276,30 @@ treatmentRecordsRouter.patch("/:id", async (req, res, next) => {
 
     const isMd = isMedicalDirectorRole(me.role);
     const isAdmin = hasAdminAccess(me.role);
-    const isProviderUpdate = !isMd && !isAdmin;
+    const isPatient = String(me.role || "").trim().toLowerCase() === "patient";
+    const isPatientSelf =
+      isPatient && String(existing.patient_id || "") === String(me.id || "");
+    const isProviderUpdate = !isMd && !isAdmin && !isPatientSelf;
 
     let canEdit = isAdmin || (await providerOwnsRecord(me, existing.provider_id));
     if (!canEdit && isMd) {
       const supervised = await supervisedProviderIdsForMd(me.id);
       canEdit = supervised.includes(String(existing.provider_id || ""));
     }
+    if (!canEdit && isPatientSelf) canEdit = true;
     if (!canEdit) return res.status(403).json({ error: "Forbidden." });
 
     const body = { ...(req.body || {}) };
+
+    if (isPatientSelf) {
+      const patientOnlyKeys = new Set(["patient_checkins", "last_checkin_date", "last_checkin_stage"]);
+      for (const key of Object.keys(body)) {
+        if (!patientOnlyKeys.has(key)) delete body[key];
+      }
+      if (!Object.keys(body).length) {
+        return res.status(400).json({ error: "Patients may only update recovery check-in fields." });
+      }
+    }
     const prevStatus = String(existing.status || "").trim();
 
     if (isProviderUpdate) {
@@ -315,17 +333,18 @@ treatmentRecordsRouter.patch("/:id", async (req, res, next) => {
       "status", "md_review_notes", "md_reviewed_by", "md_reviewed_at",
       "gfe_status", "gfe_exam_url", "gfe_provider_name", "gfe_questions_answers",
       "treatment_date", "service",
+      "patient_checkins", "has_flagged_checkins", "last_checkin_date", "last_checkin_stage",
     ];
     const setParts = [];
     const params = [id];
     for (const key of allowed) {
       if (!Object.prototype.hasOwnProperty.call(body, key)) continue;
       params.push(
-        ["areas_treated", "products_used", "before_photo_urls", "after_photo_urls", "gfe_questions_answers"].includes(key)
+        ["areas_treated", "products_used", "before_photo_urls", "after_photo_urls", "gfe_questions_answers", "patient_checkins"].includes(key)
           ? JSON.stringify(Array.isArray(body[key]) ? body[key] : [])
           : body[key]
       );
-      const cast = ["areas_treated", "products_used", "before_photo_urls", "after_photo_urls", "gfe_questions_answers"].includes(key)
+      const cast = ["areas_treated", "products_used", "before_photo_urls", "after_photo_urls", "gfe_questions_answers", "patient_checkins"].includes(key)
         ? "::jsonb"
         : "";
       setParts.push(`${key} = $${params.length}${cast}`);

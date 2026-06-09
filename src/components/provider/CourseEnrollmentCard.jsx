@@ -4,6 +4,7 @@ import { coursePreCourseMaterials } from "@/lib/preCourseMaterials";
 import { format, differenceInDays } from "date-fns";
 import { useState } from "react";
 import { sessionDateSeatsSummaryForEnrollment } from "@/lib/sessionDateSeats";
+import { formatSessionScheduleLine, sessionEntryForDate } from "@/lib/appointmentDisplay";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
@@ -29,6 +30,8 @@ export default function CourseEnrollmentCard({
   const scheduledDate =
     enrollment.session_date ||
     course.session_dates?.find((d) => d.date)?.date;
+  const scheduledSession = sessionEntryForDate(course, scheduledDate);
+  const scheduleLine = formatSessionScheduleLine(scheduledSession);
   const earnedCerts = certs.filter(c => c.course_id === course.id && c.status === "active");
   const linkedServiceIds = (course.linked_service_type_ids?.length > 0)
     ? course.linked_service_type_ids
@@ -130,9 +133,14 @@ export default function CourseEnrollmentCard({
         {/* Quick info grid */}
         <div className="grid grid-cols-2 gap-2">
          {scheduledDate ? (
-           <div className="flex items-center gap-2.5 text-xs p-2.5 rounded-lg" style={{ background: "rgba(250,111,48,0.08)", border: "1px solid rgba(250,111,48,0.2)", color: "rgba(30,37,53,0.65)" }}>
-             <Calendar className="w-4 h-4 flex-shrink-0" style={{ color: "#FA6F30" }} />
-             <span className="font-medium">{format(new Date(scheduledDate), "MMM d, yyyy")}</span>
+           <div className="col-span-2 flex items-start gap-2.5 text-xs p-2.5 rounded-lg" style={{ background: "rgba(250,111,48,0.08)", border: "1px solid rgba(250,111,48,0.2)", color: "rgba(30,37,53,0.65)" }}>
+             <Calendar className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: "#FA6F30" }} />
+             <div className="min-w-0">
+               <span className="font-medium block">{format(new Date(scheduledDate), "MMM d, yyyy")}</span>
+               {scheduleLine ? (
+                 <span className="block mt-0.5 whitespace-nowrap overflow-hidden text-ellipsis">{scheduleLine}</span>
+               ) : null}
+             </div>
            </div>
          ) : (
            <div className="flex items-center gap-2.5 text-xs p-2.5 rounded-lg" style={{ background: "rgba(250,111,48,0.08)", border: "1px solid rgba(250,111,48,0.2)", color: "rgba(30,37,53,0.65)" }}>

@@ -9,24 +9,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import MessageThread from "@/components/messaging/MessageThread";
 import { MessageSquare, Send, Loader2, Stethoscope, User, ChevronLeft } from "lucide-react";
-import { format, isToday, isYesterday } from "date-fns";
 import { parsePreBookingThreadId } from "@/lib/appointmentMessageThreads";
-
-function formatMsgTime(ts) {
-  if (!ts) return "";
-  const d = new Date(ts);
-  if (isNaN(d)) return "";
-  return format(d, "HH:mm");
-}
-
-function formatThreadTime(ts) {
-  if (!ts) return "";
-  const d = new Date(ts);
-  if (isNaN(d)) return "";
-  if (isToday(d)) return format(d, "HH:mm");
-  if (isYesterday(d)) return "Yesterday";
-  return format(d, "MMM d");
-}
+import { formatMessageTime as formatMsgTime, formatMessageThreadTime as formatThreadTime } from "@/lib/appointmentDisplay";
 
 function getInitials(name) {
   if (!name) return "?";

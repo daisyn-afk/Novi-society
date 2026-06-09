@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatUsPhoneInput, usPhoneValidationError } from "@/lib/phoneValidation";
 import { normalizeUsStateInput, usZipValidationError } from "@/lib/usAddressValidation";
+import { analyzeSkinScan, FALLBACK_SCAN_ANALYSIS } from "@/lib/patientJourneyScan";
 
 const TOTAL_STEPS = 6;
 const PATIENT_SELFIE_MAX_BYTES = 10 * 1024 * 1024;
@@ -249,6 +250,23 @@ export default function PatientOnboarding() {
 
     const me = await base44.auth.me();
     const existing = await base44.entities.PatientJourney.filter({ patient_id: me.id });
+
+    let scanEntry = null;
+    if (scanUrl) {
+      let aiAnalysis = FALLBACK_SCAN_ANALYSIS;
+      try {
+        aiAnalysis = await analyzeSkinScan({ fileUrl: scanUrl, isPremium: false });
+      } catch {
+        /* keep fallback */
+      }
+      scanEntry = {
+        scan_url: scanUrl,
+        scanned_at: new Date().toISOString(),
+        label: "Initial Scan",
+        ai_analysis: aiAnalysis,
+      };
+    }
+
     const journeyData = {
       patient_id: me.id,
       patient_email: me.email,
@@ -256,7 +274,7 @@ export default function PatientOnboarding() {
       treatment_goals: goals,
       budget_comfort: budget || undefined,
       onboarding_completed: true,
-      scans: scanUrl ? [{ scan_url: scanUrl, scanned_at: new Date().toISOString(), label: "Initial Scan" }] : [],
+      scans: scanEntry ? [scanEntry] : [],
     };
     if (existing.length > 0) {
       await base44.entities.PatientJourney.update(existing[0].id, journeyData);

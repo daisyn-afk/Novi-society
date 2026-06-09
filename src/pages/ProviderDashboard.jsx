@@ -10,7 +10,13 @@ import {
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { useProviderAccess } from "@/components/useProviderAccess";
-import { isToday, isTomorrow, format, isWithinInterval, startOfMonth, endOfMonth } from "date-fns";
+import { format, isWithinInterval, startOfMonth, endOfMonth } from "date-fns";
+import {
+  formatAppointmentDate,
+  isAppointmentDateToday,
+  isAppointmentDateTomorrow,
+  parseAppointmentDateLocal,
+} from "@/lib/appointmentDisplay";
 import { useAttendanceContext } from "@/components/provider/useAttendanceContext";
 import { Input } from "@/components/ui/input";
 import { useProviderDashboardState } from "@/hooks/useProviderDashboardState";
@@ -180,11 +186,11 @@ function ProviderActiveDashboard({ hasCompletedBasic = true }) {
   });
 
   // ── Appointments
-  const todayAppts = myAppointments.filter(a =>
-    a.appointment_date && isToday(new Date(a.appointment_date)) && ["confirmed", "requested"].includes(a.status)
+  const todayAppts = myAppointments.filter((a) =>
+    a.appointment_date && isAppointmentDateToday(a.appointment_date) && ["confirmed", "requested"].includes(a.status)
   );
-  const tomorrowAppts = myAppointments.filter(a =>
-    a.appointment_date && isTomorrow(new Date(a.appointment_date)) && ["confirmed", "requested"].includes(a.status)
+  const tomorrowAppts = myAppointments.filter((a) =>
+    a.appointment_date && isAppointmentDateTomorrow(a.appointment_date) && ["confirmed", "requested"].includes(a.status)
   );
   const pendingRequests = myAppointments.filter(a => a.status === "requested");
   const upcomingConfirmed = myAppointments.filter(a => a.status === "confirmed");
@@ -202,11 +208,14 @@ function ProviderActiveDashboard({ hasCompletedBasic = true }) {
   const retentionRate = totalPatients > 0 ? Math.round((returningPatients / totalPatients) * 100) : 0;
   const completedAppts = myAppointments.filter(a => a.status === "completed");
 
-  // ── Revenue this month
+  // ── Revenue this month (collected payments only, not invoice totals)
   const thisMonthRevenue = myAppointments
-    .filter(a => a.status === "completed" && a.appointment_date && isWithinInterval(new Date(a.appointment_date), { start: startOfMonth(today), end: endOfMonth(today) }))
-    .reduce((s, a) => s + (a.total_amount || 0), 0);
-  const totalRevenue = completedAppts.reduce((s, a) => s + (a.total_amount || 0), 0);
+    .filter((a) => {
+      const d = parseAppointmentDateLocal(a.appointment_date);
+      return a.status === "completed" && d && isWithinInterval(d, { start: startOfMonth(today), end: endOfMonth(today) });
+    })
+    .reduce((s, a) => s + (Number(a.amount_paid) || 0), 0);
+  const totalRevenue = completedAppts.reduce((s, a) => s + (Number(a.amount_paid) || 0), 0);
 
   // ── Reviews
   const avgRating = myReviews.length ? (myReviews.reduce((s, r) => s + r.rating, 0) / myReviews.length).toFixed(1) : null;
@@ -588,10 +597,10 @@ function ProviderActiveDashboard({ hasCompletedBasic = true }) {
                   <div className="flex items-center gap-3 py-2 px-3 rounded-xl hover:bg-white/30 transition-colors">
                     <div className="w-8 h-8 rounded-lg flex-shrink-0 flex flex-col items-center justify-center" style={{ background: a.status === "requested" ? "rgba(250,111,48,0.15)" : "rgba(123,142,200,0.15)" }}>
                       <p style={{ fontSize: 9, fontWeight: 700, color: a.status === "requested" ? "#FA6F30" : "#7B8EC8", textTransform: "uppercase" }}>
-                        {a.appointment_date ? format(new Date(a.appointment_date), "MMM") : "--"}
+                        {a.appointment_date ? formatAppointmentDate(a.appointment_date, "MMM") : "--"}
                       </p>
                       <p className="font-bold text-sm leading-none" style={{ color: a.status === "requested" ? "#FA6F30" : "#7B8EC8" }}>
-                        {a.appointment_date ? format(new Date(a.appointment_date), "d") : "--"}
+                        {a.appointment_date ? formatAppointmentDate(a.appointment_date, "d") : "--"}
                       </p>
                     </div>
                     <div className="flex-1 min-w-0">
@@ -604,7 +613,7 @@ function ProviderActiveDashboard({ hasCompletedBasic = true }) {
                     {a.status === "requested" && (
                       <span className="text-xs font-bold px-2 py-0.5 rounded-full flex-shrink-0" style={{ background: "rgba(250,111,48,0.15)", color: "#FA6F30" }}>New</span>
                     )}
-                    {isToday(new Date(a.appointment_date || "")) && (
+                    {isAppointmentDateToday(a.appointment_date) && (
                       <span className="text-xs font-bold px-2 py-0.5 rounded-full flex-shrink-0" style={{ background: "rgba(200,230,60,0.2)", color: "#4a6b10" }}>Today</span>
                     )}
                   </div>

@@ -33,20 +33,42 @@ export function getMdContractUrl(serviceType, options = {}) {
   return isUsableDocumentUrl(globalUrl) ? globalUrl : null;
 }
 
-/** Protocol docs for a provider MD subscription (snapshot first, then live service config). */
-export function getProtocolDocumentsForSubscription(subscription, serviceType) {
-  const snapshot = filterProtocolDocuments(subscription?.protocol_document_urls);
-  if (snapshot.length) return snapshot;
-  const tiers = serviceType?.coverage_tiers || [];
-  const tierNum = subscription?.coverage_tier || 1;
+/** Match subscription row to catalog service type (id, then name). */
+export function findServiceTypeForSubscription(subscription, serviceTypes = []) {
+  const id = String(subscription?.service_type_id || "").trim();
+  if (id) {
+    const byId = (serviceTypes || []).find((s) => String(s.id) === id);
+    if (byId) return byId;
+  }
+  const name = String(subscription?.service_type_name || "").trim().toLowerCase();
+  if (!name) return null;
+  return (
+    (serviceTypes || []).find((s) => String(s.name || "").trim().toLowerCase() === name) || null
+  );
+}
+
+/** Protocol docs configured on a service type (tier first, then root-level list). */
+export function resolveProtocolDocumentsFromServiceType(serviceType, coverageTier = 1) {
+  if (!serviceType) return [];
+  const tiers = Array.isArray(serviceType.coverage_tiers) ? serviceType.coverage_tiers : [];
+  const tierNum = Number(coverageTier) || 1;
   if (tiers.length > 0) {
     const tierDef =
-      tiers.find((t) => t.tier_number === tierNum) ||
-      tiers.find((t) => t.tier_number === 1) ||
+      tiers.find((t) => Number(t?.tier_number) === tierNum) ||
+      tiers.find((t) => Number(t?.tier_number) === 1) ||
       tiers[0];
-    return filterProtocolDocuments(tierDef?.protocol_document_urls);
+    const tierDocs = filterProtocolDocuments(tierDef?.protocol_document_urls);
+    if (tierDocs.length) return tierDocs;
   }
-  return filterProtocolDocuments(serviceType?.protocol_document_urls);
+  return filterProtocolDocuments(serviceType.protocol_document_urls);
+}
+
+/**
+ * Protocol docs frozen on the MD subscription at sign-up.
+ * Providers only see documents that were configured when they signed — not later admin uploads.
+ */
+export function getProtocolDocumentsForSubscription(subscription) {
+  return filterProtocolDocuments(subscription?.protocol_document_urls);
 }
 
 export function subscriptionHasMdAgreement(subscription) {
