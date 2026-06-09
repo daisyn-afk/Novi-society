@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { Input } from "@/components/ui/input";
@@ -57,8 +57,15 @@ function UploadField({ label, value, onChange, onUpload, uploading, accept = ".p
   );
 }
 
-export default function DisplaySection({ form, update, onUploadFile, uploadingKey }) {
+export default function DisplaySection({
+  form,
+  update,
+  onUploadFile,
+  uploadingKey,
+  lockedRequiredServiceTypeIds = [],
+}) {
   const [membershipSearch, setMembershipSearch] = useState("");
+  const [membershipError, setMembershipError] = useState("");
 
   const { data: serviceTypes = [] } = useQuery({
     queryKey: ["service-types-active-admin"],
@@ -80,9 +87,23 @@ export default function DisplaySection({ form, update, onUploadFile, uploadingKe
     });
   }, [serviceTypes, membershipSearch]);
 
+  const lockedIds = lockedRequiredServiceTypeIds.map(String);
+
+  useEffect(() => {
+    setMembershipError("");
+  }, [form.name, lockedRequiredServiceTypeIds]);
+
   const toggleMembership = (id) => {
     const key = String(id);
-    const next = selectedIds.map(String).includes(key)
+    const isSelected = selectedIds.map(String).includes(key);
+    if (isSelected && lockedIds.includes(key)) {
+      setMembershipError(
+        "This membership is locked because providers already have active access to this supplier. You can add more memberships, but cannot remove existing ones."
+      );
+      return;
+    }
+    setMembershipError("");
+    const next = isSelected
       ? selectedIds.filter((value) => String(value) !== key)
       : [...selectedIds.map(String), key];
     update({ required_service_type_ids: next });
@@ -147,13 +168,17 @@ export default function DisplaySection({ form, update, onUploadFile, uploadingKe
           ) : (
             filteredServiceTypes.map((st) => {
               const checked = selectedIds.map(String).includes(String(st.id));
+              const locked = checked && lockedIds.includes(String(st.id));
               return (
                 <label
                   key={st.id}
-                  className="flex items-start gap-3 px-3 py-2.5 cursor-pointer hover:bg-slate-50"
+                  className={`flex items-start gap-3 px-3 py-2.5 ${
+                    locked ? "cursor-not-allowed bg-slate-50/80" : "cursor-pointer hover:bg-slate-50"
+                  }`}
                 >
                   <Checkbox
                     checked={checked}
+                    disabled={locked}
                     onCheckedChange={() => toggleMembership(st.id)}
                     className="mt-0.5"
                   />
@@ -170,9 +195,15 @@ export default function DisplaySection({ form, update, onUploadFile, uploadingKe
             })
           )}
         </div>
+        {membershipError ? (
+          <p className="text-xs text-red-500 mt-1.5">{membershipError}</p>
+        ) : null}
         {selectedIds.length > 0 ? (
           <p className="text-xs text-slate-500 mt-1.5">
             {selectedIds.length} selected — provider needs any one active
+            {lockedIds.length > 0
+              ? " · existing selections are locked while providers have active access"
+              : ""}
           </p>
         ) : (
           <p className="text-xs text-red-500 mt-1.5">Select at least one membership</p>

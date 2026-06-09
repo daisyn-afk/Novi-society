@@ -417,11 +417,52 @@ export async function createManufacturer(payload) {
   return rowToApi(rows[0]);
 }
 
+function normalizeRequiredServiceTypeIdList(ids = []) {
+  if (!Array.isArray(ids)) return [];
+  return [...new Set(ids.map((id) => asTrimmedString(id)).filter(Boolean))];
+}
+
+async function countApprovedManufacturerApplications(manufacturerId) {
+  const { rows } = await query(
+    `select count(*)::int as count
+     from public.manufacturer_applications
+     where manufacturer_id = $1
+       and lower(coalesce(status, '')) = 'approved'`,
+    [manufacturerId]
+  );
+  return Number(rows[0]?.count || 0);
+}
+
+async function assertRequiredMembershipsNotRemovedWhileActiveProviders({
+  manufacturerId,
+  previousIds = [],
+  nextIds = [],
+}) {
+  const previous = new Set(normalizeRequiredServiceTypeIdList(previousIds));
+  const next = new Set(normalizeRequiredServiceTypeIdList(nextIds));
+  const removed = [...previous].filter((id) => !next.has(id));
+  if (!removed.length) return;
+
+  const activeProviderCount = await countApprovedManufacturerApplications(manufacturerId);
+  if (activeProviderCount <= 0) return;
+
+  const err = new Error(
+    "Cannot remove required MD memberships while providers have active access to this supplier. Keep existing selections and add more if needed."
+  );
+  err.statusCode = 400;
+  throw err;
+}
+
 export async function updateManufacturer(id, payload) {
   const current = await getManufacturerById(id);
   if (!current) return null;
   const merged = { ...current, ...payload, id };
   const data = normalizeManufacturerPayload(merged);
+  await assertRequiredMembershipsNotRemovedWhileActiveProviders({
+    manufacturerId: id,
+    previousIds: current.required_service_type_ids,
+    nextIds: data.required_service_type_ids,
+  });
   const { rows } = await query(
     `update public.manufacturers
      set name = $2,

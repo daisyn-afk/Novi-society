@@ -480,9 +480,7 @@ function SupplierMarketplaceCard({
               {appStatus.label}
             </span>
           </div>
-        ) : !hasCoverage ? (
-          <SupplierCoverageBlockedButton />
-        ) : (
+        ) : !hasCoverage ? null : (
           <button
             type="button"
             onClick={(e) => {

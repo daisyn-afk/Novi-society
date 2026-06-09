@@ -121,6 +121,7 @@ export default function SupplierFormDialog({
   open,
   onOpenChange,
   initial,
+  lockedRequiredServiceTypeIds = [],
   onSubmit,
   onUploadFile,
   isSubmitting = false,
@@ -254,6 +255,9 @@ export default function SupplierFormDialog({
                   update={update}
                   onUploadFile={handleUploadFile}
                   uploadingKey={uploadingKey}
+                  lockedRequiredServiceTypeIds={
+                    id === "display" ? lockedRequiredServiceTypeIds : undefined
+                  }
                 />
               )}
             </SectionShell>
