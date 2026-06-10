@@ -380,6 +380,7 @@ export async function sendEmailFromTemplate(templateKey, vars = {}) {
     to: recipient,
     subject: rendered.subject,
     html: rendered.html,
+    reply_to: vars.reply_to,
   });
 
   if (!dispatch.ok) {

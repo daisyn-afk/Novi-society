@@ -322,6 +322,14 @@ export async function notifyAdminsOfManufacturerApplication({
   }
 }
 
+function formatProviderReplyTo(name, email) {
+  const cleanEmail = String(email || "").trim();
+  if (!cleanEmail || !isValidEmail(cleanEmail)) return "";
+  const displayName = String(name || "").trim().replace(/[<>"\\]/g, "");
+  if (!displayName) return cleanEmail;
+  return `${displayName} <${cleanEmail}>`;
+}
+
 export async function notifyRepOfManufacturerApplication({
   application,
   manufacturer,
@@ -335,6 +343,10 @@ export async function notifyRepOfManufacturerApplication({
   });
   await sendEmailFromTemplate("manufacturer_application_rep", {
     to: repEmail,
+    reply_to: formatProviderReplyTo(
+      application?.provider_name,
+      application?.provider_email
+    ),
     first_name: manufacturer?.account_rep_name || "there",
     manufacturer_name: manufacturer?.name || application?.manufacturer_name || "your account",
     summary_lines: summaryLines,
@@ -379,8 +391,8 @@ export async function notifyRepOfContactRequest({
     : [...basicProviderLines, `Request type: ${orderRequest?.contact_type || "message"}`];
 
   const intro = isOrder
-    ? `${providerName} submitted a product order request through NOVI. Basic contact details and order lines are below — reply directly to confirm pricing and fulfillment.`
-    : `${providerName} sent a message through the NOVI supplier marketplace. Reply directly to follow up.`;
+    ? `${providerName} submitted a product order request through NOVI. Basic contact details and order lines are below — reply directly to the provider to confirm pricing and fulfillment.`
+    : `${providerName} sent a message through the NOVI supplier marketplace. Reply directly to the provider to follow up.`;
 
   const orderItems = isOrder
     ? mapOrderItemsForRegistry(
@@ -391,6 +403,7 @@ export async function notifyRepOfContactRequest({
 
   const repResult = await sendEmailFromTemplate("manufacturer_contact_rep", {
     to: repEmail,
+    reply_to: formatProviderReplyTo(providerName, providerEmail || orderRequest?.provider_email),
     first_name: repGreetingName,
     contact_subject: subject,
     intro,
