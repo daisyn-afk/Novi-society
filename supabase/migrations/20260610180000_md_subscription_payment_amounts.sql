@@ -1,4 +1,4 @@
--- Record MD Board coverage Stripe charges on md_subscription (prorated checkout + recurring).
+-- Record MD Board coverage Stripe charges on mdd_subscription (prorated checkout + recurring).
 
 alter table if exists public.md_subscription
   add column if not exists checkout_prorated_amount_expected numeric,
