@@ -12,11 +12,7 @@ import {
   Plus, Pencil, Trash2, ChevronDown, ChevronUp, ShieldCheck, Upload, FileText,
   X, Sparkles, Video, Info, Layers, Package, CheckCircle2, AlertTriangle
 } from "lucide-react";
-import {
-  serviceDisplayName,
-  serviceRequiresGfe,
-  isMembershipPlan,
-} from "@/lib/serviceTypeMembershipModel";
+import { serviceDisplayName, serviceRequiresGfe } from "@/lib/serviceTypeMembershipModel";
 
 function ServiceBadges({ svc }) {
   return (
@@ -674,8 +670,8 @@ export default function AdminServiceTypes() {
     refetchOnMount: true,
   });
 
-  const memberships = allRecords.filter((r) => isMembershipPlan(r, allRecords));
-  const services = allRecords.filter((r) => !isMembershipPlan(r, allRecords));
+  const memberships = allRecords.filter((r) => r.is_membership);
+  const services = allRecords.filter((r) => !r.is_membership);
 
   const saveMutation = useMutation({
     mutationFn: async (data) => {
@@ -704,7 +700,7 @@ export default function AdminServiceTypes() {
       const savedId = saved.id || serviceData.id;
 
       const updatePromises = allRecords
-        .filter((r) => isMembershipPlan(r, allRecords))
+        .filter((r) => r.is_membership)
         .map((m) => {
           const wasIncluded = (m.included_service_ids || []).includes(savedId);
           const shouldInclude = selectedMembershipIds.includes(m.id);
@@ -920,7 +916,7 @@ export default function AdminServiceTypes() {
         onClose={() => setMembershipDlg({ open: false, editing: null })}
         initial={membershipDlg.editing}
         catalog={allRecords}
-        allServices={allRecords.filter((r) => !isMembershipPlan(r, allRecords))}
+        allServices={allRecords.filter((r) => !r.is_membership)}
         isSaving={saveMutation.isPending}
         onSave={(data) => saveMutation.mutate(data)}
         onCreateService={() => { setMembershipDlg((d) => ({ ...d, open: false })); setServiceDlg({ open: true, editing: null }); }}
