@@ -26,6 +26,11 @@ import {
 } from "../patientAppointmentEmails.js";
 import { migratePreBookingMessagesToAppointment } from "../appointment-messages/migratePreBookingThread.js";
 import { isAppointmentInPast } from "../lib/appointmentScheduling.js";
+import {
+  APPOINTMENT_REQUIRES_GFE_SQL,
+  APPOINTMENT_SERVICE_TYPE_JOINS,
+  resolveTreatmentServiceType,
+} from "../lib/treatmentServiceType.js";
 
 export const appointmentsRouter = Router();
 
@@ -41,16 +46,16 @@ function hasAdminAccess(role) {
 }
 
 const APPOINTMENTS_SELECT = `select a.*,
-       coalesce(st.name, st_by_name.name) as service_type_name,
-       coalesce(st.requires_gfe, st_by_name.requires_gfe, false) as requires_gfe,
+       coalesce(
+         case when coalesce(st.is_membership, false) = false then st.name else null end,
+         st_svc.name
+       ) as service_type_name,
+       ${APPOINTMENT_REQUIRES_GFE_SQL} as requires_gfe,
        pu.email as patient_user_email,
        pu.full_name as patient_user_name`;
 
 const APPOINTMENTS_FROM = `from public.appointments a
-       left join public.service_type st on st.id::text = a.service_type_id::text
-       left join public.service_type st_by_name on a.service_type_id is null
-         and lower(trim(coalesce(st_by_name.name, ''))) = lower(trim(coalesce(a.service, '')))
-         and coalesce(st_by_name.requires_gfe, false) = true
+       ${APPOINTMENT_SERVICE_TYPE_JOINS}
        left join public.users pu on pu.auth_user_id::text = a.patient_id or pu.id::text = a.patient_id`;
 
 async function resolvePatientContact(patientId, email, name) {
@@ -383,13 +388,11 @@ appointmentsRouter.post("/", async (req, res, next) => {
     }
 
     let initialGfeStatus = "not_required";
-    if (validation.service_type_id) {
-      const { rows: stRows } = await query(
-        `select requires_gfe from public.service_type where id = $1 limit 1`,
-        [validation.service_type_id]
-      );
-      if (stRows[0]?.requires_gfe === true) initialGfeStatus = "not_sent";
-    }
+    const treatmentSvc = await resolveTreatmentServiceType(query, {
+      serviceName: service,
+      serviceTypeId: validation.service_type_id,
+    });
+    if (treatmentSvc?.requires_gfe === true) initialGfeStatus = "not_sent";
 
     const patientId = hasAdminAccess(me.role) && body.patient_id ? String(body.patient_id) : me.id;
     const { patientEmail, patientName } = await resolvePatientContact(

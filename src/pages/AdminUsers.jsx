@@ -5,6 +5,7 @@ import {
   ChevronRight,
   Eye,
   EyeOff,
+  LogIn,
   Mail,
   Pencil,
   Plus,
@@ -13,6 +14,9 @@ import {
   Users as UsersIcon
 } from "lucide-react";
 import { adminUsersApi } from "@/api/adminUsersApi";
+import { base44 } from "@/api/base44Client";
+import { getDashboardPathForRole } from "@/lib/routeAccessPolicy";
+import { startMasterLoginSession } from "@/lib/masterLogin";
 import { useToast } from "@/components/ui/use-toast";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -109,8 +113,16 @@ export default function AdminUsers() {
   const [showPassword, setShowPassword] = useState(false);
   const [savedPasswords, setSavedPasswords] = useState({});
   const [sendingPasswordResetId, setSendingPasswordResetId] = useState(null);
+  const [masterLoginUserId, setMasterLoginUserId] = useState(null);
 
   const debouncedSearch = useDebounced(search, 300);
+
+  const { data: currentUser } = useQuery({
+    queryKey: ["me"],
+    queryFn: () => base44.auth.me(),
+    retry: false,
+  });
+  const isAdmin = String(currentUser?.role || "").trim().toLowerCase() === "admin";
 
   const queryKey = [
     "admin-users",
@@ -211,6 +223,47 @@ export default function AdminUsers() {
     if (!user?.id || !user?.email) return;
     setSendingPasswordResetId(user.id);
     passwordResetMutation.mutate(user.id);
+  };
+
+  const masterLoginMutation = useMutation({
+    mutationFn: ({ id }) => adminUsersApi.masterLogin(id),
+    onSuccess: (data, variables) => {
+      startMasterLoginSession({
+        session: data.session,
+        targetUser: data.user,
+        expiresAt: data.expires_at,
+        adminTokens: variables.adminTokens,
+      });
+      window.location.href = getDashboardPathForRole(data.user?.role);
+    },
+    onError: (err) => {
+      toast({
+        title: "Master login failed",
+        description: err?.message || "Unable to open this account.",
+        variant: "destructive",
+      });
+    },
+    onSettled: () => setMasterLoginUserId(null),
+  });
+
+  const canMasterLogin = (user) => {
+    if (!isAdmin || !user?.is_active) return false;
+    const role = String(user.role || "").trim().toLowerCase();
+    return role !== "admin" && role !== "staff";
+  };
+
+  const handleMasterLogin = (user) => {
+    if (!user?.id || !canMasterLogin(user)) return;
+    const adminAccess = window.localStorage.getItem("novi_auth_access_token") || "";
+    const adminRefresh = window.localStorage.getItem("novi_auth_refresh_token") || "";
+    setMasterLoginUserId(user.id);
+    masterLoginMutation.mutate({
+      id: user.id,
+      adminTokens: {
+        access_token: adminAccess,
+        refresh_token: adminRefresh,
+      },
+    });
   };
 
   const openCreate = () => {
@@ -404,6 +457,17 @@ export default function AdminUsers() {
                         {formatDate(user.created_at)}
                       </TableCell>
                       <TableCell className="text-right">
+                        {canMasterLogin(user) ? (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            title="Master login (5 min, password unchanged)"
+                            disabled={masterLoginUserId === user.id}
+                            onClick={() => handleMasterLogin(user)}
+                          >
+                            <LogIn className="w-4 h-4 text-emerald-600" />
+                          </Button>
+                        ) : null}
                         <Button
                           variant="ghost"
                           size="icon"

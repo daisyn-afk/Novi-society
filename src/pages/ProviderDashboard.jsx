@@ -843,7 +843,7 @@ function ProviderActiveDashboard({ hasCompletedBasic = true }) {
                     <Zap className="w-4 h-4 flex-shrink-0" style={{ color: "#4a6b10" }} />
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-bold truncate" style={{ color: "#1e2535" }}>{sub.service_type_name || "MD Coverage"}</p>
-                      <p className="text-xs" style={{ color: "rgba(30,37,53,0.5)" }}>Tier {sub.coverage_tier} · Active</p>
+                      <p className="text-xs" style={{ color: "rgba(30,37,53,0.5)" }}>Active</p>
                     </div>
                     <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ background: "rgba(200,230,60,0.2)", color: "#4a6b10" }}>✓ Active</span>
                   </div>

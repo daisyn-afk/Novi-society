@@ -53,6 +53,10 @@ function mapProviderRow(row) {
     years_experience: metadataValue(metadata, "years_experience"),
     accepts_new_patients: acceptsNewPatients(metadata),
     practice_packages: Array.isArray(metadata.practice_packages) ? metadata.practice_packages : [],
+    service_offerings_v2:
+      metadata.service_offerings_v2 && typeof metadata.service_offerings_v2 === "object"
+        ? metadata.service_offerings_v2
+        : {},
     gallery_photos: Array.isArray(metadata.gallery_photos) ? metadata.gallery_photos : [],
     referral_program_active: Boolean(metadataValue(metadata, "referral_program_active", false)),
     referral_code: metadataValue(metadata, "referral_code"),

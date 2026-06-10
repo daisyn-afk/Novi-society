@@ -104,14 +104,23 @@ export async function validateBookingScope({ providerId, service, referral_code 
       [pid]
     ),
     query(
-      `select id, service_type_id, service_type_name, status
-         from public.md_subscription
-        where provider_id = $1
-          and lower(status) = 'active'
+      `select ms.id, ms.service_type_id, ms.service_type_name, ms.status
+         from public.md_subscription ms
+         left join public.service_type membership on membership.id::text = ms.service_type_id::text
+        where ms.provider_id = $1
+          and lower(ms.status) = 'active'
           and (
-            lower(trim(coalesce(service_type_name, ''))) = lower($2)
-            or service_type_id in (
-              select id::text from public.service_type where lower(trim(name)) = lower($2) limit 1
+            lower(trim(coalesce(ms.service_type_name, ''))) = lower($2)
+            or lower(trim(coalesce(membership.name, ''))) = lower($2)
+            or exists (
+              select 1
+                from public.service_type child
+               where coalesce(child.is_membership, false) = false
+                 and lower(trim(child.name)) = lower($2)
+                 and (
+                   child.id::text = ms.service_type_id::text
+                   or child.id = any(coalesce(membership.included_service_ids, '{}'))
+                 )
             )
           )
         limit 1`,
@@ -210,9 +219,20 @@ export async function validateBookingScope({ providerId, service, referral_code 
     return { eligible: false, reason: referralCheck.reason };
   }
 
+  const { rows: treatmentSvcRows } = await query(
+    `select id
+       from public.service_type
+      where coalesce(is_membership, false) = false
+        and lower(trim(name)) = lower($1)
+      limit 1`,
+    [serviceName]
+  );
+  const resolvedServiceTypeId =
+    treatmentSvcRows[0]?.id || subRows[0].service_type_id || null;
+
   return {
     eligible: true,
-    service_type_id: subRows[0].service_type_id || null,
+    service_type_id: resolvedServiceTypeId,
     referral_code: referralCheck.referral_code ?? null,
   };
 }

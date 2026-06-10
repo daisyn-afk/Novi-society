@@ -244,8 +244,7 @@ export default function MDTreatmentRecords() {
                           <div>
                             <p className="text-sm font-semibold">{sub.service_type_name}</p>
                             <p className="text-xs text-slate-400">
-                              Tier {sub.coverage_tier || 1} · $
-                              {Number(sub.service_type_monthly_fee ?? 0).toLocaleString()}/mo
+                              ${Number(sub.service_type_monthly_fee ?? 0).toLocaleString()}/mo
                             </p>
                           </div>
                           <Badge className="bg-green-100 text-green-700 text-xs border-0">Active</Badge>

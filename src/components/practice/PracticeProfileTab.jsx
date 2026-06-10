@@ -14,6 +14,11 @@ import RequiredComplianceDocuments from "@/components/practice/RequiredComplianc
 import ProviderStripeConnectCard from "@/components/provider/ProviderStripeConnectCard.jsx";
 import { providerReviewAverage } from "@/lib/providerRating";
 import { emptyGalleryPair } from "@/lib/galleryPhotos";
+import {
+  lockedTreatmentMenuServices,
+  serviceDisplayName,
+  treatmentMenuServiceTypes,
+} from "@/lib/serviceTypeMembershipModel";
 
 const GLASS_STYLE = {
   background: "rgba(255,255,255,0.5)",
@@ -575,14 +580,14 @@ export default function PracticeProfileTab({
             ) : (
               <>
                 {/* Active / approved services — selectable */}
-                {serviceTypes.filter(st => activeServiceIds.has(st.id)).length > 0 && (
+                {treatmentMenuServiceTypes(serviceTypes, activeServiceIds).length > 0 && (
                   <div>
                     <div className="flex items-center gap-2 mb-2">
                       <ShieldCheck className="w-3.5 h-3.5 text-green-600" />
                       <p className="text-xs font-semibold text-green-700">Approved & Active — click to show on profile</p>
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      {serviceTypes.filter(st => activeServiceIds.has(st.id)).map(st => {
+                      {treatmentMenuServiceTypes(serviceTypes, activeServiceIds).map(st => {
                         const selected = specialties.includes(st.id);
                         return (
                           <button key={st.id} onClick={() => toggleSpecialty(st.id)}
@@ -592,7 +597,7 @@ export default function PracticeProfileTab({
                               : { background: "rgba(255,255,255,0.65)", color: "#1e2535", border: "1px solid rgba(30,37,53,0.12)" }
                             }>
                             {selected && <CheckCircle className="w-3 h-3" />}
-                            {st.name}
+                            {serviceDisplayName(st, serviceTypes)}
                           </button>
                         );
                       })}
@@ -601,16 +606,16 @@ export default function PracticeProfileTab({
                 )}
 
                 {/* Inactive / not approved — locked */}
-                {serviceTypes.filter(st => !activeServiceIds.has(st.id)).length > 0 && (
+                {lockedTreatmentMenuServices(serviceTypes, activeServiceIds).length > 0 && (
                   <div>
                     <div className="flex items-center gap-2 mb-2">
                       <Lock className="w-3.5 h-3.5 text-gray-400" />
                       <p className="text-xs font-semibold text-gray-400">Requires MD Coverage Activation</p>
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      {serviceTypes.filter(st => !activeServiceIds.has(st.id)).map(st => (
+                      {lockedTreatmentMenuServices(serviceTypes, activeServiceIds).map(st => (
                         <span key={st.id} className="text-xs px-3 py-1.5 rounded-full font-semibold flex items-center gap-1.5 cursor-not-allowed bg-gray-100 text-gray-400 border border-gray-200">
-                          <Lock className="w-3 h-3" /> {st.name}
+                          <Lock className="w-3 h-3" /> {serviceDisplayName(st, serviceTypes)}
                         </span>
                       ))}
                     </div>

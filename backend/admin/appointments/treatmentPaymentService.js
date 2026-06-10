@@ -321,9 +321,15 @@ export async function createAppointmentTreatmentCheckout({
 
     const { rows: apptRows } = await query(
       `select a.*,
-              coalesce(st.requires_gfe, false) as requires_gfe
+              coalesce(
+                case when coalesce(st.is_membership, false) = false then st.requires_gfe else null end,
+                st_svc.requires_gfe,
+                false
+              ) as requires_gfe
          from public.appointments a
-         left join public.service_type st on st.id = a.service_type_id
+         left join public.service_type st on st.id::text = a.service_type_id::text
+         left join public.service_type st_svc on coalesce(st_svc.is_membership, false) = false
+           and lower(trim(st_svc.name)) = lower(trim(coalesce(a.service, '')))
         where a.id = $1
         limit 1`,
       [appointmentId]

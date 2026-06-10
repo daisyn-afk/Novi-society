@@ -14,6 +14,7 @@ import {
   requireAdminOrStaffWithModule,
 } from "../auth/helpers.js";
 import { markUserSetupEmailSent } from "./passwordSetup.js";
+import { createMasterLoginSession } from "./masterLogin.js";
 import { sendEmailFromTemplate } from "../emails/renderTemplate.js";
 import { resolveSetPasswordUrl } from "../lib/frontendBaseUrl.js";
 
@@ -185,6 +186,39 @@ usersRouter.get("/", async (req, res, next) => {
     });
   } catch (error) {
     next(error);
+  }
+});
+
+usersRouter.post("/:id/master-login", async (req, res, next) => {
+  try {
+    const me = req.me || {};
+    if (!hasAdminAccess(me.role)) {
+      return res.status(403).json({ error: "Forbidden. Admin access required." });
+    }
+
+    const user = await getUserById(req.params.id);
+    if (!user) return res.status(404).json({ error: "User not found." });
+
+    if (String(user.auth_user_id || "") === String(me.id || "")) {
+      return res.status(400).json({ error: "You cannot master-login into your own account." });
+    }
+
+    const result = await createMasterLoginSession(user);
+    // eslint-disable-next-line no-console
+    console.info("[admin-users] master login", {
+      adminAuthUserId: me.id,
+      targetPublicUserId: user.id,
+      targetAuthUserId: user.auth_user_id,
+      targetEmail: user.email,
+      expiresAt: result.expires_at,
+    });
+
+    return res.json(result);
+  } catch (error) {
+    if (error?.statusCode) {
+      return res.status(error.statusCode).json({ error: error.message });
+    }
+    return next(error);
   }
 });
 

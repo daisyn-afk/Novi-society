@@ -11,6 +11,99 @@ export function monthlyFeeForNewMdService(activeServiceCountBeforeAdd = 0) {
   return MD_ADDON_SERVICE_MONTHLY_FEE;
 }
 
+/** Sum of per-slot fees for `activeServiceCount` active MD services (capped). */
+export function calcMdCoverageMonthlyTotal(
+  activeServiceCount = 0,
+  feeForSlot = monthlyFeeForNewMdService
+) {
+  const count = Math.max(0, Number(activeServiceCount) || 0);
+  if (count <= 0) return 0;
+  if (count >= MD_MAX_COVERED_SERVICES) return MD_MAX_MONTHLY_CAP;
+  let total = 0;
+  for (let i = 0; i < count; i += 1) {
+    total += feeForSlot(i);
+  }
+  return Math.min(total, MD_MAX_MONTHLY_CAP);
+}
+
+/**
+ * Prorate one new MD service from signup day through month-end (full rate starts on the 1st).
+ * @param {number} monthlyFee — this service only ($279 first membership, $129 each add-on)
+ */
+export function calcMdCoverageProration(monthlyFee, referenceDate = new Date()) {
+  const fee = Number(monthlyFee) || 0;
+  const today = referenceDate instanceof Date ? referenceDate : new Date(referenceDate);
+  const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+  const dayOfMonth = today.getDate();
+  const daysRemaining = daysInMonth - dayOfMonth + 1;
+  const dueToday = fee <= 0 ? 0 : (fee / daysInMonth) * daysRemaining;
+  const periodStart = new Date(today.getFullYear(), today.getMonth(), dayOfMonth);
+  const periodEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+  return {
+    daysInMonth,
+    daysRemaining,
+    dueToday: Math.round(dueToday * 100) / 100,
+    periodStart,
+    periodEnd,
+    nextBillingDate: new Date(today.getFullYear(), today.getMonth() + 1, 1),
+    currentMonthLabel: today.toLocaleString("en-US", { month: "long" }),
+  };
+}
+
+export function formatMdCoverageUsd(amount) {
+  const n = Number(amount);
+  if (!Number.isFinite(n)) return "0.00";
+  return n.toFixed(2);
+}
+
+/**
+ * Checkout billing preview: prorated charge today for the new service only;
+ * recurring total is the sum of all active slots ($279 + $129 add-ons) from the next 1st.
+ */
+export function buildMdCoverageCheckoutBillingPreview({
+  activeServiceCountBeforeAdd = 0,
+  referenceDate = new Date(),
+  providerId,
+  providerEmail,
+} = {}) {
+  const activeBefore = Math.max(0, Number(activeServiceCountBeforeAdd) || 0);
+  const feeForSlot = (slotIndex) =>
+    resolveMdCoverageMonthlyFee({
+      providerId,
+      providerEmail,
+      activeServiceCountBeforeAdd: slotIndex,
+    });
+
+  const thisServiceMonthly = feeForSlot(activeBefore);
+  const newActiveCount = activeBefore + 1;
+  const newTotalMonthlyFromNextCycle = calcMdCoverageMonthlyTotal(newActiveCount, feeForSlot);
+  const proration = calcMdCoverageProration(thisServiceMonthly, referenceDate);
+  const addonSlots = Math.max(0, newActiveCount - 1);
+
+  return {
+    thisServiceMonthly,
+    newTotalMonthlyFromNextCycle,
+    newActiveCount,
+    hitsCap: newActiveCount >= MD_MAX_COVERED_SERVICES,
+    isFirstService: activeBefore === 0,
+    dueTodayProrated: proration.dueToday,
+    proration,
+    totalBreakdownLabel:
+      newActiveCount <= 0
+        ? ""
+        : addonSlots === 0
+          ? `$${formatMdCoverageUsd(MD_FIRST_SERVICE_MONTHLY_FEE)} first service`
+          : `$${formatMdCoverageUsd(MD_FIRST_SERVICE_MONTHLY_FEE)} + ${addonSlots} add-on${addonSlots === 1 ? "" : "s"} at $${formatMdCoverageUsd(MD_ADDON_SERVICE_MONTHLY_FEE)}/mo`,
+  };
+}
+
+/** Unix timestamp for 00:00 on the 1st of the next calendar month (Stripe billing anchor). */
+export function nextMdCoverageBillingAnchorUnix(referenceDate = new Date()) {
+  const today = referenceDate instanceof Date ? referenceDate : new Date(referenceDate);
+  const anchor = new Date(today.getFullYear(), today.getMonth() + 1, 1, 0, 0, 0, 0);
+  return Math.floor(anchor.getTime() / 1000);
+}
+
 function parseCsvEnv(value) {
   return String(value || "")
     .split(",")

@@ -22,32 +22,59 @@ export function filterProtocolDocuments(docs) {
     .filter((doc) => doc.name && isUsableDocumentUrl(doc.url));
 }
 
-/** Protocol docs configured on a service type (tier first, then root-level list). */
-export function resolveProtocolDocumentsFromServiceType(serviceTypeRow, coverageTier = 1) {
-  const tiers = Array.isArray(serviceTypeRow?.coverage_tiers) ? serviceTypeRow.coverage_tiers : [];
-  const tierNum = Number(coverageTier) || 1;
-  if (tiers.length > 0) {
-    const tierDef =
-      tiers.find((t) => Number(t?.tier_number) === tierNum) ||
-      tiers.find((t) => Number(t?.tier_number) === 1) ||
-      tiers[0];
-    const tierDocs = filterProtocolDocuments(tierDef?.protocol_document_urls);
-    if (tierDocs.length) return tierDocs;
+/** Protocol docs for a membership (merged from included services) or a single service. */
+export function resolveProtocolDocumentsFromServiceType(serviceTypeRow, childRows = []) {
+  const includedIds = Array.isArray(serviceTypeRow?.included_service_ids)
+    ? serviceTypeRow.included_service_ids.filter((x) => typeof x === "string")
+    : [];
+
+  if (serviceTypeRow?.is_membership && includedIds.length > 0) {
+    const merged = [];
+    const seen = new Set();
+    for (const child of childRows) {
+      for (const doc of filterProtocolDocuments(child?.protocol_document_urls)) {
+        const key = `${doc.name}::${doc.url}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        merged.push(doc);
+      }
+    }
+    if (merged.length) return merged;
   }
+
   return filterProtocolDocuments(serviceTypeRow?.protocol_document_urls);
 }
 
-export async function fetchServiceTypeProtocolSnapshot(serviceTypeId, coverageTier = 1) {
+export async function fetchServiceTypeProtocolSnapshot(serviceTypeId) {
   const id = String(serviceTypeId || "").trim();
   if (!id) return [];
+
   const { rows } = await query(
-    `select protocol_document_urls, coverage_tiers
+    `select id, is_membership, protocol_document_urls, included_service_ids
        from public.service_type
       where id = $1
       limit 1`,
     [id]
   );
-  return resolveProtocolDocumentsFromServiceType(rows[0], coverageTier);
+  const row = rows[0];
+  if (!row) return [];
+
+  const includedIds = Array.isArray(row.included_service_ids)
+    ? row.included_service_ids.filter((x) => typeof x === "string")
+    : [];
+
+  let childRows = [];
+  if (row.is_membership && includedIds.length > 0) {
+    const { rows: children } = await query(
+      `select protocol_document_urls
+         from public.service_type
+        where id = any($1::text[])`,
+      [includedIds]
+    );
+    childRows = children;
+  }
+
+  return resolveProtocolDocumentsFromServiceType(row, childRows);
 }
 
 /** Signed protocol list only — frozen on md_subscription at MD agreement sign-up. */
@@ -55,15 +82,15 @@ export function resolveProtocolDocumentsForSubscription(subscriptionRow) {
   return filterProtocolDocuments(subscriptionRow?.protocol_document_urls);
 }
 
-export async function snapshotProtocolDocumentsOnSubscription(subscriptionId, serviceTypeId, coverageTier = 1) {
+export async function snapshotProtocolDocumentsOnSubscription(subscriptionId, serviceTypeId) {
   const id = String(subscriptionId || "").trim();
   const stId = String(serviceTypeId || "").trim();
   if (!id || !stId) return [];
-  const docs = await fetchServiceTypeProtocolSnapshot(stId, coverageTier);
+
+  const docs = await fetchServiceTypeProtocolSnapshot(stId);
   await query(
     `update public.md_subscription
-        set protocol_document_urls = $2::jsonb,
-            updated_at = now()
+        set protocol_document_urls = $2::jsonb
       where id = $1::uuid`,
     [id, JSON.stringify(docs)]
   );

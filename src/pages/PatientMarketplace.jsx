@@ -28,6 +28,10 @@ import {
   isAppointmentInPast,
   todayDateInputValue,
 } from "@/lib/repCallScheduling";
+import {
+  providerBookableServiceNames,
+  providerBookableServices,
+} from "@/lib/providerOfferingServices";
 
 /** Matches AI scan treatment categories → service_types.category (MD marketplace). */
 const JOURNEY_CATEGORY_SLUGS = new Set([
@@ -57,12 +61,6 @@ const servicePill = {
   color: "#4a5fa8",
   border: "1px solid rgba(123,142,200,0.2)",
 };
-
-function serviceTypeForMdSub(sub, serviceTypes) {
-  return serviceTypes.find(
-    (s) => String(s.id) === String(sub.service_type_id) || s.name === sub.service_type_name
-  );
-}
 
 function displayName(provider) {
   return provider.practice_name || provider.full_name || "Provider";
@@ -149,8 +147,6 @@ export default function PatientMarketplace() {
   });
 
   const serviceFiltered = useMemo(() => {
-    const activeSub = (sub) => String(sub.status || "").toLowerCase() === "active";
-
     let list = providers;
 
     if (stateFilter !== "all") {
@@ -159,17 +155,23 @@ export default function PatientMarketplace() {
 
     if (serviceFilter !== "all") {
       list = list.filter((p) =>
-        mdSubs.some((sub) => sub.provider_id === p.id && activeSub(sub) && sub.service_type_name === serviceFilter)
+        providerBookableServiceNames({
+          providerId: p.id,
+          providerOfferings: p.service_offerings_v2,
+          mdSubscriptions: mdSubs,
+          serviceTypes,
+        }).includes(serviceFilter)
       );
     }
 
     if (JOURNEY_CATEGORY_SLUGS.has(journeyCategory) && serviceFilter === "all") {
       list = list.filter((p) =>
-        mdSubs.some((sub) => {
-          if (sub.provider_id !== p.id || !activeSub(sub)) return false;
-          const st = serviceTypeForMdSub(sub, serviceTypes);
-          return st && String(st.category || "").toLowerCase() === journeyCategory;
-        })
+        providerBookableServices({
+          providerId: p.id,
+          providerOfferings: p.service_offerings_v2,
+          mdSubscriptions: mdSubs,
+          serviceTypes,
+        }).some((svc) => svc.category === journeyCategory)
       );
     }
 
@@ -184,18 +186,33 @@ export default function PatientMarketplace() {
     p.city?.toLowerCase().includes(search.toLowerCase())
   );
 
-  const availableServiceNames = useMemo(
-    () => [...new Set(mdSubs.map((s) => s.service_type_name).filter(Boolean))].sort(),
-    [mdSubs]
-  );
+  const availableServiceNames = useMemo(() => {
+    const names = new Set();
+    for (const p of providers) {
+      for (const name of providerBookableServiceNames({
+        providerId: p.id,
+        providerOfferings: p.service_offerings_v2,
+        mdSubscriptions: mdSubs,
+        serviceTypes,
+      })) {
+        names.add(name);
+      }
+    }
+    return [...names].sort();
+  }, [providers, mdSubs, serviceTypes]);
 
   const availableStates = useMemo(() => {
     const fromProviders = providers.map((p) => String(p.state || "").toUpperCase()).filter(Boolean);
     return [...new Set(fromProviders)].sort();
   }, [providers]);
 
-  const servicesFor = (providerId) =>
-    mdSubs.filter((sub) => sub.provider_id === providerId).map((sub) => sub.service_type_name);
+  const servicesFor = (provider) =>
+    providerBookableServiceNames({
+      providerId: provider?.id,
+      providerOfferings: provider?.service_offerings_v2,
+      mdSubscriptions: mdSubs,
+      serviceTypes,
+    });
 
   const certsFor = (id) => certs.filter((c) => c.provider_id === id);
   const ratingFor = (id) => providerReviewAverage(reviews, id, { verifiedOnly: true });
@@ -445,7 +462,7 @@ Based on my concerns and goals, which service types would be most relevant? Retu
         >
           <Tag className="w-4 h-4 flex-shrink-0" />
           <span>
-            Showing providers with active coverage in the <strong className="font-semibold">{journeyCategory}</strong> category (from your NOVI scan).
+            Showing providers offering treatments in <strong className="font-semibold">{journeyCategory.replace(/_/g, " ")}</strong> (from your NOVI scan).
           </span>
           <Button
             type="button"
@@ -517,7 +534,7 @@ Based on my concerns and goals, which service types would be most relevant? Retu
             <MarketplaceProviderCard
               key={p.id}
               provider={p}
-              services={servicesFor(p.id)}
+              services={servicesFor(p)}
               certs={certsFor(p.id)}
               specialties={specialtyLabels(p, serviceTypes)}
               rating={ratingFor(p.id).average}
@@ -583,7 +600,7 @@ Based on my concerns and goals, which service types would be most relevant? Retu
                 <TabsContent value="about" className="mt-0 px-4 sm:px-6 py-5 focus-visible:outline-none">
                   <ProviderProfilePanel
                     provider={selectedProvider}
-                    mdServices={servicesFor(selectedProvider.id)}
+                    mdServices={servicesFor(selectedProvider)}
                     certs={certsFor(selectedProvider.id)}
                     rating={ratingFor(selectedProvider.id).average}
                     reviewCount={ratingFor(selectedProvider.id).count}
@@ -600,7 +617,7 @@ Based on my concerns and goals, which service types would be most relevant? Retu
                     provider={selectedProvider}
                     bookForm={bookForm}
                     setBookForm={setBookForm}
-                    services={servicesFor(selectedProvider.id)}
+                    services={servicesFor(selectedProvider)}
                     bookingError={bookingError}
                     bookingLoading={bookingLoading}
                     onCancel={() => setSelectedProvider(null)}
@@ -631,7 +648,7 @@ Based on my concerns and goals, which service types would be most relevant? Retu
               provider={bookDialog}
               bookForm={bookForm}
               setBookForm={setBookForm}
-              services={servicesFor(bookDialog.id)}
+              services={servicesFor(bookDialog)}
               bookingError={bookingError}
               bookingLoading={bookingLoading}
               onCancel={() => setBookDialog(null)}
@@ -784,7 +801,7 @@ function ProviderProfilePanel({ provider, mdServices, certs, rating, reviewCount
         )}
       </ProfileSection>
 
-      <ProfileSection title="MD-covered services" emptyText={mdServices.length ? null : "No active MD coverage listed."}>
+      <ProfileSection title="Treatments offered" emptyText={mdServices.length ? null : "No treatments listed yet."}>
         {mdServices.length > 0 && (
           <div className="flex flex-wrap gap-1.5">
             {mdServices.map((service) => (
@@ -1025,7 +1042,7 @@ function MarketplaceProviderCard({
 
       {services.length > 0 && (
         <div>
-          <CardSectionHeading>MD-covered services:</CardSectionHeading>
+          <CardSectionHeading>Treatments offered:</CardSectionHeading>
           <div className="flex flex-wrap gap-1.5">
             {services.slice(0, 4).map((service) => (
               <span key={service} className={mdServiceBadge}>

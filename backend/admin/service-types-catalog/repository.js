@@ -42,7 +42,16 @@ function rowToApi(row) {
     qualiphy_exam_ids: Array.isArray(row.qualiphy_exam_ids) ? row.qualiphy_exam_ids : [],
     requires_gfe: row.requires_gfe === true,
     coverage_tiers: Array.isArray(row.coverage_tiers) ? row.coverage_tiers : [],
-    certification_name: row.certification_name ?? ""
+    certification_name: row.certification_name ?? "",
+    is_membership: row.is_membership === true,
+    included_service_ids: Array.isArray(row.included_service_ids)
+      ? row.included_service_ids.filter((x) => typeof x === "string")
+      : [],
+    requires_additional_provider_cert: row.requires_additional_provider_cert === true,
+    additional_cert_label: row.additional_cert_label ?? "",
+    legacy_parent_membership_id: row.legacy_parent_membership_id ?? "",
+    source_tier_number: row.source_tier_number ?? null,
+    metadata: row.metadata && typeof row.metadata === "object" ? row.metadata : {}
   };
 }
 
@@ -140,7 +149,15 @@ function normalizeServiceTypePayload(payload = {}) {
     coverage_tiers: Array.isArray(input.coverage_tiers)
       ? input.coverage_tiers.map(normalizeCoverageTier)
       : [],
-    certification_name: asString(input.certification_name, "")
+    certification_name: asString(input.certification_name, ""),
+    is_membership: input.is_membership === true,
+    included_service_ids: Array.isArray(input.included_service_ids)
+      ? input.included_service_ids.filter((x) => typeof x === "string")
+      : [],
+    requires_additional_provider_cert: input.requires_additional_provider_cert === true,
+    additional_cert_label: asString(input.additional_cert_label, ""),
+    legacy_parent_membership_id: asString(input.legacy_parent_membership_id, ""),
+    source_tier_number: asNumber(input.source_tier_number, null)
   };
 
   if (!normalized.name) {
@@ -170,6 +187,15 @@ function normalizeServiceTypePayload(payload = {}) {
       err.statusCode = 400;
       throw err;
     }
+  }
+
+  // GFE / Qualiphy and treatment scope are per-service only — not on membership plans.
+  if (normalized.is_membership) {
+    normalized.requires_gfe = false;
+    normalized.qualiphy_exam_ids = [];
+    normalized.allowed_areas = [];
+    normalized.scope_rules = [];
+    normalized.max_units_per_session = null;
   }
 
   return normalized;
@@ -217,7 +243,14 @@ export async function listServiceTypesForAdmin({ isActive } = {}) {
       qualiphy_exam_ids,
       requires_gfe,
       coverage_tiers,
-      certification_name
+      certification_name,
+      is_membership,
+      included_service_ids,
+      requires_additional_provider_cert,
+      additional_cert_label,
+      legacy_parent_membership_id,
+      source_tier_number,
+      metadata
      from public.service_type
      ${where}
      order by name asc`,
@@ -252,7 +285,14 @@ export async function getServiceTypeById(id) {
       qualiphy_exam_ids,
       requires_gfe,
       coverage_tiers,
-      certification_name
+      certification_name,
+      is_membership,
+      included_service_ids,
+      requires_additional_provider_cert,
+      additional_cert_label,
+      legacy_parent_membership_id,
+      source_tier_number,
+      metadata
      from public.service_type
      where id = $1
      limit 1`,
@@ -284,7 +324,13 @@ export async function createServiceType(payload) {
     qualiphy_exam_ids,
     requires_gfe,
     coverage_tiers,
-    certification_name
+    certification_name,
+    is_membership,
+    included_service_ids,
+    requires_additional_provider_cert,
+    additional_cert_label,
+    legacy_parent_membership_id,
+    source_tier_number
   } = metadata;
   if (!isUsableMdContractUrl(md_contract_url)) {
     md_contract_url = await getGlobalMdContractUrl();
@@ -315,11 +361,17 @@ export async function createServiceType(payload) {
       requires_gfe,
       coverage_tiers,
       certification_name,
+      is_membership,
+      included_service_ids,
+      requires_additional_provider_cert,
+      additional_cert_label,
+      legacy_parent_membership_id,
+      source_tier_number,
       metadata
     )
     values (
       gen_random_uuid()::text,
-      $1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14,$15,$16::jsonb,$17,$18,$19,$20::jsonb,$21,$22::jsonb,$23,$24::jsonb
+      $1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14,$15,$16::jsonb,$17,$18,$19,$20::jsonb,$21,$22::jsonb,$23,$24::jsonb,$25,$26::jsonb,$27,$28,$29,$30,$31::jsonb
     )
     returning
       id,
@@ -345,7 +397,13 @@ export async function createServiceType(payload) {
       qualiphy_exam_ids,
       requires_gfe,
       coverage_tiers,
-      certification_name`,
+      certification_name,
+      is_membership,
+      included_service_ids,
+      requires_additional_provider_cert,
+      additional_cert_label,
+      legacy_parent_membership_id,
+      source_tier_number`,
     [
       name,
       category,
@@ -370,6 +428,12 @@ export async function createServiceType(payload) {
       requires_gfe,
       JSON.stringify(coverage_tiers || []),
       certification_name,
+      is_membership,
+      JSON.stringify(included_service_ids || []),
+      requires_additional_provider_cert,
+      additional_cert_label || null,
+      legacy_parent_membership_id || null,
+      source_tier_number,
       JSON.stringify(metadata || {})
     ]
   );
@@ -407,7 +471,13 @@ export async function updateServiceType(id, payload) {
     qualiphy_exam_ids,
     requires_gfe,
     coverage_tiers,
-    certification_name
+    certification_name,
+    is_membership,
+    included_service_ids,
+    requires_additional_provider_cert,
+    additional_cert_label,
+    legacy_parent_membership_id,
+    source_tier_number
   } = metadata;
   const { rows } = await query(
     `update public.service_type
@@ -434,7 +504,13 @@ export async function updateServiceType(id, payload) {
          requires_gfe = $22,
          coverage_tiers = $23::jsonb,
          certification_name = $24,
-         metadata = $25::jsonb
+         is_membership = $25,
+         included_service_ids = $26::jsonb,
+         requires_additional_provider_cert = $27,
+         additional_cert_label = $28,
+         legacy_parent_membership_id = $29,
+         source_tier_number = $30,
+         metadata = $31::jsonb
      where id = $1
      returning
       id,
@@ -460,7 +536,13 @@ export async function updateServiceType(id, payload) {
       qualiphy_exam_ids,
       requires_gfe,
       coverage_tiers,
-      certification_name`,
+      certification_name,
+      is_membership,
+      included_service_ids,
+      requires_additional_provider_cert,
+      additional_cert_label,
+      legacy_parent_membership_id,
+      source_tier_number`,
     [
       id,
       name,
@@ -486,6 +568,12 @@ export async function updateServiceType(id, payload) {
       requires_gfe,
       JSON.stringify(coverage_tiers || []),
       certification_name,
+      is_membership,
+      JSON.stringify(included_service_ids || []),
+      requires_additional_provider_cert,
+      additional_cert_label || null,
+      legacy_parent_membership_id || null,
+      source_tier_number,
       JSON.stringify(metadata || {})
     ]
   );
