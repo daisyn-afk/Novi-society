@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useLayoutEffect } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import ProviderSalesLock from "@/components/ProviderSalesLock";
 import { useProviderAccess } from "@/components/useProviderAccess";
@@ -39,6 +39,10 @@ import {
   isUsableDocumentUrl,
 } from "@/lib/serviceTypeDocuments";
 import MdAgreementDocument from "@/components/provider/MdAgreementDocument";
+import {
+  buildAgreementContextFromProfile,
+  mergeAgreementContext,
+} from "@/lib/mdAgreementTemplate";
 import {
   MD_FIRST_SERVICE_MONTHLY_FEE as FIRST_SERVICE_PRICE,
   MD_ADDON_SERVICE_MONTHLY_FEE as ADDON_SERVICE_PRICE,
@@ -644,6 +648,10 @@ export default function ProviderCredentialsCoverage() {
   const applyableServiceTypes = serviceTypes.filter((s) => !alreadyActiveServices.includes(s.id));
   const availableServices = applyableServiceTypes.filter((s) => unlockedServiceTypeIds.has(s.id));
   const selectedService = serviceTypes.find(s => s.id === selectedServiceTypeId);
+  const agreementFields = useMemo(
+    () => mergeAgreementContext(buildAgreementContextFromProfile(me), agreementContext),
+    [me, agreementContext]
+  );
   const activeServices = serviceTypes.filter(s => alreadyActiveServices.includes(s.id));
   const approvedCertsWithoutCoverage = myCerts.filter(c => c.status === "active" && c.service_type_id && !alreadyActiveServices.includes(c.service_type_id));
   const visibleApprovedCertsWithoutCoverage = approvedCertsWithoutCoverage.filter((c) => !dismissedApprovedAlertIds.includes(c.id));
@@ -762,6 +770,7 @@ export default function ProviderCredentialsCoverage() {
     setUseExternalCert(false); setCertForm({ cert_type: "RN", issuing_school: "", cert_name: "" });
     setCertFileUrl(""); setUploadCertError(""); setSubmitCertError(""); setCertSubmitted(false); setSelectedServiceTypeId(null); setHasSigned(false);
     setProviderSigPreview("");
+    setAgreementContext(null);
   };
   const resetExtCertForm = () => {
     setCertSubmitStep(0);
@@ -1147,8 +1156,7 @@ export default function ProviderCredentialsCoverage() {
   // Load the provider's token context (name/practice/state/address) so the
   // code-rendered agreement can be personalized in the review/sign step.
   useEffect(() => {
-    if (!activateDialog || step !== 2 || !selectedServiceTypeId) return undefined;
-    if (agreementContext) return undefined;
+    if (!activateDialog || step !== 2 || !selectedServiceTypeId || !me?.id) return undefined;
     let cancelled = false;
     setFilledContractLoading(true);
     (async () => {
@@ -1157,7 +1165,7 @@ export default function ProviderCredentialsCoverage() {
         if (cancelled) return;
         if (res?.data?.context) setAgreementContext(res.data.context);
       } catch {
-        // Fall back to literal placeholders if the profile can't be loaded.
+        // Fall back to profile fields from `me` if the API can't be loaded.
       } finally {
         if (!cancelled) setFilledContractLoading(false);
       }
@@ -1165,7 +1173,7 @@ export default function ProviderCredentialsCoverage() {
     return () => {
       cancelled = true;
     };
-  }, [activateDialog, step, selectedServiceTypeId, agreementContext]);
+  }, [activateDialog, step, selectedServiceTypeId, me?.id]);
 
   // Generate and open the full agreement as a downloadable PDF on demand.
   const openFullAgreementPdf = async () => {
@@ -2456,7 +2464,7 @@ export default function ProviderCredentialsCoverage() {
                 >
                   <MdAgreementDocument
                     context={{
-                      ...(agreementContext || {}),
+                      ...agreementFields,
                       serviceName: selectedService?.name || "",
                       effectiveDate: new Date(),
                     }}

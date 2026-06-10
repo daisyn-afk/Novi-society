@@ -59,6 +59,44 @@ export function buildMdAgreementValues({
   };
 }
 
+/** Build agreement token context from an auth `me` object or provider profile row. */
+export function buildAgreementContextFromProfile(profile = {}) {
+  const cityStateZip = [
+    String(profile.city || "").trim(),
+    [String(profile.state || "").trim(), String(profile.zip || "").trim()]
+      .filter(Boolean)
+      .join(" "),
+  ]
+    .filter(Boolean)
+    .join(", ");
+  const address = [
+    String(profile.address_line1 || profile.address || "").trim(),
+    String(profile.address_line2 || "").trim(),
+    cityStateZip,
+  ]
+    .filter(Boolean)
+    .join(", ");
+  return {
+    providerName: String(profile.full_name || profile.providerName || "").trim(),
+    practiceName: String(profile.practice_name || profile.practiceName || "").trim(),
+    state: String(profile.state || "").trim(),
+    address,
+  };
+}
+
+/** Prefer the first non-empty value for each agreement field. */
+export function mergeAgreementContext(...sources) {
+  const merged = { providerName: "", practiceName: "", state: "", address: "" };
+  for (const source of sources) {
+    if (!source || typeof source !== "object") continue;
+    for (const key of Object.keys(merged)) {
+      const value = String(source[key] || "").trim();
+      if (!merged[key] && value) merged[key] = value;
+    }
+  }
+  return merged;
+}
+
 /**
  * Sentinel wrapping dynamic (filled-in) values inside block text so renderers
  * can bold them. Use `parseAgreementSegments` to split a block's text into

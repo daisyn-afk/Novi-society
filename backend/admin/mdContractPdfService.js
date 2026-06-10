@@ -8,6 +8,8 @@ import {
   buildMdAgreementBlocks,
   buildMdSignatureBlocks,
   parseAgreementSegments,
+  buildAgreementContextFromProfile,
+  mergeAgreementContext,
 } from "../../src/lib/mdAgreementTemplate.js";
 import { uploadMdSignedContract } from "./supabaseStorage.js";
 
@@ -111,14 +113,22 @@ function composeProviderAddress(fields = {}) {
 }
 
 /** Logical token context (providerName/practiceName/state/address) for the agreement. */
-export async function getProviderAgreementContext(providerId, { providerNameOverride = "" } = {}) {
+export async function getProviderAgreementContext(
+  providerId,
+  { providerNameOverride = "", profileSnapshot = null } = {}
+) {
+  const fromProfile = profileSnapshot ? buildAgreementContextFromProfile(profileSnapshot) : {};
   const fields = await getProviderContractFields(providerId);
-  return {
-    providerName: String(providerNameOverride || fields.full_name || "").trim(),
-    practiceName: String(fields.practice_name || "").trim(),
-    state: String(fields.state || "").trim(),
-    address: composeProviderAddress(fields),
-  };
+  const fromDb = buildAgreementContextFromProfile({
+    full_name: fields.full_name,
+    practice_name: fields.practice_name,
+    state: fields.state,
+    address_line1: fields.address_line1,
+    address_line2: fields.address_line2,
+    city: fields.city,
+    zip: fields.zip,
+  });
+  return mergeAgreementContext(fromProfile, { providerName: providerNameOverride }, fromDb);
 }
 
 // ─── PDF layout helpers ──────────────────────────────────────────────────────

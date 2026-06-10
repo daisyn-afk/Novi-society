@@ -983,7 +983,10 @@ functionsRouter.post("/mdAgreementContext", async (req, res, next) => {
     if (String(me.role || "").trim().toLowerCase() !== "provider") {
       return res.status(403).json({ success: false, error: "Only providers can load MD coverage agreements." });
     }
-    const context = await getProviderAgreementContext(me.id, { providerNameOverride: me.full_name });
+    const context = await getProviderAgreementContext(me.id, {
+      providerNameOverride: me.full_name,
+      profileSnapshot: me,
+    });
     return res.json({ success: true, context });
   } catch (error) {
     return next(error);
