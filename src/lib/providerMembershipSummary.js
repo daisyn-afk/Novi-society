@@ -38,7 +38,9 @@ export function summarizeProviderMemberships(provider, allSubscriptions = [], se
     byServiceId.set(sid, existing);
   }
 
-  const catalog = (serviceTypes || []).filter((st) => st?.is_active !== false && isMdPurchasablePlan(st));
+  const catalog = (serviceTypes || []).filter(
+    (st) => st?.is_active !== false && isMdPurchasablePlan(st, serviceTypes)
+  );
   const rows = catalog.map((st) => {
     const sid = String(st.id);
     const matches = byServiceId.get(sid) || [];
