@@ -22,8 +22,8 @@ async function runSql(client, text, params) {
 }
 
 /**
- * When state matching is on: MDs with no rows in `medical_director_state_license` are treated as
- * nationwide; MDs with rows must include `providerState`.
+ * When state matching is on: MDs with `supervision_nationwide` (or no license rows) are treated as
+ * nationwide; otherwise MDs must have a license row for `providerState`.
  */
 async function filterEligibleByProviderState(client, mdList, providerState) {
   const st = normalizeProviderState(providerState);
@@ -31,11 +31,23 @@ async function filterEligibleByProviderState(client, mdList, providerState) {
   const ids = mdList.map((m) => m.id).filter(Boolean);
   if (!ids.length) return [];
 
+  const { rows: profileRows } = await runSql(
+    client,
+    `select medical_director_id, coalesce(supervision_nationwide, true) as supervision_nationwide
+     from public.medical_director_profiles
+     where medical_director_id = any($1::text[])`,
+    [ids]
+  );
+  const nationwideById = new Map(
+    (profileRows || []).map((r) => [String(r.medical_director_id), r.supervision_nationwide !== false])
+  );
+
   const { rows: counts } = await runSql(
     client,
     `select medical_director_id, count(*)::int as cnt
      from public.medical_director_state_license
      where medical_director_id = any($1::text[])
+       and coalesce(trim(license_number), '') <> ''
      group by medical_director_id`,
     [ids]
   );
@@ -46,12 +58,18 @@ async function filterEligibleByProviderState(client, mdList, providerState) {
     `select distinct medical_director_id
      from public.medical_director_state_license
      where medical_director_id = any($1::text[])
-       and upper(trim(us_state)) = $2`,
+       and upper(trim(us_state)) = $2
+       and coalesce(trim(license_number), '') <> ''`,
     [ids, st]
   );
   const stateOk = new Set((matchRows || []).map((r) => String(r.medical_director_id)));
 
   return mdList.filter((m) => {
+    const hasProfileFlag = nationwideById.has(m.id);
+    const isNationwide = hasProfileFlag
+      ? nationwideById.get(m.id) !== false
+      : (licensedCount.get(m.id) ?? 0) === 0;
+    if (isNationwide) return true;
     const n = licensedCount.get(m.id) ?? 0;
     if (n === 0) return true;
     return stateOk.has(m.id);

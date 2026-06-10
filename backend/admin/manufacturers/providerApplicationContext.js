@@ -1,4 +1,5 @@
 import { pool } from "../db.js";
+import { resolveSupervisingMdCoverageForProvider } from "../lib/mdStateLicenseContext.js";
 
 function asTrimmed(value) {
   return String(value ?? "").trim();
@@ -89,7 +90,7 @@ async function fetchMdSubscriptions(providerId) {
 
 async function fetchMdRelationships(providerId) {
   return safeQuery(
-    `select medical_director_name, medical_director_email, status, start_date
+    `select medical_director_id, medical_director_name, medical_director_email, status, start_date
      from public.medical_director_relationship
      where provider_id::text = $1
      order by created_at desc`,
@@ -218,6 +219,16 @@ export async function buildManufacturerApplicationPayload({ me, formData = {} })
       ? additionalFromForm.custom_field_responses
       : {};
 
+  const supervisingMdCoverage = providerId
+    ? await resolveSupervisingMdCoverageForProvider({
+        providerId,
+        profileState: profile?.state,
+        userState: me?.state,
+        licenses,
+        practiceAddress,
+      })
+    : null;
+
   const additionalFields = {
     ...additionalFromForm,
     custom_field_responses: customFieldResponses,
@@ -255,6 +266,10 @@ export async function buildManufacturerApplicationPayload({ me, formData = {} })
     verified_licenses: licenses,
     certifications,
     supervising_md_details: activeMdRels,
+    supervising_md_npi: supervisingMdCoverage?.npi || null,
+    provider_states_for_md: supervisingMdCoverage?.provider_states || [],
+    supervising_md_state_licenses: supervisingMdCoverage?.relevant_state_licenses || [],
+    supervising_md_coverage_summary: supervisingMdCoverage?.email_summary_lines?.join("; ") || null,
   };
 
   return {
