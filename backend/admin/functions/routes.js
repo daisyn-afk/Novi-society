@@ -13,7 +13,10 @@ import {
   ensureSignedContractForSubscription,
   finalizeMdBoardCoverage,
 } from "../mdBillingService.js";
-import { buildFilledContractPreviewBytes } from "../mdContractPdfService.js";
+import {
+  buildFilledContractPreviewBytes,
+  getProviderAgreementContext,
+} from "../mdContractPdfService.js";
 import {
   isAllowlistedMdCoverageTestProvider,
   isMdCoverageTestPricingEnabled,
@@ -955,6 +958,7 @@ functionsRouter.post("/previewMdBoardContract", async (req, res, next) => {
       serviceTypeId,
       providerId: me.id,
       providerName: me.full_name,
+      serviceTypeName: String(req.body?.service_type_name || "").trim(),
     });
     if (!bytes) {
       return res.json({ success: false, error: "No MD contract is available for this service yet." });
@@ -965,6 +969,22 @@ functionsRouter.post("/previewMdBoardContract", async (req, res, next) => {
       pdf_base64: Buffer.from(bytes).toString("base64"),
       content_type: "application/pdf",
     });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+/** Provider token context (name/practice/state/address) for the rendered MD agreement. */
+functionsRouter.post("/mdAgreementContext", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ success: false, error: "Missing bearer token." });
+    const me = await getMeFromAccessToken(token);
+    if (String(me.role || "").trim().toLowerCase() !== "provider") {
+      return res.status(403).json({ success: false, error: "Only providers can load MD coverage agreements." });
+    }
+    const context = await getProviderAgreementContext(me.id, { providerNameOverride: me.full_name });
+    return res.json({ success: true, context });
   } catch (error) {
     return next(error);
   }

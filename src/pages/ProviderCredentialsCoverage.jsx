@@ -38,7 +38,7 @@ import {
   filterProtocolDocuments,
   isUsableDocumentUrl,
 } from "@/lib/serviceTypeDocuments";
-import { getDocumentViewUrl } from "@/lib/documentViewerUrl";
+import MdAgreementDocument from "@/components/provider/MdAgreementDocument";
 import {
   MD_FIRST_SERVICE_MONTHLY_FEE as FIRST_SERVICE_PRICE,
   MD_ADDON_SERVICE_MONTHLY_FEE as ADDON_SERVICE_PRICE,
@@ -73,14 +73,6 @@ function formatSessionDateLabel(value) {
   const [y, m, d] = dateOnly.split("-").map(Number);
   if (!y || !m || !d) return dateOnly;
   return format(new Date(y, m - 1, d), "MMM d, yyyy");
-}
-
-/** Inline PDF URL for iframe preview (natived browser PDF viewer). */
-function mdContractViewerUrl(url) {
-  const base = getDocumentViewUrl(url) || String(url || "").trim();
-  if (!base) return "";
-  const params = "toolbar=0&navpanes=0&scrollbar=1&view=FitH";
-  return base.includes("#") ? `${base}&${params}` : `${base}#${params}`;
 }
 
 const mdCoveragePendingKey = (serviceTypeId) => `md_coverage_pending:${serviceTypeId}`;
@@ -312,8 +304,10 @@ export default function ProviderCredentialsCoverage() {
   const [expandedServiceCard, setExpandedServiceCard] = useState(null);
   const [pricingOpen, setPricingOpen] = useState(false);
   const [activateError, setActivateError] = useState("");
-  const [filledContractUrl, setFilledContractUrl] = useState("");
   const [filledContractLoading, setFilledContractLoading] = useState(false);
+  const [agreementContext, setAgreementContext] = useState(null);
+  const [providerSigPreview, setProviderSigPreview] = useState("");
+  const [openingFullPdf, setOpeningFullPdf] = useState(false);
   const canvasRef = useRef(null);
   const isDrawing = useRef(false);
   const qc = useQueryClient();
@@ -650,10 +644,6 @@ export default function ProviderCredentialsCoverage() {
   const applyableServiceTypes = serviceTypes.filter((s) => !alreadyActiveServices.includes(s.id));
   const availableServices = applyableServiceTypes.filter((s) => unlockedServiceTypeIds.has(s.id));
   const selectedService = serviceTypes.find(s => s.id === selectedServiceTypeId);
-  const selectedServiceContractUrl = getMdContractUrl(selectedService, {
-    allServiceTypes: serviceTypes,
-    globalContractUrl: globalMdContractUrl,
-  });
   const activeServices = serviceTypes.filter(s => alreadyActiveServices.includes(s.id));
   const approvedCertsWithoutCoverage = myCerts.filter(c => c.status === "active" && c.service_type_id && !alreadyActiveServices.includes(c.service_type_id));
   const visibleApprovedCertsWithoutCoverage = approvedCertsWithoutCoverage.filter((c) => !dismissedApprovedAlertIds.includes(c.id));
@@ -771,6 +761,7 @@ export default function ProviderCredentialsCoverage() {
     setAttendedWindowKeys(new Set());
     setUseExternalCert(false); setCertForm({ cert_type: "RN", issuing_school: "", cert_name: "" });
     setCertFileUrl(""); setUploadCertError(""); setSubmitCertError(""); setCertSubmitted(false); setSelectedServiceTypeId(null); setHasSigned(false);
+    setProviderSigPreview("");
   };
   const resetExtCertForm = () => {
     setCertSubmitStep(0);
@@ -1153,45 +1144,55 @@ export default function ProviderCredentialsCoverage() {
     onError: (err) => setActivateError(err?.message || "Something went wrong. Please try again."),
   });
 
-  // Build a personalized (provider details filled in) preview of the MD contract
-  // for the review/sign step so "Open full PDF" and the inline viewer show the
-  // same values that will appear on the signed agreement.
+  // Load the provider's token context (name/practice/state/address) so the
+  // code-rendered agreement can be personalized in the review/sign step.
   useEffect(() => {
-    if (!activateDialog || step !== 2 || !selectedServiceTypeId || !selectedServiceContractUrl) {
-      return undefined;
-    }
+    if (!activateDialog || step !== 2 || !selectedServiceTypeId) return undefined;
+    if (agreementContext) return undefined;
     let cancelled = false;
-    let objectUrl = "";
-    setFilledContractUrl("");
     setFilledContractLoading(true);
     (async () => {
       try {
-        const res = await base44.functions.invoke("previewMdBoardContract", {
-          service_type_id: selectedServiceTypeId,
-        });
-        const base64 = res?.data?.pdf_base64;
-        if (cancelled || !base64) return;
-        const binary = atob(base64);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-        const blob = new Blob([bytes], { type: "application/pdf" });
-        objectUrl = URL.createObjectURL(blob);
-        if (cancelled) {
-          URL.revokeObjectURL(objectUrl);
-          return;
-        }
-        setFilledContractUrl(objectUrl);
+        const res = await base44.functions.invoke("mdAgreementContext", {});
+        if (cancelled) return;
+        if (res?.data?.context) setAgreementContext(res.data.context);
       } catch {
-        // Fall back to the un-personalized template already shown.
+        // Fall back to literal placeholders if the profile can't be loaded.
       } finally {
         if (!cancelled) setFilledContractLoading(false);
       }
     })();
     return () => {
       cancelled = true;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [activateDialog, step, selectedServiceTypeId, selectedServiceContractUrl]);
+  }, [activateDialog, step, selectedServiceTypeId, agreementContext]);
+
+  // Generate and open the full agreement as a downloadable PDF on demand.
+  const openFullAgreementPdf = async () => {
+    if (openingFullPdf) return;
+    setOpeningFullPdf(true);
+    const win = window.open("", "_blank");
+    try {
+      const res = await base44.functions.invoke("previewMdBoardContract", {
+        service_type_id: selectedServiceTypeId,
+        service_type_name: selectedService?.name || "",
+      });
+      const base64 = res?.data?.pdf_base64;
+      if (!base64) throw new Error("Unable to build the agreement PDF.");
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+      const blob = new Blob([bytes], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      if (win) win.location.href = url;
+      else window.open(url, "_blank");
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch {
+      if (win) win.close();
+    } finally {
+      setOpeningFullPdf(false);
+    }
+  };
 
   const openCancelDialog = (sub) => {
     setCancelDialog({ open: true, sub });
@@ -1257,8 +1258,15 @@ export default function ProviderCredentialsCoverage() {
   };
   const startDraw = (e) => { const canvas = canvasRef.current; const ctx = canvas.getContext("2d"); isDrawing.current = true; ctx.beginPath(); const p = getPos(e, canvas); ctx.moveTo(p.x, p.y); e.preventDefault(); };
   const draw = (e) => { if (!isDrawing.current) return; const canvas = canvasRef.current; const ctx = canvas.getContext("2d"); const p = getPos(e, canvas); ctx.lineTo(p.x, p.y); ctx.stroke(); setHasSigned(true); e.preventDefault(); };
-  const endDraw = () => { isDrawing.current = false; };
-  const clearSignature = () => { setupSignatureCanvas(); setHasSigned(false); };
+  const endDraw = () => {
+    if (!isDrawing.current) return;
+    isDrawing.current = false;
+    const canvas = canvasRef.current;
+    if (canvas) {
+      try { setProviderSigPreview(canvas.toDataURL("image/png")); } catch { /* ignore */ }
+    }
+  };
+  const clearSignature = () => { setupSignatureCanvas(); setHasSigned(false); setProviderSigPreview(""); };
 
   /** Opens apply dialog on Sign & Activate (step 2) for a known service — e.g. approved-cert banner or deep-link parity. */
   const openApplyDialogToSignForService = (serviceTypeId) => {
@@ -2135,7 +2143,7 @@ export default function ProviderCredentialsCoverage() {
 
       {/* Apply for Coverage */}
       <Dialog open={activateDialog} onOpenChange={(v) => { if (!v) resetActivation(); setActivateDialog(v); }}>
-        <DialogContent className={`${step === 2 ? "max-w-4xl" : "max-w-xl"} max-h-[92vh] overflow-y-auto`}>
+        <DialogContent className={`${step === 2 ? "max-w-2xl" : "max-w-xl"} w-[calc(100vw-2rem)] max-h-[92vh] overflow-y-auto overflow-x-hidden`}>
           <DialogHeader>
             <DialogTitle style={{ fontFamily: "'DM Serif Display', serif", fontSize: 20 }}>Apply for MD Board Coverage</DialogTitle>
           </DialogHeader>
@@ -2424,65 +2432,41 @@ export default function ProviderCredentialsCoverage() {
           )}
 
           {step === 2 && (
-            <div className="space-y-4">
-              <div className="rounded-xl border-2 border-orange-200 p-4 flex items-center justify-between bg-orange-50">
-                <div><p className="font-semibold text-slate-900">{selectedService?.name} — MD Board Coverage</p><p className="text-xs text-slate-500 mt-0.5">{alreadyActiveServices.length === 0 ? "First service" : "Add-on service"} · NOVI assigns a Board MD automatically</p></div>
-                <div className="text-right"><p className="text-2xl font-bold text-slate-900">${getMembershipPrice()}</p><p className="text-xs text-slate-400">/month</p></div>
+            <div className="space-y-4 min-w-0">
+              <div className="rounded-xl border-2 border-orange-200 p-4 flex items-center justify-between gap-3 bg-orange-50">
+                <div className="min-w-0"><p className="font-semibold text-slate-900">{selectedService?.name} — MD Board Coverage</p><p className="text-xs text-slate-500 mt-0.5">{alreadyActiveServices.length === 0 ? "First service" : "Add-on service"} · NOVI assigns a Board MD automatically</p></div>
+                <div className="text-right flex-shrink-0"><p className="text-2xl font-bold text-slate-900">${getMembershipPrice()}</p><p className="text-xs text-slate-400">/month</p></div>
               </div>
 
-              <div className="rounded-xl border border-slate-200 overflow-hidden bg-white">
-                {selectedServiceContractUrl ? (
-                  <>
-                    <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-xs font-semibold text-slate-700 uppercase tracking-wide">1. Review agreement</p>
-                        <p className="text-xs text-slate-500 mt-0.5">
-                          {filledContractLoading
-                            ? "Personalizing the contract with your details…"
-                            : `Read the MD Board contract for ${selectedService?.name || "this service"}.`}
-                        </p>
-                      </div>
-                      <a
-                        href={filledContractUrl || getDocumentViewUrl(selectedServiceContractUrl) || selectedServiceContractUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg flex-shrink-0 whitespace-nowrap"
-                        style={{ background: "rgba(123,142,200,0.12)", color: "#5a6fa8", border: "1px solid rgba(123,142,200,0.25)" }}
-                      >
-                        <ExternalLink className="w-3.5 h-3.5" /> Open full PDF
-                      </a>
-                    </div>
-                    <div className="bg-slate-100">
-                      <iframe
-                        src={
-                          filledContractUrl
-                            ? `${filledContractUrl}#toolbar=0&navpanes=0&scrollbar=1&view=FitH`
-                            : mdContractViewerUrl(selectedServiceContractUrl)
-                        }
-                        title={`${selectedService?.name || "Service"} MD Board Coverage Agreement`}
-                        className="w-full h-[min(42vh,360px)] min-h-[240px] bg-white block"
-                      />
-                    </div>
-                  </>
-                ) : selectedService?.md_agreement_text ? (
-                  <div className="px-4 py-4 bg-slate-50 border-b border-slate-200">
-                    <p className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-2">1. Review agreement</p>
-                    <div
-                      className="rounded-lg px-3 py-2 text-xs leading-relaxed max-h-48 overflow-y-auto"
-                      style={{ background: "rgba(255,255,255,0.9)", color: "rgba(30,37,53,0.75)", border: "1px solid rgba(30,37,53,0.08)" }}
-                    >
-                      {selectedService.md_agreement_text}
-                    </div>
-                  </div>
-                ) : null}
+              <div className="rounded-xl border border-slate-200 overflow-hidden bg-white min-w-0">
+                <div className="px-4 pt-3 pb-0 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={openFullAgreementPdf}
+                    disabled={openingFullPdf || filledContractLoading}
+                    className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg flex-shrink-0 whitespace-nowrap disabled:opacity-60"
+                    style={{ background: "rgba(123,142,200,0.12)", color: "#5a6fa8", border: "1px solid rgba(123,142,200,0.25)" }}
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" /> {openingFullPdf ? "Preparing…" : "Open full PDF"}
+                  </button>
+                </div>
+                <div
+                  className="px-4 py-4 bg-white overflow-y-auto overflow-x-hidden min-w-0"
+                  style={{ maxHeight: "min(46vh, 400px)" }}
+                >
+                  <MdAgreementDocument
+                    context={{
+                      ...(agreementContext || {}),
+                      serviceName: selectedService?.name || "",
+                      effectiveDate: new Date(),
+                    }}
+                    providerSignatureUrl={providerSigPreview}
+                  />
+                </div>
                 <div className="px-4 py-4 border-t border-slate-200 bg-white">
-                  <p className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-1">
-                    {selectedServiceContractUrl || selectedService?.md_agreement_text ? "2. Sign below" : "Sign below"}
-                  </p>
+                  <p className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-1">Your signature</p>
                   <p className="text-xs text-slate-500 mb-3">
-                    {selectedServiceContractUrl
-                      ? "Your signature is placed on the last page of the MD Contract, directly below the agreement text."
-                      : "Your signature is saved with your MD Board coverage agreement. After activation, the signed agreement appears in Documents."}
+                    Sign as the Manager. Your signature is placed in the Manager block (left) on the signature page above; Dr. James Otis Hill, II is the Practice Owner (right).
                   </p>
                   <div className="border-2 border-dashed border-slate-300 rounded-xl overflow-hidden bg-white relative w-full">
                     <canvas ref={canvasRef} className="block w-full touch-none cursor-crosshair"
