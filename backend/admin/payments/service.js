@@ -14,6 +14,7 @@ const COURSE_FLOW = "course";
 const MODEL_FLOW = "model";
 const SERVICE_FLOW = "service";
 const APPOINTMENT_FLOW = "appointment";
+const MD_BOARD_COVERAGE_FLOW = "md_board_coverage";
 
 let trackingTablesAvailablePromise = null;
 
@@ -934,5 +935,6 @@ export const PAYMENT_FLOW = Object.freeze({
   COURSE: COURSE_FLOW,
   MODEL: MODEL_FLOW,
   SERVICE: SERVICE_FLOW,
-  APPOINTMENT: APPOINTMENT_FLOW
+  APPOINTMENT: APPOINTMENT_FLOW,
+  MD_BOARD_COVERAGE: MD_BOARD_COVERAGE_FLOW,
 });

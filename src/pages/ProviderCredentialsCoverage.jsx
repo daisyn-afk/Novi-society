@@ -53,6 +53,7 @@ import {
   calcMdCoverageMonthlyTotal,
   buildMdCoverageCheckoutBillingPreview,
   formatMdCoverageUsd,
+  mdCoverageCapErrorMessage,
   resolveMdCoverageMonthlyFee,
   isMdCoverageTestPricingActiveForProvider,
 } from "@/lib/mdMembershipPricing";
@@ -516,6 +517,15 @@ export default function ProviderCredentialsCoverage() {
     if (params.get("tab")) setActiveTab(params.get("tab"));
     const promptService = params.get("prompt_service");
     if (!promptService || serviceTypes.length === 0) return;
+    const activeMdCount = mySubscriptions.filter((s) => s.status === "active").length;
+    if (activeMdCount >= MAX_SERVICES) {
+      setActiveTab("coverage");
+      setActivateError(mdCoverageCapErrorMessage());
+      params.delete("prompt_service");
+      const qsEarly = params.toString();
+      navigate({ pathname: createPageUrl("ProviderCredentialsCoverage"), search: qsEarly ? `?${qsEarly}` : "" }, { replace: true });
+      return;
+    }
     setActiveTab("coverage");
     setActivateDialog(true);
     setSelectedServiceTypeId(promptService);
@@ -530,7 +540,7 @@ export default function ProviderCredentialsCoverage() {
       canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
       setHasSigned(false);
     }, 150);
-  }, [location.search, serviceTypes.length, navigate]);
+  }, [location.search, serviceTypes.length, mySubscriptions, navigate]);
 
   // Stripe return: hydrate Documents tab before paint so signed PDF link appears immediately.
   useLayoutEffect(() => {
@@ -770,6 +780,20 @@ export default function ProviderCredentialsCoverage() {
     setAttendedWindowKeys(new Set());
     setUseExternalCert(false); setCertForm({ cert_type: "RN", issuing_school: "", cert_name: "" });
     setCertFileUrl(""); setUploadCertError(""); setSubmitCertError(""); setCertSubmitted(false); setSelectedServiceTypeId(null); setHasSigned(false);
+  };
+  const openApplyForCoverage = ({ serviceTypeId = null, jumpToSign = false } = {}) => {
+    if (isAtCap) {
+      setActivateError(mdCoverageCapErrorMessage());
+      setActiveTab("coverage");
+      return;
+    }
+    setActivateError("");
+    resetActivation();
+    if (serviceTypeId) {
+      setSelectedServiceTypeId(serviceTypeId);
+      setStep(jumpToSign ? 2 : 1);
+    }
+    setActivateDialog(true);
   };
   const resetExtCertForm = () => {
     setCertSubmitStep(0);
@@ -1102,13 +1126,16 @@ export default function ProviderCredentialsCoverage() {
   const activateMutation = useMutation({
     mutationFn: async () => {
       setActivateError("");
+      if (isAtCap) {
+        throw new Error(mdCoverageCapErrorMessage());
+      }
       const canvas = canvasRef.current;
       if (!canvas) throw new Error("Signature pad is not ready. Close the dialog and try again.");
       const signatureData = canvas.toDataURL("image/png");
       const res = await base44.functions.invoke("createMDSubscriptionCheckout", {
         service_type_id: selectedServiceTypeId,
         service_type_name: serviceTypes.find(s => s.id === selectedServiceTypeId)?.name,
-        amount: isAtCap ? 0 : getMembershipPrice(),
+        amount: getMembershipPrice(),
         enrollment_id: verifiedSession?.enrollment_id || null,
         signature_data: signatureData,
       });
@@ -1263,6 +1290,12 @@ export default function ProviderCredentialsCoverage() {
   const openApplyDialogToSignForService = (serviceTypeId) => {
     const raw = String(serviceTypeId || "").trim();
     const stId = raw && serviceTypes.some((s) => s.id === raw) ? raw : "";
+    if (isAtCap) {
+      setActivateError(mdCoverageCapErrorMessage());
+      setActiveTab("coverage");
+      return;
+    }
+    setActivateError("");
     setClassCode("");
     setCodeError("");
     setVerifiedSession(null);
@@ -1302,11 +1335,17 @@ export default function ProviderCredentialsCoverage() {
             Licenses, certifications, and NOVI Board coverage — everything needed to practice legally.
           </p>
         </div>
-        <button onClick={() => { setActivateDialog(true); resetActivation(); }}
-          className="flex items-center gap-2 text-sm font-bold transition-all hover:opacity-75 flex-shrink-0"
-          style={{ color: "#FA6F30" }}>
-          <Zap className="w-4 h-4" /> Apply for MD Coverage
-        </button>
+        {!isAtCap ? (
+          <button onClick={() => openApplyForCoverage()}
+            className="flex items-center gap-2 text-sm font-bold transition-all hover:opacity-75 flex-shrink-0"
+            style={{ color: "#FA6F30" }}>
+            <Zap className="w-4 h-4" /> Apply for MD Coverage
+          </button>
+        ) : (
+          <p className="text-xs font-semibold max-w-[200px] text-right" style={{ color: "rgba(30,37,53,0.55)" }}>
+            {MAX_SERVICES} services max · ${MAX_MONTHLY_CAP}/mo cap
+          </p>
+        )}
       </div>
 
       {isMdCoverageTestPricingActiveForProvider(me?.id, me?.email) && (
@@ -1323,6 +1362,17 @@ export default function ProviderCredentialsCoverage() {
         </div>
       )}
 
+      {activateError && !activateDialog && (
+        <div className="flex items-start gap-3 px-5 py-4 rounded-2xl" style={{ background: "rgba(250,111,48,0.1)", border: "1px solid rgba(250,111,48,0.3)" }}>
+          <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" style={{ color: "#FA6F30" }} />
+          <div className="flex-1">
+            <p className="text-sm font-semibold" style={{ color: "#1e2535" }}>MD coverage limit</p>
+            <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.65)" }}>{activateError}</p>
+          </div>
+          <button type="button" onClick={() => setActivateError("")} className="text-xs font-semibold" style={{ color: "#FA6F30" }}>Dismiss</button>
+        </div>
+      )}
+
       {/* Alerts */}
       {visibleApprovedCertsWithoutCoverage.map(c => (
         <div key={c.id} className="flex items-center gap-3 px-5 py-4 rounded-2xl" style={{ background: "rgba(200,230,60,0.15)", border: "1px solid rgba(200,230,60,0.4)" }}>
@@ -1331,9 +1381,11 @@ export default function ProviderCredentialsCoverage() {
             <p className="font-semibold text-sm" style={{ color: "#3D5600" }}>Your <strong>{c.service_type_name || c.certification_name}</strong> certification was approved!</p>
             <p className="text-xs mt-0.5" style={{ color: "rgba(61,86,0,0.8)" }}>You can now apply for MD Board coverage to start offering this service.</p>
           </div>
-          <Button size="sm" onClick={() => openApplyDialogToSignForService(c.service_type_id)} style={{ background: "#FA6F30", color: "#fff" }} className="flex-shrink-0 gap-1 h-8 text-xs">
-            <Zap className="w-3.5 h-3.5" /> Apply
-          </Button>
+          {!isAtCap && (
+            <Button size="sm" onClick={() => openApplyDialogToSignForService(c.service_type_id)} style={{ background: "#FA6F30", color: "#fff" }} className="flex-shrink-0 gap-1 h-8 text-xs">
+              <Zap className="w-3.5 h-3.5" /> Apply
+            </Button>
+          )}
           <button
             onClick={() => dismissApprovedAlert(c.id)}
             className="p-1 rounded-md hover:bg-black/5 transition-colors"
@@ -1647,10 +1699,18 @@ export default function ProviderCredentialsCoverage() {
                   <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.45)" }}>Monthly total: <strong style={{ color: "#1e2535" }}>${calcMonthlyTotal(activeSubscriptions.length)}/mo</strong>{activeSubscriptions.length >= MAX_SERVICES ? " (capped)" : ""}</p>
                 </div>
                 {!isAtCap && (
-                  <button onClick={() => { setActivateDialog(true); resetActivation(); }}
+                  <button onClick={() => openApplyForCoverage()}
                     className="text-xs font-bold transition-all hover:opacity-70" style={{ color: "#FA6F30" }}>+ Add Service</button>
                 )}
               </div>
+              {isAtCap && (
+                <div className="rounded-xl px-4 py-3" style={{ background: "rgba(250,111,48,0.08)", border: "1px solid rgba(250,111,48,0.22)" }}>
+                  <p className="text-sm font-semibold" style={{ color: "#1e2535" }}>Maximum MD coverage reached</p>
+                  <p className="text-xs mt-1" style={{ color: "rgba(30,37,53,0.6)" }}>
+                    You have {MAX_SERVICES} active services (${formatMdCoverageUsd(MAX_MONTHLY_CAP)}/mo total, capped). No additional $129 add-ons are available — cancel a service to switch coverage.
+                  </p>
+                </div>
+              )}
               {activeSubscriptions.map((sub, idx) => {
                 const st = findServiceTypeForSubscription(sub, serviceTypes);
                 const isExp = expandedService === sub.id;
@@ -1675,15 +1735,24 @@ export default function ProviderCredentialsCoverage() {
                       const effectiveDocs = getProtocolDocumentsForSubscription(sub);
                       const activatedDate = sub.activated_at ? new Date(sub.activated_at) : null;
                       const monthlyAmount = Number(sub.service_type_monthly_fee ?? (idx === 0 ? FIRST_SERVICE_PRICE : ADDON_SERVICE_PRICE));
+                      const checkoutPaid = sub.checkout_amount_paid != null ? Number(sub.checkout_amount_paid) : null;
+                      const lastPaid = sub.last_amount_paid != null ? Number(sub.last_amount_paid) : null;
+                      const lastPaidAt = sub.last_amount_paid_at ? new Date(sub.last_amount_paid_at) : null;
                       const today = new Date();
                       const nextBilling = new Date(today.getFullYear(), today.getMonth() + 1, 1);
                       return (
                         <div className="border-t" style={{ borderColor: "rgba(30,37,53,0.08)" }}>
                           <div className="px-5 py-3 flex items-center justify-between flex-wrap gap-2" style={{ background: "rgba(123,142,200,0.05)", borderBottom: "1px solid rgba(30,37,53,0.06)" }}>
-                            <div className="flex items-center gap-4 text-xs" style={{ color: "rgba(30,37,53,0.55)" }}>
-                              <span><strong style={{ color: "#1e2535" }}>${monthlyAmount}/mo</strong> · billed 1st</span>
+                            <div className="flex items-center gap-4 text-xs flex-wrap" style={{ color: "rgba(30,37,53,0.55)" }}>
+                              <span><strong style={{ color: "#1e2535" }}>${formatMdCoverageUsd(monthlyAmount)}/mo</strong> · billed 1st</span>
                               {activatedDate && <span>Active since {format(activatedDate, "MMM d, yyyy")}</span>}
                               <span>Next: {format(nextBilling, "MMM 1, yyyy")}</span>
+                              {checkoutPaid != null && Number.isFinite(checkoutPaid) && (
+                                <span>First charge: ${formatMdCoverageUsd(checkoutPaid)}</span>
+                              )}
+                              {lastPaid != null && Number.isFinite(lastPaid) && lastPaidAt && (
+                                <span>Last paid: ${formatMdCoverageUsd(lastPaid)} · {format(lastPaidAt, "MMM d, yyyy")}</span>
+                              )}
                             </div>
                             <button onClick={e => { e.stopPropagation(); openCancelDialog(sub); }} className="text-xs font-semibold hover:opacity-70" style={{ color: "#DA6A63" }}>Cancel</button>
                           </div>
@@ -1735,14 +1804,14 @@ export default function ProviderCredentialsCoverage() {
               <p className="text-sm mt-2 mb-5" style={{ color: "rgba(30,37,53,0.55)", maxWidth: 340, margin: "8px auto 20px" }}>
                 Apply for NOVI Board of Medical Directors coverage to legally practice. We'll assign you a Board MD — you don't need to find one yourself.
               </p>
-              <Button onClick={() => { setActivateDialog(true); resetActivation(); }} style={{ background: "#FA6F30", color: "#fff" }} className="gap-2 font-bold">
+              <Button onClick={() => openApplyForCoverage()} style={{ background: "#FA6F30", color: "#fff" }} className="gap-2 font-bold">
                 <Zap className="w-4 h-4" /> Apply for Coverage
               </Button>
             </GlassCard>
           )}
 
           {/* ── Add More Services (only non-active services) ── */}
-          {mdCoveragePlans.filter(s => !alreadyActiveServices.includes(s.id)).length > 0 && (
+          {!isAtCap && mdCoveragePlans.filter(s => !alreadyActiveServices.includes(s.id)).length > 0 && (
             <div className="space-y-3">
               <SectionLabel>{activeSubscriptions.length === 0 ? "Available Coverage Plans" : "Add More Services"}</SectionLabel>
               {mdCoveragePlans.filter(s => !alreadyActiveServices.includes(s.id)).map(service => {
@@ -1772,7 +1841,7 @@ export default function ProviderCredentialsCoverage() {
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className="text-xs font-semibold px-2.5 py-1 rounded-full" style={{ background: "rgba(200,230,60,0.15)", color: "#5a7a20", border: "1px solid rgba(200,230,60,0.35)" }}>✓ Training Complete — Ready to Apply</span>
                             <Button size="sm" className="font-bold gap-1.5 h-8" style={{ background: "#FA6F30", color: "#fff" }}
-                              onClick={() => { setSelectedServiceTypeId(service.id); setActivateDialog(true); resetActivation(); }}>
+                              onClick={() => openApplyForCoverage({ serviceTypeId: service.id, jumpToSign: false })}>
                               <Zap className="w-3.5 h-3.5" /> Apply for Coverage
                             </Button>
                           </div>
@@ -1845,7 +1914,7 @@ export default function ProviderCredentialsCoverage() {
                 <div className="text-center py-6">
                   <p className="text-sm font-semibold" style={{ color: "#1e2535" }}>No MD agreements yet</p>
                   <p className="text-xs mt-1 mb-3" style={{ color: "rgba(30,37,53,0.4)" }}>After you sign MD coverage for a service, your agreement and protocol documents appear here.</p>
-                  <button onClick={() => { setActivateDialog(true); resetActivation(); }} className="text-xs font-bold" style={{ color: "#FA6F30" }}>Apply for Coverage</button>
+                  <button onClick={() => openApplyForCoverage()} className="text-xs font-bold" style={{ color: "#FA6F30" }}>Apply for Coverage</button>
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -2100,6 +2169,18 @@ export default function ProviderCredentialsCoverage() {
             <DialogTitle style={{ fontFamily: "'DM Serif Display', serif", fontSize: 20 }}>Apply for MD Board Coverage</DialogTitle>
           </DialogHeader>
 
+          {isAtCap ? (
+            <div className="space-y-4 pt-1">
+              <div className="rounded-xl px-4 py-4" style={{ background: "rgba(250,111,48,0.08)", border: "1px solid rgba(250,111,48,0.22)" }}>
+                <p className="text-sm font-semibold" style={{ color: "#1e2535" }}>Cannot add another service</p>
+                <p className="text-sm mt-2" style={{ color: "rgba(30,37,53,0.65)" }}>{mdCoverageCapErrorMessage()}</p>
+              </div>
+              <Button variant="outline" className="w-full" onClick={() => { resetActivation(); setActivateDialog(false); }}>
+                Close
+              </Button>
+            </div>
+          ) : (
+          <>
           {/* ── Step -1: Info / intro screen ── */}
           {step === -1 && (
             <div className="space-y-4 pt-1">
@@ -2560,6 +2641,8 @@ export default function ProviderCredentialsCoverage() {
             </div>
             );
           })()}
+          </>
+          )}
         </DialogContent>
       </Dialog>
 

@@ -11,6 +11,21 @@ export function monthlyFeeForNewMdService(activeServiceCountBeforeAdd = 0) {
   return MD_ADDON_SERVICE_MONTHLY_FEE;
 }
 
+export function isMdCoverageAtServiceCap(activeServiceCount = 0) {
+  return Math.max(0, Number(activeServiceCount) || 0) >= MD_MAX_COVERED_SERVICES;
+}
+
+export function mdCoverageCapErrorMessage() {
+  return `You can cover up to ${MD_MAX_COVERED_SERVICES} services ($${MD_MAX_MONTHLY_CAP}/mo maximum). Cancel an existing service before adding another.`;
+}
+
+export function assertCanAddMdCoverageService(activeServiceCountBeforeAdd = 0) {
+  if (isMdCoverageAtServiceCap(activeServiceCountBeforeAdd)) {
+    return { ok: false, error: mdCoverageCapErrorMessage() };
+  }
+  return { ok: true };
+}
+
 export function calcMdCoverageMonthlyTotal(
   activeServiceCount = 0,
   feeForSlot = monthlyFeeForNewMdService

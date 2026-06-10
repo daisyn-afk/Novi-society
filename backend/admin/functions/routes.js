@@ -15,6 +15,7 @@ import {
 } from "../mdBillingService.js";
 import { buildFilledContractPreviewBytes } from "../mdContractPdfService.js";
 import {
+  assertCanAddMdCoverageService,
   buildMdCoverageCheckoutBillingPreview,
   isAllowlistedMdCoverageTestProvider,
   isMdCoverageTestPricingEnabled,
@@ -1016,6 +1017,10 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
       [me.id, serviceTypeId]
     );
     const activeOtherCount = activeOtherRows?.length || 0;
+    const capCheck = assertCanAddMdCoverageService(activeOtherCount);
+    if (!capCheck.ok) {
+      return res.status(400).json({ success: false, error: capCheck.error });
+    }
     const billingPreview = buildMdCoverageCheckoutBillingPreview({
       activeServiceCountBeforeAdd: activeOtherCount,
       providerId: me.id,
@@ -1058,6 +1063,28 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
       });
     }
 
+    const paymentAttemptId = await recordCheckoutInitiated({
+      payment_flow: PAYMENT_FLOW.MD_BOARD_COVERAGE,
+      payment_type: "md_board_coverage",
+      service_type_id: serviceTypeId,
+      item_id: serviceTypeId,
+      item_name: serviceTypeName,
+      user_id: me.id,
+      linked_user_id: me.id,
+      customer_email: me.email,
+      customer_name: me.full_name,
+      amount_subtotal: billingPreview.thisServiceMonthly,
+      amount_total: billingPreview.dueTodayProrated,
+      currency: "usd",
+      source_context: "provider_md_coverage_checkout",
+      metadata: {
+        monthly_fee_usd: billingPreview.thisServiceMonthly,
+        prorated_due_usd: billingPreview.dueTodayProrated,
+        new_total_monthly_usd: billingPreview.newTotalMonthlyFromNextCycle,
+        active_services_before: activeOtherCount,
+      },
+    });
+
     const pending = await createPendingMdSubscriptionForCheckout({
       providerId: me.id,
       providerEmail: me.email,
@@ -1068,7 +1095,18 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
       signatureData,
       signedByName: me.full_name,
       monthlyFee: monthlyFeeUsd,
+      checkoutProratedAmountExpected: billingPreview.dueTodayProrated,
+      paymentTransactionId: paymentAttemptId,
     });
+
+    if (paymentAttemptId) {
+      await enrichPaymentTransaction(
+        { id: paymentAttemptId },
+        {
+          stripe_metadata: { md_subscription_id: String(pending.id || "") },
+        }
+      );
+    }
 
     const signedContractUrl = await ensureSignedContractForSubscription(pending, {
       signatureData,
@@ -1125,7 +1163,23 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
       ]
     });
 
-    await attachCheckoutSessionToMdSubscription(pending.id, checkoutSession.id);
+    await attachCheckoutSessionToMdSubscription(pending.id, checkoutSession.id, {
+      paymentTransactionId: paymentAttemptId,
+    });
+
+    if (paymentAttemptId) {
+      await enrichPaymentTransaction(
+        { id: paymentAttemptId },
+        {
+          stripe_session_id: checkoutSession.id,
+          stripe_checkout_url: checkoutSession.url || null,
+          stripe_customer_id:
+            typeof checkoutSession.customer === "string" ? checkoutSession.customer : null,
+          payment_status: "checkout_opened",
+          stripe_metadata: { md_subscription_id: String(pending.id || "") },
+        }
+      );
+    }
 
     const url = checkoutSession?.url;
     if (!url) {

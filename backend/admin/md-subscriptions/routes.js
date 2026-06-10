@@ -8,7 +8,11 @@ import {
 } from "../mdSupervisedAccess.js";
 import { getGlobalMdContractUrl, isUsableMdContractUrl } from "../lib/globalMdContract.js";
 import { resolveProtocolDocumentsForSubscription } from "../lib/mdSubscriptionProtocolDocs.js";
-import { enrichMdSubscriptionMonthlyFees, monthlyFeeForNewMdService } from "../mdMembershipPricing.js";
+import {
+  assertCanAddMdCoverageService,
+  enrichMdSubscriptionMonthlyFees,
+  monthlyFeeForNewMdService,
+} from "../mdMembershipPricing.js";
 import { ensureSignedContractForSubscription, finalizeMdBoardCoverage } from "../mdBillingService.js";
 
 export const mdSubscriptionsRouter = Router();
@@ -238,15 +242,22 @@ mdSubscriptionsRouter.post("/", async (req, res, next) => {
       body.service_type_monthly_fee != null && String(body.service_type_monthly_fee).trim() !== ""
         ? Number(body.service_type_monthly_fee)
         : null;
+    const { rows: existingActive } = await query(
+      `select id from public.md_subscription
+       where provider_id = $1
+         and lower(coalesce(status, '')) = 'active'
+         and coalesce(service_type_id::text, '') <> $2`,
+      [providerId, serviceTypeId]
+    );
+    const activeOtherCount = (existingActive || []).length;
+    if (String(status).toLowerCase() === "active") {
+      const capCheck = assertCanAddMdCoverageService(activeOtherCount);
+      if (!capCheck.ok) {
+        return res.status(400).json({ error: capCheck.error });
+      }
+    }
     if (monthlyFee == null || !Number.isFinite(monthlyFee)) {
-      const { rows: existingActive } = await query(
-        `select id from public.md_subscription
-         where provider_id = $1
-           and lower(coalesce(status, '')) = 'active'
-           and coalesce(service_type_id::text, '') <> $2`,
-        [providerId, serviceTypeId]
-      );
-      monthlyFee = monthlyFeeForNewMdService((existingActive || []).length);
+      monthlyFee = monthlyFeeForNewMdService(activeOtherCount);
     }
     const { rows } = await query(
       `insert into public.md_subscription (
