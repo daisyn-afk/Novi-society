@@ -1,5 +1,7 @@
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
+import { expandActiveServiceIds, servicesInMembership } from "@/lib/serviceTypeMembershipModel";
 
 /**
  * Central hook for all service-level access checks.
@@ -45,10 +47,19 @@ export function useServiceAccess() {
     enabled: !!me,
   });
 
-  const isLoading = loadingSubs || loadingEnrollments || loadingCerts;
+  const { data: serviceTypes = [], isLoading: loadingServiceTypes } = useQuery({
+    queryKey: ["service-types"],
+    queryFn: () => base44.entities.ServiceType.list(),
+    enabled: !!me,
+  });
+
+  const isLoading = loadingSubs || loadingEnrollments || loadingCerts || loadingServiceTypes;
 
   const activeSubscriptions = mySubscriptions.filter(s => s.status === "active");
-  const activeServiceIds = new Set(activeSubscriptions.map(s => s.service_type_id));
+  const activeServiceIds = useMemo(
+    () => expandActiveServiceIds(activeSubscriptions, serviceTypes),
+    [activeSubscriptions, serviceTypes]
+  );
   const hasActiveMD = activeSubscriptions.length > 0;
   const hasPendingActivity = (myEnrollments.length > 0 || myCerts.length > 0) && !hasActiveMD;
 
@@ -57,8 +68,28 @@ export function useServiceAccess() {
     return activeServiceIds.has(serviceTypeId);
   };
 
-  const getSubscription = (serviceTypeId) =>
-    activeSubscriptions.find(s => s.service_type_id === serviceTypeId);
+  const getSubscription = (serviceTypeId) => {
+    const direct = activeSubscriptions.find((s) => s.service_type_id === serviceTypeId);
+    if (direct) return direct;
+
+    const service = serviceTypes.find((st) => String(st.id) === String(serviceTypeId));
+    if (!service) return undefined;
+
+    for (const sub of activeSubscriptions) {
+      const membership = serviceTypes.find((st) => String(st.id) === String(sub.service_type_id));
+      if (!membership) continue;
+      const included = (membership.included_service_ids || []).map(String);
+      if (!included.includes(String(serviceTypeId))) continue;
+      return sub;
+    }
+
+    const parentId = String(service.legacy_parent_membership_id || "").trim();
+    if (parentId) {
+      return activeSubscriptions.find((s) => s.service_type_id === parentId);
+    }
+
+    return undefined;
+  };
 
   return {
     isLoading,

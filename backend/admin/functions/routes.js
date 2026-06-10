@@ -18,8 +18,11 @@ import {
   getProviderAgreementContext,
 } from "../mdContractPdfService.js";
 import {
+  assertCanAddMdCoverageService,
+  buildMdCoverageCheckoutBillingPreview,
   isAllowlistedMdCoverageTestProvider,
   isMdCoverageTestPricingEnabled,
+  nextMdCoverageBillingAnchorUnix,
   resolveMdCoverageMonthlyFee,
 } from "../mdMembershipPricing.js";
 import Stripe from "stripe";
@@ -57,6 +60,12 @@ import {
   buildManufacturerApplicationPayload,
 } from "../manufacturers/providerApplicationContext.js";
 import { validateBookingScope } from "../bookingValidation.js";
+import {
+  APPOINTMENT_QUALIPHY_EXAM_IDS_SQL,
+  APPOINTMENT_REQUIRES_GFE_SQL,
+  APPOINTMENT_SERVICE_TYPE_JOINS,
+  resolveTreatmentServiceType,
+} from "../lib/treatmentServiceType.js";
 import { sendAppointmentGfeInviteEmail, notifyPatientGfeInvite } from "../patientAppointmentEmails.js";
 import { handleQualiphyExamWebhook, resolveQualiphyWebhookUrl } from "../qualiphy/webhookHandler.js";
 import { buildAppointmentGfeRedirectUrls } from "../qualiphy/config.js";
@@ -263,7 +272,8 @@ async function resolveQualiphyExamIdForCourse({ courseId, treatmentType }) {
     const { rows } = await query(
       `select id, category, requires_gfe, qualiphy_exam_ids
        from public.service_type
-       where id = any($1::text[])`,
+       where id = any($1::text[])
+         and coalesce(is_membership, false) = false`,
       [serviceTypeIds]
     );
     serviceRows = rows;
@@ -274,6 +284,7 @@ async function resolveQualiphyExamIdForCourse({ courseId, treatmentType }) {
       `select id, category, requires_gfe, qualiphy_exam_ids
        from public.service_type
        where category = any($1::text[])
+         and coalesce(is_membership, false) = false
          and requires_gfe = true`,
       [categoriesToTry]
     );
@@ -304,12 +315,12 @@ async function resolveQualiphyExamIdForAppointment({ serviceTypeId, serviceName,
   const fromJoin = normalizeExamIds(qualiphyExamIds);
   if (fromJoin.length > 0) return fromJoin[0];
   const stId = String(serviceTypeId || "").trim();
-  if (stId) {
-    const { rows } = await query(
-      `select qualiphy_exam_ids from public.service_type where id = $1 limit 1`,
-      [stId]
-    );
-    const ids = normalizeExamIds(rows[0]?.qualiphy_exam_ids);
+  const treatmentSvc = await resolveTreatmentServiceType(query, {
+    serviceName,
+    serviceTypeId: stId,
+  });
+  if (treatmentSvc) {
+    const ids = normalizeExamIds(treatmentSvc.qualiphy_exam_ids);
     if (ids.length > 0) return ids[0];
   }
   const service = String(serviceName || "").trim();
@@ -318,6 +329,7 @@ async function resolveQualiphyExamIdForAppointment({ serviceTypeId, serviceName,
       `select qualiphy_exam_ids
          from public.service_type
         where lower(trim(name)) = lower(trim($1))
+          and coalesce(is_membership, false) = false
           and requires_gfe = true
         limit 1`,
       [service]
@@ -1028,11 +1040,16 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
       [me.id, serviceTypeId]
     );
     const activeOtherCount = activeOtherRows?.length || 0;
-    const monthlyFeeUsd = resolveMdCoverageMonthlyFee({
+    const capCheck = assertCanAddMdCoverageService(activeOtherCount);
+    if (!capCheck.ok) {
+      return res.status(400).json({ success: false, error: capCheck.error });
+    }
+    const billingPreview = buildMdCoverageCheckoutBillingPreview({
+      activeServiceCountBeforeAdd: activeOtherCount,
       providerId: me.id,
       providerEmail: me.email,
-      activeServiceCountBeforeAdd: activeOtherCount,
     });
+    const monthlyFeeUsd = billingPreview.thisServiceMonthly;
     const amountCents = Math.round(monthlyFeeUsd * 100);
 
     if (
@@ -1069,6 +1086,28 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
       });
     }
 
+    const paymentAttemptId = await recordCheckoutInitiated({
+      payment_flow: PAYMENT_FLOW.MD_BOARD_COVERAGE,
+      payment_type: "md_board_coverage",
+      service_type_id: serviceTypeId,
+      item_id: serviceTypeId,
+      item_name: serviceTypeName,
+      user_id: me.id,
+      linked_user_id: me.id,
+      customer_email: me.email,
+      customer_name: me.full_name,
+      amount_subtotal: billingPreview.thisServiceMonthly,
+      amount_total: billingPreview.dueTodayProrated,
+      currency: "usd",
+      source_context: "provider_md_coverage_checkout",
+      metadata: {
+        monthly_fee_usd: billingPreview.thisServiceMonthly,
+        prorated_due_usd: billingPreview.dueTodayProrated,
+        new_total_monthly_usd: billingPreview.newTotalMonthlyFromNextCycle,
+        active_services_before: activeOtherCount,
+      },
+    });
+
     const pending = await createPendingMdSubscriptionForCheckout({
       providerId: me.id,
       providerEmail: me.email,
@@ -1079,7 +1118,18 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
       signatureData,
       signedByName: me.full_name,
       monthlyFee: monthlyFeeUsd,
+      checkoutProratedAmountExpected: billingPreview.dueTodayProrated,
+      paymentTransactionId: paymentAttemptId,
     });
+
+    if (paymentAttemptId) {
+      await enrichPaymentTransaction(
+        { id: paymentAttemptId },
+        {
+          stripe_metadata: { md_subscription_id: String(pending.id || "") },
+        }
+      );
+    }
 
     const signedContractUrl = await ensureSignedContractForSubscription(pending, {
       signatureData,
@@ -1110,6 +1160,8 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
         enrollment_id: enrollmentId || ""
       },
       subscription_data: {
+        billing_cycle_anchor: nextMdCoverageBillingAnchorUnix(),
+        proration_behavior: "create_prorations",
         metadata: {
           checkout_type: "md_board_coverage",
           md_subscription_id: String(pending.id || ""),
@@ -1134,7 +1186,23 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
       ]
     });
 
-    await attachCheckoutSessionToMdSubscription(pending.id, checkoutSession.id);
+    await attachCheckoutSessionToMdSubscription(pending.id, checkoutSession.id, {
+      paymentTransactionId: paymentAttemptId,
+    });
+
+    if (paymentAttemptId) {
+      await enrichPaymentTransaction(
+        { id: paymentAttemptId },
+        {
+          stripe_session_id: checkoutSession.id,
+          stripe_checkout_url: checkoutSession.url || null,
+          stripe_customer_id:
+            typeof checkoutSession.customer === "string" ? checkoutSession.customer : null,
+          payment_status: "checkout_opened",
+          stripe_metadata: { md_subscription_id: String(pending.id || "") },
+        }
+      );
+    }
 
     const url = checkoutSession?.url;
     if (!url) {
@@ -1148,6 +1216,12 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
       service_type_id: serviceTypeId,
       service_type_name: serviceTypeName,
       checkout_amount_usd: monthlyFeeUsd,
+      billing_preview: {
+        this_service_monthly_usd: billingPreview.thisServiceMonthly,
+        new_total_monthly_from_next_cycle_usd: billingPreview.newTotalMonthlyFromNextCycle,
+        due_today_prorated_usd: billingPreview.dueTodayProrated,
+        next_billing_date: billingPreview.proration?.nextBillingDate?.toISOString?.() || null,
+      },
     });
   } catch (error) {
     return next(error);
@@ -2482,16 +2556,19 @@ functionsRouter.post("/sendQualiphyGFE", async (req, res, next) => {
 
     const { rows: apptRows } = await query(
       `select a.*,
-              st.name as service_type_name,
-              st.qualiphy_exam_ids,
-              coalesce(st.requires_gfe, false) as requires_gfe,
+              coalesce(
+                case when coalesce(st.is_membership, false) = false then st.name else null end,
+                st_svc.name
+              ) as service_type_name,
+              ${APPOINTMENT_QUALIPHY_EXAM_IDS_SQL} as qualiphy_exam_ids,
+              ${APPOINTMENT_REQUIRES_GFE_SQL} as requires_gfe,
               coalesce(nullif(trim(a.patient_email), ''), u.email) as resolved_patient_email,
               coalesce(nullif(trim(a.patient_name), ''), u.full_name) as resolved_patient_name,
               pp.phone as patient_phone,
               pp.state as patient_state,
               pp.date_of_birth as patient_dob
          from public.appointments a
-         left join public.service_type st on st.id::text = a.service_type_id::text
+         ${APPOINTMENT_SERVICE_TYPE_JOINS}
          left join public.users u on u.auth_user_id::text = a.patient_id or u.id::text = a.patient_id
          left join public.patient_profiles pp on pp.user_id = u.id
         where a.id = $1

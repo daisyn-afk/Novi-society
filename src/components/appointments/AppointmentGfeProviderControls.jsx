@@ -15,12 +15,14 @@ export default function AppointmentGfeProviderControls({
 
   const gfeStatus = appointmentGfeDisplayStatus(appointment);
   const gfeLink = appointmentGfeLink(appointment);
+  const skipSend = appointment.gfe_skip_send === true || appointment.gfe_prerequisite_satisfied === true;
   const canSend =
     showSend &&
+    !skipSend &&
     ["requested", "awaiting_payment", "confirmed", "awaiting_consent"].includes(
       String(appointment.status || "")
     );
-  const canOpenLink = Boolean(gfeLink) && gfeStatus !== "approved";
+  const canOpenLink = Boolean(gfeLink) && gfeStatus !== "approved" && !skipSend;
 
   if (!canSend && !canOpenLink) return null;
 

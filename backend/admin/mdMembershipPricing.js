@@ -2,12 +2,91 @@
 export const MD_FIRST_SERVICE_MONTHLY_FEE = 279;
 export const MD_ADDON_SERVICE_MONTHLY_FEE = 129;
 export const MD_MAX_COVERED_SERVICES = 5;
+export const MD_MAX_MONTHLY_CAP = 795;
 
 export function monthlyFeeForNewMdService(activeServiceCountBeforeAdd = 0) {
   const n = Math.max(0, Number(activeServiceCountBeforeAdd) || 0);
   if (n >= MD_MAX_COVERED_SERVICES) return 0;
   if (n === 0) return MD_FIRST_SERVICE_MONTHLY_FEE;
   return MD_ADDON_SERVICE_MONTHLY_FEE;
+}
+
+export function isMdCoverageAtServiceCap(activeServiceCount = 0) {
+  return Math.max(0, Number(activeServiceCount) || 0) >= MD_MAX_COVERED_SERVICES;
+}
+
+export function mdCoverageCapErrorMessage() {
+  return `You can cover up to ${MD_MAX_COVERED_SERVICES} services ($${MD_MAX_MONTHLY_CAP}/mo maximum). Cancel an existing service before adding another.`;
+}
+
+export function assertCanAddMdCoverageService(activeServiceCountBeforeAdd = 0) {
+  if (isMdCoverageAtServiceCap(activeServiceCountBeforeAdd)) {
+    return { ok: false, error: mdCoverageCapErrorMessage() };
+  }
+  return { ok: true };
+}
+
+export function calcMdCoverageMonthlyTotal(
+  activeServiceCount = 0,
+  feeForSlot = monthlyFeeForNewMdService
+) {
+  const count = Math.max(0, Number(activeServiceCount) || 0);
+  if (count <= 0) return 0;
+  if (count >= MD_MAX_COVERED_SERVICES) return MD_MAX_MONTHLY_CAP;
+  let total = 0;
+  for (let i = 0; i < count; i += 1) {
+    total += feeForSlot(i);
+  }
+  return Math.min(total, MD_MAX_MONTHLY_CAP);
+}
+
+export function calcMdCoverageProration(monthlyFee, referenceDate = new Date()) {
+  const fee = Number(monthlyFee) || 0;
+  const today = referenceDate instanceof Date ? referenceDate : new Date(referenceDate);
+  const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+  const dayOfMonth = today.getDate();
+  const daysRemaining = daysInMonth - dayOfMonth + 1;
+  const dueToday = fee <= 0 ? 0 : (fee / daysInMonth) * daysRemaining;
+  return {
+    daysInMonth,
+    daysRemaining,
+    dueToday: Math.round(dueToday * 100) / 100,
+    periodStart: new Date(today.getFullYear(), today.getMonth(), dayOfMonth),
+    periodEnd: new Date(today.getFullYear(), today.getMonth() + 1, 0),
+    nextBillingDate: new Date(today.getFullYear(), today.getMonth() + 1, 1),
+  };
+}
+
+export function buildMdCoverageCheckoutBillingPreview({
+  activeServiceCountBeforeAdd = 0,
+  referenceDate = new Date(),
+  providerId,
+  providerEmail,
+} = {}) {
+  const activeBefore = Math.max(0, Number(activeServiceCountBeforeAdd) || 0);
+  const feeForSlot = (slotIndex) =>
+    resolveMdCoverageMonthlyFee({
+      providerId,
+      providerEmail,
+      activeServiceCountBeforeAdd: slotIndex,
+    });
+  const thisServiceMonthly = feeForSlot(activeBefore);
+  const newActiveCount = activeBefore + 1;
+  const newTotalMonthlyFromNextCycle = calcMdCoverageMonthlyTotal(newActiveCount, feeForSlot);
+  const proration = calcMdCoverageProration(thisServiceMonthly, referenceDate);
+  return {
+    thisServiceMonthly,
+    newTotalMonthlyFromNextCycle,
+    newActiveCount,
+    dueTodayProrated: proration.dueToday,
+    proration,
+  };
+}
+
+export function nextMdCoverageBillingAnchorUnix(referenceDate = new Date()) {
+  const today = referenceDate instanceof Date ? referenceDate : new Date(referenceDate);
+  const anchor = new Date(today.getFullYear(), today.getMonth() + 1, 1, 0, 0, 0, 0);
+  return Math.floor(anchor.getTime() / 1000);
 }
 
 function parseCsvEnv(value) {

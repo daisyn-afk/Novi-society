@@ -6,6 +6,7 @@ import {
   notifyMdOfTreatmentRecordResubmit,
   notifyProviderOfTreatmentRecordReview,
 } from "./notifications.js";
+import { assertGfePrerequisiteForAppointment } from "../gfe/patientGfeService.js";
 
 export const treatmentRecordsRouter = Router();
 
@@ -203,6 +204,9 @@ treatmentRecordsRouter.post("/", async (req, res, next) => {
     const p = buildPayload({ ...body, provider_id: providerId });
     if (!hasAdminAccess(me.role)) {
       await assertBookingDepositPaidForAppointment(p.appointment_id);
+      if (String(p.status || "").trim() === "submitted") {
+        await assertGfePrerequisiteForAppointment(p.appointment_id);
+      }
     }
     const { rows } = await query(
       `insert into public.treatment_records (
@@ -313,6 +317,9 @@ treatmentRecordsRouter.patch("/:id", async (req, res, next) => {
 
       if (Object.prototype.hasOwnProperty.call(body, "status")) {
         const nextStatus = String(body.status || "").trim();
+        if (!hasAdminAccess(me.role) && nextStatus === "submitted") {
+          await assertGfePrerequisiteForAppointment(existing.appointment_id);
+        }
         const allowedStatuses = new Set(["draft", "submitted"]);
         if (!allowedStatuses.has(nextStatus)) {
           return res.status(400).json({ error: "Providers may only save draft or submitted records." });

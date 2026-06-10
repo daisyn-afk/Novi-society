@@ -1,3 +1,5 @@
+import { isMdPurchasablePlan } from "./serviceTypeMembershipModel";
+
 /** Match md_subscription rows to a provider user record (auth id, users.id, or email). */
 export function providerLookupKeys(provider) {
   const keys = new Set();
@@ -36,7 +38,9 @@ export function summarizeProviderMemberships(provider, allSubscriptions = [], se
     byServiceId.set(sid, existing);
   }
 
-  const catalog = (serviceTypes || []).filter((st) => st?.is_active !== false);
+  const catalog = (serviceTypes || []).filter(
+    (st) => st?.is_active !== false && isMdPurchasablePlan(st, serviceTypes)
+  );
   const rows = catalog.map((st) => {
     const sid = String(st.id);
     const matches = byServiceId.get(sid) || [];

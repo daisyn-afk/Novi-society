@@ -15,7 +15,11 @@ import {
   requestAppointmentTreatmentPayment,
   syncAppointmentTreatmentPayment,
 } from "./treatmentPaymentService.js";
-import { computeTreatmentPaymentBreakdown } from "../stripe-connect/gfePlatformFee.js";
+import {
+  assertGfePrerequisiteForAppointment,
+  enrichAppointmentGfeFields,
+  enrichAppointmentsGfeFields,
+} from "../gfe/patientGfeService.js";
 import {
   sendAppointmentConfirmedPatientEmail,
   sendAppointmentCancelledPatientEmail,
@@ -26,6 +30,11 @@ import {
 } from "../patientAppointmentEmails.js";
 import { migratePreBookingMessagesToAppointment } from "../appointment-messages/migratePreBookingThread.js";
 import { isAppointmentInPast } from "../lib/appointmentScheduling.js";
+import {
+  APPOINTMENT_REQUIRES_GFE_SQL,
+  APPOINTMENT_SERVICE_TYPE_JOINS,
+  resolveTreatmentServiceType,
+} from "../lib/treatmentServiceType.js";
 
 export const appointmentsRouter = Router();
 
@@ -41,16 +50,20 @@ function hasAdminAccess(role) {
 }
 
 const APPOINTMENTS_SELECT = `select a.*,
-       coalesce(st.name, st_by_name.name) as service_type_name,
-       coalesce(st.requires_gfe, st_by_name.requires_gfe, false) as requires_gfe,
+       coalesce(
+         case when coalesce(st.is_membership, false) = false then st.name else null end,
+         st_svc.name
+       ) as service_type_name,
+       ${APPOINTMENT_REQUIRES_GFE_SQL} as requires_gfe,
+       coalesce(
+         case when coalesce(st.is_membership, false) = false then st.category else null end,
+         st_svc.category
+       ) as service_type_category,
        pu.email as patient_user_email,
        pu.full_name as patient_user_name`;
 
 const APPOINTMENTS_FROM = `from public.appointments a
-       left join public.service_type st on st.id::text = a.service_type_id::text
-       left join public.service_type st_by_name on a.service_type_id is null
-         and lower(trim(coalesce(st_by_name.name, ''))) = lower(trim(coalesce(a.service, '')))
-         and coalesce(st_by_name.requires_gfe, false) = true
+       ${APPOINTMENT_SERVICE_TYPE_JOINS}
        left join public.users pu on pu.auth_user_id::text = a.patient_id or pu.id::text = a.patient_id`;
 
 async function resolvePatientContact(patientId, email, name) {
@@ -246,16 +259,12 @@ function mapAppointmentRow(row) {
     String(row.patient_email || row.patient_user_email || "").trim() || null;
   const patientName =
     String(row.patient_name || row.patient_user_name || "").trim() || null;
-  const { patient_user_email: _pe, patient_user_name: _pn, ...rest } = row;
-  const requiresGfe = row.requires_gfe === true;
-  const treatmentAmount = Number(row.treatment_amount);
-  const paymentBreakdown =
-    Number.isFinite(treatmentAmount) && treatmentAmount > 0
-      ? computeTreatmentPaymentBreakdown({
-          treatmentAmount,
-          requiresGfe,
-        })
-      : null;
+  const {
+    patient_user_email: _pe,
+    patient_user_name: _pn,
+    service_type_category: _stc,
+    ...rest
+  } = row;
 
   return {
     ...rest,
@@ -264,14 +273,16 @@ function mapAppointmentRow(row) {
     patient_name: patientName,
     service,
     service_type_name: serviceTypeName || row.service_type_name || null,
-    requires_gfe: requiresGfe,
-    platform_fee_amount: paymentBreakdown?.platformFeeAmount ?? 0,
-    treatment_charge_total:
-      paymentBreakdown?.totalChargeAmount ??
-      (Number.isFinite(treatmentAmount) && treatmentAmount > 0 ? treatmentAmount : null),
+    service_type_category: row.service_type_category || null,
+    requires_gfe: row.requires_gfe === true,
     created_date: row.created_at,
     updated_date: row.updated_at,
   };
+}
+
+async function enrichAppointmentForClient(appointment) {
+  const withGfe = await enrichAppointmentGfeFields(mapAppointmentRow(appointment));
+  return enrichAppointmentDepositFields(withGfe);
 }
 
 const PATCH_ALLOWED = [
@@ -339,10 +350,10 @@ appointmentsRouter.get("/", async (req, res, next) => {
                    order by a.appointment_date desc, a.created_at desc
                    limit $${limitIdx}`;
     const { rows } = await query(sql, params);
-    const mapped = await Promise.all((rows || []).map(async (row) =>
-      enrichAppointmentDepositFields(mapAppointmentRow(row))
-    ));
-    return res.json(mapped);
+    const mapped = (rows || []).map((row) => mapAppointmentRow(row));
+    const withGfe = await enrichAppointmentsGfeFields(mapped);
+    const enriched = await Promise.all(withGfe.map((row) => enrichAppointmentDepositFields(row)));
+    return res.json(enriched);
   } catch (error) {
     return next(error);
   }
@@ -383,13 +394,11 @@ appointmentsRouter.post("/", async (req, res, next) => {
     }
 
     let initialGfeStatus = "not_required";
-    if (validation.service_type_id) {
-      const { rows: stRows } = await query(
-        `select requires_gfe from public.service_type where id = $1 limit 1`,
-        [validation.service_type_id]
-      );
-      if (stRows[0]?.requires_gfe === true) initialGfeStatus = "not_sent";
-    }
+    const treatmentSvc = await resolveTreatmentServiceType(query, {
+      serviceName: service,
+      serviceTypeId: validation.service_type_id,
+    });
+    if (treatmentSvc?.requires_gfe === true) initialGfeStatus = "not_sent";
 
     const patientId = hasAdminAccess(me.role) && body.patient_id ? String(body.patient_id) : me.id;
     const { patientEmail, patientName } = await resolvePatientContact(
@@ -443,9 +452,9 @@ appointmentsRouter.post("/", async (req, res, next) => {
           where a.id = $1`,
         [createdId]
       );
-      return res.status(201).json(mapAppointmentRow(enriched[0] || rows[0]));
+      return res.status(201).json(await enrichAppointmentForClient(enriched[0] || rows[0]));
     }
-    return res.status(201).json(mapAppointmentRow(rows[0]));
+    return res.status(201).json(await enrichAppointmentForClient(rows[0]));
   } catch (error) {
     return next(error);
   }
@@ -485,6 +494,13 @@ appointmentsRouter.patch("/:id", async (req, res, next) => {
           "The patient must pay the booking deposit before you can mark this appointment complete or log treatment.",
       });
     }
+    if (nextStatusRaw === "completed" && !hasAdminAccess(me.role)) {
+      try {
+        await assertGfePrerequisiteForAppointment(id);
+      } catch (gfeError) {
+        return res.status(gfeError?.statusCode || 409).json({ error: gfeError?.message || "GFE prerequisite not met." });
+      }
+    }
     const isProviderOwner =
       existing.provider_id === me.id && !hasAdminAccess(me.role);
     if (
@@ -519,7 +535,7 @@ appointmentsRouter.patch("/:id", async (req, res, next) => {
           where a.id = $1`,
         [id]
       );
-      return res.json(await enrichAppointmentDepositFields(mapAppointmentRow(enriched[0] || existing)));
+      return res.json(await enrichAppointmentForClient(enriched[0] || existing));
     }
 
     const { rows } = await query(
@@ -532,11 +548,10 @@ appointmentsRouter.patch("/:id", async (req, res, next) => {
         where a.id = $1`,
       [id]
     );
-    const updated = mapAppointmentRow(enriched[0] || rows[0]);
-    const updatedForClient = await enrichAppointmentDepositFields(updated);
+    const updatedForClient = await enrichAppointmentForClient(enriched[0] || rows[0]);
 
     const prevStatus = String(existing.status || "").trim().toLowerCase();
-    const nextStatus = String(updated.status || "").trim().toLowerCase();
+    const nextStatus = String(updatedForClient.status || "").trim().toLowerCase();
     const cancelReason =
       updates.cancellation_reason != null ? String(updates.cancellation_reason) : String(existing.cancellation_reason || "");
 
@@ -552,9 +567,9 @@ appointmentsRouter.patch("/:id", async (req, res, next) => {
     }
 
     const { patientEmail, patientName } = await resolvePatientContact(
-      updated.patient_id || existing.patient_id,
-      updated.patient_email || existing.patient_email,
-      updated.patient_name || existing.patient_name
+      updatedForClient.patient_id || existing.patient_id,
+      updatedForClient.patient_email || existing.patient_email,
+      updatedForClient.patient_name || existing.patient_name
     );
 
     const patientNotifications = await runAppointmentPatientNotifications({
@@ -562,7 +577,7 @@ appointmentsRouter.patch("/:id", async (req, res, next) => {
       nextStatus,
       patientEmail,
       patientName,
-      patientId: updated.patient_id || existing.patient_id,
+      patientId: updatedForClient.patient_id || existing.patient_id,
       providerName: updatedForClient.provider_name || existing.provider_name,
       providerId: updatedForClient.provider_id || existing.provider_id,
       providerEmail: updatedForClient.provider_email || existing.provider_email,
@@ -632,7 +647,7 @@ appointmentsRouter.post("/:id/sync-deposit-payment", async (req, res, next) => {
         where a.id = $1`,
       [appointmentId]
     );
-    return res.json(await enrichAppointmentDepositFields(mapAppointmentRow(enriched[0] || updated)));
+    return res.json(await enrichAppointmentForClient(enriched[0] || updated));
   } catch (error) {
     if (error?.statusCode) {
       return res.status(error.statusCode).json({ error: error.message });
@@ -674,7 +689,7 @@ appointmentsRouter.post("/:id/request-treatment-payment", async (req, res, next)
         where a.id = $1`,
       [appointmentId]
     );
-    return res.json(mapAppointmentRow(enriched[0] || updated));
+    return res.json(await enrichAppointmentForClient(enriched[0] || updated));
   } catch (error) {
     if (error?.statusCode) return res.status(error.statusCode).json({ error: error.message });
     return next(error);
@@ -728,7 +743,7 @@ appointmentsRouter.post("/:id/sync-treatment-payment", async (req, res, next) =>
         where a.id = $1`,
       [appointmentId]
     );
-    return res.json(mapAppointmentRow(enriched[0] || updated));
+    return res.json(await enrichAppointmentForClient(enriched[0] || updated));
   } catch (error) {
     if (error?.statusCode) return res.status(error.statusCode).json({ error: error.message });
     return next(error);
@@ -751,7 +766,7 @@ appointmentsRouter.post("/:id/request-deposit", async (req, res, next) => {
         where a.id = $1`,
       [appointmentId]
     );
-    return res.json(await enrichAppointmentDepositFields(mapAppointmentRow(enriched[0] || updated)));
+    return res.json(await enrichAppointmentForClient(enriched[0] || updated));
   } catch (error) {
     if (error?.statusCode) {
       return res.status(error.statusCode).json({ error: error.message });

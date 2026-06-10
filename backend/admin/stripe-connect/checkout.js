@@ -37,7 +37,11 @@ export async function createMarketplaceCheckoutSession({
   const paymentType = feeContext.paymentType || "";
   const treatmentCents =
     Number(feeContext.treatmentCents) > 0 ? Number(feeContext.treatmentCents) : amountCents;
-  const platformFeeCents = resolveConnectPlatformFeeCents(feeContext);
+  const platformFeeCents = resolveConnectPlatformFeeCents({
+    ...feeContext,
+    chargeGfeFee: feeContext.chargeGfeFee,
+    requiresGfe: feeContext.requiresGfe,
+  });
   const providerTransferCents =
     paymentType === PAYMENT_TYPE_APPOINTMENT_DEPOSIT ? amountCents : treatmentCents;
   const chargeCents =

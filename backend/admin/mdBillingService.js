@@ -1,7 +1,11 @@
 import Stripe from "stripe";
 import { query } from "./db.js";
 import { insertAppNotification } from "./certificationNotifications.js";
-import { monthlyFeeForNewMdService, resolveMdCoverageMonthlyFee } from "./mdMembershipPricing.js";
+import {
+  assertCanAddMdCoverageService,
+  monthlyFeeForNewMdService,
+  resolveMdCoverageMonthlyFee,
+} from "./mdMembershipPricing.js";
 import { submitMdBoardCoverageAssignment } from "./mdAssignmentService.js";
 import { attachSignedContractToSubscription, getServiceTypeContractInfo } from "./mdContractPdfService.js";
 import { snapshotProtocolDocumentsOnSubscription } from "./lib/mdSubscriptionProtocolDocs.js";
@@ -218,6 +222,34 @@ async function ensureMdAssignment(providerId, providerEmail, providerName, servi
 /**
  * Create a pending md_subscription row before Stripe Checkout (paid activations).
  */
+async function recordMdSubscriptionPaymentAmount(mdSubscriptionId, {
+  amountPaid = null,
+  checkoutAmountPaid = null,
+  paymentTransactionId = null,
+} = {}) {
+  const id = s(mdSubscriptionId);
+  if (!id) return;
+  const paid =
+    amountPaid != null && Number.isFinite(Number(amountPaid)) ? Number(amountPaid) : null;
+  const checkoutPaid =
+    checkoutAmountPaid != null && Number.isFinite(Number(checkoutAmountPaid))
+      ? Number(checkoutAmountPaid)
+      : null;
+  const txId = s(paymentTransactionId) || null;
+  if (paid == null && checkoutPaid == null && !txId) return;
+  await query(
+    `update public.md_subscription
+        set checkout_amount_paid = coalesce($2, checkout_amount_paid),
+            last_amount_paid = coalesce($3, last_amount_paid),
+            last_amount_paid_at = case when $3 is not null then now() else last_amount_paid_at end,
+            payment_transaction_id = coalesce($4::uuid, payment_transaction_id),
+            billing_updated_at = now(),
+            updated_at = now()
+      where id = $1::uuid`,
+    [id, checkoutPaid, paid, txId]
+  );
+}
+
 export async function createPendingMdSubscriptionForCheckout({
   providerId,
   providerEmail,
@@ -225,6 +257,8 @@ export async function createPendingMdSubscriptionForCheckout({
   serviceTypeId,
   serviceTypeName,
   monthlyFee,
+  checkoutProratedAmountExpected = null,
+  paymentTransactionId = null,
   enrollmentId = null,
   signatureData = null,
   signedByName = null,
@@ -285,6 +319,10 @@ export async function createPendingMdSubscriptionForCheckout({
       [pid, stId]
     )
   ).rows.length;
+  const capCheck = assertCanAddMdCoverageService(activeOtherCount);
+  if (!capCheck.ok) {
+    throw new Error(capCheck.error);
+  }
   const fee =
     monthlyFee != null && Number.isFinite(Number(monthlyFee))
       ? Number(monthlyFee)
@@ -295,12 +333,19 @@ export async function createPendingMdSubscriptionForCheckout({
         });
 
   const nowIso = new Date().toISOString();
+  const proratedExpected =
+    checkoutProratedAmountExpected != null && Number.isFinite(Number(checkoutProratedAmountExpected))
+      ? Number(checkoutProratedAmountExpected)
+      : null;
+  const paymentTxId = s(paymentTransactionId) || null;
+
   const { rows } = await query(
     `insert into public.md_subscription (
       provider_id, provider_email, provider_name, service_type_id, service_type_name,
-      service_type_monthly_fee, status, billing_status, signed_at, signed_by_name,
+      service_type_monthly_fee, checkout_prorated_amount_expected, payment_transaction_id,
+      status, billing_status, signed_at, signed_by_name,
       activated_at, enrollment_id, signature_data, billing_updated_at
-    ) values ($1, $2, $3, $4, $5, $6, 'pending', 'pending', $7, $8, null, $9, $10, now())
+    ) values ($1, $2, $3, $4, $5, $6, $7, $8::uuid, 'pending', 'pending', $9, $10, null, $11, $12, now())
     returning *`,
     [
       pid,
@@ -309,6 +354,8 @@ export async function createPendingMdSubscriptionForCheckout({
       stId,
       serviceTypeName || null,
       fee,
+      proratedExpected,
+      paymentTxId,
       nowIso,
       signedByName || providerName || null,
       enrollmentId || null,
@@ -325,14 +372,19 @@ export async function createPendingMdSubscriptionForCheckout({
   return (await getMdSubscriptionById(created.id)) || created;
 }
 
-export async function attachCheckoutSessionToMdSubscription(mdSubscriptionId, stripeCheckoutSessionId) {
+export async function attachCheckoutSessionToMdSubscription(
+  mdSubscriptionId,
+  stripeCheckoutSessionId,
+  { paymentTransactionId = null } = {}
+) {
   await query(
     `update public.md_subscription
         set stripe_checkout_session_id = $2,
+            payment_transaction_id = coalesce($3::uuid, payment_transaction_id),
             billing_updated_at = now(),
             updated_at = now()
       where id = $1::uuid`,
-    [mdSubscriptionId, stripeCheckoutSessionId]
+    [mdSubscriptionId, stripeCheckoutSessionId, s(paymentTransactionId) || null]
   );
 }
 
@@ -427,11 +479,28 @@ export async function activateMdSubscriptionFromStripeSession(session) {
   row = rows[0] || row;
   await snapshotProtocolDocumentsOnSubscription(row.id, row.service_type_id);
 
+  const checkoutAmountPaid =
+    session?.amount_total != null && Number.isFinite(Number(session.amount_total))
+      ? Number(session.amount_total) / 100
+      : null;
+
+  await recordMdSubscriptionPaymentAmount(row.id, {
+    amountPaid: checkoutAmountPaid,
+    checkoutAmountPaid,
+  });
+
   await logBillingEvent({
     mdSubscriptionId: row.id,
     eventType: "checkout_completed",
     stripeSubscriptionId: stripeSubscriptionId || null,
-    metadata: { checkout_session_id: session.id },
+    amountPaid: checkoutAmountPaid,
+    currency: session?.currency || "usd",
+    metadata: {
+      checkout_session_id: session.id,
+      amount_subtotal: session?.amount_subtotal != null ? Number(session.amount_subtotal) / 100 : null,
+      service_type_monthly_fee: row.service_type_monthly_fee,
+      checkout_prorated_amount_expected: row.checkout_prorated_amount_expected,
+    },
   });
 
   await ensureMdAssignment(
@@ -525,6 +594,10 @@ export async function finalizeMdBoardCoverage({
       [pid, stId]
     )
   ).rows.length;
+  const capCheck = assertCanAddMdCoverageService(activeOtherCount);
+  if (!capCheck.ok && status !== "active") {
+    return { ok: false, error: capCheck.error };
+  }
   const monthlyFee = resolveMdCoverageMonthlyFee({
     providerId: pid,
     providerEmail,
@@ -624,14 +697,25 @@ export async function handleMdInvoicePaid(invoice, stripeEventId = null) {
             current_period_start = coalesce($2::timestamptz, current_period_start),
             current_period_end = coalesce($3::timestamptz, current_period_end),
             last_stripe_invoice_id = $4,
+            last_amount_paid = coalesce($5, last_amount_paid),
+            last_amount_paid_at = case when $5 is not null then now() else last_amount_paid_at end,
             last_payment_failure_code = null,
             last_payment_failure_message = null,
             last_payment_failed_at = null,
             billing_updated_at = now(),
             updated_at = now()
       where id = $1::uuid`,
-    [row.id, periodStart, periodEnd, invoice.id || null]
+    [row.id, periodStart, periodEnd, invoice.id || null, amountPaid]
   );
+
+  if (invoice.billing_reason === "subscription_create" && amountPaid != null) {
+    await recordMdSubscriptionPaymentAmount(row.id, {
+      amountPaid,
+      checkoutAmountPaid: amountPaid,
+    });
+  } else if (amountPaid != null) {
+    await recordMdSubscriptionPaymentAmount(row.id, { amountPaid });
+  }
 
   await logBillingEvent({
     mdSubscriptionId: row.id,
@@ -641,7 +725,12 @@ export async function handleMdInvoicePaid(invoice, stripeEventId = null) {
     stripeSubscriptionId,
     amountPaid,
     currency: invoice.currency || "usd",
-    metadata: { billing_reason: invoice.billing_reason },
+    metadata: {
+      billing_reason: invoice.billing_reason,
+      service_type_monthly_fee: row.service_type_monthly_fee,
+      period_start: periodStart,
+      period_end: periodEnd,
+    },
   });
 
   return { ok: true };

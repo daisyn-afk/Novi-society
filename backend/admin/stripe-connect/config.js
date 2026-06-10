@@ -27,8 +27,8 @@ export function getConnectStripeClient() {
   return connectStripeClient;
 }
 
-/** Flat GFE platform fee in cents. Default $50.00 */
-export const DEFAULT_GFE_PLATFORM_FEE_CENTS = 5000;
+/** Flat GFE platform fee in cents. Default $29.00 (override via STRIPE_CONNECT_GFE_PLATFORM_FEE_CENTS). */
+export const DEFAULT_GFE_PLATFORM_FEE_CENTS = 2900;
 
 export function getConnectGfePlatformFeeCents() {
   const centsRaw = Number(process.env.STRIPE_CONNECT_GFE_PLATFORM_FEE_CENTS);
@@ -54,13 +54,14 @@ export const PAYMENT_TYPE_APPOINTMENT_DEPOSIT = "appointment_deposit";
 export const PAYMENT_TYPE_APPOINTMENT_TREATMENT = "appointment_treatment";
 
 /**
- * GFE platform fee applies on treatment checkouts when the service requires GFE (never deposits).
- * Patient exam completion/approval does not affect whether the fee applies.
+ * GFE platform fee applies on treatment checkouts when chargeGfeFee is true (never deposits).
+ * Fee is charged once per category validity period when a new approved GFE is in effect.
  */
-export function shouldApplyPlatformFee({ paymentType, requiresGfe } = {}) {
+export function shouldApplyPlatformFee({ paymentType, chargeGfeFee, requiresGfe } = {}) {
   if (paymentType !== PAYMENT_TYPE_APPOINTMENT_TREATMENT) return false;
-  if (requiresGfe !== true) return false;
-  return true;
+  if (chargeGfeFee === true) return true;
+  if (chargeGfeFee === false) return false;
+  return requiresGfe === true;
 }
 
 /** Flat GFE platform fee (added on top of treatment at checkout). */

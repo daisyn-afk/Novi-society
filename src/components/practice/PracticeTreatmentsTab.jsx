@@ -7,6 +7,11 @@ import {
 } from "lucide-react";
 import { createPageUrl } from "@/utils";
 import { Link } from "react-router-dom";
+import {
+  lockedTreatmentMenuServices,
+  serviceDisplayName,
+  treatmentMenuServiceTypes,
+} from "@/lib/serviceTypeMembershipModel";
 
 const GLASS = {
   background: "rgba(255,255,255,0.5)",
@@ -525,11 +530,6 @@ function StandardServiceCard({ st, data, onChange }) {
   );
 }
 
-// Detects if a service type is the combined injectable (tox + filler)
-function isInjectableBundle(st) {
-  return st.category === "injectables" || st.name?.toLowerCase().includes("neurotoxin") || st.name?.toLowerCase().includes("injectable");
-}
-
 const PACKAGE_TYPES = [
   { value: "bundle", label: "Bundle", icon: Package, desc: "e.g. 3 sessions for a flat price" },
   { value: "reward", label: "Loyalty Reward", icon: Gift, desc: "e.g. 10th visit free, referral discount" },
@@ -722,8 +722,8 @@ export default function PracticeTreatmentsTab({ me, serviceTypes, activeServiceI
     setOfferings(prev => ({ ...prev, [key]: data }));
   };
 
-  const activeSubs = serviceTypes.filter(st => activeServiceIds.has(st.id));
-  const inactiveSubs = serviceTypes.filter(st => !activeServiceIds.has(st.id) && st.is_active !== false);
+  const activeSubs = treatmentMenuServiceTypes(serviceTypes, activeServiceIds);
+  const inactiveSubs = lockedTreatmentMenuServices(serviceTypes, activeServiceIds);
 
   return (
     <div className="space-y-5">
@@ -751,38 +751,14 @@ export default function PracticeTreatmentsTab({ me, serviceTypes, activeServiceI
       ) : (
         <div className="space-y-4">
           <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "#5a7a20" }}>Active Treatments ({activeSubs.length})</p>
-          {activeSubs.map(st => {
-            if (isInjectableBundle(st)) {
-              // Split into tox + filler sub-cards
-              return (
-                <div key={st.id} className="space-y-3">
-                  <div className="flex items-center gap-2 px-1">
-                    <div className="text-xs font-bold uppercase tracking-widest" style={{ color: "#1e2535" }}>{st.name}</div>
-                    <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: "rgba(123,142,200,0.12)", color: "#7B8EC8", border: "1px solid rgba(123,142,200,0.2)" }}>
-                      {categoryLabel[st.category] || st.category}
-                    </span>
-                    <span className="text-xs" style={{ color: "rgba(30,37,53,0.35)" }}>— customize each service separately</span>
-                  </div>
-                  {INJECTABLE_SPLITS.map(sub => (
-                    <SubServiceCard
-                      key={sub.key}
-                      sub={sub}
-                      data={offerings[`${st.id}_${sub.key}`] || {}}
-                      onChange={data => updateOffering(`${st.id}_${sub.key}`, data)}
-                    />
-                  ))}
-                </div>
-              );
-            }
-            return (
-              <StandardServiceCard
-                key={st.id}
-                st={st}
-                data={offerings[st.id] || {}}
-                onChange={data => updateOffering(st.id, data)}
-              />
-            );
-          })}
+          {activeSubs.map(st => (
+            <StandardServiceCard
+              key={st.id}
+              st={{ ...st, name: serviceDisplayName(st, serviceTypes) }}
+              data={offerings[st.id] || {}}
+              onChange={data => updateOffering(st.id, data)}
+            />
+          ))}
         </div>
       )}
 
@@ -795,7 +771,7 @@ export default function PracticeTreatmentsTab({ me, serviceTypes, activeServiceI
               <div key={st.id} className="flex items-center gap-3 rounded-xl px-4 py-3" style={{ background: "rgba(255,255,255,0.35)", border: "1px solid rgba(30,37,53,0.08)" }}>
                 <Lock className="w-4 h-4 flex-shrink-0" style={{ color: "rgba(30,37,53,0.25)" }} />
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate" style={{ color: "rgba(30,37,53,0.45)" }}>{st.name}</p>
+                  <p className="text-sm font-medium truncate" style={{ color: "rgba(30,37,53,0.45)" }}>{serviceDisplayName(st, serviceTypes)}</p>
                   <p className="text-xs" style={{ color: "rgba(30,37,53,0.3)" }}>{categoryLabel[st.category] || st.category}</p>
                 </div>
               </div>
