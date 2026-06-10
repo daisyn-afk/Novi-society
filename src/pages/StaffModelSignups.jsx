@@ -38,6 +38,16 @@ function fmtDt(value) {
   return d.toLocaleString();
 }
 
+function isCourseDatePast(courseDate) {
+  if (!courseDate) return false;
+  const [year, month, day] = String(courseDate).slice(0, 10).split("-").map(Number);
+  if (!year || !month || !day) return false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const courseDay = new Date(year, month - 1, day);
+  return courseDay < today;
+}
+
 const TIME_SLOTS = [
   { label: "2:00 PM", value: "14:00" },
   { label: "3:00 PM", value: "15:00" },
@@ -146,6 +156,15 @@ export default function StaffModelSignups() {
           customer_email: signup.customer_email,
           customer_name: signup.customer_name,
           gfe_url: signup.gfe_meeting_url,
+        });
+      } else if (emailType === "post_training") {
+        const course = courseMap[signup.course_id];
+        await base44.functions.invoke("sendModelPostTrainingEmail", {
+          customer_email: signup.customer_email,
+          customer_name: signup.customer_name,
+          treatment_type: signup.treatment_type,
+          course_title: course?.title || signup.course_title || "NOVI Training Course",
+          pre_order_id: signup.id,
         });
       }
       queryClient.invalidateQueries({ queryKey: ["staff-model-signups"] });
@@ -397,6 +416,12 @@ export default function StaffModelSignups() {
                   {selectedModel.status === "confirmed" && (
                     <button onClick={() => handleResendEmail(selectedModel, "confirmation")} disabled={resendingEmail?.id === selectedModel.id} className="w-full flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50" style={{ background: "rgba(45,107,127,0.1)", color: "#2D6B7F", border: "1px solid rgba(45,107,127,0.2)" }}>
                       {resendingEmail?.id === selectedModel.id ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Resend Confirmation Email
+                    </button>
+                  )}
+                  {(isCourseDatePast(selectedModel.course_date) || selectedModel.attendance_confirmed) && (
+                    <button onClick={() => handleResendEmail(selectedModel, "post_training")} disabled={resendingEmail?.id === selectedModel.id} className="w-full flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50" style={{ background: "rgba(218,106,99,0.1)", color: "#DA6A63", border: "1px solid rgba(218,106,99,0.25)" }}>
+                      {resendingEmail?.id === selectedModel.id && resendingEmail?.type === "post_training" ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                      {selectedModel.post_training_email_sent ? "Resend Post-Training Email" : "Send Post-Training Email"}
                     </button>
                   )}
                 </div>

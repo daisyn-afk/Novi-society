@@ -11,6 +11,10 @@
     {
       "path": "/api/functions/complianceChecks",
       "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/functions/modelAutomation",
+      "schedule": "0 14 * * *"
     }
   ]
 }

@@ -11,21 +11,19 @@ export { app };
 
 if (!process.env.VERCEL) {
   const runModelAutomationTick = async () => {
-    const trigger = async (routePath) => {
-      const response = await fetch(`http://127.0.0.1:${port}/functions/${routePath}`, {
+    const cronSecret = String(process.env.CRON_SECRET || "").trim();
+    const headers = { "Content-Type": "application/json" };
+    if (cronSecret) headers.Authorization = `Bearer ${cronSecret}`;
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/functions/modelAutomation`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: "{}"
+        headers,
+        body: "{}",
       });
       if (!response.ok) {
         const body = await response.text().catch(() => "");
-        throw new Error(`${routePath} failed (${response.status}): ${body}`);
+        throw new Error(`modelAutomation failed (${response.status}): ${body}`);
       }
-    };
-    try {
-      await trigger("sendModelReminderBatch");
-      await trigger("sendModelGFEReminderBatch");
-      await trigger("sendModelPostTrainingBatch");
       // eslint-disable-next-line no-console
       console.log("[model-automation] tick completed");
     } catch (error) {
