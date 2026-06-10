@@ -7,7 +7,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Save,
   CheckCircle,
@@ -19,15 +18,13 @@ import {
   Layers,
 } from "lucide-react";
 import MDServiceOfferingsSection from "@/components/md/MDServiceOfferingsSection";
+import MDStateLicensesSection, {
+  emptyStateLicenseMap,
+  licensedStatesFromMap,
+  stateLicensesFromProfile,
+  stateLicensesToPayload,
+} from "@/components/md/MDStateLicensesSection";
 import { formatUsPhoneInput, usPhoneValidationError } from "@/lib/phoneValidation";
-
-const US_STATES = [
-  "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
-  "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
-  "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
-  "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
-  "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY", "DC",
-];
 
 const glassCard = {
   background: "rgba(255,255,255,0.75)",
@@ -55,7 +52,7 @@ export default function MDProfile() {
   });
 
   const [form, setForm] = useState({});
-  const [licensedStates, setLicensedStates] = useState([]);
+  const [stateLicenseMap, setStateLicenseMap] = useState(emptyStateLicenseMap);
   const [nationwide, setNationwide] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [errors, setErrors] = useState({});
@@ -75,9 +72,8 @@ export default function MDProfile() {
       license_state: profile.license_state || "",
       board_certifications: profile.board_certifications || "",
     });
-    const states = profile.licensed_states || [];
-    setLicensedStates(states);
-    setNationwide(states.length === 0);
+    setStateLicenseMap(stateLicensesFromProfile(profile));
+    setNationwide(profile.supervision_nationwide !== false);
   }, [profile]);
 
   const save = useMutation({
@@ -86,7 +82,8 @@ export default function MDProfile() {
         method: "PATCH",
         body: JSON.stringify({
           ...form,
-          licensed_states: nationwide ? [] : licensedStates,
+          state_licenses: stateLicensesToPayload(stateLicenseMap),
+          supervision_nationwide: nationwide,
         }),
       }),
     onSuccess: () => {
@@ -114,20 +111,10 @@ export default function MDProfile() {
     }
   };
 
-  function toggleLicensedState(code) {
-    setNationwide(false);
-    setLicensedStates((prev) => {
-      const next = new Set(prev);
-      if (next.has(code)) next.delete(code);
-      else next.add(code);
-      return [...next].sort();
-    });
-  }
-
   useEffect(() => {
     if (!submitAttempted) return;
     setErrors(validateForm(form));
-  }, [licensedStates, nationwide, serviceOfferings, submitAttempted]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [stateLicenseMap, nationwide, serviceOfferings, submitAttempted]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const requiredFieldKeys = new Set([
     "phone",
@@ -154,8 +141,8 @@ export default function MDProfile() {
     if (!data.npi?.trim()) nextErrors.npi = requiredMessage;
     if (!data.medical_license_number?.trim()) nextErrors.medical_license_number = requiredMessage;
 
-    if (!nationwide && licensedStates.length === 0) {
-      nextErrors.licensed_states = "Select at least one state or enable Nationwide.";
+    if (!nationwide && licensedStatesFromMap(stateLicenseMap).length === 0) {
+      nextErrors.licensed_states = "Enter at least one state license or enable Nationwide supervision.";
     }
 
     if (!serviceOfferings?.service_type_ids?.length) {
@@ -239,7 +226,7 @@ export default function MDProfile() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto space-y-6">
+    <div className="max-w-3xl mx-auto space-y-6">
       <div>
         <p className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: "rgba(218,106,99,0.9)" }}>
           Medical Director
@@ -327,38 +314,16 @@ export default function MDProfile() {
       <div className="overflow-hidden" style={glassCard}>
         <div className="px-6 py-4 flex items-center gap-2" style={sectionBorder}>
           <MapPin className="w-4 h-4 text-slate-500" />
-          <p className="font-bold text-sm text-slate-900">Supervision coverage by state *</p>
+          <p className="font-bold text-sm text-slate-900">State licenses *</p>
         </div>
-        <div className="p-6 space-y-4">
-          <p className="text-xs text-slate-500" style={{ lineHeight: 1.6 }}>
-            Leave empty for nationwide coverage. Select states only if you limit where you can supervise (when state matching is enabled).
-          </p>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <Checkbox
-              checked={nationwide}
-              onCheckedChange={(checked) => {
-                setNationwide(Boolean(checked));
-                if (checked) setLicensedStates([]);
-              }}
-            />
-            <span className="text-sm text-slate-800 font-medium">Nationwide (all states)</span>
-          </label>
-          {!nationwide && (
-            <div className="grid grid-cols-4 sm:grid-cols-6 gap-2 max-h-48 overflow-y-auto rounded-lg border border-slate-200 bg-white p-3">
-              {US_STATES.map((code) => (
-                <label key={code} className="flex items-center gap-1.5 text-xs text-slate-800 cursor-pointer">
-                  <Checkbox
-                    checked={licensedStates.includes(code)}
-                    onCheckedChange={() => toggleLicensedState(code)}
-                  />
-                  {code}
-                </label>
-              ))}
-            </div>
-          )}
-          {errors.licensed_states && (
-            <p className="text-xs text-red-600">{errors.licensed_states}</p>
-          )}
+        <div className="p-6">
+          <MDStateLicensesSection
+            stateLicenseMap={stateLicenseMap}
+            onChange={setStateLicenseMap}
+            nationwide={nationwide}
+            onNationwideChange={setNationwide}
+            error={errors.licensed_states}
+          />
         </div>
       </div>
 

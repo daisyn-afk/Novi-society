@@ -36,6 +36,7 @@ async function getProfileRow(medicalDirectorId) {
   const { rows } = await query(
     `select medical_director_id, phone, city, state, bio, specialty, avatar_url,
             npi, medical_license_number, license_state, board_certifications,
+            coalesce(supervision_nationwide, true) as supervision_nationwide,
             created_at, updated_at
      from public.medical_director_profiles
      where medical_director_id = $1
@@ -45,19 +46,71 @@ async function getProfileRow(medicalDirectorId) {
   return rows[0] || null;
 }
 
-async function getLicensedStates(medicalDirectorId) {
+async function replaceStateLicenses(medicalDirectorId, entries) {
+  await query(`delete from public.medical_director_state_license where medical_director_id = $1`, [
+    medicalDirectorId,
+  ]);
+  if (!entries.length) return;
+  const states = entries.map((e) => e.us_state);
+  const licenseNumbers = entries.map((e) => e.license_number);
+  const expirationDates = entries.map((e) => e.expiration_date);
+  await query(
+    `insert into public.medical_director_state_license
+       (medical_director_id, us_state, license_number, expiration_date)
+     select $1, x.us_state, x.license_number, x.expiration_date::date
+     from unnest($2::text[], $3::text[], $4::text[]) as x(us_state, license_number, expiration_date)`,
+    [medicalDirectorId, states, licenseNumbers, expirationDates]
+  );
+}
+
+function normalizeExpirationDate(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+  const d = new Date(`${raw}T00:00:00.000Z`);
+  if (Number.isNaN(d.getTime())) return null;
+  return raw;
+}
+
+function normalizeStateLicenseEntry(raw) {
+  const us_state = normalizeUsState(raw?.us_state);
+  if (!us_state) return null;
+  const license_number = String(raw?.license_number || "").trim() || null;
+  const expiration_date = normalizeExpirationDate(raw?.expiration_date);
+  if (!license_number) return null;
+  return { us_state, license_number, expiration_date };
+}
+
+async function getStateLicenses(medicalDirectorId) {
   const { rows } = await query(
-    `select us_state
+    `select us_state, license_number, expiration_date
      from public.medical_director_state_license
      where medical_director_id = $1
      order by us_state`,
     [medicalDirectorId]
   );
-  return (rows || []).map((r) => String(r.us_state || "").trim()).filter(Boolean);
+  return (rows || [])
+    .map((r) => ({
+      us_state: String(r.us_state || "").trim().toUpperCase(),
+      license_number: r.license_number ? String(r.license_number).trim() : null,
+      expiration_date: r.expiration_date
+        ? String(r.expiration_date).slice(0, 10)
+        : null,
+    }))
+    .filter((r) => r.us_state);
 }
 
-function profilePayload(row, me, licensedStates) {
+function licensedStatesFromEntries(stateLicenses) {
+  return stateLicenses
+    .filter((row) => row.license_number)
+    .map((row) => row.us_state)
+    .sort();
+}
+
+function profilePayload(row, me, stateLicenses) {
   const base = row || {};
+  const supervisionNationwide = base.supervision_nationwide !== false;
+  const licensedStates = licensedStatesFromEntries(stateLicenses);
   return {
     medical_director_id: String(me.id || ""),
     email: me.email || null,
@@ -74,8 +127,10 @@ function profilePayload(row, me, licensedStates) {
     medical_license_number: base.medical_license_number || null,
     license_state: base.license_state || null,
     board_certifications: base.board_certifications || null,
-    licensed_states: licensedStates,
-    licensed_states_nationwide: licensedStates.length === 0,
+    state_licenses: stateLicenses,
+    supervision_nationwide: supervisionNationwide,
+    licensed_states: supervisionNationwide ? [] : licensedStates,
+    licensed_states_nationwide: supervisionNationwide,
   };
 }
 
@@ -89,8 +144,8 @@ mdProfileRouter.get("/me", async (req, res, next) => {
     }
     const mid = String(me.id || "").trim();
     const row = await getProfileRow(mid);
-    const licensedStates = await getLicensedStates(mid);
-    return res.json(profilePayload(row, me, licensedStates));
+    const stateLicenses = await getStateLicenses(mid);
+    return res.json(profilePayload(row, me, stateLicenses));
   } catch (error) {
     return next(error);
   }
@@ -133,25 +188,43 @@ mdProfileRouter.patch("/me", async (req, res, next) => {
       );
     }
 
-    if (Object.prototype.hasOwnProperty.call(body, "licensed_states")) {
+    if (Object.prototype.hasOwnProperty.call(body, "supervision_nationwide")) {
+      const nationwide = body.supervision_nationwide !== false;
+      await query(
+        `insert into public.medical_director_profiles (medical_director_id, supervision_nationwide)
+         values ($1, $2)
+         on conflict (medical_director_id)
+         do update set supervision_nationwide = excluded.supervision_nationwide, updated_at = now()`,
+        [mid, nationwide]
+      );
+    }
+
+    if (Object.prototype.hasOwnProperty.call(body, "state_licenses")) {
+      const raw = body.state_licenses;
+      if (!Array.isArray(raw)) {
+        return res.status(400).json({ error: "state_licenses must be an array." });
+      }
+      const entries = [...new Map(
+        raw.map(normalizeStateLicenseEntry).filter(Boolean).map((entry) => [entry.us_state, entry])
+      ).values()].sort((a, b) => a.us_state.localeCompare(b.us_state));
+      await replaceStateLicenses(mid, entries);
+    } else if (Object.prototype.hasOwnProperty.call(body, "licensed_states")) {
       const raw = body.licensed_states;
       if (!Array.isArray(raw)) {
         return res.status(400).json({ error: "licensed_states must be an array." });
       }
       const states = [...new Set(raw.map(normalizeUsState).filter(Boolean))].sort();
-      await query(`delete from public.medical_director_state_license where medical_director_id = $1`, [mid]);
-      if (states.length > 0) {
-        await query(
-          `insert into public.medical_director_state_license (medical_director_id, us_state)
-           select $1, x from unnest($2::text[]) as x`,
-          [mid, states]
-        );
-      }
+      const entries = states.map((us_state) => ({
+        us_state,
+        license_number: us_state,
+        expiration_date: null,
+      }));
+      await replaceStateLicenses(mid, entries);
     }
 
     const row = await getProfileRow(mid);
-    const licensedStates = await getLicensedStates(mid);
-    return res.json(profilePayload(row, me, licensedStates));
+    const stateLicenses = await getStateLicenses(mid);
+    return res.json(profilePayload(row, me, stateLicenses));
   } catch (error) {
     return next(error);
   }
