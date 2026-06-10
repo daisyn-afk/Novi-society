@@ -112,22 +112,27 @@ export function buildPasswordResetEmailHtml({ greetingName, resetLink, role }) {
   return buildCourseStyleEmailHtml({ greetingName, bodyHtml, includeSignoff: false });
 }
 
-export async function sendResendHtmlEmail({ to, subject, html }) {
+export async function sendResendHtmlEmail({ to, subject, html, reply_to }) {
   const resendApiKey = process.env.RESEND_API_KEY;
   const resendFromEmail = process.env.RESEND_FROM_EMAIL || "NOVI Society <support@novisociety.com>";
   const fallbackFrom = String(process.env.RESEND_FALLBACK_FROM_EMAIL || "").trim();
+  const replyTo = String(reply_to || "").trim();
 
   if (!to) return { ok: false, error: "missing_recipient" };
   if (!resendApiKey) return { ok: false, error: "missing_resend_key" };
 
-  const sendWithFrom = async (fromAddress) => fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${resendApiKey}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({ from: fromAddress, to: [to], subject, html })
-  });
+  const sendWithFrom = async (fromAddress) => {
+    const payload = { from: fromAddress, to: [to], subject, html };
+    if (replyTo) payload.reply_to = replyTo;
+    return fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${resendApiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+  };
 
   let res = await sendWithFrom(resendFromEmail);
   if (!res.ok && fallbackFrom && fallbackFrom !== resendFromEmail) {
