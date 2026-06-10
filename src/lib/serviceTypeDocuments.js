@@ -47,19 +47,26 @@ export function findServiceTypeForSubscription(subscription, serviceTypes = []) 
   );
 }
 
-/** Protocol docs configured on a service type (tier first, then root-level list). */
-export function resolveProtocolDocumentsFromServiceType(serviceType, coverageTier = 1) {
+/** Protocol docs for a membership (merged from included services) or a single service row. */
+export function resolveProtocolDocumentsFromServiceType(serviceType, allServiceTypes = []) {
   if (!serviceType) return [];
-  const tiers = Array.isArray(serviceType.coverage_tiers) ? serviceType.coverage_tiers : [];
-  const tierNum = Number(coverageTier) || 1;
-  if (tiers.length > 0) {
-    const tierDef =
-      tiers.find((t) => Number(t?.tier_number) === tierNum) ||
-      tiers.find((t) => Number(t?.tier_number) === 1) ||
-      tiers[0];
-    const tierDocs = filterProtocolDocuments(tierDef?.protocol_document_urls);
-    if (tierDocs.length) return tierDocs;
+
+  const includedIds = serviceType.included_service_ids || [];
+  if (serviceType.is_membership && includedIds.length > 0) {
+    const merged = [];
+    const seen = new Set();
+    for (const id of includedIds) {
+      const child = (allServiceTypes || []).find((st) => String(st.id) === String(id));
+      for (const doc of filterProtocolDocuments(child?.protocol_document_urls)) {
+        const key = `${doc.name}::${doc.url}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        merged.push(doc);
+      }
+    }
+    if (merged.length) return merged;
   }
+
   return filterProtocolDocuments(serviceType.protocol_document_urls);
 }
 

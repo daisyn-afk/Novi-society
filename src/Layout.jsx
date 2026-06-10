@@ -25,6 +25,7 @@ import {
 import { hasStaffModulePermission, normalizeRole, SHARED_AUTH_PAGES } from "@/lib/routeAccessPolicy";
 import ProviderNextStepBar from "@/components/launchpad/ProviderNextStepBar";
 import { useLaunchRoadmapStats } from "@/components/launchpad/useLaunchRoadmapStats";
+import MasterLoginBanner from "@/components/MasterLoginBanner";
 
 const navByRole = {
   admin: [
@@ -428,6 +429,7 @@ export default function Layout({ children, currentPageName }) {
 
       {/* Main */}
       <div className="flex-1 flex flex-col min-w-0 novi-main lg:ml-0" style={{ background: "transparent", width: "100%" }}>
+        <MasterLoginBanner />
         {/* Topbar */}
         <header className="novi-topbar px-5 lg:px-7 flex items-center justify-between sticky top-0 z-10" style={{ height: 56, background: "rgba(245,243,239,0.08)", backdropFilter: "blur(12px)", borderBottom: "1px solid rgba(245,243,239,0.12)" }}>
           <button className="lg:hidden p-1.5 rounded-lg" style={{ background: "transparent", color: "rgba(123,142,200,0.4)" }} onClick={() => setSidebarOpen(true)}>

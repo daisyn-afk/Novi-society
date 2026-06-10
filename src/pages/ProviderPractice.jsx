@@ -1,10 +1,12 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import ProviderSalesLock from "@/components/ProviderSalesLock";
 import { useProviderAccess } from "@/components/useProviderAccess";
+import { useServiceAccess } from "@/components/useServiceAccess";
+import { treatmentMenuServiceTypes } from "@/lib/serviceTypeMembershipModel";
 import PracticeProfileTab from "@/components/practice/PracticeProfileTab.jsx";
 import PracticeTreatmentsTab from "@/components/practice/PracticeTreatmentsTab.jsx";
 import PracticeAppointmentsTab from "@/components/practice/PracticeAppointmentsTab.jsx";
@@ -162,18 +164,17 @@ export default function ProviderPractice() {
 
   useEffect(() => subscribeAppointmentsRefresh(refetchAppointments), [refetchAppointments]);
 
-  const { data: mdSubs = [] } = useQuery({
-    queryKey: ["my-md-subscriptions"],
-    queryFn: async () => {
-      const user = await base44.auth.me();
-      return base44.entities.MDSubscription.filter({ provider_id: user.id });
-    },
-  });
+  const { activeServiceIds, activeSubscriptions: mdSubs } = useServiceAccess();
 
   const { data: serviceTypes = [] } = useQuery({
     queryKey: ["service-types"],
     queryFn: () => base44.entities.ServiceType.filter({ is_active: true }),
   });
+
+  const activeTreatmentCount = useMemo(
+    () => treatmentMenuServiceTypes(serviceTypes, activeServiceIds).length,
+    [serviceTypes, activeServiceIds]
+  );
 
   const { data: reviews = [] } = useQuery({
     queryKey: ["my-reviews"],
@@ -305,7 +306,6 @@ export default function ProviderPractice() {
     setActivePanel(null);
   };
 
-  const activeServiceIds = new Set(mdSubs.filter(s => s.status === "active").map(s => s.service_type_id));
   const pendingCount = appointments.filter(a => a.status === "requested").length;
   const appointmentsPanelFilter = (() => {
     const raw = String(searchParams.get("appointments_filter") || "").trim();
@@ -356,7 +356,7 @@ export default function ProviderPractice() {
       action: "Add Bio",
       panel: "profile",
     };
-    if (!form.consultation_fee && activeServiceIds.size > 0) return {
+    if (!form.consultation_fee && activeTreatmentCount > 0) return {
       color: "#DA6A63",
       label: "Set Your Prices",
       title: "Patients can't see your consultation fee",
@@ -488,10 +488,10 @@ export default function ProviderPractice() {
           icon={Stethoscope}
           iconColor="#2D6B7F"
           title="Treatment Menu"
-          meta={`${activeServiceIds.size} active service${activeServiceIds.size !== 1 ? "s" : ""} · ${form.consultation_fee ? `Consult $${form.consultation_fee}` : "No pricing set"}`}
-          status={!form.consultation_fee && activeServiceIds.size > 0 ? "Pricing missing" : `${activeServiceIds.size} live`}
-          statusColor={!form.consultation_fee && activeServiceIds.size > 0 ? "#DA6A63" : "#4a6b10"}
-          warning={!form.consultation_fee && activeServiceIds.size > 0 ? "#DA6A63" : undefined}
+          meta={`${activeTreatmentCount} active service${activeTreatmentCount !== 1 ? "s" : ""} · ${form.consultation_fee ? `Consult $${form.consultation_fee}` : "No pricing set"}`}
+          status={!form.consultation_fee && activeTreatmentCount > 0 ? "Pricing missing" : `${activeTreatmentCount} live`}
+          statusColor={!form.consultation_fee && activeTreatmentCount > 0 ? "#DA6A63" : "#4a6b10"}
+          warning={!form.consultation_fee && activeTreatmentCount > 0 ? "#DA6A63" : undefined}
           action="Edit"
           onAction={() => openPanel("treatments")}
         />

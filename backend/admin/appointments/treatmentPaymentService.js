@@ -28,6 +28,10 @@ import {
   markPlatformFeeCollected,
   resolveAppointmentGfeContext,
 } from "../gfe/patientGfeService.js";
+import {
+  APPOINTMENT_REQUIRES_GFE_SQL,
+  APPOINTMENT_SERVICE_TYPE_JOINS,
+} from "../lib/treatmentServiceType.js";
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || "";
 const appBaseUrl = process.env.APP_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || "";
@@ -330,13 +334,13 @@ export async function createAppointmentTreatmentCheckout({
 
     const { rows: apptRows } = await query(
       `select a.*,
-              coalesce(st.requires_gfe, false) as requires_gfe,
-              coalesce(st.category, st_by_name.category) as service_type_category
+              ${APPOINTMENT_REQUIRES_GFE_SQL} as requires_gfe,
+              coalesce(
+                case when coalesce(st.is_membership, false) = false then st.category else null end,
+                st_svc.category
+              ) as service_type_category
          from public.appointments a
-         left join public.service_type st on st.id::text = a.service_type_id::text
-         left join public.service_type st_by_name on a.service_type_id is null
-           and lower(trim(coalesce(st_by_name.name, ''))) = lower(trim(coalesce(a.service, '')))
-          and coalesce(st_by_name.requires_gfe, false) = true
+         ${APPOINTMENT_SERVICE_TYPE_JOINS}
         where a.id = $1
         limit 1`,
       [appointmentId]
