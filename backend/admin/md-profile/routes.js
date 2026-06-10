@@ -54,57 +54,57 @@ async function replaceStateLicenses(medicalDirectorId, entries) {
   const states = entries.map((e) => e.us_state);
   const licenseNumbers = entries.map((e) => e.license_number);
   const expirationDates = entries.map((e) => e.expiration_date);
+  const sortOrders = entries.map((e) => Number(e.sort_order) || 0);
   await query(
     `insert into public.medical_director_state_license
-       (medical_director_id, us_state, license_number, expiration_date)
-     select $1, x.us_state, x.license_number, x.expiration_date::date
-     from unnest($2::text[], $3::text[], $4::text[]) as x(us_state, license_number, expiration_date)`,
-    [medicalDirectorId, states, licenseNumbers, expirationDates]
+       (medical_director_id, us_state, license_number, expiration_date, sort_order)
+     select $1, x.us_state, nullif(x.license_number, ''), nullif(x.expiration_date, ''), x.sort_order
+     from unnest($2::text[], $3::text[], $4::text[], $5::int[]) as x(us_state, license_number, expiration_date, sort_order)`,
+    [medicalDirectorId, states, licenseNumbers, expirationDates, sortOrders]
   );
 }
 
-function normalizeExpirationDate(value) {
-  const raw = String(value || "").trim();
-  if (!raw) return null;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
-  const d = new Date(`${raw}T00:00:00.000Z`);
-  if (Number.isNaN(d.getTime())) return null;
-  return raw;
+function normalizeStoredText(value) {
+  if (value == null) return null;
+  const raw = String(value).trim();
+  return raw || null;
 }
 
-function normalizeStateLicenseEntry(raw) {
+function normalizeStateLicenseEntry(raw, index) {
   const us_state = normalizeUsState(raw?.us_state);
   if (!us_state) return null;
-  const license_number = String(raw?.license_number || "").trim() || null;
-  const expiration_date = normalizeExpirationDate(raw?.expiration_date);
-  if (!license_number) return null;
-  return { us_state, license_number, expiration_date };
+  return {
+    us_state,
+    license_number: normalizeStoredText(raw?.license_number),
+    expiration_date: normalizeStoredText(raw?.expiration_date),
+    sort_order: Number.isFinite(Number(raw?.sort_order)) ? Number(raw.sort_order) : index,
+  };
 }
 
 async function getStateLicenses(medicalDirectorId) {
   const { rows } = await query(
-    `select us_state, license_number, expiration_date
+    `select us_state, license_number, expiration_date, sort_order
      from public.medical_director_state_license
      where medical_director_id = $1
-     order by us_state`,
+     order by sort_order, us_state`,
     [medicalDirectorId]
   );
   return (rows || [])
     .map((r) => ({
       us_state: String(r.us_state || "").trim().toUpperCase(),
       license_number: r.license_number ? String(r.license_number).trim() : null,
-      expiration_date: r.expiration_date
-        ? String(r.expiration_date).slice(0, 10)
-        : null,
+      expiration_date: r.expiration_date ? String(r.expiration_date).trim() : null,
     }))
     .filter((r) => r.us_state);
 }
 
 function licensedStatesFromEntries(stateLicenses) {
   return stateLicenses
-    .filter((row) => row.license_number)
-    .map((row) => row.us_state)
-    .sort();
+    .filter((row) => {
+      const license = String(row.license_number || "").trim();
+      return license && license !== "-";
+    })
+    .map((row) => row.us_state);
 }
 
 function profilePayload(row, me, stateLicenses) {
@@ -204,9 +204,7 @@ mdProfileRouter.patch("/me", async (req, res, next) => {
       if (!Array.isArray(raw)) {
         return res.status(400).json({ error: "state_licenses must be an array." });
       }
-      const entries = [...new Map(
-        raw.map(normalizeStateLicenseEntry).filter(Boolean).map((entry) => [entry.us_state, entry])
-      ).values()].sort((a, b) => a.us_state.localeCompare(b.us_state));
+      const entries = raw.map((row, index) => normalizeStateLicenseEntry(row, index)).filter(Boolean);
       await replaceStateLicenses(mid, entries);
     } else if (Object.prototype.hasOwnProperty.call(body, "licensed_states")) {
       const raw = body.licensed_states;

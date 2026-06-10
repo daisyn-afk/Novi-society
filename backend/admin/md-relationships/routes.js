@@ -6,6 +6,7 @@ import {
   isMedicalDirectorRole,
   mdHasActiveSupervisionOf,
 } from "../mdSupervisedAccess.js";
+import { resolveSupervisingMdCoverageForProvider } from "../lib/mdStateLicenseContext.js";
 
 export const mdRelationshipsRouter = Router();
 
@@ -65,6 +66,74 @@ mdRelationshipsRouter.get("/", async (req, res, next) => {
       [me.id]
     );
     return res.json(rows || []);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+/** Supervising MD NPI + per-state licenses for the logged-in provider (relevant states only). */
+mdRelationshipsRouter.get("/supervising-md-coverage", async (req, res, next) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ error: "Missing bearer token." });
+    const me = await getMeFromAccessToken(token);
+    const role = String(me?.role || "").trim().toLowerCase();
+    if (role !== "provider" && !hasAdminAccess(me.role)) {
+      return res.status(403).json({ error: "Provider access only." });
+    }
+
+    const providerId = hasAdminAccess(me.role)
+      ? String(req.query.provider_id || me.id || "").trim()
+      : String(me.id || "").trim();
+    if (!providerId) return res.status(400).json({ error: "provider_id is required." });
+
+    const { aliases } = await getProviderIdAliases(providerId);
+    const lookupIds = aliases.length ? aliases : [providerId];
+    const { rows: userRows } = await query(
+      `select id::text as app_user_id, auth_user_id::text as auth_user_id
+       from public.users
+       where auth_user_id::text = any($1::text[])
+          or id::text = any($1::text[])
+       limit 1`,
+      [lookupIds]
+    );
+    const appUserId = String(userRows[0]?.app_user_id || "").trim();
+    const { rows: profileRows } = await query(
+      `select city, state, address_line1, address_line2, zip
+       from public.provider_profiles
+       where user_id::text = $1
+       limit 1`,
+      [appUserId || providerId]
+    );
+    const profile = profileRows[0] || {};
+    const practiceAddress = [
+      profile.address_line1,
+      profile.address_line2,
+      profile.city,
+      profile.state,
+      profile.zip,
+    ]
+      .filter((part) => part != null && String(part).trim() !== "")
+      .join(" ");
+
+    const { rows: licenseRows } = await query(
+      `select license_type, license_number, issuing_state, status
+       from public.licenses
+       where provider_id::text = any($1::text[])
+         and lower(coalesce(status, '')) = 'verified'
+       order by created_at desc`,
+      [lookupIds]
+    );
+
+    const coverage = await resolveSupervisingMdCoverageForProvider({
+      providerId,
+      profileState: profile.state,
+      userState: me.state,
+      licenses: licenseRows,
+      practiceAddress,
+    });
+
+    return res.json(coverage);
   } catch (error) {
     return next(error);
   }

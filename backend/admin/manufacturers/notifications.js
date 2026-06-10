@@ -129,6 +129,9 @@ const SKIP_ADDITIONAL_KEYS = new Set([
   "verified_licenses",
   "certifications",
   "supervising_md_details",
+  "supervising_md_state_licenses",
+  "provider_states_for_md",
+  "supervising_md_coverage_summary",
   "custom_field_responses",
 ]);
 
@@ -248,6 +251,23 @@ function buildApplicationEmailContent({ application, manufacturer }) {
     application?.supervising_physician_name
       ? `Supervising MD: ${application.supervising_physician_name}${application.supervising_physician_email ? ` (${application.supervising_physician_email})` : ""}`
       : null,
+    additional.supervising_md_npi ? `MD NPI: ${additional.supervising_md_npi}` : null,
+    Array.isArray(additional.provider_states_for_md) && additional.provider_states_for_md.length
+      ? `Provider state(s): ${additional.provider_states_for_md.join(", ")}`
+      : null,
+    ...(Array.isArray(additional.supervising_md_state_licenses)
+      ? additional.supervising_md_state_licenses.map((lic) => {
+          const state = String(lic?.us_state || "").trim();
+          const num = String(lic?.license_number ?? "").trim();
+          const exp = String(lic?.expiration_date ?? "").trim();
+          const hasLicense = num && num !== "-" && !/^n\/?a$/i.test(num);
+          const hasExp = exp && exp !== "-" && !/^n\/?a$/i.test(exp);
+          if (!hasLicense && !hasExp) return `MD license (${state}): not on file`;
+          const numLabel = hasLicense ? num : "—";
+          const expLabel = hasExp ? exp : "—";
+          return `MD license (${state}): ${numLabel} / ${expLabel}`;
+        })
+      : []),
     additional.certifications_summary
       ? `Certifications: ${additional.certifications_summary}`
       : null,
@@ -255,7 +275,13 @@ function buildApplicationEmailContent({ application, manufacturer }) {
 
   for (const [key, value] of Object.entries(additional)) {
     if (SKIP_ADDITIONAL_KEYS.has(key)) continue;
-    if (["provider_id", "md_coverage", "verified_licenses_summary", "certifications_summary"].includes(key)) {
+    if ([
+      "provider_id",
+      "md_coverage",
+      "verified_licenses_summary",
+      "certifications_summary",
+      "supervising_md_npi",
+    ].includes(key)) {
       continue;
     }
     const formatted = formatAdditionalValue(value);

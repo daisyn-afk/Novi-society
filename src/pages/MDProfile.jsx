@@ -19,8 +19,8 @@ import {
 } from "lucide-react";
 import MDServiceOfferingsSection from "@/components/md/MDServiceOfferingsSection";
 import MDStateLicensesSection, {
-  emptyStateLicenseMap,
-  licensedStatesFromMap,
+  createEmptyStateLicenseRow,
+  licensedStatesFromRows,
   stateLicensesFromProfile,
   stateLicensesToPayload,
 } from "@/components/md/MDStateLicensesSection";
@@ -52,7 +52,7 @@ export default function MDProfile() {
   });
 
   const [form, setForm] = useState({});
-  const [stateLicenseMap, setStateLicenseMap] = useState(emptyStateLicenseMap);
+  const [stateLicenseRows, setStateLicenseRows] = useState([createEmptyStateLicenseRow()]);
   const [nationwide, setNationwide] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [errors, setErrors] = useState({});
@@ -72,7 +72,7 @@ export default function MDProfile() {
       license_state: profile.license_state || "",
       board_certifications: profile.board_certifications || "",
     });
-    setStateLicenseMap(stateLicensesFromProfile(profile));
+    setStateLicenseRows(stateLicensesFromProfile(profile));
     setNationwide(profile.supervision_nationwide !== false);
   }, [profile]);
 
@@ -82,7 +82,7 @@ export default function MDProfile() {
         method: "PATCH",
         body: JSON.stringify({
           ...form,
-          state_licenses: stateLicensesToPayload(stateLicenseMap),
+          state_licenses: stateLicensesToPayload(stateLicenseRows),
           supervision_nationwide: nationwide,
         }),
       }),
@@ -114,7 +114,7 @@ export default function MDProfile() {
   useEffect(() => {
     if (!submitAttempted) return;
     setErrors(validateForm(form));
-  }, [stateLicenseMap, nationwide, serviceOfferings, submitAttempted]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [stateLicenseRows, nationwide, serviceOfferings, submitAttempted]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const requiredFieldKeys = new Set([
     "phone",
@@ -141,7 +141,7 @@ export default function MDProfile() {
     if (!data.npi?.trim()) nextErrors.npi = requiredMessage;
     if (!data.medical_license_number?.trim()) nextErrors.medical_license_number = requiredMessage;
 
-    if (!nationwide && licensedStatesFromMap(stateLicenseMap).length === 0) {
+    if (!nationwide && licensedStatesFromRows(stateLicenseRows).length === 0) {
       nextErrors.licensed_states = "Enter at least one state license or enable Nationwide supervision.";
     }
 
@@ -318,10 +318,11 @@ export default function MDProfile() {
         </div>
         <div className="p-6">
           <MDStateLicensesSection
-            stateLicenseMap={stateLicenseMap}
-            onChange={setStateLicenseMap}
+            stateLicenseRows={stateLicenseRows}
+            onChange={setStateLicenseRows}
             nationwide={nationwide}
             onNationwideChange={setNationwide}
+            onNpiDetected={(npi) => setForm((prev) => ({ ...prev, npi }))}
             error={errors.licensed_states}
           />
         </div>
