@@ -545,7 +545,7 @@ appointmentsRouter.patch("/:id", async (req, res, next) => {
     const updatedForClient = await enrichAppointmentForClient(enriched[0] || rows[0]);
 
     const prevStatus = String(existing.status || "").trim().toLowerCase();
-    const nextStatus = String(updated.status || "").trim().toLowerCase();
+    const nextStatus = String(updatedForClient.status || "").trim().toLowerCase();
     const cancelReason =
       updates.cancellation_reason != null ? String(updates.cancellation_reason) : String(existing.cancellation_reason || "");
 
@@ -561,9 +561,9 @@ appointmentsRouter.patch("/:id", async (req, res, next) => {
     }
 
     const { patientEmail, patientName } = await resolvePatientContact(
-      updated.patient_id || existing.patient_id,
-      updated.patient_email || existing.patient_email,
-      updated.patient_name || existing.patient_name
+      updatedForClient.patient_id || existing.patient_id,
+      updatedForClient.patient_email || existing.patient_email,
+      updatedForClient.patient_name || existing.patient_name
     );
 
     const patientNotifications = await runAppointmentPatientNotifications({
@@ -571,7 +571,7 @@ appointmentsRouter.patch("/:id", async (req, res, next) => {
       nextStatus,
       patientEmail,
       patientName,
-      patientId: updated.patient_id || existing.patient_id,
+      patientId: updatedForClient.patient_id || existing.patient_id,
       providerName: updatedForClient.provider_name || existing.provider_name,
       providerId: updatedForClient.provider_id || existing.provider_id,
       providerEmail: updatedForClient.provider_email || existing.provider_email,
