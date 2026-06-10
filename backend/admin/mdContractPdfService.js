@@ -1,12 +1,31 @@
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { query } from "./db.js";
-import { getGlobalMdContractUrl, isUsableMdContractUrl } from "./lib/globalMdContract.js";
 import {
-  getLastPageSignaturePlacement,
-  signatureBlockTopBaseline,
-} from "./lib/mdContractPdfLayout.js";
-import { locateProviderFieldPlacements } from "./lib/mdContractFieldFill.js";
+  buildMdAgreementValues,
+  buildMdAgreementBlocks,
+  buildMdSignatureBlocks,
+  parseAgreementSegments,
+  buildAgreementContextFromProfile,
+  mergeAgreementContext,
+} from "../../src/lib/mdAgreementTemplate.js";
 import { uploadMdSignedContract } from "./supabaseStorage.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const DOCTOR_SIGNATURE_PATH = path.join(__dirname, "assets", "doctor-signature.png");
+
+let doctorSignatureBytesCache;
+function getDoctorSignatureBytes() {
+  if (doctorSignatureBytesCache !== undefined) return doctorSignatureBytesCache;
+  try {
+    doctorSignatureBytesCache = fs.readFileSync(DOCTOR_SIGNATURE_PATH);
+  } catch {
+    doctorSignatureBytesCache = null;
+  }
+  return doctorSignatureBytesCache;
+}
 
 function parseSignatureDataUrl(dataUrl) {
   const raw = String(dataUrl || "").trim();
@@ -22,16 +41,6 @@ function parseSignatureDataUrl(dataUrl) {
   }
 }
 
-async function fetchPdfBytes(url) {
-  const response = await fetch(String(url), { redirect: "follow" });
-  if (!response.ok) {
-    throw new Error(`Could not fetch contract PDF (${response.status}).`);
-  }
-  const buf = Buffer.from(await response.arrayBuffer());
-  if (!buf.length) throw new Error("Contract PDF is empty.");
-  return buf;
-}
-
 export async function getServiceTypeContractInfo(serviceTypeId) {
   const id = String(serviceTypeId || "").trim();
   if (!id) return { name: "", md_contract_url: null, md_agreement_text: "" };
@@ -43,27 +52,16 @@ export async function getServiceTypeContractInfo(serviceTypeId) {
     [id]
   );
   const row = rows?.[0] || {};
-  let mdContractUrl = row.md_contract_url || null;
-  if (!isUsableMdContractUrl(mdContractUrl)) {
-    mdContractUrl = (await getGlobalMdContractUrl()) || null;
-  }
   return {
     name: row.name || "",
-    md_contract_url: mdContractUrl,
+    md_contract_url: row.md_contract_url || null,
     md_agreement_text: row.md_agreement_text || "",
   };
 }
 
-function isUsableDocumentUrl(value) {
-  const raw = String(value || "").trim();
-  if (!raw || raw === "/N/A" || raw.toUpperCase() === "N/A") return false;
-  return /^https?:\/\//i.test(raw);
-}
-
 /**
- * Resolve the provider details used to fill placeholder fields on the contract.
- * `providerId` may be the Supabase auth user id (md_subscription.provider_id /
- * me.id) or the public.users id.
+ * Resolve the provider details used to fill the agreement tokens. `providerId`
+ * may be the Supabase auth user id or the public.users id.
  */
 export async function getProviderContractFields(providerId) {
   const id = String(providerId || "").trim();
@@ -114,264 +112,272 @@ function composeProviderAddress(fields = {}) {
     .join(", ");
 }
 
-/** Map raw provider details to the logical field keys used by placeholders. */
-function buildFieldValues(fields = {}, dateLabel = "", providerNameOverride = "") {
-  const name = String(providerNameOverride || fields.full_name || "").trim();
-  const practice = String(fields.practice_name || "").trim();
+/** Logical token context (providerName/practiceName/state/address) for the agreement. */
+export async function getProviderAgreementContext(
+  providerId,
+  { providerNameOverride = "", profileSnapshot = null } = {}
+) {
+  const fromProfile = profileSnapshot ? buildAgreementContextFromProfile(profileSnapshot) : {};
+  const fields = await getProviderContractFields(providerId);
+  const fromDb = buildAgreementContextFromProfile({
+    full_name: fields.full_name,
+    practice_name: fields.practice_name,
+    state: fields.state,
+    address_line1: fields.address_line1,
+    address_line2: fields.address_line2,
+    city: fields.city,
+    zip: fields.zip,
+  });
+  return mergeAgreementContext(fromProfile, { providerName: providerNameOverride }, fromDb);
+}
+
+// ─── PDF layout helpers ──────────────────────────────────────────────────────
+
+const PAGE_W = 612;
+const PAGE_H = 792;
+const MARGIN_X = 56;
+const MARGIN_TOP = 58;
+const MARGIN_BOTTOM = 56;
+const CONTENT_W = PAGE_W - MARGIN_X * 2;
+const INK = rgb(0.1, 0.12, 0.2);
+const BODY = rgb(0.16, 0.18, 0.24);
+const MUTED = rgb(0.42, 0.45, 0.52);
+
+function createRenderer(pdfDoc, fonts) {
+  let page = pdfDoc.addPage([PAGE_W, PAGE_H]);
+  let y = PAGE_H - MARGIN_TOP;
+
+  function ensure(space) {
+    if (y - space < MARGIN_BOTTOM) {
+      page = pdfDoc.addPage([PAGE_W, PAGE_H]);
+      y = PAGE_H - MARGIN_TOP;
+    }
+  }
+
+  /**
+   * Greedy word-wrap across mixed-font tokens. Whitespace (including across
+   * token boundaries) is collapsed into a single inter-word space, while
+   * adjacent runs with no whitespace between them (e.g. punctuation) stay glued
+   * — so "(Name)" and "2026," do not gain stray spaces.
+   */
+  function layout(tokens, size, maxWidth) {
+    const words = [];
+    let pendingSpace = false;
+    for (const tok of tokens) {
+      let buf = "";
+      let spaceBefore = pendingSpace;
+      const str = String(tok.text || "");
+      for (let i = 0; i < str.length; i += 1) {
+        const ch = str[i];
+        if (/\s/.test(ch)) {
+          if (buf) {
+            words.push({ text: buf, font: tok.font, color: tok.color, space: spaceBefore });
+            buf = "";
+          }
+          pendingSpace = true;
+        } else {
+          if (!buf) {
+            spaceBefore = pendingSpace;
+            pendingSpace = false;
+          }
+          buf += ch;
+        }
+      }
+      if (buf) words.push({ text: buf, font: tok.font, color: tok.color, space: spaceBefore });
+    }
+
+    const lines = [];
+    let line = [];
+    let lineWidth = 0;
+    const spaceW = fonts.regular.widthOfTextAtSize(" ", size);
+    for (const word of words) {
+      const wWidth = word.font.widthOfTextAtSize(word.text, size);
+      const lead = line.length && word.space ? spaceW : 0;
+      if (line.length && lineWidth + lead + wWidth > maxWidth) {
+        lines.push(line);
+        line = [{ ...word, space: false }];
+        lineWidth = wWidth;
+      } else {
+        line.push(word);
+        lineWidth += lead + wWidth;
+      }
+    }
+    if (line.length) lines.push(line);
+    return { lines, spaceW };
+  }
+
+  function drawTokens(tokens, { size = 10.5, gapAfter = 8, lineGap = 3, x = MARGIN_X, maxWidth = CONTENT_W } = {}) {
+    const { lines, spaceW } = layout(tokens, size, maxWidth);
+    const lineH = size + lineGap;
+    for (const line of lines) {
+      ensure(lineH);
+      let cursorX = x;
+      for (let i = 0; i < line.length; i += 1) {
+        const word = line[i];
+        if (i > 0 && word.space) cursorX += spaceW;
+        page.drawText(word.text, { x: cursorX, y, size, font: word.font, color: word.color || BODY });
+        cursorX += word.font.widthOfTextAtSize(word.text, size);
+      }
+      y -= lineH;
+    }
+    y -= gapAfter;
+  }
+
+  function drawCentered(text, { size = 11, font = fonts.bold, color = INK, gapAfter = 8 } = {}) {
+    ensure(size + 4);
+    const w = font.widthOfTextAtSize(text, size);
+    page.drawText(text, { x: (PAGE_W - w) / 2, y, size, font, color });
+    y -= size + gapAfter;
+  }
+
   return {
-    date: String(dateLabel || "").trim(),
-    providerName: name,
-    practiceName: practice,
-    // Only one practice/business name is captured for a provider, so the LLC
-    // (Manager) and PLLC (Practice) tokens reuse it.
-    businessName: practice,
-    state: String(fields.state || "").trim(),
-    address: composeProviderAddress(fields),
+    get page() {
+      return page;
+    },
+    get y() {
+      return y;
+    },
+    set y(v) {
+      y = v;
+    },
+    ensure,
+    drawTokens,
+    drawCentered,
+    newPage() {
+      page = pdfDoc.addPage([PAGE_W, PAGE_H]);
+      y = PAGE_H - MARGIN_TOP;
+    },
   };
 }
 
+function drawSignatureColumn(page, fonts, x, topY, colW, block, sigImage, dynamic = false) {
+  let yy = topY;
+  page.drawText(String(block.role || "").toUpperCase(), {
+    x, y: yy, size: 9, font: fonts.bold, color: INK,
+  });
+  yy -= 16;
+  page.drawText(block.entity || "", { x, y: yy, size: 11, font: fonts.bold, color: INK });
+  yy -= 13;
+  page.drawText(block.entityType || "", { x, y: yy, size: 9, font: fonts.italic, color: MUTED });
+
+  const lineY = yy - 44;
+  if (sigImage) {
+    const imgW = Math.min(colW - 4, (sigImage.width / sigImage.height) * 32);
+    const imgH = Math.min(32, (sigImage.height / sigImage.width) * imgW);
+    page.drawImage(sigImage, { x, y: lineY + 3, width: imgW, height: imgH });
+  }
+  page.drawLine({ start: { x, y: lineY }, end: { x: x + colW, y: lineY }, thickness: 1, color: rgb(0.4, 0.42, 0.48) });
+
+  let ty = lineY - 13;
+  const namePrefix = "Name: ";
+  page.drawText(namePrefix, { x, y: ty, size: 9.5, font: fonts.regular, color: BODY });
+  page.drawText(block.name || "", {
+    x: x + fonts.regular.widthOfTextAtSize(namePrefix, 9.5),
+    y: ty,
+    size: 9.5,
+    font: dynamic ? fonts.bold : fonts.regular,
+    color: dynamic ? INK : BODY,
+  });
+  ty -= 12;
+  page.drawText(`Title: ${block.title || ""}`, { x, y: ty, size: 9.5, font: fonts.regular, color: BODY });
+  return ty - 8;
+}
+
 /**
- * White out placeholder tokens on the contract and draw the provider's values
- * in their place. Coordinates from locateProviderFieldPlacements are already in
- * pdf-lib's user space.
+ * Render the full code-defined agreement to a PDF.
+ * @param {object} opts
+ * @param {object} opts.context  provider token context
+ * @param {string} opts.serviceTypeName
+ * @param {Date}   opts.effectiveDate
+ * @param {{format:string,bytes:Buffer}|null} opts.providerSignature drawn signature
+ * @returns {Promise<Uint8Array>}
  */
-async function fillProviderFieldsOnDocument(pdfDoc, pdfBytes, fieldValues) {
-  let placements;
-  try {
-    placements = await locateProviderFieldPlacements(pdfBytes);
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error("[md-contract] placeholder scan failed:", err?.message || err);
-    return;
-  }
-  if (!placements?.length) return;
-
-  const font = await pdfDoc.embedFont(StandardFonts.TimesRomanBold);
-  const pageCount = pdfDoc.getPageCount();
-
-  for (const placement of placements) {
-    const value = String(fieldValues?.[placement.field] || "").trim();
-    if (!value) continue;
-    if (placement.pageIndex < 0 || placement.pageIndex >= pageCount) continue;
-
-    const page = pdfDoc.getPage(placement.pageIndex);
-    const tokenWidth = Math.max(0, placement.rightX - placement.leftX);
-    // Draw filled values slightly larger than the surrounding body text and in
-    // bold so they stand out as the provider-supplied details.
-    const sourceSize = Math.min(11, Math.max(8, placement.fontSize || 11));
-    const baseSize = sourceSize + 1.5;
-
-    page.drawRectangle({
-      x: placement.leftX - 1,
-      y: placement.baselineY - baseSize * 0.3,
-      width: tokenWidth + 2,
-      height: baseSize * 1.22,
-      color: rgb(1, 1, 1),
-    });
-
-    // Fit the value into the available horizontal space. Prefer the gap up to
-    // the next text on the line so values do not overlap following content;
-    // fall back to a small overflow allowance when there is no following text.
-    let maxWidth = tokenWidth + 48;
-    if (Number.isFinite(placement.nextX)) {
-      maxWidth = Math.max(tokenWidth, placement.nextX - placement.leftX - 2);
-    }
-    let size = baseSize;
-    let width = font.widthOfTextAtSize(value, size);
-    while (width > maxWidth && size > 8) {
-      size -= 0.5;
-      width = font.widthOfTextAtSize(value, size);
-    }
-
-    page.drawText(value, {
-      x: placement.leftX,
-      y: placement.baselineY,
-      size,
-      font,
-      color: rgb(0.06, 0.08, 0.15),
-    });
-  }
-}
-
-function effectiveDateLabel(dateInput) {
-  const date = dateInput ? new Date(dateInput) : new Date();
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  });
-}
-
-function wrapTextLines(text, maxChars = 88) {
-  const words = String(text || "").trim().split(/\s+/).filter(Boolean);
-  if (!words.length) return [];
-  const lines = [];
-  let line = "";
-  for (const word of words) {
-    const next = line ? `${line} ${word}` : word;
-    if (next.length > maxChars && line) {
-      lines.push(line);
-      line = word;
-    } else {
-      line = next;
-    }
-  }
-  if (line) lines.push(line);
-  return lines;
-}
-
-async function buildStandaloneAgreementPdf({ agreementText, serviceTypeName }) {
+async function renderAgreementPdf({ context, serviceTypeName, effectiveDate, providerSignature }) {
   const pdfDoc = await PDFDocument.create();
-  const page = pdfDoc.addPage([612, 792]);
-  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-  const title = serviceTypeName
-    ? `${serviceTypeName} — MD Board Coverage Agreement`
-    : "MD Board Coverage Agreement";
-
-  page.drawText(title, { x: 54, y: 720, size: 14, font: bold, color: rgb(0.1, 0.12, 0.2) });
-
-  const body =
-    String(agreementText || "").trim() ||
-    "The provider agrees to NOVI MD Board medical director supervision for this service, including applicable clinical scope, documentation, and compliance requirements.";
-  const lines = wrapTextLines(body, 88);
-  let y = 688;
-  let contentEndY = 688;
-  for (const line of lines) {
-    if (y < 120) {
-      break;
-    }
-    page.drawText(line, { x: 54, y, size: 10, font, color: rgb(0.15, 0.17, 0.22) });
-    contentEndY = y;
-    y -= 14;
-  }
-  return { pdfDoc, contentEndY };
-}
-
-async function buildContractPdfDocument({ contractPdfUrl }) {
-  if (!isUsableDocumentUrl(contractPdfUrl)) {
-    throw new Error("An MD contract PDF must be uploaded for this service before signing.");
-  }
-  const bytes = await fetchPdfBytes(contractPdfUrl);
-  const pdfDoc = await PDFDocument.load(bytes);
-  const placement = await getLastPageSignaturePlacement(bytes);
-  return {
-    pdfDoc,
-    bytes,
-    contentBottomY: placement.contentBottomY,
-    pageHeight: placement.pageHeight,
+  const fonts = {
+    regular: await pdfDoc.embedFont(StandardFonts.Helvetica),
+    bold: await pdfDoc.embedFont(StandardFonts.HelveticaBold),
+    italic: await pdfDoc.embedFont(StandardFonts.HelveticaOblique),
   };
-}
 
-/** Draw provider signature on the last page, below all existing contract content. */
-async function drawSignatureBelowContent(pdfDoc, {
-  contentBottomY,
-  pageHeight,
-  providerName,
-  serviceTypeName,
-  contractName,
-  dateLabel,
-  signature,
-}) {
-  if (pdfDoc.getPageCount() < 1) {
-    throw new Error("Contract PDF has no pages.");
+  const values = buildMdAgreementValues({
+    providerName: context?.providerName || "",
+    practiceName: context?.practiceName || "",
+    state: context?.state || "",
+    address: context?.address || "",
+    serviceName: serviceTypeName || "",
+    effectiveDate: effectiveDate || new Date(),
+  });
+  const blocks = buildMdAgreementBlocks(values);
+  const sig = buildMdSignatureBlocks(values);
+
+  const r = createRenderer(pdfDoc, fonts);
+
+  // Convert marked block text into tokens, bolding dynamic (filled-in) values.
+  const toTokens = (text) =>
+    parseAgreementSegments(text).map((seg) =>
+      seg.dynamic
+        ? { text: seg.text, font: fonts.bold, color: INK }
+        : { text: seg.text, font: fonts.regular, color: BODY }
+    );
+
+  for (const block of blocks) {
+    if (block.type === "title") {
+      r.drawCentered(String(block.text).toUpperCase(), { size: 13.5, gapAfter: 14 });
+    } else if (block.type === "heading") {
+      r.y -= 6;
+      r.drawTokens([{ text: String(block.text).toUpperCase(), font: fonts.bold, color: INK }], { size: 11, gapAfter: 5 });
+    } else if (block.type === "clause") {
+      r.drawTokens(
+        [{ text: `${block.label} `, font: fonts.bold, color: INK }, ...toTokens(block.text)],
+        { size: 10.5, gapAfter: 8 }
+      );
+    } else {
+      r.drawTokens(toTokens(block.text), { size: 10.5, gapAfter: 8 });
+    }
   }
 
-  const lastPage = pdfDoc.getPage(pdfDoc.getPageCount() - 1);
-  const pageWidth = lastPage.getWidth();
-  const pageH = pageHeight || lastPage.getHeight();
-  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  // ─── Signature page ───
+  const blockHeight = 150;
+  if (r.y - blockHeight < MARGIN_BOTTOM) r.newPage();
+  else r.y -= 10;
 
-  const embeddedImage =
-    signature.format === "png"
-      ? await pdfDoc.embedPng(signature.bytes)
-      : await pdfDoc.embedJpg(signature.bytes);
+  r.drawCentered("SIGNATURE PAGE", { size: 12, gapAfter: 10 });
+  r.drawTokens(toTokens(sig.intro), { size: 10.5, gapAfter: 18 });
 
-  const marginX = Math.max(36, pageWidth * 0.08);
-  const imgWidth = Math.min(220, pageWidth - marginX * 2);
-  const imgHeight = Math.min(70, (embeddedImage.height / embeddedImage.width) * imgWidth);
-  const blockHeight = imgHeight + 88;
-  const placement = signatureBlockTopBaseline({
-    contentBottomY,
-    pageHeight: pageH,
-    blockHeight,
-    gapBelowContent: 28,
-  });
-
-  let sigPage = lastPage;
-  let y;
-  if (placement.needsNewPage) {
-    sigPage = pdfDoc.addPage([pageWidth, pageH]);
-    y = pageH - 48;
-  } else {
-    y = placement.topBaseline;
+  // Embed signatures.
+  let providerImg = null;
+  if (providerSignature) {
+    try {
+      providerImg = providerSignature.format === "png"
+        ? await pdfDoc.embedPng(providerSignature.bytes)
+        : await pdfDoc.embedJpg(providerSignature.bytes);
+    } catch { providerImg = null; }
+  }
+  let doctorImg = null;
+  const doctorBytes = getDoctorSignatureBytes();
+  if (doctorBytes) {
+    try { doctorImg = await pdfDoc.embedPng(doctorBytes); } catch { doctorImg = null; }
   }
 
-  sigPage.drawText("Provider Signature", {
-    x: marginX,
-    y,
-    size: 11,
-    font: bold,
-    color: rgb(0.1, 0.12, 0.2),
-  });
-  y -= 14;
+  const colW = (CONTENT_W - 28) / 2;
+  const rightX = MARGIN_X + colW + 28;
+  const topY = r.y;
+  const leftBottom = drawSignatureColumn(r.page, fonts, MARGIN_X, topY, colW, sig.left, providerImg, true);
+  const rightBottom = drawSignatureColumn(r.page, fonts, rightX, topY, colW, sig.right, doctorImg, false);
+  r.y = Math.min(leftBottom, rightBottom) - 14;
 
-  sigPage.drawText(`Signed by: ${providerName || "Provider"}`, {
-    x: marginX,
-    y,
-    size: 10,
-    font,
-    color: rgb(0.1, 0.12, 0.2),
-  });
-  y -= 13;
+  r.drawTokens(
+    [{ text: "Electronic signature applied via NOVI Society.", font: fonts.italic, color: MUTED }],
+    { size: 8, gapAfter: 0 }
+  );
 
-  sigPage.drawText(`Date: ${dateLabel}`, {
-    x: marginX,
-    y,
-    size: 10,
-    font,
-    color: rgb(0.1, 0.12, 0.2),
-  });
-  y -= 13;
-
-  sigPage.drawText(`Service: ${serviceTypeName || contractName || "MD Board Coverage"}`, {
-    x: marginX,
-    y,
-    size: 10,
-    font,
-    color: rgb(0.1, 0.12, 0.2),
-  });
-  y -= 10;
-
-  sigPage.drawImage(embeddedImage, {
-    x: marginX,
-    y: y - imgHeight,
-    width: imgWidth,
-    height: imgHeight,
-  });
-  y -= imgHeight + 8;
-
-  sigPage.drawLine({
-    start: { x: marginX, y },
-    end: { x: marginX + imgWidth, y },
-    thickness: 1,
-    color: rgb(0.4, 0.42, 0.48),
-  });
-  y -= 10;
-
-  sigPage.drawText("Electronic signature applied via NOVI Society", {
-    x: marginX,
-    y,
-    size: 8,
-    font,
-    color: rgb(0.45, 0.48, 0.55),
-  });
+  return pdfDoc.save();
 }
 
 /**
- * Merge provider signature onto contract PDF and upload to storage.
+ * Generate the signed agreement PDF (provider drawn signature + doctor default)
+ * and upload it to storage. Returns the public URL.
  */
 export async function generateAndUploadSignedMdContract({
   providerId,
@@ -380,85 +386,48 @@ export async function generateAndUploadSignedMdContract({
   providerName,
   signedAtIso,
   signatureDataUrl,
-  contractPdfUrl = null,
-  agreementText = null,
+  // legacy args (contractPdfUrl / agreementText / providerFields) accepted but unused
   providerFields = null,
 }) {
-  const signature = parseSignatureDataUrl(signatureDataUrl);
-  if (!signature) {
+  const providerSignature = parseSignatureDataUrl(signatureDataUrl);
+  if (!providerSignature) {
     throw new Error("A valid signature is required to generate the signed contract.");
   }
 
-  const contractInfo = contractPdfUrl
-    ? {
-        md_contract_url: contractPdfUrl,
-        name: serviceTypeName,
-        md_agreement_text: agreementText || "",
-      }
-    : await getServiceTypeContractInfo(serviceTypeId);
-
-  const templateUrl = contractPdfUrl || contractInfo.md_contract_url;
-  const agreementBody = agreementText || contractInfo.md_agreement_text || "";
-
   const signedAt = signedAtIso ? new Date(signedAtIso) : new Date();
-  const dateLabel = signedAt.toLocaleString("en-US", {
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
+  const resolvedName =
+    serviceTypeName || (serviceTypeId ? (await getServiceTypeContractInfo(serviceTypeId)).name : "");
+
+  const context = providerFields
+    ? {
+        providerName: String(providerName || providerFields.full_name || "").trim(),
+        practiceName: String(providerFields.practice_name || "").trim(),
+        state: String(providerFields.state || "").trim(),
+        address: composeProviderAddress(providerFields),
+      }
+    : await getProviderAgreementContext(providerId, { providerNameOverride: providerName });
+
+  const pdfBytes = await renderAgreementPdf({
+    context,
+    serviceTypeName: resolvedName,
+    effectiveDate: signedAt,
+    providerSignature,
   });
 
-  let pdfDoc;
-  let contentBottomY;
-  let pageHeight;
-  if (isUsableDocumentUrl(templateUrl)) {
-    const built = await buildContractPdfDocument({ contractPdfUrl: templateUrl });
-    pdfDoc = built.pdfDoc;
-    contentBottomY = built.contentBottomY;
-    pageHeight = built.pageHeight;
-
-    const fields = providerFields || (await getProviderContractFields(providerId));
-    const fieldValues = buildFieldValues(
-      fields,
-      effectiveDateLabel(signedAt),
-      providerName
-    );
-    await fillProviderFieldsOnDocument(pdfDoc, built.bytes, fieldValues);
-  } else {
-    const built = await buildStandaloneAgreementPdf({
-      agreementText: agreementBody,
-      serviceTypeName: serviceTypeName || contractInfo.name,
-    });
-    pdfDoc = built.pdfDoc;
-    contentBottomY = built.contentEndY - 14;
-    pageHeight = pdfDoc.getPage(0).getHeight();
-  }
-
-  await drawSignatureBelowContent(pdfDoc, {
-    contentBottomY,
-    pageHeight,
-    providerName,
-    serviceTypeName,
-    contractName: contractInfo.name,
-    dateLabel,
-    signature,
-  });
-
-  const pdfBytes = await pdfDoc.save();
   const safeProvider = String(providerId || "provider").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
   const safeService = String(serviceTypeId || "service").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
-  const readableBase = [
-    String(serviceTypeName || contractInfo.name || "MD Board Agreement").trim(),
-    "signed by",
-    String(providerName || "provider").trim(),
-  ]
-    .filter(Boolean)
-    .join(" - ")
-    .replace(/[^\w\s.-]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 120) || "MD Board Agreement";
+  const readableBase =
+    [
+      String(resolvedName || "MD Board Agreement").trim(),
+      "signed by",
+      String(providerName || context.providerName || "provider").trim(),
+    ]
+      .filter(Boolean)
+      .join(" - ")
+      .replace(/[^\w\s.-]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 120) || "MD Board Agreement";
 
   const uploaded = await uploadMdSignedContract({
     buffer: Buffer.from(pdfBytes),
@@ -487,27 +456,25 @@ export async function attachSignedContractToSubscription(subscriptionId, options
 }
 
 /**
- * Build an unsigned contract PDF with the provider's details filled into the
- * placeholder fields. Used to preview what the contract will look like before
- * the provider signs (in the Apply modal and "Open full PDF").
+ * Build an UNSIGNED preview of the agreement with the provider's details filled
+ * in (doctor's default signature shown, provider signature line blank). Used by
+ * the "Open full PDF" download in the apply modal.
  *
- * @returns {Promise<Uint8Array>} PDF bytes, or null when no template exists.
+ * @returns {Promise<Uint8Array>} PDF bytes.
  */
 export async function buildFilledContractPreviewBytes({
   serviceTypeId,
   providerId,
   providerName = "",
-  contractPdfUrl = null,
+  serviceTypeName = "",
 }) {
-  const templateUrl = contractPdfUrl || (await getServiceTypeContractInfo(serviceTypeId)).md_contract_url;
-  if (!isUsableDocumentUrl(templateUrl)) return null;
-
-  const bytes = await fetchPdfBytes(templateUrl);
-  const pdfDoc = await PDFDocument.load(bytes);
-
-  const fields = await getProviderContractFields(providerId);
-  const fieldValues = buildFieldValues(fields, effectiveDateLabel(new Date()), providerName);
-  await fillProviderFieldsOnDocument(pdfDoc, bytes, fieldValues);
-
-  return pdfDoc.save();
+  const resolvedName =
+    serviceTypeName || (serviceTypeId ? (await getServiceTypeContractInfo(serviceTypeId)).name : "");
+  const context = await getProviderAgreementContext(providerId, { providerNameOverride: providerName });
+  return renderAgreementPdf({
+    context,
+    serviceTypeName: resolvedName,
+    effectiveDate: new Date(),
+    providerSignature: null,
+  });
 }
