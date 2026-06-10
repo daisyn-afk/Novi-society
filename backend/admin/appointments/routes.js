@@ -15,7 +15,11 @@ import {
   requestAppointmentTreatmentPayment,
   syncAppointmentTreatmentPayment,
 } from "./treatmentPaymentService.js";
-import { computeTreatmentPaymentBreakdown } from "../stripe-connect/gfePlatformFee.js";
+import {
+  assertGfePrerequisiteForAppointment,
+  enrichAppointmentGfeFields,
+  enrichAppointmentsGfeFields,
+} from "../gfe/patientGfeService.js";
 import {
   sendAppointmentConfirmedPatientEmail,
   sendAppointmentCancelledPatientEmail,
@@ -43,6 +47,7 @@ function hasAdminAccess(role) {
 const APPOINTMENTS_SELECT = `select a.*,
        coalesce(st.name, st_by_name.name) as service_type_name,
        coalesce(st.requires_gfe, st_by_name.requires_gfe, false) as requires_gfe,
+       coalesce(st.category, st_by_name.category) as service_type_category,
        pu.email as patient_user_email,
        pu.full_name as patient_user_name`;
 
@@ -246,16 +251,12 @@ function mapAppointmentRow(row) {
     String(row.patient_email || row.patient_user_email || "").trim() || null;
   const patientName =
     String(row.patient_name || row.patient_user_name || "").trim() || null;
-  const { patient_user_email: _pe, patient_user_name: _pn, ...rest } = row;
-  const requiresGfe = row.requires_gfe === true;
-  const treatmentAmount = Number(row.treatment_amount);
-  const paymentBreakdown =
-    Number.isFinite(treatmentAmount) && treatmentAmount > 0
-      ? computeTreatmentPaymentBreakdown({
-          treatmentAmount,
-          requiresGfe,
-        })
-      : null;
+  const {
+    patient_user_email: _pe,
+    patient_user_name: _pn,
+    service_type_category: _stc,
+    ...rest
+  } = row;
 
   return {
     ...rest,
@@ -264,14 +265,16 @@ function mapAppointmentRow(row) {
     patient_name: patientName,
     service,
     service_type_name: serviceTypeName || row.service_type_name || null,
-    requires_gfe: requiresGfe,
-    platform_fee_amount: paymentBreakdown?.platformFeeAmount ?? 0,
-    treatment_charge_total:
-      paymentBreakdown?.totalChargeAmount ??
-      (Number.isFinite(treatmentAmount) && treatmentAmount > 0 ? treatmentAmount : null),
+    service_type_category: row.service_type_category || null,
+    requires_gfe: row.requires_gfe === true,
     created_date: row.created_at,
     updated_date: row.updated_at,
   };
+}
+
+async function enrichAppointmentForClient(appointment) {
+  const withGfe = await enrichAppointmentGfeFields(mapAppointmentRow(appointment));
+  return enrichAppointmentDepositFields(withGfe);
 }
 
 const PATCH_ALLOWED = [
@@ -339,10 +342,10 @@ appointmentsRouter.get("/", async (req, res, next) => {
                    order by a.appointment_date desc, a.created_at desc
                    limit $${limitIdx}`;
     const { rows } = await query(sql, params);
-    const mapped = await Promise.all((rows || []).map(async (row) =>
-      enrichAppointmentDepositFields(mapAppointmentRow(row))
-    ));
-    return res.json(mapped);
+    const mapped = (rows || []).map((row) => mapAppointmentRow(row));
+    const withGfe = await enrichAppointmentsGfeFields(mapped);
+    const enriched = await Promise.all(withGfe.map((row) => enrichAppointmentDepositFields(row)));
+    return res.json(enriched);
   } catch (error) {
     return next(error);
   }
@@ -443,9 +446,9 @@ appointmentsRouter.post("/", async (req, res, next) => {
           where a.id = $1`,
         [createdId]
       );
-      return res.status(201).json(mapAppointmentRow(enriched[0] || rows[0]));
+      return res.status(201).json(await enrichAppointmentForClient(enriched[0] || rows[0]));
     }
-    return res.status(201).json(mapAppointmentRow(rows[0]));
+    return res.status(201).json(await enrichAppointmentForClient(rows[0]));
   } catch (error) {
     return next(error);
   }
@@ -485,6 +488,13 @@ appointmentsRouter.patch("/:id", async (req, res, next) => {
           "The patient must pay the booking deposit before you can mark this appointment complete or log treatment.",
       });
     }
+    if (nextStatusRaw === "completed" && !hasAdminAccess(me.role)) {
+      try {
+        await assertGfePrerequisiteForAppointment(id);
+      } catch (gfeError) {
+        return res.status(gfeError?.statusCode || 409).json({ error: gfeError?.message || "GFE prerequisite not met." });
+      }
+    }
     const isProviderOwner =
       existing.provider_id === me.id && !hasAdminAccess(me.role);
     if (
@@ -519,7 +529,7 @@ appointmentsRouter.patch("/:id", async (req, res, next) => {
           where a.id = $1`,
         [id]
       );
-      return res.json(await enrichAppointmentDepositFields(mapAppointmentRow(enriched[0] || existing)));
+      return res.json(await enrichAppointmentForClient(enriched[0] || existing));
     }
 
     const { rows } = await query(
@@ -532,8 +542,7 @@ appointmentsRouter.patch("/:id", async (req, res, next) => {
         where a.id = $1`,
       [id]
     );
-    const updated = mapAppointmentRow(enriched[0] || rows[0]);
-    const updatedForClient = await enrichAppointmentDepositFields(updated);
+    const updatedForClient = await enrichAppointmentForClient(enriched[0] || rows[0]);
 
     const prevStatus = String(existing.status || "").trim().toLowerCase();
     const nextStatus = String(updated.status || "").trim().toLowerCase();
@@ -632,7 +641,7 @@ appointmentsRouter.post("/:id/sync-deposit-payment", async (req, res, next) => {
         where a.id = $1`,
       [appointmentId]
     );
-    return res.json(await enrichAppointmentDepositFields(mapAppointmentRow(enriched[0] || updated)));
+    return res.json(await enrichAppointmentForClient(enriched[0] || updated));
   } catch (error) {
     if (error?.statusCode) {
       return res.status(error.statusCode).json({ error: error.message });
@@ -674,7 +683,7 @@ appointmentsRouter.post("/:id/request-treatment-payment", async (req, res, next)
         where a.id = $1`,
       [appointmentId]
     );
-    return res.json(mapAppointmentRow(enriched[0] || updated));
+    return res.json(await enrichAppointmentForClient(enriched[0] || updated));
   } catch (error) {
     if (error?.statusCode) return res.status(error.statusCode).json({ error: error.message });
     return next(error);
@@ -728,7 +737,7 @@ appointmentsRouter.post("/:id/sync-treatment-payment", async (req, res, next) =>
         where a.id = $1`,
       [appointmentId]
     );
-    return res.json(mapAppointmentRow(enriched[0] || updated));
+    return res.json(await enrichAppointmentForClient(enriched[0] || updated));
   } catch (error) {
     if (error?.statusCode) return res.status(error.statusCode).json({ error: error.message });
     return next(error);
@@ -751,7 +760,7 @@ appointmentsRouter.post("/:id/request-deposit", async (req, res, next) => {
         where a.id = $1`,
       [appointmentId]
     );
-    return res.json(await enrichAppointmentDepositFields(mapAppointmentRow(enriched[0] || updated)));
+    return res.json(await enrichAppointmentForClient(enriched[0] || updated));
   } catch (error) {
     if (error?.statusCode) {
       return res.status(error.statusCode).json({ error: error.message });
