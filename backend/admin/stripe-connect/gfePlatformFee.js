@@ -19,6 +19,7 @@ export function appointmentRequiresGfe(appt) {
 export function computeTreatmentPaymentBreakdown({
   treatmentAmount,
   requiresGfe,
+  chargeGfeFee,
   paymentType = PAYMENT_TYPE_APPOINTMENT_TREATMENT,
 }) {
   const treatmentUsd = Number(treatmentAmount);
@@ -27,6 +28,12 @@ export function computeTreatmentPaymentBreakdown({
   const feeContext = {
     paymentType,
     requiresGfe: requiresGfe === true,
+    chargeGfeFee:
+      chargeGfeFee === true
+        ? true
+        : chargeGfeFee === false
+          ? false
+          : requiresGfe === true,
   };
   const platformFeeCents = resolveConnectPlatformFeeCents(feeContext);
   const chargeCents = treatmentCents + platformFeeCents;

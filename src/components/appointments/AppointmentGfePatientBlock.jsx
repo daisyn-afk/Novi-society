@@ -3,6 +3,7 @@ import { ExternalLink } from "lucide-react";
 import {
   appointmentGfeDisplayStatus,
   appointmentGfeLink,
+  appointmentGfeValidityLabel,
   patientAwaitingGfeInvite,
   patientCanTakeGfeExam,
 } from "@/lib/appointmentGfe";
@@ -17,6 +18,7 @@ export default function AppointmentGfePatientBlock({ appointment }) {
   const gfeLink = appointmentGfeLink(appointment);
   const canTake = patientCanTakeGfeExam(appointment);
   const awaitingInvite = patientAwaitingGfeInvite(appointment);
+  const validUntil = appointmentGfeValidityLabel(appointment);
 
   return (
     <div className="mt-1 space-y-0.5">
@@ -50,7 +52,13 @@ export default function AppointmentGfePatientBlock({ appointment }) {
 
       {gfeStatus === "approved" && !awaitingInvite && !canTake && (
         <p className="text-[11px] font-medium" style={{ color: GFE_DARK }}>
-          Approved — cleared for this visit
+          {validUntil ? `Approved — valid until ${validUntil}` : "Approved — cleared for this visit"}
+        </p>
+      )}
+
+      {appointment.gfe_expired && (
+        <p className="text-[11px] font-medium" style={{ color: "#991b1b" }}>
+          Your GFE has expired. Your provider will send a new exam link.
         </p>
       )}
 
