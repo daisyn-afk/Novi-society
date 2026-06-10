@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import NoviOfferingsPortal from "@/components/landing/NoviOfferingsPortal";
 import { DEFAULT_COURSE_IMAGE_URL } from "@/lib/courseDisplay";
+import { LEGAL_FOOTER_LINKS } from "@/lib/legalFooterLinks";
 
 // Brand palette from the Novi moodboard
 const NOVI_LOGO_SRC = "/novi-logo-neon-green.png";
@@ -634,13 +635,9 @@ export default function LandingPage() {
             <img src={NOVI_LOGO_SRC} alt="" width={200} height={58} style={{ height: 44, width: "auto", display: "block" }} />
           </Link>
           <p className="novi-sans" style={{ fontSize: 12, color: "rgba(255,255,255,0.2)", letterSpacing: "0.04em" }}>© 2026 Novi. All rights reserved.</p>
-          <div style={{ display: "flex", gap: 28 }}>
-            {[
-              { label: "Privacy", to: createPageUrl("PrivacyPolicy") },
-              { label: "Terms", to: createPageUrl("TermsAndConditions") },
-              { label: "Contact", to: createPageUrl("ContactUs") },
-            ].map(({ label, to }) => (
-              <Link key={label} to={to} className="novi-sans" style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", textDecoration: "none", letterSpacing: "0.1em", textTransform: "uppercase" }}>{label}</Link>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 28 }}>
+            {LEGAL_FOOTER_LINKS.map(({ shortLabel, page }) => (
+              <Link key={page} to={createPageUrl(page)} className="novi-sans" style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", textDecoration: "none", letterSpacing: "0.1em", textTransform: "uppercase" }}>{shortLabel}</Link>
             ))}
           </div>
         </div>

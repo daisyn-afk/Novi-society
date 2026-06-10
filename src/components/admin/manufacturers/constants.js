@@ -82,6 +82,7 @@ export const EMPTY_SUPPLIER = {
 
   custom_fields: [],
   required_fields: [],
+  required_service_type_ids: [],
 
   min_order_amount: "",
   ships_to_states: "",
@@ -110,8 +111,26 @@ export const EMPTY_CUSTOM_FIELD = {
   label: "",
   input_type: "text",
   placeholder: "",
+  options: [],
   required: true,
 };
+
+/** Keep custom field shape consistent from admin UI through API payload. */
+export function normalizeCustomFieldForClient(field = {}) {
+  const inputType = String(field.input_type || "text").trim() || "text";
+  const rawOptions = Array.isArray(field.options) ? field.options : [];
+  const options = [
+    ...new Set(rawOptions.map((o) => String(o ?? "").trim()).filter(Boolean)),
+  ];
+
+  return {
+    label: String(field.label || "").trim(),
+    input_type: inputType,
+    placeholder: String(field.placeholder || ""),
+    required: field.required !== false,
+    options: inputType === "select" ? options : [],
+  };
+}
 
 export const EMPTY_PRICING_ROW = { product: "", retail: "", novi: "" };
 export const EMPTY_ROI_STAT = { value: "", label: "" };

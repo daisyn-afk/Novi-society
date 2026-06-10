@@ -60,12 +60,17 @@ function asJsonbArray(value) {
   return Array.isArray(value) ? value : [];
 }
 
-// Custom fields shape: { label, input_type, placeholder, required }
+// Custom fields shape: { label, input_type, placeholder, options, required }
 function normalizeCustomField(field = {}) {
+  const inputType = asString(field.input_type, "text");
+  const options = Array.isArray(field.options)
+    ? [...new Set(field.options.map((o) => asString(o, "").trim()).filter(Boolean))]
+    : [];
   return {
     label: asString(field.label, "").trim(),
-    input_type: asString(field.input_type, "text"),
+    input_type: inputType,
     placeholder: asString(field.placeholder, ""),
+    options: inputType === "select" ? options : [],
     required: asBoolean(field.required, false),
   };
 }
@@ -147,6 +152,7 @@ function rowToApi(row) {
 
     custom_fields: asJsonbArray(row.custom_fields),
     required_fields: asJsonbArray(row.required_fields),
+    required_service_type_ids: asJsonbArray(row.required_service_type_ids),
 
     min_order_amount: row.min_order_amount === null || row.min_order_amount === undefined
       ? null
@@ -195,6 +201,20 @@ function normalizeManufacturerPayload(payload = {}) {
   // regardless of what the client sent.
   const requiredFields = customFields.filter((f) => f.required).map((f) => f.label);
 
+  const requiredServiceTypeIds = Array.isArray(payload.required_service_type_ids)
+    ? [...new Set(
+        payload.required_service_type_ids
+          .map((id) => asTrimmedString(id))
+          .filter(Boolean)
+      )]
+    : [];
+
+  if (requiredServiceTypeIds.length === 0) {
+    const err = new Error("At least one required MD membership must be selected.");
+    err.statusCode = 400;
+    throw err;
+  }
+
   return {
     name,
     category,
@@ -239,6 +259,7 @@ function normalizeManufacturerPayload(payload = {}) {
 
     custom_fields: customFields,
     required_fields: requiredFields,
+    required_service_type_ids: requiredServiceTypeIds,
 
     min_order_amount: asNumberOrNull(payload.min_order_amount),
     ships_to_states: asString(payload.ships_to_states, ""),
@@ -279,6 +300,7 @@ const MANUFACTURER_COLUMNS = `
   network_tiers,
   custom_fields,
   required_fields,
+  required_service_type_ids,
   min_order_amount,
   ships_to_states,
   is_active,
@@ -337,7 +359,7 @@ export async function createManufacturer(payload) {
        training_approved, is_featured, price_tier, sort_order,
        account_rep_name, account_rep_email, jotform_application_url,
        uses_network_tiers, network_tiers,
-       custom_fields, required_fields,
+       custom_fields, required_fields, required_service_type_ids,
        min_order_amount, ships_to_states, is_active
      )
      values (
@@ -350,8 +372,8 @@ export async function createManufacturer(payload) {
        $21, $22, $23, $24,
        $25, $26, $27,
        $28, $29::jsonb,
-       $30::jsonb, $31::jsonb,
-       $32, $33, $34
+       $30::jsonb, $31::jsonb, $32::jsonb,
+       $33, $34, $35
      )
      returning ${MANUFACTURER_COLUMNS}`,
     [
@@ -386,6 +408,7 @@ export async function createManufacturer(payload) {
       JSON.stringify(data.network_tiers),
       JSON.stringify(data.custom_fields),
       JSON.stringify(data.required_fields),
+      JSON.stringify(data.required_service_type_ids),
       data.min_order_amount,
       data.ships_to_states,
       data.is_active,
@@ -394,11 +417,52 @@ export async function createManufacturer(payload) {
   return rowToApi(rows[0]);
 }
 
+function normalizeRequiredServiceTypeIdList(ids = []) {
+  if (!Array.isArray(ids)) return [];
+  return [...new Set(ids.map((id) => asTrimmedString(id)).filter(Boolean))];
+}
+
+async function countApprovedManufacturerApplications(manufacturerId) {
+  const { rows } = await query(
+    `select count(*)::int as count
+     from public.manufacturer_applications
+     where manufacturer_id = $1
+       and lower(coalesce(status, '')) = 'approved'`,
+    [manufacturerId]
+  );
+  return Number(rows[0]?.count || 0);
+}
+
+async function assertRequiredMembershipsNotRemovedWhileActiveProviders({
+  manufacturerId,
+  previousIds = [],
+  nextIds = [],
+}) {
+  const previous = new Set(normalizeRequiredServiceTypeIdList(previousIds));
+  const next = new Set(normalizeRequiredServiceTypeIdList(nextIds));
+  const removed = [...previous].filter((id) => !next.has(id));
+  if (!removed.length) return;
+
+  const activeProviderCount = await countApprovedManufacturerApplications(manufacturerId);
+  if (activeProviderCount <= 0) return;
+
+  const err = new Error(
+    "Cannot remove required MD memberships while providers have active access to this supplier. Keep existing selections and add more if needed."
+  );
+  err.statusCode = 400;
+  throw err;
+}
+
 export async function updateManufacturer(id, payload) {
   const current = await getManufacturerById(id);
   if (!current) return null;
   const merged = { ...current, ...payload, id };
   const data = normalizeManufacturerPayload(merged);
+  await assertRequiredMembershipsNotRemovedWhileActiveProviders({
+    manufacturerId: id,
+    previousIds: current.required_service_type_ids,
+    nextIds: data.required_service_type_ids,
+  });
   const { rows } = await query(
     `update public.manufacturers
      set name = $2,
@@ -432,9 +496,10 @@ export async function updateManufacturer(id, payload) {
          network_tiers = $30::jsonb,
          custom_fields = $31::jsonb,
          required_fields = $32::jsonb,
-         min_order_amount = $33,
-         ships_to_states = $34,
-         is_active = $35,
+         required_service_type_ids = $33::jsonb,
+         min_order_amount = $34,
+         ships_to_states = $35,
+         is_active = $36,
          updated_at = now()
      where id = $1
      returning ${MANUFACTURER_COLUMNS}`,
@@ -471,6 +536,7 @@ export async function updateManufacturer(id, payload) {
       JSON.stringify(data.network_tiers),
       JSON.stringify(data.custom_fields),
       JSON.stringify(data.required_fields),
+      JSON.stringify(data.required_service_type_ids),
       data.min_order_amount,
       data.ships_to_states,
       data.is_active,
@@ -542,10 +608,20 @@ function applicationRowToApi(row) {
     license_state: row.license_state ?? "",
     supervising_physician_name: row.supervising_physician_name ?? "",
     supervising_physician_email: row.supervising_physician_email ?? "",
-    additional_fields:
-      row.additional_fields && typeof row.additional_fields === "object"
-        ? row.additional_fields
-        : {},
+    additional_fields: (() => {
+      const raw = row.additional_fields;
+      if (!raw) return {};
+      if (typeof raw === "object" && !Array.isArray(raw)) return raw;
+      if (typeof raw === "string") {
+        try {
+          const parsed = JSON.parse(raw);
+          return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+        } catch {
+          return {};
+        }
+      }
+      return {};
+    })(),
     status: row.status ?? "submitted",
     admin_notes: row.admin_notes ?? "",
     submitted_at: row.submitted_at,
