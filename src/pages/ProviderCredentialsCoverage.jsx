@@ -655,7 +655,7 @@ export default function ProviderCredentialsCoverage() {
       .filter(Boolean)
   );
   const unlockedServiceTypeIds = new Set([...earnedServiceTypeIds, ...activeCertServiceTypeIds]);
-  const mdCoveragePlans = serviceTypes.filter(isMdPurchasablePlan);
+  const mdCoveragePlans = serviceTypes.filter((st) => isMdPurchasablePlan(st, serviceTypes));
   const applyableServiceTypes = mdCoveragePlans.filter((s) => !alreadyActiveServices.includes(s.id));
   const availableServices = applyableServiceTypes.filter((s) => unlockedServiceTypeIds.has(s.id));
   const selectedService = serviceTypes.find(s => s.id === selectedServiceTypeId);
