@@ -1,48 +1,9 @@
-import { useState } from "react";
 import { Link } from "react-router-dom";
-import { MapPin, Phone, Mail, Clock, Send, CheckCircle2, Building2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { adminApiRequest } from "@/api/adminApiRequest";
+import { MapPin, Phone, Mail, Clock, Building2 } from "lucide-react";
 import NoviFooter from "@/components/NoviFooter";
-
-const BLANK = { name: "", email: "", phone: "", subject: "", message: "" };
+import ClinicGrowersFormEmbed from "@/components/ClinicGrowersFormEmbed";
 
 export default function ContactUs() {
-  const [form, setForm] = useState(BLANK);
-  const [submitted, setSubmitted] = useState(false);
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState("");
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!form.name || !form.email || !form.message) return;
-    setSending(true);
-    setError("");
-    try {
-      await adminApiRequest("/admin/contact", {
-        method: "POST",
-        body: JSON.stringify({
-          name: form.name,
-          email: form.email,
-          phone: form.phone,
-          subject: form.subject,
-          message: form.message,
-        }),
-      });
-      setSubmitted(true);
-    } catch (err) {
-      console.error(err);
-      setError(
-        err?.message ||
-          "Something went wrong. Please email us directly at support@novisociety.com"
-      );
-    } finally {
-      setSending(false);
-    }
-  };
-
   return (
     <div className="min-h-screen" style={{ background: "#f5f3ef", fontFamily: "'DM Sans', sans-serif" }}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap');`}</style>
@@ -140,113 +101,11 @@ export default function ContactUs() {
 
           {/* Right: Contact Form */}
           <div className="lg:col-span-3">
-            <div className="rounded-2xl p-8" style={{ background: "#fff", border: "1px solid rgba(0,0,0,0.07)" }}>
-              {submitted ? (
-                <div className="py-12 text-center space-y-4">
-                  <div className="w-16 h-16 rounded-full mx-auto flex items-center justify-center" style={{ background: "rgba(200,230,60,0.15)" }}>
-                    <CheckCircle2 className="w-8 h-8" style={{ color: "#5a7a20" }} />
-                  </div>
-                  <h3 style={{ fontFamily: "'DM Serif Display', serif", fontSize: "1.75rem", color: "#1e2535", fontStyle: "italic" }}>Message Sent!</h3>
-                  <p className="text-base max-w-sm mx-auto" style={{ color: "rgba(30,37,53,0.65)", lineHeight: 1.7 }}>
-                    Thanks for reaching out. Our team will respond to <strong>{form.email}</strong> within 1–2 business days.
-                  </p>
-                  <Button onClick={() => { setForm(BLANK); setSubmitted(false); setError(""); }} className="mt-2 px-8 py-3 rounded-full font-bold" style={{ background: "#C8E63C", color: "#1a2540" }}>
-                    Send Another Message
-                  </Button>
-                </div>
-              ) : (
-                <>
-                  <h2 style={{ fontFamily: "'DM Serif Display', serif", fontSize: "1.6rem", color: "#1e2535", fontStyle: "italic", marginBottom: 6 }}>Send Us a Message</h2>
-                  <p className="text-sm mb-3" style={{ color: "rgba(30,37,53,0.55)" }}>We typically respond within 1–2 business days.</p>
-                  <p className="text-sm mb-6" style={{ color: "rgba(30,37,53,0.55)" }}>Use this form for general questions about training, scheduling, and enrollment. SMS consent, where applicable, is collected separately through designated opt-in forms.</p>
-
-                  <form onSubmit={handleSubmit} className="space-y-4">
-                    <div className="grid sm:grid-cols-2 gap-4">
-                      <div>
-                        <Label className="text-sm font-semibold mb-1.5 block" style={{ color: "#1e2535" }}>Full Name *</Label>
-                        <Input
-                          value={form.name}
-                          onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                          placeholder="Jane Smith"
-                          required
-                          className="h-11 rounded-xl"
-                          style={{ border: "1.5px solid rgba(0,0,0,0.1)" }}
-                        />
-                      </div>
-                      <div>
-                        <Label className="text-sm font-semibold mb-1.5 block" style={{ color: "#1e2535" }}>Email *</Label>
-                        <Input
-                          type="email"
-                          value={form.email}
-                          onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-                          placeholder="jane@example.com"
-                          required
-                          className="h-11 rounded-xl"
-                          style={{ border: "1.5px solid rgba(0,0,0,0.1)" }}
-                        />
-                      </div>
-                    </div>
-
-                    <div className="grid sm:grid-cols-2 gap-4">
-                      <div>
-                        <Label className="text-sm font-semibold mb-1.5 block" style={{ color: "#1e2535" }}>Phone <span className="font-normal" style={{ color: "rgba(30,37,53,0.4)" }}>(optional)</span></Label>
-                        <Input
-                          value={form.phone}
-                          onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
-                          placeholder="(555) 123-4567"
-                          className="h-11 rounded-xl"
-                          style={{ border: "1.5px solid rgba(0,0,0,0.1)" }}
-                        />
-                      </div>
-                      <div>
-                        <Label className="text-sm font-semibold mb-1.5 block" style={{ color: "#1e2535" }}>Subject <span className="font-normal" style={{ color: "rgba(30,37,53,0.4)" }}>(optional)</span></Label>
-                        <Input
-                          value={form.subject}
-                          onChange={e => setForm(f => ({ ...f, subject: e.target.value }))}
-                          placeholder="e.g. Course Enrollment, Scheduling"
-                          className="h-11 rounded-xl"
-                          style={{ border: "1.5px solid rgba(0,0,0,0.1)" }}
-                        />
-                      </div>
-                    </div>
-
-                    <div>
-                      <Label className="text-sm font-semibold mb-1.5 block" style={{ color: "#1e2535" }}>Message *</Label>
-                      <textarea
-                        value={form.message}
-                        onChange={e => setForm(f => ({ ...f, message: e.target.value }))}
-                        placeholder="Tell us how we can help..."
-                        required
-                        rows={5}
-                        className="w-full rounded-xl p-3 text-sm resize-y focus:outline-none focus:ring-1 focus:ring-blue-300"
-                        style={{ border: "1.5px solid rgba(0,0,0,0.1)", color: "#1e2535", fontFamily: "'DM Sans', sans-serif" }}
-                      />
-                    </div>
-
-                    {error && (
-                      <p className="text-sm rounded-xl px-3 py-2" style={{ background: "rgba(254,226,226,0.85)", border: "1px solid rgba(220,38,38,0.35)", color: "#991b1b" }}>
-                        {error}
-                      </p>
-                    )}
-
-                    <Button
-                      type="submit"
-                      disabled={!form.name || !form.email || !form.message || sending}
-                      className="w-full py-5 text-base font-bold rounded-xl"
-                      style={{ background: "#C8E63C", color: "#1a2540" }}
-                    >
-                      {sending ? (
-                        <><div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin mr-2" />Sending...</>
-                      ) : (
-                        <><Send className="w-4 h-4 mr-2" />Send Message</>
-                      )}
-                    </Button>
-                  </form>
-                </>
-              )}
+            <div className="rounded-2xl p-8" style={{ background: "#fff", border: "1px solid rgba(0,0,0,0.07)", minHeight: 900 }}>
+              <h2 style={{ fontFamily: "'DM Serif Display', serif", fontSize: "1.6rem", color: "#1e2535", fontStyle: "italic", marginBottom: 6 }}>Send Us a Message</h2>
+              <p className="text-sm mb-6" style={{ color: "rgba(30,37,53,0.55)" }}>We typically respond within 1–2 business days.</p>
+              <ClinicGrowersFormEmbed />
             </div>
-
-
           </div>
         </div>
       </div>
