@@ -31,7 +31,13 @@ import {
   profileBookingDepositAmount,
   providerConfirmActionLabel,
 } from "@/lib/appointmentDisplay";
-import { appointmentGfeDisplayStatus, appointmentGfeLink } from "@/lib/appointmentGfe";
+import {
+  appointmentGfeBlockMessage,
+  appointmentGfeBlocksTreatment,
+  appointmentGfeDisplayStatus,
+  appointmentGfeLink,
+  appointmentGfeValidityLabel,
+} from "@/lib/appointmentGfe";
 import { useToast } from "@/components/ui/use-toast";
 import { useSendAppointmentGfe } from "@/hooks/useSendAppointmentGfe";
 
@@ -164,6 +170,10 @@ function ApptDetail({
   const gfeStatus = appointmentGfeDisplayStatus(appt);
   const gfeLink = appointmentGfeLink(appt);
   const depositBlocked = appointmentDepositBlocksProvider(appt);
+  const gfeBlocked = appointmentGfeBlocksTreatment(appt);
+  const gfeBlockMessage = appointmentGfeBlockMessage(appt);
+  const gfeValidUntil = appointmentGfeValidityLabel(appt);
+  const providerActionBlocked = depositBlocked || gfeBlocked;
   const depositPaid = appointmentDepositPaid(appt);
   return (
     <div className="space-y-4">
@@ -256,6 +266,17 @@ function ApptDetail({
               Sent {format(new Date(appt.gfe_sent_at), "MMM d, h:mm a")}
             </span>
           )}
+          {gfeValidUntil && (
+            <span className="text-[10px] font-medium" style={{ color: "#166534" }}>
+              Valid until {gfeValidUntil}
+              {appt.gfe_expiring_soon ? " · expiring soon" : ""}
+            </span>
+          )}
+          {appt.gfe_expired && (
+            <span className="text-[10px] font-medium" style={{ color: "#991b1b" }}>
+              GFE expired — send a new exam
+            </span>
+          )}
           {gfeStatus === "approved" && appt.gfe_provider_name && (
             <span className="text-[10px]" style={{ color: "rgba(30,37,53,0.45)" }}>
               {appt.gfe_provider_name}
@@ -336,13 +357,21 @@ function ApptDetail({
             Booking deposit paid (${appt.amount_paid || appt.deposit_amount}). This amount will be applied to the final treatment checkout.
           </div>
         )}
+        {gfeBlocked && gfeBlockMessage && (
+          <div
+            className="px-3 py-2.5 rounded-xl text-xs"
+            style={{ background: "rgba(254,226,226,0.85)", border: "1px solid rgba(220,38,38,0.35)", color: "#991b1b" }}
+          >
+            {gfeBlockMessage}
+          </div>
+        )}
         {appt.status === "confirmed" && (
           <div className="grid grid-cols-2 gap-2">
             <Button
               className="w-full gap-1.5"
               style={{ background: "rgba(200,230,60,0.2)", color: "#4a6b10", border: "1px solid rgba(200,230,60,0.4)" }}
               onClick={onComplete}
-              disabled={depositBlocked}
+              disabled={providerActionBlocked}
             >
               <CheckCircle className="w-4 h-4" />Mark Done
             </Button>
@@ -365,7 +394,7 @@ function ApptDetail({
             className="w-full gap-1.5"
             style={{ background: "rgba(250,111,48,0.1)", color: "#FA6F30", border: "1px solid rgba(250,111,48,0.3)" }}
             onClick={onDoc}
-            disabled={depositBlocked && !hasRecord}
+            disabled={providerActionBlocked && !hasRecord}
           >
             <FileText className="w-4 h-4" />{hasRecord ? "View Record" : "Log Treatment"}
           </Button>

@@ -49,5 +49,10 @@ export const adminUsersApi = {
       body: JSON.stringify({
         frontend_origin: browserFrontendOrigin()
       })
+    }),
+  masterLogin: (id) =>
+    adminApiRequest(`/admin/users/${id}/master-login`, {
+      method: "POST",
+      body: JSON.stringify({})
     })
 };

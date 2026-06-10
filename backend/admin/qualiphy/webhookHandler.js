@@ -1,5 +1,6 @@
 import { query } from "../db.js";
 import { sendAppointmentGfeApprovedPatientEmail } from "../patientAppointmentEmails.js";
+import { recordPatientGfeFromAppointment } from "../gfe/patientGfeService.js";
 import { resolveQualiphyWebhookUrl } from "./config.js";
 
 export { resolveQualiphyWebhookUrl };
@@ -109,8 +110,23 @@ async function updateAppointmentFromQualiphy({
   if (!id) return { updated: false, reason: "missing_appointment_id" };
 
   const { rows: existingRows } = await query(
-    `select id, patient_id, patient_email, patient_name, provider_id, provider_email, provider_name, service, appointment_date
-       from public.appointments where id = $1 limit 1`,
+    `select a.id,
+            a.patient_id,
+            a.patient_email,
+            a.patient_name,
+            a.provider_id,
+            a.provider_email,
+            a.provider_name,
+            a.service,
+            a.appointment_date,
+            a.service_type_id,
+            coalesce(st.category, st_by_name.category) as service_type_category
+       from public.appointments a
+       left join public.service_type st on st.id::text = a.service_type_id::text
+       left join public.service_type st_by_name on a.service_type_id is null
+         and lower(trim(coalesce(st_by_name.name, ''))) = lower(trim(coalesce(a.service, '')))
+      where a.id = $1
+      limit 1`,
     [id]
   );
   const existing = existingRows[0];
@@ -178,6 +194,20 @@ async function updateAppointmentFromQualiphy({
       message: `GFE approved for ${patientLabel} (${serviceLabel}).`,
       linkPage: "ProviderPractice?tab=appointments",
     });
+
+    try {
+      await recordPatientGfeFromAppointment({
+        appointmentId: id,
+        patientId: existing.patient_id,
+        gfeCategory: existing.service_type_category,
+        status: gfeStatus,
+        completedAt: new Date().toISOString(),
+        qualiphyPatientExamId: patientExamId,
+      });
+    } catch (recordErr) {
+      // eslint-disable-next-line no-console
+      console.warn("[qualiphyWebhook] patient GFE validation record failed:", recordErr?.message || recordErr);
+    }
   } else if (gfeStatus === "deferred") {
     await insertNotification({
       userId: existing.patient_id,

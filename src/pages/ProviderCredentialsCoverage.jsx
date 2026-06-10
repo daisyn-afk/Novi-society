@@ -38,12 +38,22 @@ import {
   filterProtocolDocuments,
   isUsableDocumentUrl,
 } from "@/lib/serviceTypeDocuments";
+import {
+  isMdPurchasablePlan,
+  servicesInMembership,
+  servicesUnlockedForSubscription,
+  serviceDisplayName,
+} from "@/lib/serviceTypeMembershipModel";
 import { getDocumentViewUrl } from "@/lib/documentViewerUrl";
 import {
   MD_FIRST_SERVICE_MONTHLY_FEE as FIRST_SERVICE_PRICE,
   MD_ADDON_SERVICE_MONTHLY_FEE as ADDON_SERVICE_PRICE,
   MD_MAX_COVERED_SERVICES as MAX_SERVICES,
   MD_MAX_MONTHLY_CAP as MAX_MONTHLY_CAP,
+  calcMdCoverageMonthlyTotal,
+  buildMdCoverageCheckoutBillingPreview,
+  formatMdCoverageUsd,
+  mdCoverageCapErrorMessage,
   resolveMdCoverageMonthlyFee,
   isMdCoverageTestPricingActiveForProvider,
 } from "@/lib/mdMembershipPricing";
@@ -507,6 +517,15 @@ export default function ProviderCredentialsCoverage() {
     if (params.get("tab")) setActiveTab(params.get("tab"));
     const promptService = params.get("prompt_service");
     if (!promptService || serviceTypes.length === 0) return;
+    const activeMdCount = mySubscriptions.filter((s) => s.status === "active").length;
+    if (activeMdCount >= MAX_SERVICES) {
+      setActiveTab("coverage");
+      setActivateError(mdCoverageCapErrorMessage());
+      params.delete("prompt_service");
+      const qsEarly = params.toString();
+      navigate({ pathname: createPageUrl("ProviderCredentialsCoverage"), search: qsEarly ? `?${qsEarly}` : "" }, { replace: true });
+      return;
+    }
     setActiveTab("coverage");
     setActivateDialog(true);
     setSelectedServiceTypeId(promptService);
@@ -521,7 +540,7 @@ export default function ProviderCredentialsCoverage() {
       canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
       setHasSigned(false);
     }, 150);
-  }, [location.search, serviceTypes.length, navigate]);
+  }, [location.search, serviceTypes.length, mySubscriptions, navigate]);
 
   // Stripe return: hydrate Documents tab before paint so signed PDF link appears immediately.
   useLayoutEffect(() => {
@@ -603,26 +622,15 @@ export default function ProviderCredentialsCoverage() {
     if (!course) return false;
     return isNowWithinSessionRedeemWindow(course, enrollment.session_date);
   });
-  const getMembershipPrice = () =>
+  const feeForMdSlot = (activeServiceCountBeforeAdd) =>
     resolveMdCoverageMonthlyFee({
       providerId: me?.id,
       providerEmail: me?.email,
-      activeServiceCountBeforeAdd: alreadyActiveServices.length,
+      activeServiceCountBeforeAdd,
     });
+  const getMembershipPrice = () => feeForMdSlot(alreadyActiveServices.length);
   const isAtCap = alreadyActiveServices.length >= MAX_SERVICES;
-  const calcMonthlyTotal = (count) => {
-    if (count <= 0) return 0;
-    if (count >= MAX_SERVICES) return MAX_MONTHLY_CAP;
-    let total = 0;
-    for (let i = 0; i < count; i += 1) {
-      total += resolveMdCoverageMonthlyFee({
-        providerId: me?.id,
-        providerEmail: me?.email,
-        activeServiceCountBeforeAdd: i,
-      });
-    }
-    return Math.min(total, MAX_MONTHLY_CAP);
-  };
+  const calcMonthlyTotal = (count) => calcMdCoverageMonthlyTotal(count, feeForMdSlot);
   const completedEnrollments = myEnrollments.filter((e) => ["completed", "attended"].includes(String(e?.status || "").toLowerCase()));
   const unlockedCourseIds = new Set(
     completedEnrollments
@@ -647,7 +655,8 @@ export default function ProviderCredentialsCoverage() {
       .filter(Boolean)
   );
   const unlockedServiceTypeIds = new Set([...earnedServiceTypeIds, ...activeCertServiceTypeIds]);
-  const applyableServiceTypes = serviceTypes.filter((s) => !alreadyActiveServices.includes(s.id));
+  const mdCoveragePlans = serviceTypes.filter(isMdPurchasablePlan);
+  const applyableServiceTypes = mdCoveragePlans.filter((s) => !alreadyActiveServices.includes(s.id));
   const availableServices = applyableServiceTypes.filter((s) => unlockedServiceTypeIds.has(s.id));
   const selectedService = serviceTypes.find(s => s.id === selectedServiceTypeId);
   const selectedServiceContractUrl = getMdContractUrl(selectedService, {
@@ -771,6 +780,20 @@ export default function ProviderCredentialsCoverage() {
     setAttendedWindowKeys(new Set());
     setUseExternalCert(false); setCertForm({ cert_type: "RN", issuing_school: "", cert_name: "" });
     setCertFileUrl(""); setUploadCertError(""); setSubmitCertError(""); setCertSubmitted(false); setSelectedServiceTypeId(null); setHasSigned(false);
+  };
+  const openApplyForCoverage = ({ serviceTypeId = null, jumpToSign = false } = {}) => {
+    if (isAtCap) {
+      setActivateError(mdCoverageCapErrorMessage());
+      setActiveTab("coverage");
+      return;
+    }
+    setActivateError("");
+    resetActivation();
+    if (serviceTypeId) {
+      setSelectedServiceTypeId(serviceTypeId);
+      setStep(jumpToSign ? 2 : 1);
+    }
+    setActivateDialog(true);
   };
   const resetExtCertForm = () => {
     setCertSubmitStep(0);
@@ -1103,13 +1126,16 @@ export default function ProviderCredentialsCoverage() {
   const activateMutation = useMutation({
     mutationFn: async () => {
       setActivateError("");
+      if (isAtCap) {
+        throw new Error(mdCoverageCapErrorMessage());
+      }
       const canvas = canvasRef.current;
       if (!canvas) throw new Error("Signature pad is not ready. Close the dialog and try again.");
       const signatureData = canvas.toDataURL("image/png");
       const res = await base44.functions.invoke("createMDSubscriptionCheckout", {
         service_type_id: selectedServiceTypeId,
         service_type_name: serviceTypes.find(s => s.id === selectedServiceTypeId)?.name,
-        amount: isAtCap ? 0 : getMembershipPrice(),
+        amount: getMembershipPrice(),
         enrollment_id: verifiedSession?.enrollment_id || null,
         signature_data: signatureData,
       });
@@ -1129,7 +1155,7 @@ export default function ProviderCredentialsCoverage() {
             signed_at: new Date().toISOString(),
             md_contract_url: getMdContractUrl(st, { allServiceTypes: serviceTypes }) || null,
             md_agreement_text: st?.md_agreement_text || null,
-            protocol_document_urls: resolveProtocolDocumentsFromServiceType(st, 1),
+            protocol_document_urls: resolveProtocolDocumentsFromServiceType(st, serviceTypes),
           });
         } catch { /* ignore */ }
         window.location.href = res.data.url;
@@ -1264,6 +1290,12 @@ export default function ProviderCredentialsCoverage() {
   const openApplyDialogToSignForService = (serviceTypeId) => {
     const raw = String(serviceTypeId || "").trim();
     const stId = raw && serviceTypes.some((s) => s.id === raw) ? raw : "";
+    if (isAtCap) {
+      setActivateError(mdCoverageCapErrorMessage());
+      setActiveTab("coverage");
+      return;
+    }
+    setActivateError("");
     setClassCode("");
     setCodeError("");
     setVerifiedSession(null);
@@ -1303,11 +1335,17 @@ export default function ProviderCredentialsCoverage() {
             Licenses, certifications, and NOVI Board coverage — everything needed to practice legally.
           </p>
         </div>
-        <button onClick={() => { setActivateDialog(true); resetActivation(); }}
-          className="flex items-center gap-2 text-sm font-bold transition-all hover:opacity-75 flex-shrink-0"
-          style={{ color: "#FA6F30" }}>
-          <Zap className="w-4 h-4" /> Apply for MD Coverage
-        </button>
+        {!isAtCap ? (
+          <button onClick={() => openApplyForCoverage()}
+            className="flex items-center gap-2 text-sm font-bold transition-all hover:opacity-75 flex-shrink-0"
+            style={{ color: "#FA6F30" }}>
+            <Zap className="w-4 h-4" /> Apply for MD Coverage
+          </button>
+        ) : (
+          <p className="text-xs font-semibold max-w-[200px] text-right" style={{ color: "rgba(30,37,53,0.55)" }}>
+            {MAX_SERVICES} services max · ${MAX_MONTHLY_CAP}/mo cap
+          </p>
+        )}
       </div>
 
       {isMdCoverageTestPricingActiveForProvider(me?.id, me?.email) && (
@@ -1324,6 +1362,17 @@ export default function ProviderCredentialsCoverage() {
         </div>
       )}
 
+      {activateError && !activateDialog && (
+        <div className="flex items-start gap-3 px-5 py-4 rounded-2xl" style={{ background: "rgba(250,111,48,0.1)", border: "1px solid rgba(250,111,48,0.3)" }}>
+          <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" style={{ color: "#FA6F30" }} />
+          <div className="flex-1">
+            <p className="text-sm font-semibold" style={{ color: "#1e2535" }}>MD coverage limit</p>
+            <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.65)" }}>{activateError}</p>
+          </div>
+          <button type="button" onClick={() => setActivateError("")} className="text-xs font-semibold" style={{ color: "#FA6F30" }}>Dismiss</button>
+        </div>
+      )}
+
       {/* Alerts */}
       {visibleApprovedCertsWithoutCoverage.map(c => (
         <div key={c.id} className="flex items-center gap-3 px-5 py-4 rounded-2xl" style={{ background: "rgba(200,230,60,0.15)", border: "1px solid rgba(200,230,60,0.4)" }}>
@@ -1332,9 +1381,11 @@ export default function ProviderCredentialsCoverage() {
             <p className="font-semibold text-sm" style={{ color: "#3D5600" }}>Your <strong>{c.service_type_name || c.certification_name}</strong> certification was approved!</p>
             <p className="text-xs mt-0.5" style={{ color: "rgba(61,86,0,0.8)" }}>You can now apply for MD Board coverage to start offering this service.</p>
           </div>
-          <Button size="sm" onClick={() => openApplyDialogToSignForService(c.service_type_id)} style={{ background: "#FA6F30", color: "#fff" }} className="flex-shrink-0 gap-1 h-8 text-xs">
-            <Zap className="w-3.5 h-3.5" /> Apply
-          </Button>
+          {!isAtCap && (
+            <Button size="sm" onClick={() => openApplyDialogToSignForService(c.service_type_id)} style={{ background: "#FA6F30", color: "#fff" }} className="flex-shrink-0 gap-1 h-8 text-xs">
+              <Zap className="w-3.5 h-3.5" /> Apply
+            </Button>
+          )}
           <button
             onClick={() => dismissApprovedAlert(c.id)}
             className="p-1 rounded-md hover:bg-black/5 transition-colors"
@@ -1648,10 +1699,18 @@ export default function ProviderCredentialsCoverage() {
                   <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.45)" }}>Monthly total: <strong style={{ color: "#1e2535" }}>${calcMonthlyTotal(activeSubscriptions.length)}/mo</strong>{activeSubscriptions.length >= MAX_SERVICES ? " (capped)" : ""}</p>
                 </div>
                 {!isAtCap && (
-                  <button onClick={() => { setActivateDialog(true); resetActivation(); }}
+                  <button onClick={() => openApplyForCoverage()}
                     className="text-xs font-bold transition-all hover:opacity-70" style={{ color: "#FA6F30" }}>+ Add Service</button>
                 )}
               </div>
+              {isAtCap && (
+                <div className="rounded-xl px-4 py-3" style={{ background: "rgba(250,111,48,0.08)", border: "1px solid rgba(250,111,48,0.22)" }}>
+                  <p className="text-sm font-semibold" style={{ color: "#1e2535" }}>Maximum MD coverage reached</p>
+                  <p className="text-xs mt-1" style={{ color: "rgba(30,37,53,0.6)" }}>
+                    You have {MAX_SERVICES} active services (${formatMdCoverageUsd(MAX_MONTHLY_CAP)}/mo total, capped). No additional $129 add-ons are available — cancel a service to switch coverage.
+                  </p>
+                </div>
+              )}
               {activeSubscriptions.map((sub, idx) => {
                 const st = findServiceTypeForSubscription(sub, serviceTypes);
                 const isExp = expandedService === sub.id;
@@ -1672,60 +1731,52 @@ export default function ProviderCredentialsCoverage() {
                       </div>
                     </button>
                     {isExp && st && (() => {
-                      const currentTierNum = sub.coverage_tier || 1;
-                      const tiers = st.coverage_tiers || [];
-                      const hasTiers = tiers.length > 0;
-                      const currentTierDef = tiers.find(t => t.tier_number === currentTierNum);
-                      const nextTierDef = tiers.find(t => t.tier_number === currentTierNum + 1);
-                      const effectiveAreas = hasTiers ? (currentTierDef?.allowed_areas || []) : (st.allowed_areas || []);
-                      const effectiveUnits = hasTiers ? currentTierDef?.max_units_per_session : st.max_units_per_session;
+                      const includedServices = servicesUnlockedForSubscription(sub, st, serviceTypes);
                       const effectiveDocs = getProtocolDocumentsForSubscription(sub);
                       const activatedDate = sub.activated_at ? new Date(sub.activated_at) : null;
                       const monthlyAmount = Number(sub.service_type_monthly_fee ?? (idx === 0 ? FIRST_SERVICE_PRICE : ADDON_SERVICE_PRICE));
+                      const checkoutPaid = sub.checkout_amount_paid != null ? Number(sub.checkout_amount_paid) : null;
+                      const lastPaid = sub.last_amount_paid != null ? Number(sub.last_amount_paid) : null;
+                      const lastPaidAt = sub.last_amount_paid_at ? new Date(sub.last_amount_paid_at) : null;
                       const today = new Date();
                       const nextBilling = new Date(today.getFullYear(), today.getMonth() + 1, 1);
                       return (
                         <div className="border-t" style={{ borderColor: "rgba(30,37,53,0.08)" }}>
-                          {/* Billing row — compact single line */}
                           <div className="px-5 py-3 flex items-center justify-between flex-wrap gap-2" style={{ background: "rgba(123,142,200,0.05)", borderBottom: "1px solid rgba(30,37,53,0.06)" }}>
-                            <div className="flex items-center gap-4 text-xs" style={{ color: "rgba(30,37,53,0.55)" }}>
-                              <span><strong style={{ color: "#1e2535" }}>${monthlyAmount}/mo</strong> · billed 1st</span>
+                            <div className="flex items-center gap-4 text-xs flex-wrap" style={{ color: "rgba(30,37,53,0.55)" }}>
+                              <span><strong style={{ color: "#1e2535" }}>${formatMdCoverageUsd(monthlyAmount)}/mo</strong> · billed 1st</span>
                               {activatedDate && <span>Active since {format(activatedDate, "MMM d, yyyy")}</span>}
                               <span>Next: {format(nextBilling, "MMM 1, yyyy")}</span>
+                              {checkoutPaid != null && Number.isFinite(checkoutPaid) && (
+                                <span>First charge: ${formatMdCoverageUsd(checkoutPaid)}</span>
+                              )}
+                              {lastPaid != null && Number.isFinite(lastPaid) && lastPaidAt && (
+                                <span>Last paid: ${formatMdCoverageUsd(lastPaid)} · {format(lastPaidAt, "MMM d, yyyy")}</span>
+                              )}
                             </div>
                             <button onClick={e => { e.stopPropagation(); openCancelDialog(sub); }} className="text-xs font-semibold hover:opacity-70" style={{ color: "#DA6A63" }}>Cancel</button>
                           </div>
 
                           <div className="px-5 py-4 space-y-3">
-                            {/* Current tier */}
-                            {hasTiers && currentTierDef && (
-                              <div className="flex items-center gap-3">
-                                <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0" style={{ background: "#C8E63C", color: "#1a2540" }}>{currentTierNum}</div>
-                                <div>
-                                  <p className="text-sm font-bold" style={{ color: "#1e2535" }}>{currentTierDef.tier_name}</p>
-                                  {currentTierDef.description && <p className="text-xs" style={{ color: "rgba(30,37,53,0.5)" }}>{currentTierDef.description}</p>}
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Allowed areas */}
-                            {effectiveAreas.length > 0 && (
+                            {includedServices.length > 0 && (
                               <div>
-                                <p className="text-[10px] font-bold uppercase tracking-widest mb-1.5" style={{ color: "rgba(30,37,53,0.4)" }}>Allowed Areas</p>
-                                <div className="flex flex-wrap gap-1.5">
-                                  {effectiveAreas.map((a, i) => <span key={i} className="text-xs px-2.5 py-1 rounded-full capitalize" style={{ background: "rgba(30,37,53,0.07)", color: "rgba(30,37,53,0.7)", border: "1px solid rgba(30,37,53,0.1)" }}>{a}</span>)}
+                                <p className="text-[10px] font-bold uppercase tracking-widest mb-2" style={{ color: "rgba(30,37,53,0.4)" }}>
+                                  Services included ({includedServices.length})
+                                </p>
+                                <div className="space-y-2">
+                                  {includedServices.map((svc) => (
+                                    <div key={svc.id} className="rounded-xl px-3 py-2.5" style={{ background: "rgba(30,37,53,0.03)", border: "1px solid rgba(30,37,53,0.07)" }}>
+                                      <p className="text-sm font-bold" style={{ color: "#1e2535" }}>{serviceDisplayName(svc, serviceTypes)}</p>
+                                      {svc.description && <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.5)" }}>{svc.description}</p>}
+                                      {svc.allowed_areas?.length > 0 && (
+                                        <p className="text-xs mt-1 font-medium" style={{ color: "#2D6B7F" }}>{svc.allowed_areas.join(", ")}</p>
+                                      )}
+                                    </div>
+                                  ))}
                                 </div>
                               </div>
                             )}
 
-                            {/* Max units */}
-                            {effectiveUnits && (
-                              <p className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>
-                                <span className="font-semibold" style={{ color: "#1e2535" }}>Max {effectiveUnits} units</span> per session
-                              </p>
-                            )}
-
-                            {/* Protocol docs */}
                             {effectiveDocs.length > 0 && (
                               <div className="flex flex-wrap gap-2">
                                 {effectiveDocs.map((doc, i) => (
@@ -1733,18 +1784,6 @@ export default function ProviderCredentialsCoverage() {
                                     <FileText className="w-3 h-3" /> {doc.name}
                                   </a>
                                 ))}
-                              </div>
-                            )}
-
-                            {/* Unlock next tier */}
-                            {hasTiers && nextTierDef && (
-                              <div className="flex items-start gap-2.5 px-3 py-2.5 rounded-xl" style={{ background: "rgba(250,111,48,0.06)", border: "1px solid rgba(250,111,48,0.18)" }}>
-                                <Sparkles className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" style={{ color: "#FA6F30" }} />
-                                <div>
-                                  <p className="text-xs font-bold" style={{ color: "#1e2535" }}>Next: {nextTierDef.tier_name || `Tier ${nextTierDef.tier_number}`}</p>
-                                  {nextTierDef.description && <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.55)" }}>{nextTierDef.description}</p>}
-                                  <p className="text-xs mt-1 font-semibold" style={{ color: "#FA6F30" }}>Complete a NOVI course to unlock</p>
-                                </div>
                               </div>
                             )}
                           </div>
@@ -1765,20 +1804,20 @@ export default function ProviderCredentialsCoverage() {
               <p className="text-sm mt-2 mb-5" style={{ color: "rgba(30,37,53,0.55)", maxWidth: 340, margin: "8px auto 20px" }}>
                 Apply for NOVI Board of Medical Directors coverage to legally practice. We'll assign you a Board MD — you don't need to find one yourself.
               </p>
-              <Button onClick={() => { setActivateDialog(true); resetActivation(); }} style={{ background: "#FA6F30", color: "#fff" }} className="gap-2 font-bold">
+              <Button onClick={() => openApplyForCoverage()} style={{ background: "#FA6F30", color: "#fff" }} className="gap-2 font-bold">
                 <Zap className="w-4 h-4" /> Apply for Coverage
               </Button>
             </GlassCard>
           )}
 
           {/* ── Add More Services (only non-active services) ── */}
-          {serviceTypes.filter(s => !alreadyActiveServices.includes(s.id)).length > 0 && (
+          {!isAtCap && mdCoveragePlans.filter(s => !alreadyActiveServices.includes(s.id)).length > 0 && (
             <div className="space-y-3">
               <SectionLabel>{activeSubscriptions.length === 0 ? "Available Coverage Plans" : "Add More Services"}</SectionLabel>
-              {serviceTypes.filter(s => !alreadyActiveServices.includes(s.id)).map(service => {
+              {mdCoveragePlans.filter(s => !alreadyActiveServices.includes(s.id)).map(service => {
                 const isEligible = unlockedServiceTypeIds.has(service.id);
-                const tiers = service.coverage_tiers || [];
-                const hasTiers = tiers.length > 0;
+                const includedServices = servicesInMembership(service, serviceTypes);
+                const hasIncludedServices = includedServices.length > 0;
                 const isExpanded = expandedServiceCard === service.id;
                 const price = activeSubscriptions.length === 0 ? FIRST_SERVICE_PRICE : ADDON_SERVICE_PRICE;
                 return (
@@ -1794,14 +1833,15 @@ export default function ProviderCredentialsCoverage() {
                           <h4 className="font-bold text-base" style={{ color: "#1e2535" }}>{service.name}</h4>
                         </div>
                         <p className="text-xs capitalize mb-2" style={{ color: "rgba(30,37,53,0.5)" }}>
-                          {service.category?.replace("_", " ")}{hasTiers ? ` · ${tiers.length} treatment tiers` : ""}
+                          {service.category?.replace("_", " ")}
+                          {hasIncludedServices ? ` · ${includedServices.length} service${includedServices.length !== 1 ? "s" : ""} included` : ""}
                         </p>
                         {/* Status + CTA */}
                         {isEligible ? (
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className="text-xs font-semibold px-2.5 py-1 rounded-full" style={{ background: "rgba(200,230,60,0.15)", color: "#5a7a20", border: "1px solid rgba(200,230,60,0.35)" }}>✓ Training Complete — Ready to Apply</span>
                             <Button size="sm" className="font-bold gap-1.5 h-8" style={{ background: "#FA6F30", color: "#fff" }}
-                              onClick={() => { setSelectedServiceTypeId(service.id); setActivateDialog(true); resetActivation(); }}>
+                              onClick={() => openApplyForCoverage({ serviceTypeId: service.id, jumpToSign: false })}>
                               <Zap className="w-3.5 h-3.5" /> Apply for Coverage
                             </Button>
                           </div>
@@ -1826,39 +1866,28 @@ export default function ProviderCredentialsCoverage() {
                         {activeSubscriptions.length > 0 && <p className="text-xs font-semibold" style={{ color: "#5a7a20" }}>add-on</p>}
                       </div>
                     </div>
-                    {/* Tier preview toggle */}
-                    {hasTiers && (
+                    {hasIncludedServices && (
                       <div style={{ borderTop: "1px solid rgba(30,37,53,0.07)" }}>
                         <button
                           onClick={() => setExpandedServiceCard(isExpanded ? null : service.id)}
                           className="w-full px-5 py-2.5 flex items-center justify-between text-xs font-semibold"
                           style={{ color: "rgba(30,37,53,0.5)" }}
                         >
-                          <span>{tiers.length} Treatment Tiers Included</span>
+                          <span>{includedServices.length} Service{includedServices.length !== 1 ? "s" : ""} Included</span>
                           {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                         </button>
                         {isExpanded && (
                           <div className="px-5 pb-4 space-y-2">
-                            {tiers.sort((a,b) => a.tier_number - b.tier_number).map(tier => {
-                              const linkedCourseNames = (tier.linked_course_ids || []).map(cid => courseMap[cid]?.title).filter(Boolean);
-                              const tierCertEarned = linkedCourseNames.length === 0 || completedEnrollments.some(e => (tier.linked_course_ids || []).includes(e.course_id));
-                              return (
-                                <div key={tier.tier_number} className="flex items-start gap-3 rounded-xl px-3 py-2.5" style={{ background: "rgba(30,37,53,0.03)", border: "1px solid rgba(30,37,53,0.07)" }}>
-                                  <div className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5" style={{ background: "rgba(30,37,53,0.08)", color: "rgba(30,37,53,0.4)" }}>{tier.tier_number}</div>
-                                  <div className="flex-1 min-w-0">
-                                    <p className="font-semibold text-sm" style={{ color: "#1e2535" }}>{tier.tier_name}</p>
-                                    {tier.description && <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.5)" }}>{tier.description}</p>}
-                                    {tier.allowed_areas?.length > 0 && <p className="text-xs mt-0.5 font-medium" style={{ color: "#2D6B7F" }}>{tier.allowed_areas.join(", ")}</p>}
-                                    {linkedCourseNames.length > 0 && (
-                                      <p className="text-xs mt-1 flex items-center gap-1" style={{ color: tierCertEarned ? "#4a6b10" : "#FA6F30" }}>
-                                        {tierCertEarned ? <CheckCircle className="w-3 h-3 flex-shrink-0" /> : <Award className="w-3 h-3 flex-shrink-0" />}
-                                        {tierCertEarned ? "Cert earned" : `Requires cert: ${linkedCourseNames.join(", ")}`}
-                                      </p>
-                                    )}
-                                  </div>
+                            {includedServices.map((svc) => (
+                              <div key={svc.id} className="flex items-start gap-3 rounded-xl px-3 py-2.5" style={{ background: "rgba(30,37,53,0.03)", border: "1px solid rgba(30,37,53,0.07)" }}>
+                                <div className="flex-1 min-w-0">
+                                  <p className="font-semibold text-sm" style={{ color: "#1e2535" }}>{serviceDisplayName(svc, serviceTypes)}</p>
+                                  {svc.allowed_areas?.length > 0 && (
+                                    <p className="text-xs mt-0.5 font-medium" style={{ color: "#2D6B7F" }}>{svc.allowed_areas.join(", ")}</p>
+                                  )}
                                 </div>
-                              );
-                            })}
+                              </div>
+                            ))}
                           </div>
                         )}
                       </div>
@@ -1885,7 +1914,7 @@ export default function ProviderCredentialsCoverage() {
                 <div className="text-center py-6">
                   <p className="text-sm font-semibold" style={{ color: "#1e2535" }}>No MD agreements yet</p>
                   <p className="text-xs mt-1 mb-3" style={{ color: "rgba(30,37,53,0.4)" }}>After you sign MD coverage for a service, your agreement and protocol documents appear here.</p>
-                  <button onClick={() => { setActivateDialog(true); resetActivation(); }} className="text-xs font-bold" style={{ color: "#FA6F30" }}>Apply for Coverage</button>
+                  <button onClick={() => openApplyForCoverage()} className="text-xs font-bold" style={{ color: "#FA6F30" }}>Apply for Coverage</button>
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -2140,6 +2169,18 @@ export default function ProviderCredentialsCoverage() {
             <DialogTitle style={{ fontFamily: "'DM Serif Display', serif", fontSize: 20 }}>Apply for MD Board Coverage</DialogTitle>
           </DialogHeader>
 
+          {isAtCap ? (
+            <div className="space-y-4 pt-1">
+              <div className="rounded-xl px-4 py-4" style={{ background: "rgba(250,111,48,0.08)", border: "1px solid rgba(250,111,48,0.22)" }}>
+                <p className="text-sm font-semibold" style={{ color: "#1e2535" }}>Cannot add another service</p>
+                <p className="text-sm mt-2" style={{ color: "rgba(30,37,53,0.65)" }}>{mdCoverageCapErrorMessage()}</p>
+              </div>
+              <Button variant="outline" className="w-full" onClick={() => { resetActivation(); setActivateDialog(false); }}>
+                Close
+              </Button>
+            </div>
+          ) : (
+          <>
           {/* ── Step -1: Info / intro screen ── */}
           {step === -1 && (
             <div className="space-y-4 pt-1">
@@ -2413,7 +2454,7 @@ export default function ProviderCredentialsCoverage() {
                   <div className="flex items-center justify-between">
                     <div><p className="font-semibold text-slate-900">{s.name}</p><p className="text-xs text-slate-500 capitalize">{s.category?.replace("_", " ")}</p></div>
                     <div className="flex items-center gap-3">
-                      <div className="text-right"><span className="font-bold text-slate-900">${getMembershipPrice()}</span><span className="text-xs text-slate-400">/mo</span></div>
+                      <div className="text-right"><span className="font-bold text-slate-900">${formatMdCoverageUsd(getMembershipPrice())}</span><span className="text-xs text-slate-400">/mo</span></div>
                       {selectedServiceTypeId === s.id && <CheckCircle className="w-5 h-5 text-orange-500" />}
                     </div>
                   </div>
@@ -2423,12 +2464,83 @@ export default function ProviderCredentialsCoverage() {
             </div>
           )}
 
-          {step === 2 && (
+          {step === 2 && (() => {
+            const billing = buildMdCoverageCheckoutBillingPreview({
+              activeServiceCountBeforeAdd: alreadyActiveServices.length,
+              providerId: me?.id,
+              providerEmail: me?.email,
+            });
+            const { proration } = billing;
+            const showPaidCheckout = billing.thisServiceMonthly > 0;
+            return (
             <div className="space-y-4">
               <div className="rounded-xl border-2 border-orange-200 p-4 flex items-center justify-between bg-orange-50">
-                <div><p className="font-semibold text-slate-900">{selectedService?.name} — MD Board Coverage</p><p className="text-xs text-slate-500 mt-0.5">{alreadyActiveServices.length === 0 ? "First service" : "Add-on service"} · NOVI assigns a Board MD automatically</p></div>
-                <div className="text-right"><p className="text-2xl font-bold text-slate-900">${getMembershipPrice()}</p><p className="text-xs text-slate-400">/month</p></div>
+                <div><p className="font-semibold text-slate-900">{selectedService?.name} — MD Board Coverage</p><p className="text-xs text-slate-500 mt-0.5">{billing.isFirstService ? "First service" : "Add-on service"} · NOVI assigns a Board MD automatically</p></div>
+                <div className="text-right"><p className="text-2xl font-bold text-slate-900">${formatMdCoverageUsd(billing.thisServiceMonthly)}</p><p className="text-xs text-slate-400">/month from next cycle</p></div>
               </div>
+
+              {showPaidCheckout && (
+                <div className="rounded-xl border border-slate-200 overflow-hidden bg-white">
+                  <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2">
+                    <CreditCard className="w-4 h-4 text-slate-500" />
+                    <p className="text-xs font-bold uppercase tracking-widest text-slate-500">Billing summary</p>
+                  </div>
+                  <div className="px-4 py-3 space-y-2.5 text-sm">
+                    <div className="flex items-start justify-between gap-3">
+                      <span className="text-slate-600">
+                        This service (monthly)
+                        <span className="block text-xs text-slate-400 mt-0.5 line-clamp-2">
+                          {selectedService?.name}
+                          {billing.isFirstService ? " · first membership" : " · add-on"}
+                        </span>
+                      </span>
+                      <span className="font-semibold text-slate-900 whitespace-nowrap">
+                        ${formatMdCoverageUsd(billing.thisServiceMonthly)}/mo
+                      </span>
+                    </div>
+                    <div className="flex items-start justify-between gap-3">
+                      <span className="text-slate-600">
+                        New total monthly charge
+                        <span className="block text-xs text-slate-400 mt-0.5">
+                          From {format(proration.nextBillingDate, "MMMM d, yyyy")} · {billing.totalBreakdownLabel}
+                        </span>
+                      </span>
+                      <span
+                        className="font-bold whitespace-nowrap"
+                        style={{ color: billing.hitsCap ? "#FA6F30" : "#1e2535" }}
+                      >
+                        ${formatMdCoverageUsd(billing.newTotalMonthlyFromNextCycle)}/mo
+                        {billing.hitsCap ? " (capped)" : ""}
+                      </span>
+                    </div>
+                    <div className="border-t border-slate-100 pt-2.5 flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-semibold text-slate-900">Due today (prorated)</p>
+                        <p className="text-xs text-slate-400 mt-0.5">
+                          {format(proration.periodStart, "MMM d")} – {format(proration.periodEnd, "MMM d, yyyy")}
+                          {" "}({proration.daysRemaining} day{proration.daysRemaining === 1 ? "" : "s"} in {proration.currentMonthLabel})
+                        </p>
+                        <p className="text-[11px] text-slate-400 mt-1">
+                          Only this service · ${formatMdCoverageUsd(billing.thisServiceMonthly)} ÷ {proration.daysInMonth} × {proration.daysRemaining}
+                        </p>
+                      </div>
+                      <span className="text-lg font-bold text-slate-900 whitespace-nowrap">
+                        ${formatMdCoverageUsd(billing.dueTodayProrated)}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="px-4 py-2.5 bg-slate-50 border-t border-slate-100">
+                    <p className="text-xs text-slate-500">
+                      You pay <strong className="text-slate-700">${formatMdCoverageUsd(billing.dueTodayProrated)}</strong> today for this service through the end of {proration.currentMonthLabel}.
+                      {" "}Starting <strong className="text-slate-700">{format(proration.nextBillingDate, "MMMM d, yyyy")}</strong>, this service bills{" "}
+                      <strong className="text-slate-700">${formatMdCoverageUsd(billing.thisServiceMonthly)}/mo</strong> on the 1st
+                      {billing.newActiveCount > 1
+                        ? ` and your combined active MD coverage total is $${formatMdCoverageUsd(billing.newTotalMonthlyFromNextCycle)}/mo.`
+                        : "."}
+                    </p>
+                  </div>
+                </div>
+              )}
 
               <div className="rounded-xl border border-slate-200 overflow-hidden bg-white">
                 {selectedServiceContractUrl ? (
@@ -2527,6 +2639,9 @@ export default function ProviderCredentialsCoverage() {
                 {activateMutation.isPending ? "Activating..." : "Sign & Activate MD Board Coverage"}
               </Button>
             </div>
+            );
+          })()}
+          </>
           )}
         </DialogContent>
       </Dialog>

@@ -19,10 +19,19 @@ import {
 import { createMarketplaceCheckoutSession, retrieveMarketplaceCheckoutSession } from "../stripe-connect/checkout.js";
 import { isStripeConnectConfigured, PAYMENT_TYPE_APPOINTMENT_TREATMENT } from "../stripe-connect/config.js";
 import {
-  appointmentRequiresGfe,
   buildTreatmentCheckoutLineItems,
   computeTreatmentPaymentBreakdown,
 } from "../stripe-connect/gfePlatformFee.js";
+import {
+  assertGfePrerequisiteForAppointment,
+  loadAppointmentGfeContext,
+  markPlatformFeeCollected,
+  resolveAppointmentGfeContext,
+} from "../gfe/patientGfeService.js";
+import {
+  APPOINTMENT_REQUIRES_GFE_SQL,
+  APPOINTMENT_SERVICE_TYPE_JOINS,
+} from "../lib/treatmentServiceType.js";
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || "";
 const appBaseUrl = process.env.APP_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || "";
@@ -216,6 +225,10 @@ export async function requestAppointmentTreatmentPayment({
     throw e;
   }
 
+  if (!hasAdminAccess(me.role)) {
+    await assertGfePrerequisiteForAppointment(id);
+  }
+
   const invoiceWithTotals = {
     ...invoice,
     total: treatmentTotal,
@@ -321,9 +334,13 @@ export async function createAppointmentTreatmentCheckout({
 
     const { rows: apptRows } = await query(
       `select a.*,
-              coalesce(st.requires_gfe, false) as requires_gfe
+              ${APPOINTMENT_REQUIRES_GFE_SQL} as requires_gfe,
+              coalesce(
+                case when coalesce(st.is_membership, false) = false then st.category else null end,
+                st_svc.category
+              ) as service_type_category
          from public.appointments a
-         left join public.service_type st on st.id = a.service_type_id
+         ${APPOINTMENT_SERVICE_TYPE_JOINS}
         where a.id = $1
         limit 1`,
       [appointmentId]
@@ -352,11 +369,13 @@ export async function createAppointmentTreatmentCheckout({
       throw e;
     }
 
-    const requiresGfe = appointmentRequiresGfe(appt);
+    const gfeContext = await resolveAppointmentGfeContext(appt);
+    const requiresGfe = appt.requires_gfe === true;
     const gfeStatus = String(appt.gfe_status || "");
     const paymentBreakdown = computeTreatmentPaymentBreakdown({
       treatmentAmount: amountDue,
       requiresGfe,
+      chargeGfeFee: gfeContext.gfe_fee_applies === true,
       paymentType: PAYMENT_TYPE_APPOINTMENT_TREATMENT,
     });
     const { treatmentCents, platformFeeCents, chargeCents } = paymentBreakdown;
@@ -388,6 +407,8 @@ export async function createAppointmentTreatmentCheckout({
       deposit_credit: String(depositCredit),
       requires_gfe: String(requiresGfe),
       gfe_status: gfeStatus,
+      gfe_category: String(gfeContext.gfe_category || ""),
+      gfe_fee_applies: String(gfeContext.gfe_fee_applies === true),
       treatment_amount_cents: String(treatmentCents),
       platform_fee_cents: String(platformFeeCents),
       total_charge_cents: String(chargeCents),
@@ -400,6 +421,7 @@ export async function createAppointmentTreatmentCheckout({
       feeContext: {
         paymentType: PAYMENT_TYPE_APPOINTMENT_TREATMENT,
         requiresGfe,
+        chargeGfeFee: gfeContext.gfe_fee_applies === true,
         gfeStatus,
         treatmentCents,
       },
@@ -483,6 +505,27 @@ export async function processAppointmentTreatmentCheckoutCompletedSession(sessio
       where id = $1`,
     [appointmentId, nowIso, stripeSessionId || null, newAmountPaid]
   );
+
+  const platformFeeCents = Number(metadata.platform_fee_cents || 0);
+  if (platformFeeCents > 0) {
+    const gfeCategory = String(metadata.gfe_category || "").trim();
+    if (gfeCategory && appt.patient_id) {
+      await markPlatformFeeCollected({
+        patientId: appt.patient_id,
+        gfeCategory,
+        appointmentId,
+      });
+    } else {
+      const gfeCtx = await loadAppointmentGfeContext(appointmentId);
+      if (gfeCtx?.gfe_category && appt.patient_id) {
+        await markPlatformFeeCollected({
+          patientId: appt.patient_id,
+          gfeCategory: gfeCtx.gfe_category,
+          appointmentId,
+        });
+      }
+    }
+  }
 
   await enrichPaymentTransaction(
     { stripe_session_id: stripeSessionId },
