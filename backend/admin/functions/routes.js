@@ -4,6 +4,13 @@ import { getMeFromAccessToken } from "../auth/service.js";
 import { hasAdminAccess, hasStaffModuleAccess } from "../auth/helpers.js";
 import { notifyAdminsOfPendingCourseCertIssuance } from "../certificationNotifications.js";
 import { sendEmailFromTemplate } from "../emails/renderTemplate.js";
+import {
+  runModelAutomation,
+  runModelGFEReminderBatch,
+  runModelPostTrainingBatch,
+  runModelReminderBatch,
+  sendModelPostTrainingEmailForSignup,
+} from "../modelEmailAutomation.js";
 import { listEligibleMedicalDirectorsForService } from "../mdEligibleDirectors.js";
 import { submitMdBoardCoverageAssignment } from "../mdAssignmentService.js";
 import { formatDisplayTime } from "../timeDisplay.js";
@@ -763,6 +770,15 @@ async function requireCronOrAdminCompliance(req, res, next) {
     if (auth === `Bearer ${cronSecret}`) return next();
   }
   return requireAdminOrStaffCompliance(req, res, next);
+}
+
+async function requireCronOrAdminModelSignups(req, res, next) {
+  const cronSecret = String(process.env.CRON_SECRET || "").trim();
+  if (cronSecret) {
+    const auth = String(req.headers.authorization || "").trim();
+    if (auth === `Bearer ${cronSecret}`) return next();
+  }
+  return requireAdminOrStaffModelSignups(req, res, next);
 }
 
 functionsRouter.post("/validateBookingScope", async (req, res, next) => {
@@ -2155,148 +2171,41 @@ functionsRouter.post("/sendModelPostTrainingEmail", requireAdminOrStaffModelSign
   try {
     const { customer_email, customer_name, treatment_type, course_title, pre_order_id } = req.body || {};
     if (!customer_email || !customer_name) return res.status(400).json({ error: "Missing required fields" });
-    const treatmentName = treatment_type === "tox" ? "Botox" : treatment_type === "filler" ? "Dermal Fillers" : "Botox & Fillers";
-    await sendModelEmail("model_post_training", {
-      to: customer_email,
-      first_name: String(customer_name || "there").split(/\s+/)[0],
-      course_title: course_title || "NOVI Training Course",
-      treatment_label: treatmentName,
-      summary_lines: [
-        "Sign up at novisociety.com/patient-signup",
-        "Build your aesthetic profile",
-        `Book your first ${treatmentName} treatment`,
-        "Use code NOVIMODEL15 for 15% off your first treatment",
-      ],
+    await sendModelPostTrainingEmailForSignup({
+      id: pre_order_id || null,
+      customer_email,
+      customer_name,
+      treatment_type,
+      course_title,
     });
-    if (pre_order_id) {
-      await query(`update public.pre_orders set post_training_email_sent = true, updated_at = now() where id = $1`, [pre_order_id]);
-    }
     return res.json({ success: true });
   } catch (error) {
     return next(error);
   }
 });
 
-functionsRouter.post("/sendModelReminderBatch", requireAdminOrStaffModelSignups, async (_req, res, next) => {
+functionsRouter.post("/sendModelReminderBatch", requireCronOrAdminModelSignups, async (_req, res, next) => {
   try {
-    const { rows } = await query(
-      `select id, customer_email, customer_name, course_date, model_time_slot, treatment_type
-       from public.pre_orders
-       where order_type = 'model'
-         and (
-           lower(coalesce(status, '')) in ('paid','confirmed')
-           or (
-             lower(coalesce(status, '')) = 'pending'
-             and lower(coalesce(payment_status, '')) = 'completed'
-           )
-         )
-         and course_date::date = (current_date + interval '1 day')::date
-         and reminder_email_sent_at is null`
-    );
-    let sent = 0;
-    for (const row of rows) {
-      try {
-        await sendModelEmail("model_session_reminder", {
-          to: row.customer_email,
-          first_name: String(row.customer_name || "there").split(/\s+/)[0],
-          course_date_label: fmtDateLocal(row.course_date),
-          time_label: fmtTimeLabel(row.model_time_slot),
-          treatment_label: treatmentLabel(row.treatment_type),
-          details: [
-            { label: "Date", value: fmtDateLocal(row.course_date) },
-            { label: "Time", value: fmtTimeLabel(row.model_time_slot) },
-            { label: "Treatment", value: treatmentLabel(row.treatment_type) },
-          ],
-        });
-        await query(`update public.pre_orders set reminder_email_sent_at = now(), updated_at = now() where id = $1`, [row.id]);
-        sent += 1;
-      } catch {
-        // continue next row
-      }
-    }
-    return res.json({ success: true, total: rows.length, sent });
+    const result = await runModelReminderBatch();
+    return res.json({ success: true, ...result });
   } catch (error) {
     return next(error);
   }
 });
 
-functionsRouter.post("/sendModelGFEReminderBatch", requireAdminOrStaffModelSignups, async (_req, res, next) => {
+functionsRouter.post("/sendModelGFEReminderBatch", requireCronOrAdminModelSignups, async (_req, res, next) => {
   try {
-    const hasMeetingUrl = await hasPreOrderColumn("gfe_meeting_url");
-    const hasGfeStatus = await hasPreOrderColumn("gfe_status");
-    if (!hasMeetingUrl || !hasGfeStatus) {
-      return res.json({ success: true, total: 0, sent: 0, skipped: "Missing gfe columns (run migration)." });
-    }
-    const { rows } = await query(
-      `select id, customer_email, customer_name, gfe_meeting_url
-       from public.pre_orders
-       where order_type = 'model'
-         and lower(coalesce(status, '')) in ('paid','confirmed')
-         and coalesce(gfe_status, 'not_available') = 'pending'
-         and gfe_completed_at is null
-         and gfe_meeting_url is not null
-         and gfe_meeting_url not like '%/ModelBookingLookup%'
-         and (
-           gfe_reminder_sent_at is null
-           or gfe_reminder_sent_at < (now() - interval '24 hours')
-         )`
-    );
-    let sent = 0;
-    for (const row of rows) {
-      try {
-        await sendModelEmail("model_gfe_reminder", {
-          to: row.customer_email,
-          first_name: String(row.customer_name || "there").split(/\s+/)[0],
-          gfe_url: row.gfe_meeting_url,
-        });
-        await query(`update public.pre_orders set gfe_reminder_sent_at = now(), updated_at = now() where id = $1`, [row.id]);
-        sent += 1;
-      } catch {
-        // continue
-      }
-    }
-    return res.json({ success: true, total: rows.length, sent });
+    const result = await runModelGFEReminderBatch();
+    return res.json({ success: true, ...result });
   } catch (error) {
     return next(error);
   }
 });
 
-functionsRouter.post("/sendModelPostTrainingBatch", requireAdminOrStaffModelSignups, async (_req, res, next) => {
+functionsRouter.post("/sendModelPostTrainingBatch", requireCronOrAdminModelSignups, async (_req, res, next) => {
   try {
-    const { rows } = await query(
-      `select id, customer_email, customer_name, treatment_type, course_title
-       from public.pre_orders
-       where order_type = 'model'
-         and course_date::date < current_date
-         and coalesce(post_training_email_sent, false) = false
-         and lower(coalesce(status, '')) in ('paid','confirmed','attended')`
-    );
-    let sent = 0;
-    for (const row of rows) {
-      try {
-        const treatmentName = row.treatment_type === "tox"
-          ? "Botox"
-          : row.treatment_type === "filler"
-            ? "Dermal Fillers"
-            : "Botox & Fillers";
-        await sendModelEmail("model_post_training", {
-          to: row.customer_email,
-          first_name: String(row.customer_name || "there").split(/\s+/)[0],
-          course_title: row.course_title || "NOVI Training Course",
-          treatment_label: treatmentName,
-          summary_lines: [
-            "Sign up at novisociety.com/patient-signup",
-            "Build your aesthetic profile",
-            `Book your first ${treatmentName} treatment`,
-          ],
-        });
-        await query(`update public.pre_orders set post_training_email_sent = true, updated_at = now() where id = $1`, [row.id]);
-        sent += 1;
-      } catch {
-        // continue
-      }
-    }
-    return res.json({ success: true, total: rows.length, sent });
+    const result = await runModelPostTrainingBatch();
+    return res.json({ success: true, ...result });
   } catch (error) {
     return next(error);
   }
@@ -3184,6 +3093,17 @@ functionsRouter.post("/patientCheckinEscalation", async (req, res, next) => {
   }
 });
 
+async function handleModelAutomation(_req, res, next) {
+  try {
+    const result = await runModelAutomation();
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+functionsRouter.post("/modelAutomation", requireCronOrAdminModelSignups, handleModelAutomation);
+functionsRouter.get("/modelAutomation", requireCronOrAdminModelSignups, handleModelAutomation);
 functionsRouter.post("/checkExpirations", requireCronOrAdminCompliance, handleCheckExpirations);
 functionsRouter.get("/checkExpirations", requireCronOrAdminCompliance, handleCheckExpirations);
 functionsRouter.post("/complianceChecks", requireCronOrAdminCompliance, handleComplianceChecks);
