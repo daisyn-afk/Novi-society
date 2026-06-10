@@ -371,7 +371,7 @@ export async function createServiceType(payload) {
     )
     values (
       gen_random_uuid()::text,
-      $1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14,$15,$16::jsonb,$17,$18,$19,$20::jsonb,$21,$22::jsonb,$23,$24::jsonb,$25,$26::jsonb,$27,$28,$29,$30,$31::jsonb
+      $1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14,$15,$16::jsonb,$17,$18,$19,$20::jsonb,$21,$22::jsonb,$23,$24::jsonb,$25,$26::jsonb,$27,$28,$29,$30::jsonb
     )
     returning
       id,
