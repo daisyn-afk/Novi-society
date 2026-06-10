@@ -25,36 +25,14 @@ export function isMembershipChildService(st) {
 /** @deprecated use isMembershipChildService */
 export const isTierChildService = isMembershipChildService;
 
-/** Row was created from a coverage_tier during tier_migration_v1 (child service, not a plan). */
-export function isTierMigrationChildRow(st) {
-  const meta = st?.metadata;
-  if (!meta || typeof meta !== "object") return false;
-  if (String(meta.tier_migration_v1 || "") !== "true") return false;
-  const courses = meta.linked_course_ids;
-  return Array.isArray(courses) && courses.length > 0;
-}
-
-/** Listed on another membership's included_service_ids (child service even if flags are wrong). */
-export function isIncludedInAnotherMembership(st, allServiceTypes = []) {
-  if (!st) return false;
-  const id = String(st.id);
-  return (allServiceTypes || []).some((m) => {
-    if (String(m.id) === id) return false;
-    if (m.is_membership !== true) return false;
-    return (m.included_service_ids || []).map(String).includes(id);
-  });
-}
-
 /** Membership plan — what providers purchase MD coverage for. */
-export function isMembershipPlan(st, allServiceTypes = []) {
+export function isMembershipPlan(st) {
   if (!st || isMembershipChildService(st)) return false;
-  if (isTierMigrationChildRow(st)) return false;
-  if (allServiceTypes.length > 0 && isIncludedInAnotherMembership(st, allServiceTypes)) return false;
   return st.is_membership === true;
 }
 
-export function isMdPurchasablePlan(st, allServiceTypes = []) {
-  return isMembershipPlan(st, allServiceTypes);
+export function isMdPurchasablePlan(st) {
+  return isMembershipPlan(st);
 }
 
 /** GFE is only configured on individual services, never membership plans. */
