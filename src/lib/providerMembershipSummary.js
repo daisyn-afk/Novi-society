@@ -3,7 +3,7 @@ import { isMdPurchasablePlan } from "./serviceTypeMembershipModel";
 /** Match md_subscription rows to a provider user record (auth id, users.id, or email). */
 export function providerLookupKeys(provider) {
   const keys = new Set();
-  for (const raw of [provider?.auth_user_id, provider?.id, provider?.provider_id]) {
+  for (const raw of [provider?.auth_user_id, provider?.id, provider?.provider_id, provider?.users_id]) {
     const v = String(raw || "").trim();
     if (v) keys.add(v.toLowerCase());
   }

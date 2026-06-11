@@ -7,6 +7,7 @@ import {
   listUsers,
   updateUser
 } from "./repository.js";
+import { getAdminProviderDetail } from "./providerDetail.js";
 import {
   hasAdminAccess,
   hasStaffModuleAccess,
@@ -252,6 +253,22 @@ usersRouter.post("/:id/send-password-reset", async (req, res, next) => {
         email: user.email,
         password_reset_email_sent_at: new Date().toISOString()
       });
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+usersRouter.get("/:id/provider-detail", async (req, res, next) => {
+  try {
+    await requireUsersRouteAccess(req, res, async () => {
+      const me = req.me || {};
+      const detail = await getAdminProviderDetail(req.params.id);
+      if (!detail) return res.status(404).json({ error: "User not found." });
+      if (isProviderOnlyStaff(me) && String(detail.user?.role || "").toLowerCase() !== "provider") {
+        return res.status(403).json({ error: "Forbidden." });
+      }
+      return res.json(detail);
     });
   } catch (error) {
     return next(error);
