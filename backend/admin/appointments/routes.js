@@ -31,6 +31,7 @@ import {
 import { migratePreBookingMessagesToAppointment } from "../appointment-messages/migratePreBookingThread.js";
 import { isAppointmentInPast } from "../lib/appointmentScheduling.js";
 import {
+  APPOINTMENT_QUALIPHY_EXAM_IDS_SQL,
   APPOINTMENT_REQUIRES_GFE_SQL,
   APPOINTMENT_SERVICE_TYPE_JOINS,
   resolveTreatmentServiceType,
@@ -59,6 +60,7 @@ const APPOINTMENTS_SELECT = `select a.*,
          case when coalesce(st.is_membership, false) = false then st.category else null end,
          st_svc.category
        ) as service_type_category,
+       ${APPOINTMENT_QUALIPHY_EXAM_IDS_SQL} as qualiphy_exam_ids,
        pu.email as patient_user_email,
        pu.full_name as patient_user_name`;
 

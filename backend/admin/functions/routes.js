@@ -90,6 +90,10 @@ import {
   isGfeSimulationEnabled,
 } from "../qualiphy/gfeSimulation.js";
 import {
+  normalizeQualiphyExamIds,
+  resolveQualiphyExamIdForAppointment,
+} from "../gfe/qualiphyExamId.js";
+import {
   runCheckExpirations,
   runComplianceChecks,
 } from "../compliance-logs/expirationService.js";
@@ -166,13 +170,6 @@ async function getCoursePromoColumnsSet() {
 async function hasCoursePromoColumn(name) {
   const cols = await getCoursePromoColumnsSet();
   return cols.has(String(name || "").toLowerCase());
-}
-
-function normalizeExamIds(value) {
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((x) => String(x ?? "").trim())
-    .filter(Boolean);
 }
 
 function splitNameParts(fullName) {
@@ -314,7 +311,7 @@ async function resolveQualiphyExamIdForCourse({ courseId, treatmentType }) {
   const withExamIds = serviceRows
     .map((row) => ({
       ...row,
-      examIds: normalizeExamIds(row.qualiphy_exam_ids)
+      examIds: normalizeQualiphyExamIds(row.qualiphy_exam_ids)
     }))
     .filter((row) => row.examIds.length > 0);
   if (withExamIds.length === 0) return null;
@@ -328,35 +325,6 @@ async function resolveQualiphyExamIdForCourse({ courseId, treatmentType }) {
     if (preferred) return preferred.examIds[0];
   }
   return candidates[0].examIds[0];
-}
-
-async function resolveQualiphyExamIdForAppointment({ serviceTypeId, serviceName, qualiphyExamIds }) {
-  const fromJoin = normalizeExamIds(qualiphyExamIds);
-  if (fromJoin.length > 0) return fromJoin[0];
-  const stId = String(serviceTypeId || "").trim();
-  const treatmentSvc = await resolveTreatmentServiceType(query, {
-    serviceName,
-    serviceTypeId: stId,
-  });
-  if (treatmentSvc) {
-    const ids = normalizeExamIds(treatmentSvc.qualiphy_exam_ids);
-    if (ids.length > 0) return ids[0];
-  }
-  const service = String(serviceName || "").trim();
-  if (service) {
-    const { rows } = await query(
-      `select qualiphy_exam_ids
-         from public.service_type
-        where lower(trim(name)) = lower(trim($1))
-          and coalesce(is_membership, false) = false
-          and requires_gfe = true
-        limit 1`,
-      [service]
-    );
-    const ids = normalizeExamIds(rows[0]?.qualiphy_exam_ids);
-    if (ids.length > 0) return ids[0];
-  }
-  return null;
 }
 
 async function resolveTeleStateForAppointment({ appointment, patientState }) {
@@ -2557,6 +2525,10 @@ functionsRouter.post("/sendQualiphyGFE", async (req, res, next) => {
     if (invite.patientExamId && (await hasAppointmentColumn("qualiphy_patient_exam_id"))) {
       updateParams.push(invite.patientExamId);
       setParts.push(`qualiphy_patient_exam_id = $${updateParams.length}`);
+    }
+    if (qualiphyExamId && (await hasAppointmentColumn("qualiphy_exam_id"))) {
+      updateParams.push(String(qualiphyExamId));
+      setParts.push(`qualiphy_exam_id = $${updateParams.length}`);
     }
     await query(
       `update public.appointments set ${setParts.join(", ")} where id = $1`,
