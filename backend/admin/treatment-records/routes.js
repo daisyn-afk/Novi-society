@@ -28,6 +28,8 @@ function isMedicalDirectorRole(role) {
 const MD_REVIEW_STATUSES = new Set(["approved", "flagged", "changes_requested"]);
 const PROVIDER_SUBMIT_FROM = new Set(["flagged", "changes_requested", "draft"]);
 const PROVIDER_RESUBMIT_NOTIFY_MD = new Set(["flagged", "changes_requested"]);
+/** After MD approval, providers may edit clinical/invoice fields without re-submitting for review. */
+const PROVIDER_INVOICE_EDIT_FROM = new Set(["submitted", "approved"]);
 
 function mapRow(row) {
   return {
@@ -136,6 +138,7 @@ treatmentRecordsRouter.get("/", async (req, res, next) => {
     const params = [];
     const providerId = String(req.query.provider_id || "").trim();
     const patientId = String(req.query.patient_id || "").trim();
+    const appointmentId = String(req.query.appointment_id || "").trim();
     const status = String(req.query.status || "").trim();
 
     if (hasAdminAccess(me.role)) {
@@ -174,6 +177,11 @@ treatmentRecordsRouter.get("/", async (req, res, next) => {
       where.push(`status = $${params.length}`);
     }
 
+    if (appointmentId) {
+      params.push(appointmentId);
+      where.push(`appointment_id = $${params.length}`);
+    }
+
     const limit = Math.min(Math.max(Number(req.query.limit) || 200, 1), 500);
     params.push(limit);
     const limitIdx = params.length;
@@ -206,6 +214,18 @@ treatmentRecordsRouter.post("/", async (req, res, next) => {
       await assertBookingDepositPaidForAppointment(p.appointment_id);
       if (String(p.status || "").trim() === "submitted") {
         await assertGfePrerequisiteForAppointment(p.appointment_id);
+      }
+    }
+    if (p.appointment_id) {
+      const { rows: dupRows } = await query(
+        `select id from public.treatment_records where appointment_id = $1 limit 1`,
+        [p.appointment_id]
+      );
+      if (dupRows[0]) {
+        return res.status(409).json({
+          error: "A treatment record already exists for this appointment. Edit the existing record instead.",
+          existing_id: dupRows[0].id,
+        });
       }
     }
     const { rows } = await query(
@@ -324,10 +344,12 @@ treatmentRecordsRouter.patch("/:id", async (req, res, next) => {
         if (!allowedStatuses.has(nextStatus)) {
           return res.status(400).json({ error: "Providers may only save draft or submitted records." });
         }
-        if (nextStatus === "submitted" && !PROVIDER_SUBMIT_FROM.has(prevStatus) && prevStatus !== "submitted") {
+        if (nextStatus === "submitted" && PROVIDER_INVOICE_EDIT_FROM.has(prevStatus)) {
+          // Invoice resend / clinical edit on an already-submitted or MD-approved record.
+          delete body.status;
+        } else if (nextStatus === "submitted" && !PROVIDER_SUBMIT_FROM.has(prevStatus) && prevStatus !== "submitted") {
           return res.status(400).json({ error: "This record cannot be submitted in its current state." });
-        }
-        if (nextStatus === "submitted" && PROVIDER_SUBMIT_FROM.has(prevStatus)) {
+        } else if (nextStatus === "submitted" && PROVIDER_SUBMIT_FROM.has(prevStatus)) {
           body.md_reviewed_by = null;
           body.md_reviewed_at = null;
         }

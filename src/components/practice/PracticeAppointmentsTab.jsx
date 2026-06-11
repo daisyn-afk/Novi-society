@@ -41,6 +41,17 @@ import {
 import { useToast } from "@/components/ui/use-toast";
 import { useSendAppointmentGfe } from "@/hooks/useSendAppointmentGfe";
 
+function findTreatmentRecordForAppointment(records, appt) {
+  if (!appt?.id) return null;
+  const byAppointment = (records || []).find(
+    (r) => String(r?.appointment_id || "") === String(appt.id)
+  );
+  if (byAppointment) return byAppointment;
+  const linkedId = String(appt.treatment_record_id || "").trim();
+  if (!linkedId) return null;
+  return (records || []).find((r) => String(r?.id || "") === linkedId) || null;
+}
+
 const STATUS = {
   requested:  { bg: "rgba(251,191,36,0.18)", text: "#d97706", border: "rgba(251,191,36,0.45)", label: "Pending", dot: "#fbbf24" },
   confirmed:  { bg: "rgba(96,165,250,0.18)",  text: "#3b82f6", border: "rgba(96,165,250,0.45)", label: "Confirmed", dot: "#60a5fa" },
@@ -165,7 +176,7 @@ function ApptDetail({
   confirmActionLabel = "Confirm Appointment",
 }) {
   const sc = STATUS[appt.status] || STATUS.confirmed;
-  const hasRecord = treatmentRecords.find(r => r.appointment_id === appt.id);
+  const hasRecord = findTreatmentRecordForAppointment(treatmentRecords, appt);
   const serviceLabel = appointmentServiceLabel(appt);
   const gfeStatus = appointmentGfeDisplayStatus(appt);
   const gfeLink = appointmentGfeLink(appt);
@@ -1017,7 +1028,7 @@ export default function PracticeAppointmentsTab({
               noShowPending={markNoShow.isPending}
               onSendGFE={() => sendGFE(selectedAppt)}
               onDoc={() => {
-                const existing = treatmentRecords.find(r => r.appointment_id === selectedAppt.id);
+                const existing = findTreatmentRecordForAppointment(treatmentRecords, selectedAppt);
                 if (appointmentDepositBlocksProvider(selectedAppt) && !existing) {
                   toast({
                     title: "Booking deposit required",
@@ -1116,7 +1127,7 @@ export default function PracticeAppointmentsTab({
               style={{ background: "#FA6F30", color: "#fff" }}
               onClick={() => {
                 const appt = completePrompt.appt;
-                const existing = treatmentRecords.find((r) => r.appointment_id === appt?.id);
+                const existing = findTreatmentRecordForAppointment(treatmentRecords, appt);
                 setCompletePrompt({ open: false, appt: null });
                 setDocDialog({ open: true, appt, existing: existing || null });
               }}
