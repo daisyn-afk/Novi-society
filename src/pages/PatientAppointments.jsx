@@ -273,12 +273,16 @@ export default function PatientAppointments() {
     },
   });
 
+  const pastStatuses = ["completed", "cancelled", "no_show"];
+  const upcomingStatuses = ["requested", "confirmed", "awaiting_payment", "awaiting_consent"];
+  const past = appointments.filter((a) => pastStatuses.includes(a.status));
+  // Completed visits with an outstanding treatment invoice belong in Past only (pay there).
   const upcoming = appointments.filter(
     (a) =>
-      ["requested", "confirmed", "awaiting_payment", "awaiting_consent"].includes(a.status) ||
-      String(a.treatment_payment_status || "").toLowerCase() === "awaiting_payment"
+      !pastStatuses.includes(a.status) &&
+      (upcomingStatuses.includes(a.status) ||
+        String(a.treatment_payment_status || "").toLowerCase() === "awaiting_payment")
   );
-  const past = appointments.filter(a => ["completed", "cancelled", "no_show"].includes(a.status));
 
   const hasReviewed = (apptId) => reviews.some(r => r.appointment_id === apptId);
   const getRecord = (apptId) => records.find(r => r.appointment_id === apptId);
