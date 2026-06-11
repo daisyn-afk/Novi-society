@@ -246,13 +246,38 @@ async function getProviderProfileByUserId(userId) {
   const client = await pool.connect();
   try {
     const { rows } = await client.query(
-      `select user_id, dob, address_line1, address_line2, city, state, zip, onboarding_completed, metadata, created_at, updated_at
-       from public.provider_profiles
-       where user_id = $1
+      `select u.id as user_id,
+              coalesce(p.dob, ob.dob) as dob,
+              coalesce(nullif(trim(p.address_line1), ''), nullif(trim(ob.address_line1), '')) as address_line1,
+              coalesce(nullif(trim(p.address_line2), ''), nullif(trim(ob.address_line2), '')) as address_line2,
+              coalesce(nullif(trim(p.city), ''), nullif(trim(ob.city), '')) as city,
+              coalesce(nullif(trim(p.state), ''), nullif(trim(ob.state), '')) as state,
+              coalesce(nullif(trim(p.zip), ''), nullif(trim(ob.zip), '')) as zip,
+              p.onboarding_completed,
+              p.metadata,
+              coalesce(p.created_at, ob.created_at) as created_at,
+              coalesce(p.updated_at, ob.updated_at) as updated_at
+       from public.users u
+       left join public.provider_profiles p on p.user_id = u.id
+       left join public.provider_basic_onboarding ob on ob.auth_user_id = u.auth_user_id
+       where u.id = $1
        limit 1`,
       [userId]
     );
-    return rows[0] ?? null;
+    const row = rows[0];
+    if (!row) return null;
+    if (
+      !row.address_line1 &&
+      !row.address_line2 &&
+      !row.city &&
+      !row.state &&
+      !row.zip &&
+      !row.dob &&
+      !row.metadata
+    ) {
+      return null;
+    }
+    return row;
   } finally {
     client.release();
   }

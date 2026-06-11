@@ -34,7 +34,18 @@ export default function MdAgreementDocument({
   providerSignatureUrl = "",
   doctorSignatureUrl = DOCTOR_SIGNATURE_SRC,
 }) {
-  const values = useMemo(() => buildMdAgreementValues(context || {}), [context]);
+  const values = useMemo(
+    () =>
+      buildMdAgreementValues({
+        providerName: context?.providerName,
+        practiceName: context?.practiceName,
+        state: context?.state,
+        address: context?.address,
+        serviceName: context?.serviceName,
+        effectiveDate: context?.effectiveDate,
+      }),
+    [context]
+  );
   const blocks = useMemo(() => buildMdAgreementBlocks(values), [values]);
   const sig = useMemo(() => buildMdSignatureBlocks(values), [values]);
 

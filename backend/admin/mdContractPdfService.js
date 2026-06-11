@@ -69,10 +69,15 @@ export async function getProviderContractFields(providerId) {
   try {
     const { rows } = await query(
       `select u.full_name,
-              p.address_line1, p.address_line2, p.city, p.state, p.zip,
+              coalesce(nullif(trim(p.address_line1), ''), nullif(trim(ob.address_line1), '')) as address_line1,
+              coalesce(nullif(trim(p.address_line2), ''), nullif(trim(ob.address_line2), '')) as address_line2,
+              coalesce(nullif(trim(p.city), ''), nullif(trim(ob.city), '')) as city,
+              coalesce(nullif(trim(p.state), ''), nullif(trim(ob.state), '')) as state,
+              coalesce(nullif(trim(p.zip), ''), nullif(trim(ob.zip), '')) as zip,
               p.metadata
          from public.users u
          left join public.provider_profiles p on p.user_id = u.id
+         left join public.provider_basic_onboarding ob on ob.auth_user_id = u.auth_user_id
         where u.auth_user_id = $1 or u.id::text = $1
         limit 1`,
       [id]
@@ -386,6 +391,7 @@ export async function generateAndUploadSignedMdContract({
   providerName,
   signedAtIso,
   signatureDataUrl,
+  profileSnapshot = null,
   // legacy args (contractPdfUrl / agreementText / providerFields) accepted but unused
   providerFields = null,
 }) {
@@ -405,7 +411,10 @@ export async function generateAndUploadSignedMdContract({
         state: String(providerFields.state || "").trim(),
         address: composeProviderAddress(providerFields),
       }
-    : await getProviderAgreementContext(providerId, { providerNameOverride: providerName });
+    : await getProviderAgreementContext(providerId, {
+        providerNameOverride: providerName,
+        profileSnapshot,
+      });
 
   const pdfBytes = await renderAgreementPdf({
     context,
@@ -467,10 +476,14 @@ export async function buildFilledContractPreviewBytes({
   providerId,
   providerName = "",
   serviceTypeName = "",
+  profileSnapshot = null,
 }) {
   const resolvedName =
     serviceTypeName || (serviceTypeId ? (await getServiceTypeContractInfo(serviceTypeId)).name : "");
-  const context = await getProviderAgreementContext(providerId, { providerNameOverride: providerName });
+  const context = await getProviderAgreementContext(providerId, {
+    providerNameOverride: providerName,
+    profileSnapshot,
+  });
   return renderAgreementPdf({
     context,
     serviceTypeName: resolvedName,

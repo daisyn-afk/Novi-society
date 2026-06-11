@@ -30,6 +30,7 @@ import {
   getMdContractUrl,
   getMdContractDisplayName,
   getSignedMdContractFileName,
+  getMdContractPreviewFileName,
   findServiceTypeForSubscription,
   getProtocolDocumentsForSubscription,
   resolveProtocolDocumentsFromServiceType,
@@ -1209,11 +1210,11 @@ export default function ProviderCredentialsCoverage() {
     };
   }, [activateDialog, step, selectedServiceTypeId, me?.id]);
 
-  // Generate and open the full agreement as a downloadable PDF on demand.
+  // Generate and download the full agreement PDF with a readable filename.
   const openFullAgreementPdf = async () => {
     if (openingFullPdf) return;
     setOpeningFullPdf(true);
-    const win = window.open("", "_blank");
+    const previewWin = window.open("", "_blank");
     try {
       const res = await base44.functions.invoke("previewMdBoardContract", {
         service_type_id: selectedServiceTypeId,
@@ -1226,14 +1227,41 @@ export default function ProviderCredentialsCoverage() {
       for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
       const blob = new Blob([bytes], { type: "application/pdf" });
       const url = URL.createObjectURL(blob);
-      if (win) win.location.href = url;
-      else window.open(url, "_blank");
+      const filename = getMdContractPreviewFileName(selectedService, me?.full_name);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      anchor.rel = "noopener";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      if (previewWin) previewWin.location.href = url;
+      else window.open(url, "_blank", "noopener,noreferrer");
       setTimeout(() => URL.revokeObjectURL(url), 60000);
     } catch {
-      if (win) win.close();
+      if (previewWin) previewWin.close();
     } finally {
       setOpeningFullPdf(false);
     }
+  };
+
+  const downloadSignedMdContract = async (sub, contractMeta) => {
+    const filename = getSignedMdContractFileName(contractMeta, sub.signed_by_name);
+    let url = isUsableDocumentUrl(sub.signed_contract_url) ? sub.signed_contract_url : null;
+    try {
+      const refreshed = await adminApiRequest(`/admin/md-subscriptions/${sub.id}/signed-contract`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      if (isUsableDocumentUrl(refreshed?.signed_contract_url)) {
+        url = refreshed.signed_contract_url;
+        qc.invalidateQueries({ queryKey: ["my-md-subscriptions"] });
+      }
+    } catch {
+      // Fall back to the stored URL when refresh is unavailable.
+    }
+    if (!url) return;
+    await downloadCertificateDocument(url, filename);
   };
 
   const openCancelDialog = (sub) => {
@@ -2004,17 +2032,15 @@ export default function ProviderCredentialsCoverage() {
                                 MD Contract
                               </p>
                               {signedPdfUrl ? (
-                                <a
-                                  href={signedPdfUrl}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  download={getSignedMdContractFileName(contractMeta, sub.signed_by_name)}
+                                <button
+                                  type="button"
+                                  onClick={() => downloadSignedMdContract(sub, contractMeta)}
                                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all hover:brightness-95"
                                   style={{ background: "rgba(123,142,200,0.12)", color: "#7B8EC8", border: "1px solid rgba(123,142,200,0.25)" }}
                                 >
                                   <FileText className="w-3 h-3" />
                                   {contractLabel} — signed by {sub.signed_by_name || "you"}
-                                </a>
+                                </button>
                               ) : null}
                             </div>
                           )}
