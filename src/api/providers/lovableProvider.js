@@ -1025,8 +1025,11 @@ export function createLovableProviderClient() {
             : "";
         const stampedPayload = {
           ...(payload || {}),
-          ...(browserOrigin && !payload?.frontend_origin
-            ? { frontend_origin: browserOrigin }
+          ...(browserOrigin
+            ? {
+                frontend_origin: payload?.frontend_origin || browserOrigin,
+                checkout_return_base_url: payload?.checkout_return_base_url || browserOrigin,
+              }
             : {}),
           ...(isPaymentFn ? { client_timestamp: clientTimestamp } : {}),
         };

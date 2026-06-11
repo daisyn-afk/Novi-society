@@ -84,7 +84,7 @@ import {
   createAppointmentDepositCheckout,
   processAppointmentCheckoutCompletedSession,
 } from "../appointments/paymentService.js";
-import { resolveAppBaseUrl } from "../lib/frontendBaseUrl.js";
+import { resolveCheckoutReturnBaseUrl } from "../lib/frontendBaseUrl.js";
 
 export { processAppointmentCheckoutCompletedSession };
 
@@ -1152,7 +1152,7 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
       signedByName: me.full_name,
     });
 
-    const base = resolveAppBaseUrl(req).replace(/\/$/, "");
+    const base = resolveCheckoutReturnBaseUrl(req).replace(/\/$/, "");
     const successParams = new URLSearchParams({
       md_payment_status: "success",
       service_type_id: serviceTypeId,
@@ -1167,7 +1167,9 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
         base,
         success_url: successUrl,
         frontend_origin: body.frontend_origin || null,
+        checkout_return_base_url: body.checkout_return_base_url || null,
         vercel_env: process.env.VERCEL_ENV || null,
+        vercel_url: process.env.VERCEL_URL || null,
         app_base_url: process.env.APP_BASE_URL || null,
       })
     );
@@ -1237,6 +1239,8 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
     return res.json({
       success: true,
       url,
+      return_base_url: base,
+      stripe_success_url: successUrl,
       signed_contract_url: signedContractUrl || pending.signed_contract_url || null,
       md_subscription_id: pending.id,
       service_type_id: serviceTypeId,
