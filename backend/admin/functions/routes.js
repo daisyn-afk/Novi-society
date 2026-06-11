@@ -77,6 +77,19 @@ import { sendAppointmentGfeInviteEmail, notifyPatientGfeInvite } from "../patien
 import { handleQualiphyExamWebhook, resolveQualiphyWebhookUrl } from "../qualiphy/webhookHandler.js";
 import { buildAppointmentGfeRedirectUrls } from "../qualiphy/config.js";
 import {
+  applyQualiphyTestPatientOverrides,
+  getQualiphyApiKey,
+  getQualiphyExamInviteApiUrl,
+  getQualiphyRuntimeSummary,
+  isQualiphyTestMode,
+  resolveQualiphyInviteStates,
+} from "../qualiphy/inviteConfig.js";
+import {
+  buildSimulatedQualiphyInvite,
+  getGfeSimulationRuntimeSummary,
+  isGfeSimulationEnabled,
+} from "../qualiphy/gfeSimulation.js";
+import {
   runCheckExpirations,
   runComplianceChecks,
 } from "../compliance-logs/expirationService.js";
@@ -84,7 +97,7 @@ import {
   createAppointmentDepositCheckout,
   processAppointmentCheckoutCompletedSession,
 } from "../appointments/paymentService.js";
-import { resolveAppBaseUrl } from "../lib/frontendBaseUrl.js";
+import { resolveCheckoutReturnBaseUrl } from "../lib/frontendBaseUrl.js";
 
 export { processAppointmentCheckoutCompletedSession };
 
@@ -93,7 +106,6 @@ let certificationColumnsPromise = null;
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || "";
 const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET || "";
 const appBaseUrl = process.env.APP_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || "";
-const QUALIPHY_API_URL = "https://api.qualiphy.me/api/exam_invite";
 const stripe = stripeSecretKey ? new Stripe(stripeSecretKey) : null;
 let preOrderColumnsPromise = null;
 let coursePromoColumnsPromise = null;
@@ -393,7 +405,7 @@ function parseQualiphyInviteResponse(invitePayload) {
 }
 
 async function requestQualiphyExamInvite(inviteFields, qualiphyRedirectUrls = null) {
-  const qualiphyApiKey = process.env.QUALIPHY_API_KEY || "";
+  const qualiphyApiKey = getQualiphyApiKey();
   const qualiphyClinicId = process.env.QUALIPHY_CLINIC_ID || "";
   if (!qualiphyApiKey) {
     const err = new Error("QUALIPHY_API_KEY is not configured.");
@@ -402,10 +414,18 @@ async function requestQualiphyExamInvite(inviteFields, qualiphyRedirectUrls = nu
   }
 
   const qualiphyWebhookUrl = resolveQualiphyWebhookUrl();
-  const invitePayloadBody = {
-    api_key: qualiphyApiKey,
+  const invitePayloadBody = applyQualiphyTestPatientOverrides({
     ...inviteFields,
-  };
+    api_key: qualiphyApiKey,
+  });
+  if (isQualiphyTestMode()) {
+    // eslint-disable-next-line no-console
+    console.info("[qualiphy] exam_invite test mode", {
+      ...getQualiphyRuntimeSummary(),
+      state: invitePayloadBody.state,
+      tele_state: invitePayloadBody.tele_state,
+    });
+  }
   if (qualiphyRedirectUrls && typeof qualiphyRedirectUrls === "object") {
     for (const key of ["redirect_approve", "redirect_reject", "redirect_na", "redirect_missed"]) {
       const value = String(qualiphyRedirectUrls[key] || "").trim();
@@ -424,7 +444,7 @@ async function requestQualiphyExamInvite(inviteFields, qualiphyRedirectUrls = nu
   if (qualiphyClinicId) invitePayloadBody.clinic_id = qualiphyClinicId;
 
   const sendInvite = async (payload) => {
-    const response = await fetch(QUALIPHY_API_URL, {
+    const response = await fetch(getQualiphyExamInviteApiUrl(), {
       method: "POST",
       headers: {
         Authorization: `Bearer ${qualiphyApiKey}`,
@@ -1152,7 +1172,7 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
       signedByName: me.full_name,
     });
 
-    const base = resolveAppBaseUrl(req).replace(/\/$/, "");
+    const base = resolveCheckoutReturnBaseUrl(req).replace(/\/$/, "");
     const successParams = new URLSearchParams({
       md_payment_status: "success",
       service_type_id: serviceTypeId,
@@ -1161,6 +1181,18 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
     if (enrollmentId) successParams.set("enrollment_id", enrollmentId);
     const successUrl = `${base}/ProviderCredentialsCoverage?${successParams.toString()}`;
     const cancelUrl = `${base}/ProviderCredentialsCoverage?md_payment_status=cancel&service_type_id=${encodeURIComponent(serviceTypeId)}`;
+    console.info(
+      "[md-checkout] stripe return URLs",
+      JSON.stringify({
+        base,
+        success_url: successUrl,
+        frontend_origin: body.frontend_origin || null,
+        checkout_return_base_url: body.checkout_return_base_url || null,
+        vercel_env: process.env.VERCEL_ENV || null,
+        vercel_url: process.env.VERCEL_URL || null,
+        app_base_url: process.env.APP_BASE_URL || null,
+      })
+    );
 
     const checkoutSession = await stripe.checkout.sessions.create({
       mode: "subscription",
@@ -1227,6 +1259,8 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
     return res.json({
       success: true,
       url,
+      return_base_url: base,
+      stripe_success_url: successUrl,
       signed_contract_url: signedContractUrl || pending.signed_contract_url || null,
       md_subscription_id: pending.id,
       service_type_id: serviceTypeId,
@@ -2216,9 +2250,7 @@ functionsRouter.post("/sendModelGFE", requireAdminOrStaffModelSignupsOrPaidModel
     const { customer_name, customer_email, phone, pre_order_id, course_id, treatment_type, date_of_birth, send_email } =
       req.body || {};
     if (!customer_email) return res.status(400).json({ error: "customer_email is required" });
-    const qualiphyApiKey = process.env.QUALIPHY_API_KEY || "";
-    const qualiphyClinicId = process.env.QUALIPHY_CLINIC_ID || "";
-    if (!qualiphyApiKey) {
+    if (!getQualiphyApiKey()) {
       return res.status(500).json({ error: "QUALIPHY_API_KEY is not configured." });
     }
     const qualiphyExamId = await resolveQualiphyExamIdForCourse({
@@ -2264,110 +2296,39 @@ functionsRouter.post("/sendModelGFE", requireAdminOrStaffModelSignupsOrPaidModel
       });
     }
 
-    // Qualiphy requires `tele_state` (two-letter uppercase US state) to resolve a clinic for the exam invite.
     const teleStateResolved = await resolveTeleStateForCourse({ courseId: course_id });
-    const tele_state = teleStateResolved || "TX";
+    const { state, tele_state } = resolveQualiphyInviteStates({ stateAbbr: teleStateResolved });
     const digitsPhone = String(phone || "").replace(/\D/g, "");
-    if (digitsPhone.length < 10) {
+    if (!isQualiphyTestMode() && digitsPhone.length < 10) {
       return res.status(400).json({ error: "A valid phone number is required to generate GFE invite." });
     }
-    const normalizedPhone = digitsPhone.length === 10 ? `+1${digitsPhone}` : `+${digitsPhone}`;
+    const normalizedPhone =
+      digitsPhone.length === 10 ? `+1${digitsPhone}` : digitsPhone ? `+${digitsPhone}` : "+15555550100";
     const { firstName, lastName } = splitNameParts(customer_name);
-    if (!firstName || !lastName) {
+    if (!isQualiphyTestMode() && (!firstName || !lastName)) {
       return res.status(400).json({ error: "Customer first and last name are required to generate GFE invite." });
     }
-    const qualiphyWebhookUrl = resolveQualiphyWebhookUrl();
-    const invitePayloadBody = {
-      api_key: qualiphyApiKey,
-      exams: [Number(qualiphyExamId)],
-      first_name: firstName,
-      last_name: lastName,
-      email: customer_email,
-      dob,
-      phone_number: normalizedPhone,
-      tele_state,
-      additional_data: JSON.stringify({ source: "novi_model_signup", pre_order_id: pre_order_id || null })
-    };
-    if (qualiphyWebhookUrl) {
-      invitePayloadBody.webhook_url = qualiphyWebhookUrl;
-    } else {
-      // eslint-disable-next-line no-console
-      console.warn("[sendModelGFE] No Qualiphy webhook URL configured; GFE completion will not auto-update.");
-    }
-    if (qualiphyClinicId) {
-      invitePayloadBody.clinic_id = qualiphyClinicId;
-    }
-    const sendInvite = async (payload) => {
-      const response = await fetch(QUALIPHY_API_URL, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${qualiphyApiKey}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(payload)
-      });
-      const responsePayload = await response.json().catch(() => ({}));
-      return { response, responsePayload };
-    };
 
-    const summarizeInvite = (payload) => ({
-      clinic_id_present: Boolean(payload?.clinic_id),
-      has_dob: Boolean(payload?.dob),
-      exams: Array.isArray(payload?.exams) ? payload.exams : [],
-      tele_state: payload?.tele_state ?? null
-    });
+    let invite;
+    try {
+      invite = await requestQualiphyExamInvite({
+        exams: [Number(qualiphyExamId)],
+        first_name: firstName || "Test",
+        last_name: lastName || "Approve",
+        email: customer_email,
+        dob,
+        phone_number: normalizedPhone,
+        state,
+        tele_state,
+        additional_data: JSON.stringify({ source: "novi_model_signup", pre_order_id: pre_order_id || null }),
+      });
+    } catch (inviteError) {
+      return res.status(inviteError?.statusCode || 502).json({
+        error: inviteError?.message || "Qualiphy invite request failed.",
+      });
+    }
 
-    let { response: inviteRes, responsePayload: invitePayload } = await sendInvite(invitePayloadBody);
-    let upstreamHttpCode = Number(invitePayload?.http_code || 0);
-    let upstreamFailed = !inviteRes.ok || (Number.isFinite(upstreamHttpCode) && upstreamHttpCode >= 400);
-
-    const upstreamErrorTextInitial = String(
-      invitePayload?.error_message || invitePayload?.message || invitePayload?.error || ""
-    ).toLowerCase();
-    const looksLikeClinicNotFound =
-      upstreamErrorTextInitial.includes("clinic") && upstreamErrorTextInitial.includes("not found");
-
-    const shouldRetryWithoutClinic = Boolean(invitePayloadBody?.clinic_id) && (upstreamFailed || looksLikeClinicNotFound);
-    let retriedWithoutClinic = false;
-    if (shouldRetryWithoutClinic) {
-      retriedWithoutClinic = true;
-      const fallbackPayload = { ...invitePayloadBody };
-      delete fallbackPayload.clinic_id;
-      ({ response: inviteRes, responsePayload: invitePayload } = await sendInvite(fallbackPayload));
-      upstreamHttpCode = Number(invitePayload?.http_code || 0);
-      upstreamFailed = !inviteRes.ok || (Number.isFinite(upstreamHttpCode) && upstreamHttpCode >= 400);
-    }
-    if (upstreamFailed) {
-      const upstreamError = invitePayload?.error_message || invitePayload?.message || invitePayload?.error || "Qualiphy invite request failed.";
-      // eslint-disable-next-line no-console
-      console.error("[sendModelGFE] Qualiphy invite failed", {
-        upstream_status: inviteRes.status,
-        upstream_error: upstreamError,
-        retried_without_clinic: retriedWithoutClinic,
-        sent_payload_summary: summarizeInvite(invitePayloadBody),
-        upstream_payload: invitePayload
-      });
-      return res.status(502).json({
-        error: upstreamError,
-        upstream_status: inviteRes.status,
-        retried_without_clinic: retriedWithoutClinic
-      });
-    }
-    const { meetingUrl, meetingUuid, patientExamId } = parseQualiphyInviteResponse(invitePayload);
-    if (!meetingUrl) {
-      return res.status(502).json({
-        error: "Qualiphy did not return a GFE link.",
-        upstream_status: inviteRes.status,
-        upstream_payload: invitePayload
-      });
-    }
-    if (meetingUrl.includes("/ModelBookingLookup")) {
-      return res.status(502).json({
-        error: "Invalid GFE link returned. Qualiphy did not return an exam invite URL.",
-        upstream_status: inviteRes.status,
-        upstream_payload: invitePayload
-      });
-    }
+    const { meetingUrl, meetingUuid, patientExamId } = invite;
     const resolvedPreOrderId = pre_order_id || req.modelPreOrder?.id || null;
     if (resolvedPreOrderId) {
       const hasGfeStatus = await hasPreOrderColumn("gfe_status");
@@ -2414,7 +2375,12 @@ functionsRouter.post("/sendModelGFE", requireAdminOrStaffModelSignupsOrPaidModel
       email_sent = true;
     }
 
-    return res.json({ success: true, meeting_url: meetingUrl, email_sent });
+    return res.json({
+      success: true,
+      meeting_url: meetingUrl,
+      email_sent,
+      ...getQualiphyRuntimeSummary(),
+    });
   } catch (error) {
     return next(error);
   }
@@ -2521,43 +2487,59 @@ functionsRouter.post("/sendQualiphyGFE", async (req, res, next) => {
     let patientPhone = String(appt.patient_phone || "").trim();
     let patientState = appt.patient_state;
 
-    if (!dob || patientPhone.replace(/\D/g, "").length < 10) {
-      const contact = await loadPatientGfeContact(appt.patient_id, patientEmail);
-      if (!dob) dob = contact.dob;
-      if (!patientPhone && contact.phone) patientPhone = contact.phone;
-      if (!patientState && contact.state) patientState = contact.state;
-    }
+    const contact = await loadPatientGfeContact(appt.patient_id, patientEmail);
+    if (!dob) dob = contact.dob;
+    if (!patientPhone && contact.phone) patientPhone = contact.phone;
+    if (!patientState && contact.state) patientState = contact.state;
 
-    if (!dob) {
-      return res.status(400).json({
-        success: false,
-        error: "Patient date of birth is required. Ask the patient to complete their profile before sending GFE.",
-      });
+    if (!isQualiphyTestMode()) {
+      if (!dob) {
+        return res.status(400).json({
+          success: false,
+          error: "Patient date of birth is required. Ask the patient to complete their profile before sending GFE.",
+        });
+      }
+
+      const digitsPhone = String(patientPhone || "").replace(/\D/g, "");
+      if (digitsPhone.length < 10) {
+        return res.status(400).json({
+          success: false,
+          error: "Patient phone number is required. Ask the patient to complete their profile before sending GFE.",
+        });
+      }
     }
 
     const digitsPhone = String(patientPhone || "").replace(/\D/g, "");
-    if (digitsPhone.length < 10) {
+    const normalizedPhone =
+      digitsPhone.length === 10 ? `+1${digitsPhone}` : digitsPhone ? `+${digitsPhone}` : "+15555550100";
+
+    const resolvedStateAbbr = await resolveTeleStateForAppointment({ appointment: appt, patientState });
+    if (!isQualiphyTestMode() && !resolvedStateAbbr) {
       return res.status(400).json({
         success: false,
-        error: "Patient phone number is required. Ask the patient to complete their profile before sending GFE.",
+        error:
+          "Patient state is required. Ask the patient to add their US state to their profile before sending GFE.",
       });
     }
-    const normalizedPhone = digitsPhone.length === 10 ? `+1${digitsPhone}` : `+${digitsPhone}`;
-    const tele_state = (await resolveTeleStateForAppointment({ appointment: appt, patientState })) || "TX";
 
-    const invite = await requestQualiphyExamInvite(
-      {
-        exams: [Number(qualiphyExamId)],
-        first_name: firstName,
-        last_name: lastName,
-        email: patientEmail,
-        dob,
-        phone_number: normalizedPhone,
-        tele_state,
-        additional_data: JSON.stringify({ source: "novi_appointment", appointment_id: appt.id }),
-      },
-      buildAppointmentGfeRedirectUrls(appt.id)
-    );
+    const { state, tele_state } = resolveQualiphyInviteStates({ stateAbbr: resolvedStateAbbr });
+
+    const invite = isGfeSimulationEnabled()
+      ? buildSimulatedQualiphyInvite(appt.id, req)
+      : await requestQualiphyExamInvite(
+          {
+            exams: [Number(qualiphyExamId)],
+            first_name: firstName,
+            last_name: lastName,
+            email: patientEmail,
+            dob: dob || "1990-06-30",
+            phone_number: normalizedPhone,
+            state,
+            tele_state,
+            additional_data: JSON.stringify({ source: "novi_appointment", appointment_id: appt.id }),
+          },
+          buildAppointmentGfeRedirectUrls(appt.id)
+        );
 
     const setParts = [
       "gfe_status = 'pending'",
@@ -2602,8 +2584,11 @@ functionsRouter.post("/sendQualiphyGFE", async (req, res, next) => {
       success: true,
       meeting_url: invite.meetingUrl,
       webhook_configured: Boolean(invite.webhookUrl),
+      gfe_simulation: invite.simulated === true,
       email_sent: true,
       notification_sent: notificationResult.sent === true,
+      ...getQualiphyRuntimeSummary(),
+      ...(isGfeSimulationEnabled() ? getGfeSimulationRuntimeSummary(req) : {}),
     });
   } catch (error) {
     if (error?.statusCode) {

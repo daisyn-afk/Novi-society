@@ -56,6 +56,7 @@ const { complianceLogsRouter } = await import("./compliance-logs/routes.js");
 const { launchRoadmapRouter } = await import("./launch-roadmap/routes.js");
 const { emailTemplatesRouter } = await import("./email-templates/routes.js");
 const { contactRouter } = await import("./contact/routes.js");
+const { qualiphyRouter } = await import("./qualiphy/routes.js");
 
 export function createAdminApp() {
   const app = express();
@@ -108,6 +109,7 @@ export function createAdminApp() {
   app.use("/admin/md-messages", mdMessagesRouter);
   app.use("/admin/appointment-messages", appointmentMessagesRouter);
   app.use("/admin/marketplace", marketplaceRouter);
+  app.use("/admin/qualiphy", qualiphyRouter);
   app.use("/admin/appointments", appointmentsRouter);
   app.use("/admin/treatment-records", treatmentRecordsRouter);
   app.use("/admin/reviews", reviewsRouter);

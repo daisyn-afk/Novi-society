@@ -376,87 +376,38 @@ async function resolveModelPreOrderId({ additional, meetingUuid, patientExamId, 
 }
 
 /**
- * Qualiphy POST callback when a patient completes (or updates) an exam.
+ * Process a Qualiphy exam webhook payload (production callback or local simulation).
  * @see https://api-docs.qualiphy.me/docs/api/exam-webhook
  */
-export async function handleQualiphyExamWebhook(req, res, next) {
-  try {
-    const body = req.body && typeof req.body === "object" ? req.body : {};
-    const additional = parseAdditionalData(body.additional_data);
-    const gfeStatus = mapQualiphyExamStatus(body.exam_status);
-    const examUrl = String(body.exam_url || body.exam_invite_url || "").trim();
-    const providerName = String(body.provider_name || "").trim();
-    const patientEmail = String(body.patient_email || "").trim();
-    const questionsAnswers = body.questions_answers;
+export async function processQualiphyExamWebhookBody(body) {
+  const payload = body && typeof body === "object" ? body : {};
+  const additional = parseAdditionalData(payload.additional_data);
+  const gfeStatus = mapQualiphyExamStatus(payload.exam_status);
+  const examUrl = String(payload.exam_url || payload.exam_invite_url || "").trim();
+  const providerName = String(payload.provider_name || "").trim();
+  const patientEmail = String(payload.patient_email || "").trim();
+  const questionsAnswers = payload.questions_answers;
 
-    // eslint-disable-next-line no-console
-    console.log("[qualiphyWebhook] received", {
-      event: body.event,
-      exam_status: body.exam_status,
-      mapped_status: gfeStatus,
-      source: additional.source,
-      appointment_id: additional.appointment_id,
-      pre_order_id: additional.pre_order_id,
-    });
+  // eslint-disable-next-line no-console
+  console.log("[qualiphyWebhook] received", {
+    event: payload.event,
+    exam_status: payload.exam_status,
+    mapped_status: gfeStatus,
+    source: additional.source,
+    appointment_id: additional.appointment_id,
+    pre_order_id: additional.pre_order_id,
+    gfe_simulation: additional.gfe_simulation === true,
+  });
 
-    let result = { received: true, handled: false };
+  let result = { received: true, handled: false };
 
-    const meetingUuid = String(body.meeting_uuid || "").trim();
-    const patientExamId = String(body.patient_exam_id || "").trim();
-    const isModelSignup =
-      additional.source === "novi_model_signup" || additional.source === "model_signup";
+  const meetingUuid = String(payload.meeting_uuid || "").trim();
+  const patientExamId = String(payload.patient_exam_id || "").trim();
+  const isModelSignup =
+    additional.source === "novi_model_signup" || additional.source === "model_signup";
 
-    // Model signups: update pre_orders first (do not route to a patient appointment by email).
-    if (isModelSignup || additional.pre_order_id) {
-      const preOrderId = await resolveModelPreOrderId({
-        additional,
-        meetingUuid,
-        patientExamId,
-        patientEmail,
-      });
-      if (preOrderId) {
-        result = {
-          ...result,
-          ...(await updatePreOrderFromQualiphy({
-            preOrderId,
-            gfeStatus,
-            examUrl,
-            providerName,
-            patientEmail,
-            meetingUuid,
-            patientExamId,
-          })),
-          handled: true,
-          matched_by: "model_pre_order",
-        };
-        return res.status(200).json(result);
-      }
-    }
-
-    let appointmentId = String(additional.appointment_id || "").trim() || null;
-    if (!appointmentId) {
-      appointmentId = await findAppointmentIdByQualiphyIds({ meetingUuid, patientExamId });
-    }
-
-    if (appointmentId) {
-      result = {
-        ...result,
-        ...(await updateAppointmentFromQualiphy({
-          appointmentId,
-          gfeStatus,
-          examUrl,
-          providerName,
-          questionsAnswers,
-          patientEmail,
-          meetingUuid,
-          patientExamId,
-        })),
-        handled: true,
-        matched_by: "appointment",
-      };
-      return res.status(200).json(result);
-    }
-
+  // Model signups: update pre_orders first (do not route to a patient appointment by email).
+  if (isModelSignup || additional.pre_order_id) {
     const preOrderId = await resolveModelPreOrderId({
       additional,
       meetingUuid,
@@ -464,7 +415,7 @@ export async function handleQualiphyExamWebhook(req, res, next) {
       patientEmail,
     });
     if (preOrderId) {
-      result = {
+      return {
         ...result,
         ...(await updatePreOrderFromQualiphy({
           preOrderId,
@@ -476,32 +427,87 @@ export async function handleQualiphyExamWebhook(req, res, next) {
           patientExamId,
         })),
         handled: true,
-        matched_by: "pre_order_fallback",
+        matched_by: "model_pre_order",
       };
-      return res.status(200).json(result);
     }
+  }
 
-    if (patientEmail) {
-      const fallbackId = await findPendingAppointmentByEmail(patientEmail);
-      if (fallbackId) {
-        result = {
-          ...result,
-          ...(await updateAppointmentFromQualiphy({
-            appointmentId: fallbackId,
-            gfeStatus,
-            examUrl,
-            providerName,
-            questionsAnswers,
-            patientEmail,
-            meetingUuid,
-            patientExamId,
-          })),
-          handled: true,
-          matched_by: "patient_email",
-        };
-      }
+  let appointmentId = String(additional.appointment_id || "").trim() || null;
+  if (!appointmentId) {
+    appointmentId = await findAppointmentIdByQualiphyIds({ meetingUuid, patientExamId });
+  }
+
+  if (appointmentId) {
+    return {
+      ...result,
+      ...(await updateAppointmentFromQualiphy({
+        appointmentId,
+        gfeStatus,
+        examUrl,
+        providerName,
+        questionsAnswers,
+        patientEmail,
+        meetingUuid,
+        patientExamId,
+      })),
+      handled: true,
+      matched_by: "appointment",
+    };
+  }
+
+  const preOrderId = await resolveModelPreOrderId({
+    additional,
+    meetingUuid,
+    patientExamId,
+    patientEmail,
+  });
+  if (preOrderId) {
+    return {
+      ...result,
+      ...(await updatePreOrderFromQualiphy({
+        preOrderId,
+        gfeStatus,
+        examUrl,
+        providerName,
+        patientEmail,
+        meetingUuid,
+        patientExamId,
+      })),
+      handled: true,
+      matched_by: "pre_order_fallback",
+    };
+  }
+
+  if (patientEmail) {
+    const fallbackId = await findPendingAppointmentByEmail(patientEmail);
+    if (fallbackId) {
+      return {
+        ...result,
+        ...(await updateAppointmentFromQualiphy({
+          appointmentId: fallbackId,
+          gfeStatus,
+          examUrl,
+          providerName,
+          questionsAnswers,
+          patientEmail,
+          meetingUuid,
+          patientExamId,
+        })),
+        handled: true,
+        matched_by: "patient_email",
+      };
     }
+  }
 
+  return result;
+}
+
+/**
+ * Qualiphy POST callback when a patient completes (or updates) an exam.
+ */
+export async function handleQualiphyExamWebhook(req, res, next) {
+  try {
+    const result = await processQualiphyExamWebhookBody(req.body);
     return res.status(200).json(result);
   } catch (error) {
     return next(error);

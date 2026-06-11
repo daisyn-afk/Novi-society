@@ -252,6 +252,7 @@ export default function ClassDayOnboardingWizard({ enrollment, course, open, onC
         provider_id: user.id,
         service_type_id: serviceType?.id || serviceTypeId,
         prorated_amount: pricing.prorated,
+        frontend_origin: typeof window !== "undefined" ? window.location.origin : "",
       });
 
       if (checkoutResponse.data?.url) {

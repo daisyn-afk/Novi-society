@@ -1145,6 +1145,7 @@ export default function ProviderCredentialsCoverage() {
         amount: getMembershipPrice(),
         enrollment_id: verifiedSession?.enrollment_id || null,
         signature_data: signatureData,
+        frontend_origin: typeof window !== "undefined" ? window.location.origin : "",
       });
       if (res.data?.url) {
         const st = serviceTypes.find((s) => s.id === selectedServiceTypeId);

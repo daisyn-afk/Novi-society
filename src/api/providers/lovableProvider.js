@@ -1019,9 +1019,20 @@ export function createLovableProviderClient() {
         ]);
         const isPaymentFn = PAYMENT_FUNCTIONS.has(functionName);
         const clientTimestamp = isPaymentFn ? new Date().toISOString() : null;
-        const stampedPayload = isPaymentFn
-          ? { ...(payload || {}), client_timestamp: clientTimestamp }
-          : (payload || {});
+        const browserOrigin =
+          typeof window !== "undefined" && window.location?.origin
+            ? window.location.origin
+            : "";
+        const stampedPayload = {
+          ...(payload || {}),
+          ...(browserOrigin
+            ? {
+                frontend_origin: payload?.frontend_origin || browserOrigin,
+                checkout_return_base_url: payload?.checkout_return_base_url || browserOrigin,
+              }
+            : {}),
+          ...(isPaymentFn ? { client_timestamp: clientTimestamp } : {}),
+        };
         const paymentHeaders = isPaymentFn
           ? { "x-novi-client-timestamp": clientTimestamp }
           : undefined;
