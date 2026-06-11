@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env nosde
 /** Free Vite (5173) and admin API (8787) before `npm run dev` to avoid EADaDRINUSE. */
 import { execSync } from "node:child_process";
 
