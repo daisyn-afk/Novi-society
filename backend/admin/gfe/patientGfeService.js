@@ -4,6 +4,8 @@ import {
   PAYMENT_TYPE_APPOINTMENT_TREATMENT,
 } from "../stripe-connect/config.js";
 import { computeTreatmentPaymentBreakdown } from "../stripe-connect/gfePlatformFee.js";
+import { isGfeSimulationEnabled } from "../qualiphy/gfeSimulation.js";
+import { isQualiphyTestMode } from "../qualiphy/inviteConfig.js";
 
 export const GFE_VALIDITY_DAYS = 365;
 export const GFE_EXPIRING_SOON_DAYS = 30;
@@ -370,6 +372,8 @@ export async function enrichAppointmentGfeFields(appointment) {
   return {
     ...appointment,
     ...gfeContext,
+    qualiphy_test_mode: isQualiphyTestMode(),
+    gfe_simulation_enabled: isGfeSimulationEnabled(),
     platform_fee_amount: paymentBreakdown.platformFeeAmount ?? 0,
     treatment_charge_total:
       paymentBreakdown.totalChargeAmount ??

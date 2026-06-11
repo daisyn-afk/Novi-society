@@ -34,6 +34,7 @@ import ModelSignup from './pages/ModelSignup';
 import ModelBookingLookup from './pages/ModelBookingLookup';
 import ThankYou from './pages/ThankYou';
 import RequestInformation from './pages/RequestInformation';
+import GfeSimulate from './pages/GfeSimulate';
 import PrivacyPolicy from './pages/PrivacyPolicy';
 import TermsAndConditions from './pages/TermsAndConditions';
 import RefundPolicy from './pages/RefundPolicy';
@@ -222,6 +223,8 @@ const AuthenticatedApp = () => {
       } />
       <Route path="/thank-you" element={<ThankYou />} />
       <Route path="/request-information" element={<RequestInformation />} />
+      <Route path="/GfeSimulate" element={<GfeSimulate />} />
+      <Route path="/gfe-simulate" element={<Navigate to="/GfeSimulate" replace />} />
       <Route path="/modelsignup" element={<Navigate to="/ModelSignup" replace />} />
       <Route path="/model-booking-lookup" element={<Navigate to="/ModelBookingLookup" replace />} />
       <Route path="/modelbookinglookup" element={<Navigate to="/ModelBookingLookup" replace />} />
