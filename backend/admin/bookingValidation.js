@@ -119,7 +119,13 @@ export async function validateBookingScope({ providerId, service, referral_code 
                  and lower(trim(child.name)) = lower($2)
                  and (
                    child.id::text = ms.service_type_id::text
-                   or child.id = any(coalesce(membership.included_service_ids, '{}'))
+                   or exists (
+                     select 1
+                       from jsonb_array_elements_text(
+                         coalesce(membership.included_service_ids, '[]'::jsonb)
+                       ) as inc(inc_id)
+                      where child.id::text = inc.inc_id
+                   )
                  )
             )
           )
