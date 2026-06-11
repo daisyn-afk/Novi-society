@@ -1177,6 +1177,16 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
     if (enrollmentId) successParams.set("enrollment_id", enrollmentId);
     const successUrl = `${base}/ProviderCredentialsCoverage?${successParams.toString()}`;
     const cancelUrl = `${base}/ProviderCredentialsCoverage?md_payment_status=cancel&service_type_id=${encodeURIComponent(serviceTypeId)}`;
+    console.info(
+      "[md-checkout] stripe return URLs",
+      JSON.stringify({
+        base,
+        success_url: successUrl,
+        frontend_origin: body.frontend_origin || null,
+        vercel_env: process.env.VERCEL_ENV || null,
+        app_base_url: process.env.APP_BASE_URL || null,
+      })
+    );
 
     const checkoutSession = await stripe.checkout.sessions.create({
       mode: "subscription",

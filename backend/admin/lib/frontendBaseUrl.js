@@ -3,12 +3,11 @@
  * Supabase auth email links (invite, recovery, password-reset redirectTo).
  *
  * Priority (highest → lowest):
- *   1. APP_BASE_URL env var (canonicalized – vercel.app remapped in production)
- *   2. frontend_origin from API body (browser-sent by admin UI)
- *   3. Request Origin / Referer headers (trusted hosts only)
- *   4. Vercel production → https://novisociety.com
- *   5. Local dev fallback (http://localhost:5173)
- *   6. Vercel preview URL (non-production deployments only)
+ *   1. frontend_origin / Origin / Referer from the incoming request (trusted hosts)
+ *   2. APP_BASE_URL env var (skipped on preview when it points at live)
+ *   3. Vercel production → https://novisociety.com
+ *   4. Local dev fallback (http://localhost:5173)
+ *   5. Vercel preview URL (non-production deployments only)
  *
  * Email links must NEVER use *.vercel.app on the live site — users receive
  * novisociety.com links even when admins or env vars still reference Vercel.
@@ -24,12 +23,23 @@ const _isLiveDeployment =
 
 const CANONICAL_PRODUCTION_URL = CANONICAL_LIVE_ORIGIN;
 
+function _isPreviewDeployment() {
+  return process.env.VERCEL_ENV === "preview" || process.env.VERCEL_ENV === "development";
+}
+
 /** Resolved once at module load from explicit env only (never Vercel injection). */
-const _envBaseUrl = (() => {
+function _resolveEnvBaseUrl() {
   const explicit = String(process.env.APP_BASE_URL || "").trim().replace(/\/+$/, "");
   if (!explicit) return "";
-  return toPublicFrontendBaseUrl(explicit);
-})();
+  const resolved = toPublicFrontendBaseUrl(explicit);
+  // Preview/staging often copies APP_BASE_URL=novisociety.com from production — ignore that.
+  if (_isPreviewDeployment() && resolved === CANONICAL_PRODUCTION_URL) {
+    return "";
+  }
+  return resolved;
+}
+
+const _envBaseUrl = _resolveEnvBaseUrl();
 
 const TRUSTED_FRONTEND_HOSTS = new Set([
   "localhost",
@@ -144,13 +154,8 @@ function _readFrontendOriginFromReq(req) {
  * @returns {string}         e.g. "https://novisociety.com" or "http://localhost:5173"
  */
 export function resolveAppBaseUrl(req) {
-  // 1. Operator-configured env (canonicalized so vercel.app → novisociety.com)
-  if (_envBaseUrl) {
-    console.info(`[frontendBaseUrl] using APP_BASE_URL: ${_envBaseUrl}`);
-    return _envBaseUrl;
-  }
-
-  // 2–3. Browser / client origin (body, Origin header, Referer)
+  // 1. Browser / client origin — must win over APP_BASE_URL so dev preview checkouts
+  //    return to the same host the user started on (not novisociety.com).
   const requestOrigin = _readFrontendOriginFromReq(req);
   if (requestOrigin && _isTrustedFrontendOrigin(requestOrigin)) {
     const resolved = toPublicFrontendBaseUrl(requestOrigin);
@@ -158,13 +163,19 @@ export function resolveAppBaseUrl(req) {
     return resolved;
   }
 
-  // 4. Production API with no trusted origin → canonical live domain
+  // 2. Operator-configured env (canonicalized so vercel.app → novisociety.com on prod only)
+  if (_envBaseUrl) {
+    console.info(`[frontendBaseUrl] using APP_BASE_URL: ${_envBaseUrl}`);
+    return _envBaseUrl;
+  }
+
+  // 3. Production API with no trusted origin → canonical live domain
   if (_isLiveDeployment) {
     console.info(`[frontendBaseUrl] using canonical production URL: ${CANONICAL_PRODUCTION_URL}`);
     return CANONICAL_PRODUCTION_URL;
   }
 
-  // 5. Local dev fallback
+  // 4. Local dev fallback
   if (_isDev) {
     console.warn(
       "[frontendBaseUrl] APP_BASE_URL not set and no request origin available; " +
@@ -174,7 +185,7 @@ export function resolveAppBaseUrl(req) {
     return LOCAL_DEV_ORIGIN;
   }
 
-  // 6. Vercel preview / staging deployment URL
+  // 5. Vercel preview / staging deployment URL
   const vercel = process.env.VERCEL_URL || "";
   if (vercel) {
     const preview = `https://${vercel}`.replace(/\/+$/, "");
