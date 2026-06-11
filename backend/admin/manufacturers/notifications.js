@@ -129,6 +129,9 @@ const SKIP_ADDITIONAL_KEYS = new Set([
   "verified_licenses",
   "certifications",
   "supervising_md_details",
+  "supervising_md_state_licenses",
+  "provider_states_for_md",
+  "supervising_md_coverage_summary",
   "custom_field_responses",
 ]);
 
@@ -248,6 +251,23 @@ function buildApplicationEmailContent({ application, manufacturer }) {
     application?.supervising_physician_name
       ? `Supervising MD: ${application.supervising_physician_name}${application.supervising_physician_email ? ` (${application.supervising_physician_email})` : ""}`
       : null,
+    additional.supervising_md_npi ? `MD NPI: ${additional.supervising_md_npi}` : null,
+    Array.isArray(additional.provider_states_for_md) && additional.provider_states_for_md.length
+      ? `Provider state(s): ${additional.provider_states_for_md.join(", ")}`
+      : null,
+    ...(Array.isArray(additional.supervising_md_state_licenses)
+      ? additional.supervising_md_state_licenses.map((lic) => {
+          const state = String(lic?.us_state || "").trim();
+          const num = String(lic?.license_number ?? "").trim();
+          const exp = String(lic?.expiration_date ?? "").trim();
+          const hasLicense = num && num !== "-" && !/^n\/?a$/i.test(num);
+          const hasExp = exp && exp !== "-" && !/^n\/?a$/i.test(exp);
+          if (!hasLicense && !hasExp) return `MD license (${state}): not on file`;
+          const numLabel = hasLicense ? num : "—";
+          const expLabel = hasExp ? exp : "—";
+          return `MD license (${state}): ${numLabel} / ${expLabel}`;
+        })
+      : []),
     additional.certifications_summary
       ? `Certifications: ${additional.certifications_summary}`
       : null,
@@ -255,7 +275,13 @@ function buildApplicationEmailContent({ application, manufacturer }) {
 
   for (const [key, value] of Object.entries(additional)) {
     if (SKIP_ADDITIONAL_KEYS.has(key)) continue;
-    if (["provider_id", "md_coverage", "verified_licenses_summary", "certifications_summary"].includes(key)) {
+    if ([
+      "provider_id",
+      "md_coverage",
+      "verified_licenses_summary",
+      "certifications_summary",
+      "supervising_md_npi",
+    ].includes(key)) {
       continue;
     }
     const formatted = formatAdditionalValue(value);
@@ -322,6 +348,14 @@ export async function notifyAdminsOfManufacturerApplication({
   }
 }
 
+function formatProviderReplyTo(name, email) {
+  const cleanEmail = String(email || "").trim();
+  if (!cleanEmail || !isValidEmail(cleanEmail)) return "";
+  const displayName = String(name || "").trim().replace(/[<>"\\]/g, "");
+  if (!displayName) return cleanEmail;
+  return `${displayName} <${cleanEmail}>`;
+}
+
 export async function notifyRepOfManufacturerApplication({
   application,
   manufacturer,
@@ -335,6 +369,10 @@ export async function notifyRepOfManufacturerApplication({
   });
   await sendEmailFromTemplate("manufacturer_application_rep", {
     to: repEmail,
+    reply_to: formatProviderReplyTo(
+      application?.provider_name,
+      application?.provider_email
+    ),
     first_name: manufacturer?.account_rep_name || "there",
     manufacturer_name: manufacturer?.name || application?.manufacturer_name || "your account",
     summary_lines: summaryLines,
@@ -379,8 +417,8 @@ export async function notifyRepOfContactRequest({
     : [...basicProviderLines, `Request type: ${orderRequest?.contact_type || "message"}`];
 
   const intro = isOrder
-    ? `${providerName} submitted a product order request through NOVI. Basic contact details and order lines are below — reply directly to confirm pricing and fulfillment.`
-    : `${providerName} sent a message through the NOVI supplier marketplace. Reply directly to follow up.`;
+    ? `${providerName} submitted a product order request through NOVI. Basic contact details and order lines are below — reply directly to the provider to confirm pricing and fulfillment.`
+    : `${providerName} sent a message through the NOVI supplier marketplace. Reply directly to the provider to follow up.`;
 
   const orderItems = isOrder
     ? mapOrderItemsForRegistry(
@@ -391,6 +429,7 @@ export async function notifyRepOfContactRequest({
 
   const repResult = await sendEmailFromTemplate("manufacturer_contact_rep", {
     to: repEmail,
+    reply_to: formatProviderReplyTo(providerName, providerEmail || orderRequest?.provider_email),
     first_name: repGreetingName,
     contact_subject: subject,
     intro,

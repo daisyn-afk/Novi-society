@@ -1,5 +1,5 @@
-#!/usr/bin/env node
-/** Free Vite (5173) and admin API (8787) before `npm run dev` to avoid EADDRINUSE. */
+#!/usr/bin/env nosde
+/** Free Vite (5173) and admin API (8787) before `npm run dev` to avoid EADaDRINUSE. */
 import { execSync } from "node:child_process";
 
 const PORTS = [5173, 8787];

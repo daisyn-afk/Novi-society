@@ -74,7 +74,7 @@ export default function OrderRequestDialog({ open, onClose, manufacturer, me, sa
             </div>
             <p className="font-bold text-lg" style={{ fontFamily: "'DM Serif Display', serif", color: "#1e2535" }}>Order Request Sent!</p>
             <p className="text-sm mt-1 mb-2" style={{ color: "rgba(30,37,53,0.55)" }}>
-              Sent to {rep.rep_email}. A copy was sent to your email.
+              Sent to {rep.rep_email}. When they reply, it goes to your email. A copy was sent to you as well.
             </p>
             <p className="text-xs mb-5" style={{ color: "rgba(30,37,53,0.4)" }}>
               Your order details and basic contact info were included — no license or MD coverage attachments.
