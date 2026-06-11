@@ -20,6 +20,7 @@ const APPLICATION_STATUSES = new Set([
   "approved",
   "rejected",
   "more_info_needed",
+  "cancelled",
 ]);
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
