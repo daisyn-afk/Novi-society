@@ -84,7 +84,11 @@ import {
   isQualiphyTestMode,
   resolveQualiphyInviteStates,
 } from "../qualiphy/inviteConfig.js";
-import { buildSimulatedQualiphyInvite, isGfeSimulationEnabled } from "../qualiphy/gfeSimulation.js";
+import {
+  buildSimulatedQualiphyInvite,
+  getGfeSimulationRuntimeSummary,
+  isGfeSimulationEnabled,
+} from "../qualiphy/gfeSimulation.js";
 import {
   runCheckExpirations,
   runComplianceChecks,
@@ -2584,6 +2588,7 @@ functionsRouter.post("/sendQualiphyGFE", async (req, res, next) => {
       email_sent: true,
       notification_sent: notificationResult.sent === true,
       ...getQualiphyRuntimeSummary(),
+      ...(isGfeSimulationEnabled() ? getGfeSimulationRuntimeSummary(req) : {}),
     });
   } catch (error) {
     if (error?.statusCode) {

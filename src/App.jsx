@@ -138,6 +138,7 @@ const AuthenticatedApp = () => {
     "/RefundPolicy",
     "/SMSTerms",
     "/ContactUs",
+    "/GfeSimulate",
   ]);
   const isPublicRoute = publicPaths.has(location.pathname);
 

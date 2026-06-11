@@ -4,6 +4,37 @@ import { getQualiphyApiKey, isQualiphyTestMode } from "./inviteConfig.js";
 
 export const GFE_SIMULATE_PAGE_PATH = "/GfeSimulate";
 
+function normalizeSimulationBaseUrl(raw) {
+  const value = String(raw || "").trim().replace(/\/+$/, "");
+  if (!value) return "";
+  try {
+    const parsed = new URL(value.startsWith("http") ? value : `https://${value}`);
+    if (!/^https?:$/.test(parsed.protocol)) return "";
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Base URL for /GfeSimulate links. Uses GFE_SIMULATION_BASE_URL when set (dev/staging)
+ * without remapping to novisociety.com. Falls back to resolveAppBaseUrl for local dev.
+ */
+export function resolveGfeSimulationBaseUrl(req = null) {
+  const explicit = normalizeSimulationBaseUrl(process.env.GFE_SIMULATION_BASE_URL || "");
+  if (explicit) return explicit;
+  return resolveAppBaseUrl(req);
+}
+
+export function getGfeSimulationRuntimeSummary(req = null) {
+  const baseUrl = resolveGfeSimulationBaseUrl(req);
+  const configured = Boolean(normalizeSimulationBaseUrl(process.env.GFE_SIMULATION_BASE_URL || ""));
+  return {
+    gfe_simulation_base_url: baseUrl,
+    gfe_simulation_base_url_configured: configured,
+  };
+}
+
 function simulationSecret() {
   return getQualiphyApiKey() || String(process.env.GFE_SIMULATION_SECRET || "novi-gfe-sim-dev").trim();
 }
@@ -28,7 +59,7 @@ export function verifyGfeSimulationToken(appointmentId, token) {
 export function buildGfeSimulationUrl(appointmentId, req = null) {
   const id = String(appointmentId || "").trim();
   if (!id) return "";
-  const base = resolveAppBaseUrl(req);
+  const base = resolveGfeSimulationBaseUrl(req);
   const token = buildGfeSimulationToken(id);
   const params = new URLSearchParams({ appointment_id: id, token });
   return `${base}${GFE_SIMULATE_PAGE_PATH}?${params.toString()}`;
@@ -80,7 +111,7 @@ export function buildSimulatedWebhookPayload({
     provider_name: providerName,
     meeting_uuid: `sim_${id}`,
     patient_exam_id: `sim_exam_${id}`,
-    exam_url: buildGfeSimulationUrl(id),
+    exam_url: buildGfeSimulationUrl(id, null),
     additional_data: JSON.stringify({
       source: "novi_appointment",
       appointment_id: id,
