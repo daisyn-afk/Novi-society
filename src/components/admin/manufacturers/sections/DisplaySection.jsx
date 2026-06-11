@@ -11,6 +11,11 @@ import FieldLabel from "../shared/FieldLabel";
 import ChipListEditor from "../shared/ChipListEditor";
 import InfoBanner from "../shared/InfoBanner";
 import { CATEGORIES, CATEGORY_LABELS } from "../constants";
+import {
+  isMembershipPlan,
+  serviceDisplayName,
+  servicesInMembership,
+} from "@/lib/serviceTypeMembershipModel";
 
 function UploadField({ label, value, onChange, onUpload, uploading, accept = ".png,.jpg,.jpeg,.svg,.webp" }) {
   const handleFileChange = async (e) => {
@@ -74,18 +79,25 @@ export default function DisplaySection({
 
   const selectedIds = form.required_service_type_ids || [];
 
-  const filteredServiceTypes = useMemo(() => {
+  const membershipPlans = useMemo(
+    () => serviceTypes.filter(isMembershipPlan),
+    [serviceTypes]
+  );
+
+  const filteredMembershipPlans = useMemo(() => {
     const q = membershipSearch.trim().toLowerCase();
-    const sorted = [...serviceTypes].sort((a, b) =>
+    const sorted = [...membershipPlans].sort((a, b) =>
       String(a?.name || "").localeCompare(String(b?.name || ""))
     );
     if (!q) return sorted;
-    return sorted.filter((st) => {
-      const name = String(st?.name || "").toLowerCase();
-      const category = String(st?.category || "").toLowerCase();
-      return name.includes(q) || category.includes(q);
+    return sorted.filter((plan) => {
+      const name = String(plan?.name || "").toLowerCase();
+      const included = servicesInMembership(plan, serviceTypes)
+        .map((svc) => serviceDisplayName(svc, serviceTypes).toLowerCase())
+        .join(" ");
+      return name.includes(q) || included.includes(q);
     });
-  }, [serviceTypes, membershipSearch]);
+  }, [membershipPlans, membershipSearch, serviceTypes]);
 
   const lockedIds = lockedRequiredServiceTypeIds.map(String);
 
@@ -161,17 +173,20 @@ export default function DisplaySection({
         <div
           className="rounded-xl border border-slate-200 bg-white max-h-44 overflow-y-auto divide-y divide-slate-100"
         >
-          {filteredServiceTypes.length === 0 ? (
+          {filteredMembershipPlans.length === 0 ? (
             <p className="text-xs text-slate-400 text-center py-4">
-              {serviceTypes.length === 0 ? "No active memberships found." : "No matches."}
+              {membershipPlans.length === 0
+                ? "No active membership plans found. Create one under Service Types."
+                : "No matches."}
             </p>
           ) : (
-            filteredServiceTypes.map((st) => {
-              const checked = selectedIds.map(String).includes(String(st.id));
-              const locked = checked && lockedIds.includes(String(st.id));
+            filteredMembershipPlans.map((plan) => {
+              const checked = selectedIds.map(String).includes(String(plan.id));
+              const locked = checked && lockedIds.includes(String(plan.id));
+              const includedServices = servicesInMembership(plan, serviceTypes);
               return (
                 <label
-                  key={st.id}
+                  key={plan.id}
                   className={`flex items-start gap-3 px-3 py-2.5 ${
                     locked ? "cursor-not-allowed bg-slate-50/80" : "cursor-pointer hover:bg-slate-50"
                   }`}
@@ -179,16 +194,19 @@ export default function DisplaySection({
                   <Checkbox
                     checked={checked}
                     disabled={locked}
-                    onCheckedChange={() => toggleMembership(st.id)}
+                    onCheckedChange={() => toggleMembership(plan.id)}
                     className="mt-0.5"
                   />
                   <span className="min-w-0">
                     <span className="text-sm font-semibold text-slate-800 block truncate">
-                      {st.name}
+                      {plan.name}
                     </span>
-                    {st.category ? (
-                      <span className="text-xs text-slate-500 capitalize">{st.category}</span>
-                    ) : null}
+                    <span className="text-xs text-slate-500">
+                      {includedServices.length} service{includedServices.length !== 1 ? "s" : ""} included
+                      {includedServices.length > 0
+                        ? ` — ${includedServices.map((svc) => serviceDisplayName(svc, serviceTypes)).join(", ")}`
+                        : ""}
+                    </span>
                   </span>
                 </label>
               );
