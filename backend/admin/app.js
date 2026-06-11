@@ -108,6 +108,8 @@ export function createAdminApp() {
   app.use("/admin/md-messages", mdMessagesRouter);
   app.use("/admin/appointment-messages", appointmentMessagesRouter);
   app.use("/admin/marketplace", marketplaceRouter);
+  const { qualiphyRouter } = await import("./qualiphy/routes.js");
+  app.use("/admin/qualiphy", qualiphyRouter);
   app.use("/admin/appointments", appointmentsRouter);
   app.use("/admin/treatment-records", treatmentRecordsRouter);
   app.use("/admin/reviews", reviewsRouter);

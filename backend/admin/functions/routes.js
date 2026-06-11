@@ -84,6 +84,7 @@ import {
   isQualiphyTestMode,
   resolveQualiphyInviteStates,
 } from "../qualiphy/inviteConfig.js";
+import { buildSimulatedQualiphyInvite, isGfeSimulationEnabled } from "../qualiphy/gfeSimulation.js";
 import {
   runCheckExpirations,
   runComplianceChecks,
@@ -2505,20 +2506,22 @@ functionsRouter.post("/sendQualiphyGFE", async (req, res, next) => {
 
     const { state, tele_state } = resolveQualiphyInviteStates({ stateAbbr: resolvedStateAbbr });
 
-    const invite = await requestQualiphyExamInvite(
-      {
-        exams: [Number(qualiphyExamId)],
-        first_name: firstName,
-        last_name: lastName,
-        email: patientEmail,
-        dob: dob || "1990-06-30",
-        phone_number: normalizedPhone,
-        state,
-        tele_state,
-        additional_data: JSON.stringify({ source: "novi_appointment", appointment_id: appt.id }),
-      },
-      buildAppointmentGfeRedirectUrls(appt.id)
-    );
+    const invite = isGfeSimulationEnabled()
+      ? buildSimulatedQualiphyInvite(appt.id, req)
+      : await requestQualiphyExamInvite(
+          {
+            exams: [Number(qualiphyExamId)],
+            first_name: firstName,
+            last_name: lastName,
+            email: patientEmail,
+            dob: dob || "1990-06-30",
+            phone_number: normalizedPhone,
+            state,
+            tele_state,
+            additional_data: JSON.stringify({ source: "novi_appointment", appointment_id: appt.id }),
+          },
+          buildAppointmentGfeRedirectUrls(appt.id)
+        );
 
     const setParts = [
       "gfe_status = 'pending'",
@@ -2563,6 +2566,7 @@ functionsRouter.post("/sendQualiphyGFE", async (req, res, next) => {
       success: true,
       meeting_url: invite.meetingUrl,
       webhook_configured: Boolean(invite.webhookUrl),
+      gfe_simulation: invite.simulated === true,
       email_sent: true,
       notification_sent: notificationResult.sent === true,
       ...getQualiphyRuntimeSummary(),
