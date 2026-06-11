@@ -40,20 +40,32 @@ function rowToApi(row, certifications = []) {
 }
 
 function normalizeAwardsForApi(awards = []) {
+  const seen = new Set();
   return (awards || [])
     .filter((c) => c?.service_type_id)
     .map((c) => ({
       service_type_id: c.service_type_id,
       service_type_name: c.service_type_name ?? null,
       cert_name: c.cert_name ?? null
-    }));
+    }))
+    .filter((c) => {
+      const key = String(c.service_type_id);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
 }
+
+/** Template award rows only — exclude provider-issued certifications in the same table. */
+const TEMPLATE_AWARD_WHERE = `template_course_id = $1
+  and provider_id is null
+  and coalesce(nullif(trim(enrollment_id), ''), null) is null`;
 
 async function fetchCertificationsForTemplate(client, templateId) {
   const { rows } = await client.query(
     `select service_type_id, service_type_name, cert_name, sort_order
      from public.certification
-     where template_course_id = $1
+     where ${TEMPLATE_AWARD_WHERE}
      order by sort_order asc, id asc`,
     [templateId]
   );
@@ -100,9 +112,13 @@ async function upsertServiceTypes(client, payload, serviceTypeNameLookup) {
 }
 
 async function replaceCertifications(client, templateCourseId, awards) {
-  await client.query(`delete from public.certification where template_course_id = $1`, [
-    templateCourseId
-  ]);
+  await client.query(
+    `delete from public.certification
+      where template_course_id = $1
+        and provider_id is null
+        and coalesce(nullif(trim(enrollment_id), ''), null) is null`,
+    [templateCourseId]
+  );
   const normalized = (awards || []).filter((c) => c?.service_type_id);
   if (!normalized.length) return;
 
@@ -138,6 +154,8 @@ export async function listTemplateCourses() {
     `select template_course_id, service_type_id, service_type_name, cert_name
      from public.certification
      where template_course_id = any($1::uuid[])
+       and provider_id is null
+       and coalesce(nullif(trim(enrollment_id), ''), null) is null
      order by template_course_id, sort_order asc, id asc`,
     [templateIds]
   );

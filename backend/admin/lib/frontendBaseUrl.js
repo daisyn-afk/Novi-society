@@ -99,7 +99,13 @@ export function toPublicFrontendBaseUrl(candidate) {
   if (_isLocalHost(host)) return normalized;
 
   if (_isVercelHost(host)) {
-    return _isLiveDeployment || !_isDev ? CANONICAL_PRODUCTION_URL : normalized;
+    // Only the production deployment uses the custom domain in outbound links.
+    // Preview/staging *.vercel.app URLs must stay on preview so Stripe returns
+    // users to the same environment they started from (not live).
+    if (process.env.VERCEL_ENV === "production" || _isLiveDeployment) {
+      return CANONICAL_PRODUCTION_URL;
+    }
+    return normalized;
   }
 
   if (_isLegacyTypoHost(host) || _isProductionAliasHost(host) || _isProductionCanonicalHost(host)) {

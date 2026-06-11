@@ -10,6 +10,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { X, Award, FileText, Plus, BookOpen, Users, Clock, DollarSign, ImageIcon } from "lucide-react";
 import { adminUploadsApi } from "@/api/adminUploadsApi";
 import { trainerPrepApi } from "@/api/trainerPrepApi";
+import {
+  isMembershipPlan,
+  serviceDisplayName,
+  servicesInMembership,
+} from "@/lib/serviceTypeMembershipModel";
 
 export const EMPTY_TEMPLATE = {
   type: "template",
@@ -65,19 +70,73 @@ export default function CourseTemplateForm({ open, onOpenChange, form, setForm, 
         ((s?.scope_rules?.length > 0) || (s?.allowed_areas?.length > 0))
     );
 
+  const dedupeCertAwards = (awards = []) => {
+    const seen = new Set();
+    return (awards || []).filter((cert) => {
+      const key = String(cert?.service_type_id || "");
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  };
+
+  const duplicateCertCount = useMemo(() => {
+    const ids = (form.certifications_awarded || []).map((c) => String(c?.service_type_id || "")).filter(Boolean);
+    return ids.length - new Set(ids).size;
+  }, [form.certifications_awarded]);
+
   const addCert = () => {
     if (!newCert.service_type_id) return;
     const st = serviceTypes.find(s => s.id === newCert.service_type_id);
-    setForm(f => ({
-      ...f,
-      certifications_awarded: [...(f.certifications_awarded || []), { service_type_id: newCert.service_type_id, service_type_name: st?.name, cert_name: newCert.cert_name || st?.name }],
-      // Auto-add to linked_service_type_ids so the ClassDay wizard always fires
-      linked_service_type_ids: (f.linked_service_type_ids || []).includes(newCert.service_type_id)
-        ? (f.linked_service_type_ids || [])
-        : [...(f.linked_service_type_ids || []), newCert.service_type_id],
-    }));
+    const entry = {
+      service_type_id: newCert.service_type_id,
+      service_type_name: st?.name,
+      cert_name: newCert.cert_name || st?.name,
+    };
+    setForm(f => {
+      const existing = f.certifications_awarded || [];
+      const withoutDup = existing.filter((c) => String(c.service_type_id) !== String(newCert.service_type_id));
+      return {
+        ...f,
+        certifications_awarded: [...withoutDup, entry],
+        linked_service_type_ids: (f.linked_service_type_ids || []).includes(newCert.service_type_id)
+          ? (f.linked_service_type_ids || [])
+          : [...(f.linked_service_type_ids || []), newCert.service_type_id],
+      };
+    });
     setNewCert({ service_type_id: "", cert_name: "" });
   };
+
+  const removeDuplicateCerts = () => {
+    setForm((f) => ({ ...f, certifications_awarded: dedupeCertAwards(f.certifications_awarded) }));
+  };
+
+  const syncCertsFromLinkedServices = () => {
+    const linkedIds = form.linked_service_type_ids || [];
+    const awards = [];
+    for (const id of linkedIds) {
+      const st = serviceTypes.find((s) => s.id === id);
+      if (!st) continue;
+      if (isMembershipPlan(st)) {
+        for (const child of servicesInMembership(st, serviceTypes)) {
+          const label = serviceDisplayName(child, serviceTypes);
+          awards.push({
+            service_type_id: child.id,
+            service_type_name: child.name,
+            cert_name: `${label} Certification`,
+          });
+        }
+        continue;
+      }
+      awards.push({
+        service_type_id: st.id,
+        service_type_name: st.name,
+        cert_name: `${serviceDisplayName(st, serviceTypes)} Certification`,
+      });
+    }
+    setForm((f) => ({ ...f, certifications_awarded: dedupeCertAwards(awards) }));
+  };
+
   const removeCert = (i) => setForm(f => ({ ...f, certifications_awarded: f.certifications_awarded.filter((_, idx) => idx !== i) }));
 
   const addMaterial = () => {
@@ -490,7 +549,24 @@ export default function CourseTemplateForm({ open, onOpenChange, form, setForm, 
             )}
             <div className="md:col-span-2 border rounded-xl p-4 space-y-3 bg-amber-50/50">
               <div className="flex items-center gap-2"><Award className="w-4 h-4 text-amber-600" /><p className="font-semibold text-sm text-amber-900">Certifications Awarded</p></div>
-              <p className="text-xs text-slate-500">These certifications will be issued to providers who complete this course. Typically one per linked service.</p>
+              <div className="text-xs text-slate-600 space-y-1.5 rounded-lg bg-white/80 border border-amber-100 px-3 py-2.5">
+                <p><strong>What this list is:</strong> the certificate(s) a provider earns when they complete this course — one row per <em>treatment</em> service (e.g. Botox, Dermal Filler), not per membership plan.</p>
+                <p><strong>Not auto-created:</strong> linking services above only sets MD scope. Each cert here was added manually with <strong>+ Add Cert</strong> (or use <strong>Sync from linked services</strong> below).</p>
+                <p><strong>Typical setup:</strong> link the membership → sync certs → you should see 1 cert per included treatment, then save.</p>
+              </div>
+              {duplicateCertCount > 0 && (
+                <div className="rounded-lg px-3 py-2 text-xs font-medium flex flex-wrap items-center gap-2" style={{ background: "rgba(250,111,48,0.1)", border: "1px solid rgba(250,111,48,0.25)", color: "#c2440a" }}>
+                  <span>{duplicateCertCount} duplicate service{duplicateCertCount !== 1 ? "s" : ""} in this list (from repeated testing).</span>
+                  <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={removeDuplicateCerts}>
+                    Keep one per service
+                  </Button>
+                </div>
+              )}
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" variant="outline" size="sm" className="border-amber-300 text-amber-800" onClick={syncCertsFromLinkedServices}>
+                  Sync from linked services
+                </Button>
+              </div>
               <div className="space-y-2">
                 {(form.certifications_awarded || []).map((cert, i) => (
                   <div key={i} className="flex items-center gap-2 bg-white rounded-lg px-3 py-2 border">
