@@ -88,8 +88,7 @@ mdSubscriptionsRouter.get("/", async (req, res, next) => {
       const { rows } = await query(
         `select * from public.md_subscription
          ${whereSql}
-         order by created_at desc nulls last
-         limit 500`,
+         order by created_at desc nulls last`,
         params
       );
       return respondWithSubscriptions(res, rows);

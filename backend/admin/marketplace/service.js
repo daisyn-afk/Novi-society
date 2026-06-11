@@ -1,8 +1,10 @@
 import { query } from "../db.js";
+import { activeNonExpiredCertSql } from "../lib/providerCredentialEligibility.js";
 import {
-  activeNonExpiredCertSql,
-  verifiedNonExpiredLicenseSql,
-} from "../lib/providerCredentialEligibility.js";
+  buildProviderLookupMaps,
+  listFullyActiveProviderRows,
+  normalizeProviderScopedRows,
+} from "../lib/fullyActiveProviders.js";
 
 function parseMetadata(raw) {
   if (!raw || typeof raw !== "object") return {};
@@ -67,81 +69,70 @@ function mapProviderRow(row) {
 }
 
 export async function listMarketplaceProviders() {
-  const { rows: providerRows } = await query(
-    `select distinct
-        u.auth_user_id,
-        u.email,
-        u.full_name,
-        u.role,
-        u.is_active,
-        pp.city,
-        pp.state,
-        pp.metadata
-       from public.users u
-       inner join public.provider_profiles pp on pp.user_id = u.id
-       inner join public.licenses l
-         on l.provider_id = u.auth_user_id
-        and ${verifiedNonExpiredLicenseSql("l")}
-       inner join public.md_subscription ms
-         on ms.provider_id = u.auth_user_id::text
-        and lower(ms.status) = 'active'
-      where u.role = 'provider'
-        and coalesce(u.is_active, true) = true
-        and not exists (
-          select 1
-            from public.medical_director_relationship mdr
-           where mdr.provider_id = u.auth_user_id::text
-             and lower(coalesce(mdr.status, '')) = 'suspended'
-        )
-      order by u.full_name nulls last, u.email`
-  );
+  const providerRows = await listFullyActiveProviderRows({
+    requireAuthUserId: true,
+  });
 
-  const providers = providerRows
-    .map(mapProviderRow)
-    .filter((p) => p.accepts_new_patients !== false);
+  const providers = providerRows.map(mapProviderRow);
+  const { authIdByKey, keys: providerLookupKeys, emails: providerEmails } =
+    buildProviderLookupMaps(providerRows);
 
-  const providerIds = providers.map((p) => p.id).filter(Boolean);
-  if (!providerIds.length) {
+  if (!providers.length) {
     return { providers: [], md_subscriptions: [], certifications: [], reviews: [] };
   }
 
-  const { rows: mdSubs } = await query(
-    `select *
-       from public.md_subscription
-      where provider_id = any($1::text[])
-        and lower(status) = 'active'
-      order by service_type_name`,
-    [providerIds]
+  const mdSubsSql = providerEmails.length
+    ? `select *
+         from public.md_subscription
+        where lower(coalesce(status, '')) = 'active'
+          and (
+            provider_id = any($1::text[])
+            or lower(trim(coalesce(provider_email, ''))) = any($2::text[])
+          )
+        order by service_type_name`
+    : `select *
+         from public.md_subscription
+        where lower(coalesce(status, '')) = 'active'
+          and provider_id = any($1::text[])
+        order by service_type_name`;
+
+  const { rows: mdSubsRaw } = await query(
+    mdSubsSql,
+    providerEmails.length ? [providerLookupKeys, providerEmails] : [providerLookupKeys]
   );
 
-  const { rows: certs } = await query(
+  const { rows: certsRaw } = await query(
     `select c.*
        from public.certification c
       where c.provider_id = any($1::text[])
         and ${activeNonExpiredCertSql("c")}
       order by c.certification_name nulls last`,
-    [providerIds]
+    [providerLookupKeys]
   ).catch(() => ({ rows: [] }));
 
-  let reviewRows = [];
+  let reviewRowsRaw = [];
   try {
     const result = await query(
       `select *
          from public.reviews
         where provider_id = any($1::text[])
           and is_verified = true`,
-      [providerIds]
+      [providerLookupKeys]
     );
-    reviewRows = result.rows || [];
+    reviewRowsRaw = result.rows || [];
   } catch {
-    reviewRows = [];
+    reviewRowsRaw = [];
   }
+
+  const mdSubs = normalizeProviderScopedRows(mdSubsRaw, authIdByKey);
+  const certs = normalizeProviderScopedRows(certsRaw, authIdByKey);
+  const reviews = normalizeProviderScopedRows(reviewRowsRaw, authIdByKey);
 
   return {
     providers,
     md_subscriptions: mdSubs,
     certifications: certs,
-    reviews: reviewRows,
+    reviews,
   };
 }
 

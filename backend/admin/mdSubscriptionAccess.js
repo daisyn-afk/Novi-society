@@ -7,7 +7,8 @@ import { query } from "./db.js";
  * - call Stripe (subscriptions keep billing until admin or provider cancel flow in Stripe)
  * - change billing_status, stripe_subscription_id, or cancel_at_period_end
  *
- * Patient marketplace + validateBookingScope require status = 'active' and valid license/cert.
+ * Patient marketplace lists providers with status = 'active' MD coverage (admin "Fully Active").
+ * validateBookingScope still requires valid license/cert at booking time.
  */
 
 export async function suspendMdSubscriptionAccess({ providerId, serviceTypeId = null }) {
