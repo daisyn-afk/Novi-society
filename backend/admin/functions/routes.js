@@ -1249,28 +1249,38 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
   }
 });
 
-/** Provider cancel: DB + admin email only. Stripe must be cancelled manually in dashboard. */
+/**
+ * Cancel an MD membership (provider self-serve or admin). Runs the full
+ * cancellation cascade: relationship teardown, future appointment cancellation,
+ * manufacturer access revocation + rep notifications, and a soft account reset
+ * once the provider's last active membership is gone. Stripe is not modified —
+ * admins cancel billing manually in the Stripe dashboard.
+ */
 functionsRouter.post("/cancelMDSubscription", async (req, res, next) => {
   try {
     const token = getBearerToken(req);
     if (!token) return res.status(401).json({ success: false, error: "Missing bearer token." });
     const me = await getMeFromAccessToken(token);
     const role = String(me.role || "").toLowerCase();
-    if (role !== "provider" && !hasAdminAccess(me.role)) {
+    const isAdmin = hasAdminAccess(me.role);
+    if (role !== "provider" && !isAdmin) {
       return res.status(403).json({ success: false, error: "Forbidden." });
     }
     const subscriptionId = String(req.body?.subscription_id || "").trim();
     if (!subscriptionId) {
       return res.status(400).json({ success: false, error: "subscription_id is required." });
     }
-    const { requestProviderMdSubscriptionCancel } = await import(
-      "../mdSubscriptionProviderCancel.js"
+    const { processMdMembershipCancellation } = await import(
+      "../mdMembershipCancellationService.js"
     );
-    const result = await requestProviderMdSubscriptionCancel({
+    const result = await processMdMembershipCancellation({
       subscriptionId,
       providerId: me.id,
       reason: req.body?.reason || null,
       notes: req.body?.notes || null,
+      cancelledBy: isAdmin ? "admin" : "provider",
+      cancelledByName: me.full_name || null,
+      enforceOwnership: !isAdmin,
     });
     if (!result.success) {
       return res.status(result.error === "Forbidden." ? 403 : 400).json(result);

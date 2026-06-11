@@ -862,6 +862,28 @@ export async function handleMdSubscriptionDeleted(subscription, stripeEventId = 
 
   const nowIso = new Date().toISOString();
 
+  // Run the full cancellation cascade (relationship teardown, future appointment
+  // cancellation, manufacturer revocation + rep notifications, soft account
+  // reset, provider notification). Runs before the billing-specific update below
+  // because the cascade short-circuits if the row is already cancelled.
+  let cascadeSummary = null;
+  try {
+    const { processMdMembershipCancellation } = await import(
+      "./mdMembershipCancellationService.js"
+    );
+    const result = await processMdMembershipCancellation({
+      subscriptionId: row.id,
+      providerId: row.provider_id,
+      reason: "Stripe subscription ended",
+      cancelledBy: "stripe",
+      enforceOwnership: false,
+    });
+    cascadeSummary = result?.summary || null;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn("[handleMdSubscriptionDeleted] cancellation cascade failed:", err?.message || err);
+  }
+
   await query(
     `update public.md_subscription
         set status = 'cancelled',
@@ -879,15 +901,7 @@ export async function handleMdSubscriptionDeleted(subscription, stripeEventId = 
     eventType: "subscription_ended",
     stripeEventId,
     stripeSubscriptionId,
-    metadata: { ended_by: "stripe_subscription_deleted" },
-  });
-
-  await insertAppNotification({
-    user_id: row.provider_id,
-    user_email: row.provider_email,
-    type: "general",
-    message: `MD Board coverage for ${row.service_type_name || "your service"} has ended.`,
-    link_page: "ProviderCredentialsCoverage",
+    metadata: { ended_by: "stripe_subscription_deleted", cascade: cascadeSummary },
   });
 
   return { ok: true };
