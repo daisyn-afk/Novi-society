@@ -26,6 +26,7 @@ export const adminUsersApi = {
       })}`
     ),
   get: (id) => adminApiRequest(`/admin/users/${id}`),
+  getProviderDetail: (id) => adminApiRequest(`/admin/users/${id}/provider-detail`),
   create: (payload) =>
     adminApiRequest("/admin/users", {
       method: "POST",
