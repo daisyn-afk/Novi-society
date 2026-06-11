@@ -153,12 +153,37 @@ function _readFrontendOriginFromReq(req) {
  *                           shape, or null for background/cron callers.
  * @returns {string}         e.g. "https://novisociety.com" or "http://localhost:5173"
  */
-export function resolveAppBaseUrl(req) {
-  // 1. Browser / client origin — must win over APP_BASE_URL so dev preview checkouts
-  //    return to the same host the user started on (not novisociety.com).
+/**
+ * Stripe / checkout return URL base. Uses the browser origin exactly — never
+ * rewrites *.vercel.app to novisociety.com (dev projects run VERCEL_ENV=production).
+ */
+export function resolveCheckoutReturnBaseUrl(req) {
+  const explicit = _origin(
+    req?.body?.checkout_return_base_url ||
+      req?.body?.return_base_url ||
+      req?.checkout_return_base_url ||
+      ""
+  );
+  if (explicit && _isTrustedFrontendOrigin(explicit)) {
+    console.info(`[frontendBaseUrl] checkout return base (explicit): ${explicit}`);
+    return explicit;
+  }
+
   const requestOrigin = _readFrontendOriginFromReq(req);
   if (requestOrigin && _isTrustedFrontendOrigin(requestOrigin)) {
-    const resolved = toPublicFrontendBaseUrl(requestOrigin);
+    const resolved = _origin(requestOrigin);
+    console.info(`[frontendBaseUrl] checkout return base (request): ${resolved}`);
+    return resolved;
+  }
+
+  return resolveAppBaseUrl(req);
+}
+
+export function resolveAppBaseUrl(req) {
+  // 1. Browser / client origin — use as-is (no vercel.app → live rewrite).
+  const requestOrigin = _readFrontendOriginFromReq(req);
+  if (requestOrigin && _isTrustedFrontendOrigin(requestOrigin)) {
+    const resolved = _origin(requestOrigin);
     console.info(`[frontendBaseUrl] using request origin: ${resolved}`);
     return resolved;
   }
