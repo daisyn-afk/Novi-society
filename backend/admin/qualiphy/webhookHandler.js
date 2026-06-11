@@ -120,6 +120,7 @@ async function updateAppointmentFromQualiphy({
             a.service,
             a.appointment_date,
             a.service_type_id,
+            a.qualiphy_exam_id,
             coalesce(st.category, st_by_name.category) as service_type_category
        from public.appointments a
        left join public.service_type st on st.id::text = a.service_type_id::text
@@ -200,6 +201,7 @@ async function updateAppointmentFromQualiphy({
         appointmentId: id,
         patientId: existing.patient_id,
         gfeCategory: existing.service_type_category,
+        qualiphyExamId: existing.qualiphy_exam_id,
         status: gfeStatus,
         completedAt: new Date().toISOString(),
         qualiphyPatientExamId: patientExamId,

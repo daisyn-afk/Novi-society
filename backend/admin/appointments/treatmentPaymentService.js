@@ -29,6 +29,7 @@ import {
   resolveAppointmentGfeContext,
 } from "../gfe/patientGfeService.js";
 import {
+  APPOINTMENT_QUALIPHY_EXAM_IDS_SQL,
   APPOINTMENT_REQUIRES_GFE_SQL,
   APPOINTMENT_SERVICE_TYPE_JOINS,
 } from "../lib/treatmentServiceType.js";
@@ -336,9 +337,14 @@ export async function createAppointmentTreatmentCheckout({
       `select a.*,
               ${APPOINTMENT_REQUIRES_GFE_SQL} as requires_gfe,
               coalesce(
+                case when coalesce(st.is_membership, false) = false then st.name else null end,
+                st_svc.name
+              ) as service_type_name,
+              coalesce(
                 case when coalesce(st.is_membership, false) = false then st.category else null end,
                 st_svc.category
-              ) as service_type_category
+              ) as service_type_category,
+              ${APPOINTMENT_QUALIPHY_EXAM_IDS_SQL} as qualiphy_exam_ids
          from public.appointments a
          ${APPOINTMENT_SERVICE_TYPE_JOINS}
         where a.id = $1
@@ -408,6 +414,7 @@ export async function createAppointmentTreatmentCheckout({
       requires_gfe: String(requiresGfe),
       gfe_status: gfeStatus,
       gfe_category: String(gfeContext.gfe_category || ""),
+      qualiphy_exam_id: String(gfeContext.qualiphy_exam_id || ""),
       gfe_fee_applies: String(gfeContext.gfe_fee_applies === true),
       treatment_amount_cents: String(treatmentCents),
       platform_fee_cents: String(platformFeeCents),
@@ -508,18 +515,21 @@ export async function processAppointmentTreatmentCheckoutCompletedSession(sessio
 
   const platformFeeCents = Number(metadata.platform_fee_cents || 0);
   if (platformFeeCents > 0) {
+    const qualiphyExamId = String(metadata.qualiphy_exam_id || "").trim();
     const gfeCategory = String(metadata.gfe_category || "").trim();
-    if (gfeCategory && appt.patient_id) {
+    if ((qualiphyExamId || gfeCategory) && appt.patient_id) {
       await markPlatformFeeCollected({
         patientId: appt.patient_id,
+        qualiphyExamId,
         gfeCategory,
         appointmentId,
       });
     } else {
       const gfeCtx = await loadAppointmentGfeContext(appointmentId);
-      if (gfeCtx?.gfe_category && appt.patient_id) {
+      if ((gfeCtx?.qualiphy_exam_id || gfeCtx?.gfe_category) && appt.patient_id) {
         await markPlatformFeeCollected({
           patientId: appt.patient_id,
+          qualiphyExamId: gfeCtx.qualiphy_exam_id,
           gfeCategory: gfeCtx.gfe_category,
           appointmentId,
         });

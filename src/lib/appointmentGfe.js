@@ -52,7 +52,8 @@ export function appointmentGfeBlocksTreatment(appt) {
 
 export function appointmentGfeBlockMessage(appt) {
   if (!appointmentGfeBlocksTreatment(appt)) return null;
-  const category = appt.gfe_category_label || appt.gfe_category || "this treatment category";
+  const category =
+    appt.gfe_validity_label || appt.gfe_category_label || appt.gfe_category || "this service";
   if (String(appt.gfe_status || "").toLowerCase() === "deferred") {
     return `The patient's Good Faith Exam for ${category} was deferred. A new approved exam is required before treatment can be logged or completed.`;
   }
