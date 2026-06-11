@@ -36,7 +36,7 @@ async function persistMdSubscriptionSignature(row, { signatureData, signedByName
   return rows[0] || row;
 }
 
-async function maybeStoreSignedContract(subscriptionRow, { signatureData, signedByName, signedAtIso, force = false } = {}) {
+async function maybeStoreSignedContract(subscriptionRow, { signatureData, signedByName, signedAtIso, force = false, profileSnapshot = null } = {}) {
   let row = subscriptionRow;
   if (signatureData && row?.id && !row.signature_data) {
     row = await persistMdSubscriptionSignature(row, { signatureData, signedByName, signedAtIso });
@@ -67,6 +67,7 @@ async function maybeStoreSignedContract(subscriptionRow, { signatureData, signed
       providerName: signedByName || row.signed_by_name || row.provider_name,
       signedAtIso: signedAtIso || row.signed_at || new Date().toISOString(),
       signatureDataUrl: sig,
+      profileSnapshot,
       contractPdfUrl,
       agreementText,
     });
@@ -89,6 +90,7 @@ export async function ensureSignedContractForSubscription(subscriptionRowOrId, o
     signedByName: overrides.signedByName || row.signed_by_name,
     signedAtIso: overrides.signedAtIso || row.signed_at,
     force: Boolean(overrides.force),
+    profileSnapshot: overrides.profileSnapshot || null,
   });
   if (url) {
     row = { ...row, signed_contract_url: url };
@@ -536,6 +538,7 @@ export async function finalizeMdBoardCoverage({
   enrollmentId = null,
   signatureData = null,
   signedByName = null,
+  profileSnapshot = null,
 }) {
   const pid = s(providerId);
   const stId = s(serviceTypeId);
@@ -577,6 +580,7 @@ export async function finalizeMdBoardCoverage({
       signatureData: signatureData || row.signature_data,
       signedByName: signedByName || row.signed_by_name || providerName,
       signedAtIso: row.signed_at,
+      profileSnapshot,
     });
     await ensureMdAssignment(pid, providerEmail, providerName, stId, serviceTypeName);
     return {
@@ -665,6 +669,7 @@ export async function finalizeMdBoardCoverage({
     signatureData: signatureData || row.signature_data,
     signedByName: signedByName || row.signed_by_name,
     signedAtIso: row.signed_at || nowIso,
+    profileSnapshot,
   });
 
   const assignResult = await ensureMdAssignment(pid, providerEmail, providerName, stId, serviceTypeName);

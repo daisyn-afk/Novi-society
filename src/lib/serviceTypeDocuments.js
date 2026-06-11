@@ -116,6 +116,17 @@ export function getSignedMdContractFileName(serviceType, signedByName) {
   return `${safe || "MD Board Agreement"}.pdf`;
 }
 
+/** Safe filename for downloading an unsigned MD agreement preview. */
+export function getMdContractPreviewFileName(serviceType, providerName) {
+  const label = getMdContractDisplayName(serviceType);
+  const signer = String(providerName || "provider").trim() || "provider";
+  const safe = `${label} - ${signer}`
+    .replace(/[^\w\s.-]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return `${safe || "MD Board Agreement"}.pdf`;
+}
+
 export function filterProtocolDocuments(docs) {
   return (Array.isArray(docs) ? docs : []).filter((doc) => {
     const name = String(doc?.name || "").trim();

@@ -975,6 +975,7 @@ functionsRouter.post("/previewMdBoardContract", async (req, res, next) => {
       providerId: me.id,
       providerName: me.full_name,
       serviceTypeName: String(req.body?.service_type_name || "").trim(),
+      profileSnapshot: me,
     });
     if (!bytes) {
       return res.json({ success: false, error: "No MD contract is available for this service yet." });
@@ -1076,6 +1077,7 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
         enrollmentId: enrollmentId || null,
         signatureData,
         signedByName: me.full_name,
+        profileSnapshot: me,
       });
       if (!result.ok) {
         return res.status(400).json({ success: false, error: result.error || "Unable to activate MD coverage." });
@@ -1138,6 +1140,7 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
     const signedContractUrl = await ensureSignedContractForSubscription(pending, {
       signatureData,
       signedByName: me.full_name,
+      profileSnapshot: me,
     });
 
     const base = resolveCheckoutReturnBaseUrl(req).replace(/\/$/, "");
