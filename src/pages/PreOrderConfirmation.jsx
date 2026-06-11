@@ -1,11 +1,12 @@
 import { useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle, Sparkles, Calendar, Mail, ArrowLeft } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { adminApiRequest } from "@/api/adminApiRequest";
 import { adminCoursesApi } from "@/api/adminCoursesApi";
 import { queryClientAdmincourses } from "@/lib/query-client";
 import { resolvePostCheckoutReturnPath } from "@/lib/checkoutReturnPath";
+import { createPageUrl } from "@/utils";
 
 const normalizeLandingCourse = (course) => ({
   ...course,
@@ -154,13 +155,17 @@ export default function PreOrderConfirmation() {
       </div>
     );
   }
+
   const returnPath = resolvePostCheckoutReturnPath({
     returnTo: params.get("return_to") || order?.checkout_return_to,
   });
+  const isCourseEnrollment = order.order_type === "course" && order.status === "paid";
+  const needsAccountSetup = isCourseEnrollment && (order.needs_account_setup ?? !order.has_provider_account);
+  const itemLabel = order.order_type === "course" ? order.course_title : order.service_name;
+
   return (
     <div className="min-h-screen flex items-center justify-center px-4 py-16" style={{ fontFamily: "'DM Sans', sans-serif", background: "#f5f3ef" }}>
       <div className="w-full max-w-2xl text-center">
-        {/* Success icon */}
         <div className="mb-8 flex justify-center">
           <div className="w-20 h-20 rounded-full flex items-center justify-center" style={{ background: "linear-gradient(135deg, #C8E63C, #a8c020)" }}>
             <CheckCircle className="w-10 h-10" style={{ color: "#1a2540" }} />
@@ -169,19 +174,36 @@ export default function PreOrderConfirmation() {
 
         <div className="rounded-3xl overflow-hidden mb-8" style={{ background: "#ffffff", border: "1px solid rgba(30,37,53,0.08)", boxShadow: "0 10px 30px rgba(30,37,53,0.08)" }}>
           <div className="px-8 py-10">
-            <h1 className="text-4xl font-bold mb-4" style={{ fontFamily: "'DM Serif Display', serif", fontStyle: "italic", color: "#1e2535" }}>
-              You're on the list!
-            </h1>
-            <p className="text-lg mb-8" style={{ color: "rgba(30,37,53,0.7)" }}>
-              Your pre-launch reservation has been confirmed.
-            </p>
+            {isCourseEnrollment ? (
+              <>
+                <h1 className="text-4xl font-bold mb-4" style={{ fontFamily: "'DM Serif Display', serif", fontStyle: "italic", color: "#1e2535" }}>
+                  {needsAccountSetup ? "You're enrolled!" : "Enrollment confirmed!"}
+                </h1>
+                <p className="text-lg mb-8" style={{ color: "rgba(30,37,53,0.7)" }}>
+                  {needsAccountSetup
+                    ? "Your seat is confirmed. Check your email to set your password and access your dashboard, pre-course materials, and Studying status."
+                    : "Your course seat is confirmed. Head to your provider dashboard to access pre-course materials and your Studying status."}
+                </p>
+              </>
+            ) : (
+              <>
+                <h1 className="text-4xl font-bold mb-4" style={{ fontFamily: "'DM Serif Display', serif", fontStyle: "italic", color: "#1e2535" }}>
+                  You're on the list!
+                </h1>
+                <p className="text-lg mb-8" style={{ color: "rgba(30,37,53,0.7)" }}>
+                  Your pre-launch reservation has been confirmed.
+                </p>
+              </>
+            )}
 
             <div className="space-y-4 text-left">
               <div className="flex items-center gap-3 px-5 py-4 rounded-xl" style={{ background: "rgba(30,37,53,0.04)" }}>
                 <Sparkles className="w-5 h-5 flex-shrink-0" style={{ color: "#C8E63C" }} />
                 <div>
-                  <p className="text-xs font-bold uppercase tracking-wide" style={{ color: "rgba(30,37,53,0.5)" }}>Reserved</p>
-                  <p className="font-semibold" style={{ color: "#1e2535" }}>{order.order_type === "course" ? order.course_title : order.service_name}</p>
+                  <p className="text-xs font-bold uppercase tracking-wide" style={{ color: "rgba(30,37,53,0.5)" }}>
+                    {isCourseEnrollment ? "Enrolled in" : "Reserved"}
+                  </p>
+                  <p className="font-semibold" style={{ color: "#1e2535" }}>{itemLabel}</p>
                 </div>
               </div>
 
@@ -204,15 +226,48 @@ export default function PreOrderConfirmation() {
               </div>
             </div>
 
-            <div className="mt-8 px-6 py-5 rounded-2xl" style={{ background: "rgba(200,230,60,0.12)", border: "1px solid rgba(200,230,60,0.3)" }}>
-              <p className="text-sm font-semibold mb-2" style={{ color: "#3d5a0a" }}>What happens next?</p>
-              <ul className="text-sm space-y-2 text-left" style={{ color: "rgba(61,90,10,0.85)" }}>
-                <li>✓ You'll receive a confirmation email shortly</li>
-                <li>✓ We'll notify you 2 weeks before launch with payment details</li>
-                <li>✓ Early access to the NOVI Society platform before public release</li>
-                <li>✓ Priority enrollment for in-person training sessions</li>
-              </ul>
-            </div>
+            {isCourseEnrollment ? (
+              <div className="mt-8 px-6 py-5 rounded-2xl text-left" style={{ background: "rgba(200,230,60,0.12)", border: "1px solid rgba(200,230,60,0.3)" }}>
+                {needsAccountSetup ? (
+                  <>
+                    <p className="text-sm font-semibold mb-3" style={{ color: "#3d5a0a" }}>
+                      Check your email to get started
+                    </p>
+                    <p className="text-sm" style={{ color: "rgba(61,90,10,0.85)" }}>
+                      We sent an email to <strong>{order.customer_email}</strong>. Open it, click the button to set your password, then log in with that password to access your provider dashboard.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-sm font-semibold mb-3" style={{ color: "#3d5a0a" }}>
+                      What happens next?
+                    </p>
+                    <ul className="text-sm space-y-2" style={{ color: "rgba(61,90,10,0.85)" }}>
+                      <li>✓ Open your provider dashboard to view pre-course materials</li>
+                      <li>✓ Your enrollment shows a Studying status until class day</li>
+                      <li>✓ We&apos;ll send reminders before your session</li>
+                    </ul>
+                    <Link
+                      to={createPageUrl("ProviderDashboard")}
+                      className="mt-5 inline-flex items-center justify-center gap-2 w-full px-6 py-3.5 rounded-xl font-bold text-sm transition-opacity hover:opacity-90"
+                      style={{ background: "#1e2535", color: "#fff" }}
+                    >
+                      Go to your dashboard
+                    </Link>
+                  </>
+                )}
+              </div>
+            ) : (
+              <div className="mt-8 px-6 py-5 rounded-2xl" style={{ background: "rgba(200,230,60,0.12)", border: "1px solid rgba(200,230,60,0.3)" }}>
+                <p className="text-sm font-semibold mb-2" style={{ color: "#3d5a0a" }}>What happens next?</p>
+                <ul className="text-sm space-y-2 text-left" style={{ color: "rgba(61,90,10,0.85)" }}>
+                  <li>✓ You'll receive a confirmation email shortly</li>
+                  <li>✓ We'll notify you 2 weeks before launch with payment details</li>
+                  <li>✓ Early access to the NOVI Society platform before public release</li>
+                  <li>✓ Priority enrollment for in-person training sessions</li>
+                </ul>
+              </div>
+            )}
           </div>
         </div>
 
