@@ -26,7 +26,7 @@ import {
 import { resolveAppBaseUrl } from "../lib/frontendBaseUrl.js";
 import { sendEmailFromTemplate } from "../emails/renderTemplate.js";
 import { splitCustomerName } from "../users/providerSignupLink.js";
-import { markPasswordResetPending } from "../users/passwordSetup.js";
+import { markPasswordResetPending, PASSWORD_SETUP_STATUS } from "../users/passwordSetup.js";
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
 
@@ -117,6 +117,37 @@ function normalizeCheckoutReturnTo(value, fallback = "landing") {
   return "landing";
 }
 
+async function enrichPreOrderWithAccountContext(preOrder, client = null) {
+  if (!preOrder?.customer_email) {
+    return {
+      ...preOrder,
+      password_setup_status: null,
+      has_provider_account: false,
+      needs_account_setup: Boolean(preOrder?.order_type === "course" && preOrder?.status === "paid")
+    };
+  }
+
+  const runQuery = async (sql, params = []) => (client ? client.query(sql, params) : query(sql, params));
+  const { rows } = await runQuery(
+    `select password_setup_status, auth_user_id
+     from public.users
+     where lower(email) = lower($1)
+     limit 1`,
+    [preOrder.customer_email]
+  );
+  const userRow = rows[0] ?? null;
+  const passwordSetupStatus = userRow?.password_setup_status ?? null;
+  const hasProviderAccount = passwordSetupStatus === PASSWORD_SETUP_STATUS.COMPLETED;
+  const isPaidCourse = preOrder.order_type === "course" && preOrder.status === "paid";
+
+  return {
+    ...preOrder,
+    password_setup_status: passwordSetupStatus,
+    has_provider_account: hasProviderAccount,
+    needs_account_setup: isPaidCourse && !hasProviderAccount
+  };
+}
+
 export async function enrichPreOrderWithReturnContext(preOrder, sessionId = null) {
   if (!preOrder) return null;
   const sid = sessionId || preOrder.stripe_session_id || null;
@@ -129,7 +160,8 @@ export async function enrichPreOrderWithReturnContext(preOrder, sessionId = null
       // keep default
     }
   }
-  return { ...preOrder, checkout_return_to };
+  const withAccount = await enrichPreOrderWithAccountContext({ ...preOrder, checkout_return_to });
+  return withAccount;
 }
 
 export async function createCourseCheckout(payload, options = {}) {
@@ -905,14 +937,12 @@ export async function getPreOrder({ id, sessionId }) {
               stripeSession?.customer ? String(stripeSession.customer) : null
             ]
           );
-          void (async () => {
-            try {
-              await processCompletedCheckoutSession(stripeSession);
-            } catch (reconcileErr) {
-              // eslint-disable-next-line no-console
-              console.error("[checkout] async paid-session reconciliation failed:", reconcileErr?.message || reconcileErr);
-            }
-          })();
+          try {
+            await processCompletedCheckoutSession(stripeSession);
+          } catch (reconcileErr) {
+            // eslint-disable-next-line no-console
+            console.error("[checkout] paid-session reconciliation failed:", reconcileErr?.message || reconcileErr);
+          }
           const refreshed = await client.query(
             `select id, order_type, type, status, course_id, course_title, course_date,
                     customer_name, customer_email, first_name, last_name,
@@ -1056,7 +1086,7 @@ export async function getPreOrder({ id, sessionId }) {
       }
     }
 
-    return preOrder;
+    return enrichPreOrderWithAccountContext(preOrder, client);
   } finally {
     client.release();
   }
