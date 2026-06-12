@@ -28,10 +28,23 @@ function serviceDisplayName(service, allServiceTypes = []) {
 
 function servicesInMembership(membership, allServiceTypes = []) {
   if (!membership) return [];
-  const ids = Array.isArray(membership.included_service_ids) ? membership.included_service_ids : [];
-  return ids
+
+  const membershipId = String(membership.id || "").trim();
+  const byIncluded = (membership.included_service_ids || [])
     .map((id) => (allServiceTypes || []).find((st) => String(st.id) === String(id)))
     .filter(Boolean);
+
+  const children =
+    byIncluded.length > 0
+      ? byIncluded
+      : (allServiceTypes || []).filter(
+          (st) =>
+            membershipId &&
+            String(st.legacy_parent_membership_id || "") === membershipId &&
+            !isMembershipPlan(st)
+        );
+
+  return children;
 }
 
 export function dedupeCertAwards(awards = []) {
@@ -67,19 +80,6 @@ export function buildCertAwardsFromLinkedServices(linkedIds = [], serviceTypes =
     });
   }
   return dedupeCertAwards(awards);
-}
-
-function isMembershipPlan(st) {
-  if (!st || isMembershipChildService(st)) return false;
-  return st.is_membership === true;
-}
-
-function servicesInMembership(membership, allServiceTypes = []) {
-  if (!membership) return [];
-  const ids = Array.isArray(membership.included_service_ids) ? membership.included_service_ids : [];
-  return ids
-    .map((id) => (allServiceTypes || []).find((st) => String(st.id) === String(id)))
-    .filter(Boolean);
 }
 
 /** Certificate issued after a provider completes a scheduled NOVI class. */
