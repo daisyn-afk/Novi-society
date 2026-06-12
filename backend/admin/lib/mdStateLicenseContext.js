@@ -1,4 +1,6 @@
 import { pool } from "../db.js";
+import { getProviderIdAliases } from "../mdSupervisedAccess.js";
+import { resolveUnassignedMdReason } from "./mdAssignmentDiagnostics.js";
 
 function asTrimmed(value) {
   return String(value ?? "").trim();
@@ -111,20 +113,27 @@ export function buildSupervisingMdCoverageContext({ mdProfile, providerStates, m
     return { us_state: st, license_number: "", expiration_date: "" };
   });
 
+  const hasAssignedMd = Boolean(asTrimmed(mdRelationship?.medical_director_id));
+  const isNationwide = hasAssignedMd && mdProfile?.supervision_nationwide !== false;
+
   const email_summary_lines = [];
   if (mdProfile?.npi) email_summary_lines.push(`MD NPI: ${mdProfile.npi}`);
   if (states.length) email_summary_lines.push(`Provider state(s): ${states.join(", ")}`);
-  for (const lic of relevant_state_licenses) {
-    if (isRealLicenseValue(lic.license_number) || isRealLicenseValue(lic.expiration_date)) {
-      email_summary_lines.push(formatMdLicenseEmailLine(lic));
-    } else {
-      email_summary_lines.push(`MD license (${lic.us_state}): not on file`);
+  if (isNationwide) {
+    email_summary_lines.push("MD supervision: Nationwide (all states)");
+  } else {
+    for (const lic of relevant_state_licenses) {
+      if (isRealLicenseValue(lic.license_number) || isRealLicenseValue(lic.expiration_date)) {
+        email_summary_lines.push(formatMdLicenseEmailLine(lic));
+      } else {
+        email_summary_lines.push(`MD license (${lic.us_state}): not on file`);
+      }
     }
   }
 
-  const hasCoverageInProviderState = relevant_state_licenses.some(
-    (lic) => isRealLicenseValue(lic.license_number)
-  );
+  const hasCoverageInProviderState =
+    isNationwide ||
+    relevant_state_licenses.some((lic) => isRealLicenseValue(lic.license_number));
 
   return {
     medical_director_id: mdRelationship?.medical_director_id
@@ -150,15 +159,21 @@ export async function resolveSupervisingMdCoverageForProvider({
   userState,
   licenses = [],
   practiceAddress = "",
+  lookupIds = null,
 }) {
+  const { aliases } = lookupIds?.length
+    ? { aliases: lookupIds }
+    : await getProviderIdAliases(providerId);
+  const ids = aliases?.length ? aliases : [String(providerId || "").trim()].filter(Boolean);
+
   const relRows = await safeQuery(
     `select medical_director_id, medical_director_name, medical_director_email, status
      from public.medical_director_relationship
-     where provider_id::text = $1
+     where provider_id::text = any($1::text[])
      order by case when lower(coalesce(status, '')) = 'active' then 0 else 1 end,
               created_at desc nulls last
      limit 1`,
-    [providerId]
+    [ids]
   );
   const relationship = relRows[0] || null;
   const providerStates = collectProviderStates({
@@ -167,22 +182,35 @@ export async function resolveSupervisingMdCoverageForProvider({
     licenses,
     practiceAddress,
   });
+  const hasActiveRelationship = Boolean(asTrimmed(relationship?.medical_director_id))
+    && String(relationship?.status || "").toLowerCase() === "active";
 
-  if (!relationship?.medical_director_id) {
+  if (!hasActiveRelationship) {
+    const unassigned_reason = await resolveUnassignedMdReason({
+      lookupIds: ids,
+      providerState: providerStates[0] || normalizeUsState(userState) || normalizeUsState(profileState) || null,
+      hasActiveRelationship: false,
+    });
     return {
       ...buildSupervisingMdCoverageContext({
-        mdProfile: { npi: null, supervision_nationwide: true, state_licenses: [] },
+        mdProfile: { npi: null, supervision_nationwide: false, state_licenses: [] },
         providerStates,
-        mdRelationship: relationship,
+        mdRelationship: null,
       }),
       provider_states: providerStates,
+      has_active_relationship: false,
+      unassigned_reason,
     };
   }
 
   const mdProfile = await fetchMdProfileAndStateLicenses(relationship.medical_director_id);
-  return buildSupervisingMdCoverageContext({
-    mdProfile,
-    providerStates,
-    mdRelationship: relationship,
-  });
+  return {
+    ...buildSupervisingMdCoverageContext({
+      mdProfile,
+      providerStates,
+      mdRelationship: relationship,
+    }),
+    has_active_relationship: true,
+    unassigned_reason: null,
+  };
 }

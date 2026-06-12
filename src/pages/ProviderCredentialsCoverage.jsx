@@ -40,7 +40,7 @@ import {
   isUsableDocumentUrl,
 } from "@/lib/serviceTypeDocuments";
 import MdAgreementDocument from "@/components/provider/MdAgreementDocument";
-import SupervisingMdCoveragePanel from "@/components/provider/SupervisingMdCoveragePanel";
+import SupervisingMdCoveragePanel, { resolveUnassignedMessage } from "@/components/provider/SupervisingMdCoveragePanel";
 import {
   buildAgreementContextFromProfile,
   mergeAgreementContext,
@@ -475,7 +475,7 @@ export default function ProviderCredentialsCoverage() {
     queryKey: ["supervising-md-coverage", me?.id],
     queryFn: () => adminApiRequest("/admin/md-relationships/supervising-md-coverage", { method: "GET" }),
     enabled: !!me?.id,
-    staleTime: 120_000,
+    staleTime: 0,
   });
   const { data: relationships = [] } = useQuery({
     queryKey: ["my-md-relationships"],
@@ -1457,22 +1457,22 @@ export default function ProviderCredentialsCoverage() {
           { label: "MD Coverage", value: activeSubscriptions.length, sub: "services active", tab: "coverage" },
           {
             label: "Assigned MD",
-            value: activeRelationships.length > 0 ? "✓" : "—",
-            sub: activeRelationships[0]?.medical_director_name || "Not yet assigned",
+            value: activeRelationships[0]?.medical_director_name || "—",
+            sub: activeRelationships.length > 0
+              ? "Supervising physician"
+              : (resolveUnassignedMessage(supervisingMdCoverage, {
+                  hasActiveMdCoverage: activeSubscriptions.length > 0,
+                }) || "Not yet assigned"),
             tab: "coverage",
-            coverage: supervisingMdCoverage,
+            subIsError: activeRelationships.length === 0,
           },
-        ].map(({ label, value, sub, tab, coverage }, i) => (
+        ].map(({ label, value, sub, tab, subIsError }, i) => (
           <button key={label} onClick={() => setActiveTab(tab)}
             className="text-left px-4 py-4 transition-all hover:bg-white/50 min-w-0"
             style={{ borderLeft: i % 2 === 0 ? "none" : "1px solid rgba(30,37,53,0.07)", borderTop: i >= 2 ? "1px solid rgba(30,37,53,0.07)" : "none" }}>
-            <p style={{ fontFamily: "'DM Serif Display', serif", fontSize: 22, color: "#1e2535", lineHeight: 1, fontWeight: 400 }}>{value}</p>
+            <p className="truncate" style={{ fontFamily: "'DM Serif Display', serif", fontSize: label === "Assigned MD" && value !== "—" ? 16 : 22, color: "#1e2535", lineHeight: 1.2, fontWeight: 400 }}>{value}</p>
             <p className="text-xs font-semibold mt-1" style={{ color: "#1e2535" }}>{label}</p>
-            {label === "Assigned MD" && coverage ? (
-              <SupervisingMdCoveragePanel coverage={coverage} compact />
-            ) : (
-              <p className="text-[10px] mt-0.5 truncate" style={{ color: "rgba(30,37,53,0.4)" }}>{sub}</p>
-            )}
+            <p className="text-[10px] mt-0.5 line-clamp-3" style={{ color: subIsError ? "#DC2626" : "rgba(30,37,53,0.4)" }}>{sub}</p>
           </button>
         ))}
       </div>
@@ -1740,7 +1740,10 @@ export default function ProviderCredentialsCoverage() {
         <TabsContent value="coverage" className="pt-6 space-y-6">
 
           {supervisingMdCoverage && (
-            <SupervisingMdCoveragePanel coverage={supervisingMdCoverage} />
+            <SupervisingMdCoveragePanel
+              coverage={supervisingMdCoverage}
+              hasActiveMdCoverage={activeSubscriptions.length > 0}
+            />
           )}
 
           {/* MD Assignment — editorial strip */}
