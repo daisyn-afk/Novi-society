@@ -573,7 +573,7 @@ export default function ScheduleCourseForm({
                           />
                         </div>
                         <div>
-                          <Label className="text-xs">Start Time</Label>
+                          <Label className="text-xs">Start Time (US Eastern)</Label>
                           <Input
                             type="time"
                             value={(newDatesBySession[session.id] || EMPTY_DATE_DRAFT).start_time}
@@ -581,13 +581,16 @@ export default function ScheduleCourseForm({
                           />
                         </div>
                         <div>
-                          <Label className="text-xs">End Time</Label>
+                          <Label className="text-xs">End Time (US Eastern)</Label>
                           <Input
                             type="time"
                             value={(newDatesBySession[session.id] || EMPTY_DATE_DRAFT).end_time}
                             onChange={(e) => updateDateDraft(session.id, { end_time: e.target.value })}
                           />
                         </div>
+                        <p className="col-span-2 text-[11px] text-slate-500">
+                          Class times are saved in US Eastern. Providers see the matching local time in their timezone when class code entry opens.
+                        </p>
                         <div className="col-span-2 space-y-2">
                           <div className="flex items-center justify-between">
                             <Label className="text-xs">Location *</Label>

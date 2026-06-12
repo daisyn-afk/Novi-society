@@ -201,7 +201,7 @@ export default function AdminCertifications() {
         enrollment_id: payload.enrollment.id,
         provider_name: payload.enrollment.provider_name,
         provider_email: payload.enrollment.provider_email,
-        certification_name: payload.course?.title || payload.course?.certification_name || "Course Certification",
+        certification_name: payload.course?.certification_name || payload.course?.title || "Course Certification",
         certificate_number: `NOVI-${Date.now()}`,
         status: "active",
         issued_at: new Date().toISOString(),

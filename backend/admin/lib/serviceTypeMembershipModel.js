@@ -1,4 +1,5 @@
-/** Strip "Membership Name — " prefix from migrated child service names. */
+/** Shared membership → treatment service helpers (mirrors src/lib/serviceTypeMembershipModel.js). */
+
 export function serviceDisplayName(service, allServiceTypes = []) {
   const name = String(service?.name || "").trim();
   if (!name) return name;
@@ -22,26 +23,11 @@ export function isMembershipChildService(st) {
   return Boolean(String(st?.legacy_parent_membership_id || "").trim());
 }
 
-/** @deprecated use isMembershipChildService */
-export const isTierChildService = isMembershipChildService;
-
-/** Membership plan — what providers purchase MD coverage for. */
 export function isMembershipPlan(st) {
   if (!st || isMembershipChildService(st)) return false;
   return st.is_membership === true;
 }
 
-export function isMdPurchasablePlan(st) {
-  return isMembershipPlan(st);
-}
-
-/** GFE is only configured on individual services, never membership plans. */
-export function serviceRequiresGfe(st) {
-  if (!st || isMembershipPlan(st)) return false;
-  return st.requires_gfe === true;
-}
-
-/** Services included in a membership (included_service_ids, or legacy child rows). */
 export function servicesInMembership(membership, allServiceTypes = []) {
   if (!membership) return [];
 
@@ -63,37 +49,15 @@ export function servicesInMembership(membership, allServiceTypes = []) {
   return children.sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
 }
 
-/** All child services covered by an active membership subscription. */
-export function servicesUnlockedForSubscription(sub, membership, allServiceTypes = []) {
-  if (String(sub?.status || "").toLowerCase() !== "active") return [];
-  return servicesInMembership(membership, allServiceTypes);
-}
-
-/**
- * Active MD subscription → membership id + every included service id.
- */
-/** Individual treatment rows for provider menus (excludes purchasable membership plans). */
 export function treatmentMenuServiceTypes(serviceTypes = [], activeServiceIds) {
-  const active = activeServiceIds instanceof Set
-    ? activeServiceIds
-    : new Set((activeServiceIds || []).map((id) => String(id)));
+  const active =
+    activeServiceIds instanceof Set
+      ? activeServiceIds
+      : new Set((activeServiceIds || []).map((id) => String(id)));
 
   return (serviceTypes || []).filter((st) => {
     if (!active.has(String(st.id))) return false;
     if (isMembershipPlan(st)) return false;
-    return st.is_active !== false;
-  });
-}
-
-/** Locked treatment rows — services without coverage, not membership plans. */
-export function lockedTreatmentMenuServices(serviceTypes = [], activeServiceIds) {
-  const active = activeServiceIds instanceof Set
-    ? activeServiceIds
-    : new Set((activeServiceIds || []).map((id) => String(id)));
-
-  return (serviceTypes || []).filter((st) => {
-    if (isMembershipPlan(st)) return false;
-    if (active.has(String(st.id))) return false;
     return st.is_active !== false;
   });
 }
@@ -115,4 +79,26 @@ export function expandActiveServiceIds(activeSubscriptions = [], serviceTypes = 
   }
 
   return ids;
+}
+
+/**
+ * Resolve a patient-facing service label to a bookable treatment row covered by active MD subs.
+ */
+export function resolveBookableTreatmentService({
+  serviceName,
+  activeSubscriptions = [],
+  serviceTypes = [],
+}) {
+  const label = String(serviceName || "").trim();
+  if (!label) return null;
+
+  const activeServiceIds = expandActiveServiceIds(activeSubscriptions, serviceTypes);
+  const bookable = treatmentMenuServiceTypes(serviceTypes, activeServiceIds);
+  const lower = label.toLowerCase();
+
+  return (
+    bookable.find((st) => serviceDisplayName(st, serviceTypes).toLowerCase() === lower) ||
+    bookable.find((st) => String(st.name || "").trim().toLowerCase() === lower) ||
+    null
+  );
 }

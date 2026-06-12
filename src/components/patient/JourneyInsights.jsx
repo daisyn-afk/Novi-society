@@ -164,11 +164,13 @@ Include 2-3 specific product or treatment tips with real brand names. Keep it wa
         <p className="text-sm mb-5 leading-relaxed" style={{ color: "rgba(42,48,80,0.55)" }}>
           Unlock skin score trends, your next best treatment step, seasonal guides, and budget tracking.
         </p>
-        <button onClick={onUpgrade}
-          className="px-5 py-2.5 rounded-xl font-semibold text-sm"
-          style={{ background: "#7B8EC8", color: "white" }}>
-          Upgrade — $19/mo
-        </button>
+        {onUpgrade && (
+          <button onClick={onUpgrade}
+            className="px-5 py-2.5 rounded-xl font-semibold text-sm"
+            style={{ background: "#7B8EC8", color: "white" }}>
+            Upgrade — $19/mo
+          </button>
+        )}
       </div>
     );
   }

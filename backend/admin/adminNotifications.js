@@ -191,8 +191,7 @@ export async function notifyAdminsOfProviderMdCancellation({
     notes ? `Notes: ${notes}` : null,
     `NOVI subscription id: ${mdSubscriptionId || "N/A"}`,
     `Stripe subscription id: ${stripeLabel}`,
-    "Action required: cancel or deactivate this subscription in the Stripe dashboard if billing should stop.",
-    "NOVI marked coverage as cancelled in the database only — Stripe was not modified by the app.",
+    "Stripe billing was stopped automatically when the provider confirmed cancellation.",
   ].filter(Boolean);
 
   for (const admin of admins) {
@@ -204,7 +203,7 @@ export async function notifyAdminsOfProviderMdCancellation({
       adminUserId,
       adminEmail,
       type: "md_subscription_cancel_requested",
-      message: `${providerName || providerEmail || "A provider"} requested cancellation of MD coverage for ${serviceTypeName || "a service"}. Deactivate in Stripe manually.`,
+      message: `${providerName || providerEmail || "A provider"} cancelled MD coverage for ${serviceTypeName || "a service"}. Stripe billing was stopped automatically.`,
       linkPage: "AdminLicenses",
     });
 

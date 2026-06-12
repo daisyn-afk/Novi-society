@@ -65,6 +65,25 @@ export async function openCertificateDocument(cert) {
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
 }
 
+/** Sample PDF preview for course templates before any provider is certified. */
+export async function previewNoviCertificateTemplate({ certificationName, courseTitle } = {}) {
+  const name = String(certificationName || courseTitle || "Course Certification").trim();
+  const blob = await generateCourseCertificatePdf({
+    providerName: "Sample Provider",
+    certificationName: name,
+    courseTitle: name,
+    certificateNumber: "NOVI-PREVIEW",
+    issuedAt: new Date().toISOString(),
+    expiresAt: null,
+    signatureDataUrl: "",
+    signatureImageUrl: "",
+    signerName: "NOVI Society",
+  });
+  const objectUrl = URL.createObjectURL(blob);
+  window.open(objectUrl, "_blank", "noopener,noreferrer");
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+}
+
 export async function downloadCertificateDocument(certOrUrl, filename = "certificate.pdf") {
   if (typeof certOrUrl === "string") {
     const response = await fetch(certOrUrl);

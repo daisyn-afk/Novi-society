@@ -2,7 +2,7 @@ export const CERTIFICATE_EXPIRATION_DATE = "date";
 export const CERTIFICATE_EXPIRATION_NEVER = "never";
 
 export function getCourseCertificationName(course) {
-  return String(course?.title || course?.certification_name || "Course Certification").trim();
+  return String(course?.certification_name || course?.title || "Course Certification").trim();
 }
 
 export function resolveCertificateExpiration(issueForm = {}) {

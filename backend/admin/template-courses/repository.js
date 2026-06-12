@@ -1,4 +1,10 @@
 import { pool, query } from "../db.js";
+import {
+  awardsMatchStored,
+  buildCertAwardsFromLinkedServices,
+  dedupeCertAwards,
+  resolveCourseCompletionCertificateName,
+} from "../lib/courseCertAwards.js";
 
 function rowToApi(row, certifications = []) {
   if (!row) return null;
@@ -40,20 +46,65 @@ function rowToApi(row, certifications = []) {
 }
 
 function normalizeAwardsForApi(awards = []) {
-  const seen = new Set();
-  return (awards || [])
-    .filter((c) => c?.service_type_id)
-    .map((c) => ({
-      service_type_id: c.service_type_id,
-      service_type_name: c.service_type_name ?? null,
-      cert_name: c.cert_name ?? null
-    }))
-    .filter((c) => {
-      const key = String(c.service_type_id);
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
+  return dedupeCertAwards(
+    (awards || [])
+      .filter((c) => c?.service_type_id)
+      .map((c) => ({
+        service_type_id: c.service_type_id,
+        service_type_name: c.service_type_name ?? null,
+        cert_name: c.cert_name ?? null,
+      }))
+  );
+}
+
+let serviceTypesForCertsCache = null;
+let serviceTypesForCertsLoadedAt = 0;
+const SERVICE_TYPES_CACHE_MS = 60_000;
+
+async function loadServiceTypesForCertDerivation() {
+  const now = Date.now();
+  if (serviceTypesForCertsCache && now - serviceTypesForCertsLoadedAt < SERVICE_TYPES_CACHE_MS) {
+    return serviceTypesForCertsCache;
+  }
+  const { rows } = await query(
+    `select id, name, is_membership, included_service_ids, legacy_parent_membership_id
+     from public.service_type
+     where is_active is distinct from false`
+  );
+  serviceTypesForCertsCache = rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    is_membership: row.is_membership === true,
+    included_service_ids: Array.isArray(row.included_service_ids) ? row.included_service_ids : [],
+    legacy_parent_membership_id: row.legacy_parent_membership_id ?? null,
+  }));
+  serviceTypesForCertsLoadedAt = now;
+  return serviceTypesForCertsCache;
+}
+
+async function repairTemplateCertificationsIfNeeded(client, templateRow, storedAwards) {
+  const linkedServiceTypeIds = templateRow?.linked_service_type_ids ?? [];
+  const serviceTypes = await loadServiceTypesForCertDerivation();
+  const derived = buildCertAwardsFromLinkedServices(linkedServiceTypeIds, serviceTypes);
+  const resolvedCertificationName = resolveCourseCompletionCertificateName(templateRow, serviceTypes);
+  const needsAwardRepair = !awardsMatchStored(derived, storedAwards);
+  const needsNameRepair = !String(templateRow?.certification_name || "").trim() && resolvedCertificationName;
+
+  if (!needsAwardRepair && !needsNameRepair) return derived;
+
+  if (needsAwardRepair) {
+    await replaceCertifications(client, templateRow.id, derived);
+  }
+  if (needsNameRepair) {
+    await client.query(
+      `update public.template_courses
+       set certification_name = $2, updated_at = now()
+       where id = $1`,
+      [templateRow.id, resolvedCertificationName]
+    );
+    templateRow.certification_name = resolvedCertificationName;
+  }
+  return derived;
 }
 
 /** Template award rows only — exclude provider-issued certifications in the same table. */
@@ -149,37 +200,32 @@ export async function listTemplateCourses() {
   );
   if (!rows.length) return [];
 
-  const templateIds = rows.map((r) => r.id);
-  const { rows: certRows } = await query(
-    `select template_course_id, service_type_id, service_type_name, cert_name
-     from public.certification
-     where template_course_id = any($1::uuid[])
-       and provider_id is null
-       and coalesce(nullif(trim(enrollment_id), ''), null) is null
-     order by template_course_id, sort_order asc, id asc`,
-    [templateIds]
-  );
-
-  const certsByTemplate = new Map();
-  for (const cert of certRows) {
-    const arr = certsByTemplate.get(cert.template_course_id) || [];
-    arr.push({
-      service_type_id: cert.service_type_id,
-      service_type_name: cert.service_type_name,
-      cert_name: cert.cert_name
-    });
-    certsByTemplate.set(cert.template_course_id, arr);
+  const client = await pool.connect();
+  try {
+    const out = [];
+    for (const row of rows) {
+      const stored = await fetchCertificationsForTemplate(client, row.id);
+      const derived = await repairTemplateCertificationsIfNeeded(client, row, stored);
+      out.push(rowToApi(row, derived));
+    }
+    return out;
+  } finally {
+    client.release();
   }
-
-  return rows.map((row) => rowToApi(row, certsByTemplate.get(row.id) || []));
 }
 
 export async function getTemplateCourseById(id) {
   const { rows } = await query(`select * from public.template_courses where id = $1 limit 1`, [id]);
   const row = rows[0];
   if (!row) return null;
-  const certs = await fetchCertificationsForTemplate(pool, id);
-  return rowToApi(row, certs);
+  const client = await pool.connect();
+  try {
+    const stored = await fetchCertificationsForTemplate(client, id);
+    const derived = await repairTemplateCertificationsIfNeeded(client, row, stored);
+    return rowToApi(row, derived);
+  } finally {
+    client.release();
+  }
 }
 
 export async function createTemplateCourse(payload, createdByEmail, serviceTypeNameLookup) {
@@ -242,8 +288,20 @@ export async function createTemplateCourse(payload, createdByEmail, serviceTypeN
     );
 
     const row = rows[0];
-    const normalizedAwards = normalizeAwardsForApi(payload.certifications_awarded);
+    const serviceTypes = await loadServiceTypesForCertDerivation();
+    const derivedAwards = buildCertAwardsFromLinkedServices(payload.linked_service_type_ids || [], serviceTypes);
+    const normalizedAwards = normalizeAwardsForApi(derivedAwards);
+    const certificationName =
+      String(payload.certification_name || "").trim() ||
+      resolveCourseCompletionCertificateName({ ...row, ...payload }, serviceTypes);
     await replaceCertifications(client, row.id, normalizedAwards);
+    if (certificationName) {
+      await client.query(
+        `update public.template_courses set certification_name = $2 where id = $1`,
+        [row.id, certificationName]
+      );
+      row.certification_name = certificationName;
+    }
     await client.query("commit");
     return rowToApi(row, normalizedAwards);
   } catch (e) {
@@ -312,8 +370,20 @@ export async function updateTemplateCourse(id, payload, serviceTypeNameLookup) {
       return null;
     }
 
-    const normalizedAwards = normalizeAwardsForApi(payload.certifications_awarded);
+    const serviceTypes = await loadServiceTypesForCertDerivation();
+    const derivedAwards = buildCertAwardsFromLinkedServices(payload.linked_service_type_ids || [], serviceTypes);
+    const normalizedAwards = normalizeAwardsForApi(derivedAwards);
+    const certificationName =
+      String(payload.certification_name || "").trim() ||
+      resolveCourseCompletionCertificateName({ ...row, ...payload }, serviceTypes);
     await replaceCertifications(client, id, normalizedAwards);
+    if (certificationName) {
+      await client.query(
+        `update public.template_courses set certification_name = $2 where id = $1`,
+        [id, certificationName]
+      );
+      row.certification_name = certificationName;
+    }
     await client.query(
       `update public.scheduled_courses
        set pre_course_materials = $2::jsonb

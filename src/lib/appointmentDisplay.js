@@ -1,4 +1,4 @@
-import { format, isSameDay, isToday, isTomorrow, isYesterday } from "date-fns";
+import { format, isSameDay, isToday, isTomorrow, isYesterday, isWithinInterval, startOfMonth, endOfMonth } from "date-fns";
 
 /**
  * Parse appointment calendar date as a local day (not UTC).
@@ -58,6 +58,55 @@ export function formatAppointmentTime(timeValue) {
 
 /** Alias for `formatAppointmentTime` — preferred name for non-appointment clock times. */
 export const formatDisplayTime = formatAppointmentTime;
+
+/** `HH:mm` (24h) → `{ hour12: 1-12, minute: 0-59, period: 'AM'|'PM' }`. */
+export function parseTime24To12Parts(timeValue) {
+  if (timeValue == null || timeValue === "") {
+    return { hour12: "", minute: "", period: "AM" };
+  }
+  const raw = String(timeValue).trim().slice(0, 5);
+  const [hRaw, mRaw] = raw.split(":");
+  let h24 = Number(hRaw);
+  const minute = Number(mRaw);
+  if (!Number.isFinite(h24) || !Number.isFinite(minute)) {
+    return { hour12: "", minute: "", period: "AM" };
+  }
+  const period = h24 >= 12 ? "PM" : "AM";
+  let hour12 = h24 % 12;
+  if (hour12 === 0) hour12 = 12;
+  return { hour12: String(hour12), minute: String(minute).padStart(2, "0"), period };
+}
+
+/** 12h parts → `HH:mm` for storage/API. Returns "" when hour is unset. */
+export function format12PartsToTime24({ hour12, minute, period }) {
+  const h12 = Number(hour12);
+  if (!Number.isFinite(h12) || h12 < 1 || h12 > 12) return "";
+  const m = Number(minute);
+  const minuteSafe = Number.isFinite(m) ? Math.min(59, Math.max(0, m)) : 0;
+  let h24 = h12 % 12;
+  if (String(period || "").toUpperCase() === "PM") h24 += 12;
+  return `${String(h24).padStart(2, "0")}:${String(minuteSafe).padStart(2, "0")}`;
+}
+
+/** Parse typed clock like `1:00` or `12:30` (12-hour, no AM/PM). */
+export function parseClock12String(clock) {
+  const m = String(clock || "").trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  const hour12 = Number(m[1]);
+  const minute = Number(m[2]);
+  if (!Number.isFinite(hour12) || hour12 < 1 || hour12 > 12) return null;
+  if (!Number.isFinite(minute) || minute < 0 || minute > 59) return null;
+  return {
+    hour12: String(hour12),
+    minute: String(minute).padStart(2, "0"),
+  };
+}
+
+export function format12PartsToClockLabel({ hour12, minute }) {
+  if (!hour12) return "";
+  const m = minute !== "" && minute != null ? String(minute).padStart(2, "0") : "00";
+  return `${hour12}:${m}`;
+}
 
 /** ISO timestamp / Date → `h:mm AM/PM` (or custom pattern). */
 export function formatTimestampTime(value, pattern = "h:mm a") {
@@ -175,3 +224,118 @@ export function appointmentServiceLabel(appt) {
   if (fromType) return fromType;
   return String(appt.treatment || "").trim();
 }
+
+function appointmentMoney(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/**
+ * Provider-facing payment summary for appointment list/detail UI.
+ * Uses collected `amount_paid` and explicit payment statuses — not ambiguous `total_amount` alone.
+ */
+export function appointmentProviderPaymentSummary(appt) {
+  if (!appt) return null;
+
+  const amountPaid = appointmentMoney(appt.amount_paid);
+  const depositAmount = appointmentMoney(appt.deposit_amount);
+  const hasDeposit = appointmentHasBookingDeposit(appt);
+  const depositPaid = appointmentDepositPaid(appt);
+  const treatmentStatus = String(appt.treatment_payment_status || "unpaid").toLowerCase();
+  const treatmentAwaiting = treatmentStatus === "awaiting_payment";
+  const treatmentPaid = treatmentStatus === "paid";
+  const balanceDue = treatmentAwaiting
+    ? appointmentMoney(appt.treatment_amount) || appointmentMoney(appt.total_amount)
+    : 0;
+
+  let status = "none";
+  let statusLabel = "";
+  let primaryAmount = 0;
+  let amountCaption = "";
+  let detailLines = [];
+
+  if (treatmentPaid) {
+    status = "paid";
+    statusLabel = "Fully paid";
+    primaryAmount = amountPaid;
+    amountCaption = "collected";
+  } else if (treatmentAwaiting && balanceDue > 0) {
+    status = "due";
+    statusLabel = "Balance due";
+    primaryAmount = balanceDue;
+    amountCaption = "owed";
+    if (amountPaid > 0) {
+      detailLines.push({ label: "Collected", amount: amountPaid });
+    }
+  } else if (hasDeposit && !depositPaid) {
+    status = "unpaid";
+    statusLabel = "Deposit unpaid";
+    primaryAmount = depositAmount;
+    amountCaption = "deposit due";
+  } else if (depositPaid && amountPaid > 0) {
+    status = "partial";
+    statusLabel = "Deposit paid";
+    primaryAmount = amountPaid;
+    amountCaption = "collected";
+    if (!treatmentAwaiting && !treatmentPaid) {
+      detailLines.push({ label: "Treatment", amount: null, text: "Not billed yet" });
+    }
+  } else if (amountPaid > 0) {
+    status = "partial";
+    statusLabel = "Collected";
+    primaryAmount = amountPaid;
+    amountCaption = "collected";
+  } else if (hasDeposit) {
+    status = "unpaid";
+    statusLabel = "Deposit unpaid";
+    primaryAmount = depositAmount;
+    amountCaption = "deposit due";
+  }
+
+  if (!statusLabel || primaryAmount <= 0) return null;
+
+  return {
+    status,
+    statusLabel,
+    primaryAmount,
+    amountCaption,
+    amountPaid,
+    balanceDue,
+    depositPaid,
+    treatmentPaid,
+    treatmentAwaiting,
+    detailLines,
+  };
+}
+
+/** Completed visits in the current calendar month (by appointment_date). */
+export function appointmentsThisMonthRevenue(appointments, referenceDate = new Date()) {
+  const monthStart = startOfMonth(referenceDate);
+  const monthEnd = endOfMonth(referenceDate);
+  return (appointments || [])
+    .filter((a) => {
+      const d = parseAppointmentDateLocal(a.appointment_date);
+      return a.status === "completed" && d && isWithinInterval(d, { start: monthStart, end: monthEnd });
+    })
+    .sort((a, b) => {
+      const da = parseAppointmentDateLocal(a.appointment_date)?.getTime() || 0;
+      const db = parseAppointmentDateLocal(b.appointment_date)?.getTime() || 0;
+      if (db !== da) return db - da;
+      return String(b.appointment_time || "").localeCompare(String(a.appointment_time || ""));
+    });
+}
+
+export function thisMonthRevenueTotal(appointments, referenceDate = new Date()) {
+  return appointmentsThisMonthRevenue(appointments, referenceDate).reduce(
+    (sum, a) => sum + (Number(a.amount_paid) || 0),
+    0
+  );
+}
+
+export const APPOINTMENT_PAYMENT_STATUS_STYLES = {
+  paid: { bg: "rgba(74,222,128,0.18)", text: "#16a34a", border: "rgba(74,222,128,0.45)" },
+  partial: { bg: "rgba(251,191,36,0.18)", text: "#d97706", border: "rgba(251,191,36,0.45)" },
+  due: { bg: "rgba(250,111,48,0.15)", text: "#c2410c", border: "rgba(250,111,48,0.35)" },
+  unpaid: { bg: "rgba(248,113,113,0.15)", text: "#dc2626", border: "rgba(248,113,113,0.35)" },
+  none: { bg: "rgba(30,37,53,0.06)", text: "rgba(30,37,53,0.5)", border: "rgba(30,37,53,0.12)" },
+};

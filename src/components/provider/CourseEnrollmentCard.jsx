@@ -1,4 +1,4 @@
-import { Calendar, MapPin, Users, Clock, FileText, Award, CheckCircle2, Zap } from "lucide-react";
+import { Calendar, MapPin, Users, Clock, FileText, Award, CheckCircle2 } from "lucide-react";
 import PreCourseMaterialsStudyBlock from "@/components/provider/PreCourseMaterialsStudyBlock";
 import { coursePreCourseMaterials } from "@/lib/preCourseMaterials";
 import { format, differenceInDays } from "date-fns";
@@ -16,8 +16,6 @@ export default function CourseEnrollmentCard({
   activeSubServiceIds,
   onViewMaterials,
   onCancel,
-  onOpenClassWizard,
-  showClassWizardCta = false,
   attendanceWindow = null,
   onSubmitAttendance,
   isSubmittingAttendance = false,
@@ -329,24 +327,11 @@ export default function CourseEnrollmentCard({
 
         {/* Actions */}
         <div className="flex gap-2 pt-2 border-t" style={{ borderColor: "rgba(30,37,53,0.08)" }}>
-          {showClassWizardCta && (
-            <button
-              onClick={onOpenClassWizard}
-              className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-xs font-bold transition-all"
-              style={{
-                background: "rgba(250,111,48,0.12)",
-                color: "#c8501f",
-                border: "1px solid rgba(250,111,48,0.25)",
-              }}
-            >
-              <Zap className="w-3.5 h-3.5" /> Class Day Wizard
-            </button>
-          )}
           {hasPreCourseMaterials && (
             <button
               type="button"
               onClick={onViewMaterials}
-              className={`${showClassWizardCta ? "flex-[1.1]" : "flex-1"} flex items-center justify-center gap-2 py-2.5 rounded-lg text-xs font-bold transition-all`}
+              className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-xs font-bold transition-all"
               style={{
                 background: "rgba(123,142,200,0.1)",
                 color: "#4a5fa8",

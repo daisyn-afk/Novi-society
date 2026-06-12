@@ -12,7 +12,12 @@ import { format } from "date-fns";
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import ProviderLockGate from "@/components/ProviderLockGate";
-import { CLASS_TIME_ZONE, getSessionWindowForDate, isNowWithinSessionRedeemWindow } from "@/lib/classCodeWindow";
+import {
+  describeSessionWindowForProvider,
+  formatProviderWindowRange,
+  isNowWithinSessionRedeemWindow,
+} from "@/lib/classCodeWindow";
+import { resolveProviderTimeZone } from "@/lib/providerTimezone";
 
 function toDateOnly(value) {
   const raw = String(value || "").trim();
@@ -43,7 +48,15 @@ export default function ProviderCodeRedemption() {
   const [successDialog, setSuccessDialog] = useState(null);
   const [error, setError] = useState("");
   const [selectedCourseWindowKey, setSelectedCourseWindowKey] = useState("");
-  const localTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "local time";
+  const browserTimeZone = typeof Intl !== "undefined"
+    ? Intl.DateTimeFormat().resolvedOptions().timeZone
+    : "";
+
+  const { data: me } = useQuery({
+    queryKey: ["provider-code-redemption-me"],
+    queryFn: () => base44.auth.me(),
+  });
+  const providerTimeZone = resolveProviderTimeZone(me, browserTimeZone);
 
   const { data: myEnrollments = [], isLoading: loadingEnrollments, isFetching: fetchingEnrollments } = useQuery({
     queryKey: ["my-enrollments-code-redemption"],
@@ -172,15 +185,6 @@ export default function ProviderCodeRedemption() {
       }, new Map())
       .values()
   );
-  const formatWindowDateTime = (dateValue) =>
-    new Intl.DateTimeFormat("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-      hour12: true,
-    }).format(dateValue);
   const redeemedSessionKeys = new Set(
     (sessions || [])
       .filter((session) => Boolean(session?.code_used))
@@ -198,11 +202,11 @@ export default function ProviderCodeRedemption() {
   const enrollmentWindows = codeWindowEnrollments.map((enrollment) => {
     const course = courseMap[enrollment.course_id];
     const sessionDate = String(enrollment.session_date || "").slice(0, 10);
-    const window = getSessionWindowForDate(course, sessionDate);
-    const isOpen = window ? isNowWithinSessionRedeemWindow(course, sessionDate) : false;
+    const windowDisplay = describeSessionWindowForProvider(course, sessionDate, providerTimeZone);
+    const isOpen = windowDisplay ? isNowWithinSessionRedeemWindow(course, sessionDate) : false;
     const key = `${enrollment.course_id}:${sessionDate}`;
     const isAttended = redeemedSessionKeys.has(key);
-    return { key, enrollment, course, window, isOpen, isAttended };
+    return { key, enrollment, course, window: windowDisplay, isOpen, isAttended };
   });
   const selectedWindow = enrollmentWindows.find((entry) => entry.key === selectedCourseWindowKey) || null;
   const canEnterCode = Boolean(selectedWindow && selectedWindow.isOpen && !selectedWindow.isAttended);
@@ -243,7 +247,9 @@ export default function ProviderCodeRedemption() {
       <div className="space-y-6 max-w-5xl">
         <div>
           <h2 className="text-2xl font-bold text-slate-900">Class Attendance</h2>
-          <p className="text-slate-500 text-sm mt-1">Select your course first, then enter the instructor code when class is on.</p>
+          <p className="text-slate-500 text-sm mt-1">
+            Select your course first, then enter the instructor code when class is on in your local time ({providerTimeZone.replace(/_/g, " ")}).
+          </p>
         </div>
 
         <Card className="border border-slate-200 bg-slate-50">
@@ -355,7 +361,9 @@ export default function ProviderCodeRedemption() {
                     </p>
                     {window ? (
                       <p className="text-xs text-slate-500 mt-1">
-                        Window: {formatWindowDateTime(window.startAt)} - {formatWindowDateTime(window.expiresAt)}
+                        Your time: {formatProviderWindowRange(window)}
+                        <br />
+                        Class schedule (US Eastern): {window.startLabelAdmin} – {window.endLabelAdmin}
                       </p>
                     ) : (
                       <p className="text-xs text-amber-700 mt-1">Session timing not configured by admin yet.</p>
@@ -387,7 +395,9 @@ export default function ProviderCodeRedemption() {
                   </p>
                   {window ? (
                     <p className="text-xs text-slate-500 mt-1">
-                      Window: {formatWindowDateTime(window.startAt)} - {formatWindowDateTime(window.expiresAt)}
+                      Your time: {formatProviderWindowRange(window)}
+                      <br />
+                      Class schedule (US Eastern): {window.startLabelAdmin} – {window.endLabelAdmin}
                     </p>
                   ) : (
                     <p className="text-xs text-amber-700 mt-1">Session timing not configured by admin yet.</p>

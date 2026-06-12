@@ -395,7 +395,7 @@ export default function AdminLicenses() {
         provider_email: payload.enrollment.provider_email,
         provider_name: payload.enrollment.provider_name,
         course_id: payload.enrollment.course_id,
-        certification_name: payload.course?.title || payload.course?.certification_name || "Course Certification",
+        certification_name: payload.course?.certification_name || payload.course?.title || "Course Certification",
         certificate_number: `NOVI-${Date.now()}`,
         status: "active",
         issued_at: new Date().toISOString(),

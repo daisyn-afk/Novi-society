@@ -9,7 +9,22 @@ import {
 import { submitMdBoardCoverageAssignment } from "./mdAssignmentService.js";
 import { attachSignedContractToSubscription, getServiceTypeContractInfo } from "./mdContractPdfService.js";
 import { snapshotProtocolDocumentsOnSubscription } from "./lib/mdSubscriptionProtocolDocs.js";
+import { seedProviderTreatmentOfferingsForMembership } from "./lib/providerTreatmentOfferings.js";
+import { assertMembershipAttestationComplete } from "./lib/serviceAttestation.js";
 import { getProviderIdAliases } from "./mdSupervisedAccess.js";
+
+async function seedTreatmentMenuForMdSubscription(row) {
+  if (!row?.provider_id || !row?.service_type_id) return;
+  try {
+    await seedProviderTreatmentOfferingsForMembership({
+      providerId: row.provider_id,
+      membershipServiceTypeId: row.service_type_id,
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn("[md-billing] seed treatment offerings failed:", err?.message || err);
+  }
+}
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || "";
 export const mdStripe = stripeSecretKey ? new Stripe(stripeSecretKey) : null;
@@ -523,6 +538,8 @@ export async function activateMdSubscriptionFromStripeSession(session) {
     link_page: "ProviderCredentialsCoverage",
   });
 
+  await seedTreatmentMenuForMdSubscription(row);
+
   return { ok: true, md_subscription_id: row.id, signed_contract_url: signedContractUrl || row.signed_contract_url || null };
 }
 
@@ -544,6 +561,14 @@ export async function finalizeMdBoardCoverage({
   const stId = s(serviceTypeId);
   if (!pid || !stId) {
     return { ok: false, error: "provider_id and service_type_id are required." };
+  }
+
+  const attestationCheck = await assertMembershipAttestationComplete({
+    providerId: pid,
+    membershipServiceTypeId: stId,
+  });
+  if (!attestationCheck.ok) {
+    return { ok: false, error: attestationCheck.error };
   }
 
   let row = await getLatestMdSubscriptionForService(pid, stId);
@@ -583,6 +608,7 @@ export async function finalizeMdBoardCoverage({
       profileSnapshot,
     });
     await ensureMdAssignment(pid, providerEmail, providerName, stId, serviceTypeName);
+    await seedTreatmentMenuForMdSubscription(row);
     return {
       ok: true,
       already_active: true,
@@ -676,6 +702,8 @@ export async function finalizeMdBoardCoverage({
   if (!assignResult.ok) {
     return { ok: false, error: assignResult.error || "MD assignment failed." };
   }
+
+  await seedTreatmentMenuForMdSubscription(row);
 
   return {
     ok: true,
@@ -877,6 +905,7 @@ export async function handleMdSubscriptionDeleted(subscription, stripeEventId = 
       reason: "Stripe subscription ended",
       cancelledBy: "stripe",
       enforceOwnership: false,
+      skipStripeBilling: true,
     });
     cascadeSummary = result?.summary || null;
   } catch (err) {
@@ -908,8 +937,60 @@ export async function handleMdSubscriptionDeleted(subscription, stripeEventId = 
 }
 
 /**
- * Stripe-aware cancel (updates Stripe subscription). Not used by compliance checkExpirations
- * or POST /cancelMDSubscription — those are DB-only; admins cancel Stripe manually.
+ * Stop future Stripe billing for one MD membership row.
+ * Immediate cancel ends the subscription now (no next-month charge).
+ */
+export async function stopMdSubscriptionStripeBilling(
+  sub,
+  { cancelImmediately = true, reason = null, notes = null, cancelledByName = null } = {}
+) {
+  const row = sub && typeof sub === "object" ? sub : null;
+  if (!row?.id) return { ok: false, skipped: true, reason: "missing_subscription" };
+
+  const stripeSubscriptionId = s(row.stripe_subscription_id);
+  if (!stripeSubscriptionId) {
+    return { ok: true, skipped: true, reason: "no_stripe_subscription_id" };
+  }
+  if (!mdStripe) {
+    return { ok: false, skipped: true, reason: "stripe_not_configured" };
+  }
+
+  try {
+    if (cancelImmediately) {
+      await mdStripe.subscriptions.cancel(stripeSubscriptionId);
+    } else {
+      await mdStripe.subscriptions.update(stripeSubscriptionId, {
+        cancel_at_period_end: true,
+      });
+    }
+  } catch (err) {
+    const msg = String(err?.message || err);
+    if (!/already canceled|already cancelled|canceled subscription/i.test(msg)) {
+      // eslint-disable-next-line no-console
+      console.warn("[md-billing] Stripe subscription cancel failed:", msg);
+      return { ok: false, error: msg, stripeSubscriptionId };
+    }
+  }
+
+  await logBillingEvent({
+    mdSubscriptionId: row.id,
+    eventType: cancelImmediately ? "cancelled_immediately" : "cancel_scheduled",
+    stripeSubscriptionId,
+    cancellationReason: reason,
+    cancellationNotes: notes,
+    cancelledByName,
+    metadata: { cancel_immediately: cancelImmediately, source: "stopMdSubscriptionStripeBilling" },
+  });
+
+  return {
+    ok: true,
+    stripeSubscriptionId,
+    cancel_at_period_end: !cancelImmediately,
+  };
+}
+
+/**
+ * Stripe-aware cancel (updates Stripe subscription + md_subscription billing fields).
  */
 export async function cancelMdSubscriptionForProvider({
   mdSubscriptionId,
@@ -927,31 +1008,17 @@ export async function cancelMdSubscriptionForProvider({
     return { ok: false, error: "Forbidden." };
   }
 
-  const stripeSubscriptionId = s(row.stripe_subscription_id);
-  if (stripeSubscriptionId && mdStripe) {
-    if (cancelImmediately) {
-      await mdStripe.subscriptions.cancel(stripeSubscriptionId);
-    } else {
-      await mdStripe.subscriptions.update(stripeSubscriptionId, {
-        cancel_at_period_end: true,
-      });
-    }
+  const stripeResult = await stopMdSubscriptionStripeBilling(row, {
+    cancelImmediately,
+    reason,
+    notes,
+    cancelledByName,
+  });
+  if (stripeResult.ok === false && stripeResult.error) {
+    return { ok: false, error: stripeResult.error };
   }
 
   const nowIso = new Date().toISOString();
-  const updates = cancelImmediately
-    ? {
-        status: "cancelled",
-        billing_status: "cancelled",
-        cancelled_at: nowIso,
-        cancel_at_period_end: false,
-      }
-    : {
-        cancel_at_period_end: true,
-        cancellation_reason: reason,
-        cancellation_notes: notes,
-        cancelled_by_name: cancelledByName,
-      };
 
   if (cancelImmediately) {
     await query(
@@ -982,17 +1049,7 @@ export async function cancelMdSubscriptionForProvider({
     );
   }
 
-  await logBillingEvent({
-    mdSubscriptionId: row.id,
-    eventType: cancelImmediately ? "cancelled_immediately" : "cancel_scheduled",
-    stripeSubscriptionId: stripeSubscriptionId || null,
-    cancellationReason: reason,
-    cancellationNotes: notes,
-    cancelledByName: cancelledByName,
-    metadata: { cancel_immediately: cancelImmediately },
-  });
-
-  return { ok: true, cancel_at_period_end: !cancelImmediately };
+  return { ok: true, cancel_at_period_end: !cancelImmediately, stripe: stripeResult };
 }
 
 export async function processMdBoardStripeEvent(event) {

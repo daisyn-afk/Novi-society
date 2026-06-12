@@ -3,6 +3,7 @@ import {
   serviceDisplayName,
   treatmentMenuServiceTypes,
 } from "./serviceTypeMembershipModel";
+import { isServicePracticable } from "./serviceAttestation";
 
 /**
  * Individual treatment services a provider offers patients (booking + marketplace).
@@ -13,6 +14,7 @@ export function providerBookableServices({
   providerOfferings = {},
   mdSubscriptions = [],
   serviceTypes = [],
+  attestationContext = null,
 } = {}) {
   const pid = String(providerId || "").trim();
   if (!pid) return [];
@@ -28,7 +30,10 @@ export function providerBookableServices({
       : {};
 
   const activeServiceIds = expandActiveServiceIds(activeSubs, serviceTypes);
-  const coveredServices = treatmentMenuServiceTypes(serviceTypes, activeServiceIds);
+  let coveredServices = treatmentMenuServiceTypes(serviceTypes, activeServiceIds);
+  if (attestationContext) {
+    coveredServices = coveredServices.filter((st) => isServicePracticable(st, attestationContext));
+  }
 
   const liveServices = coveredServices.filter((st) => offerings[String(st.id)]?.is_live === true);
   const pick = liveServices.length > 0 ? liveServices : coveredServices;

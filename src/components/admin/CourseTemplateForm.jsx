@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,14 +7,17 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { X, Award, FileText, Plus, BookOpen, Users, Clock, DollarSign, ImageIcon } from "lucide-react";
+import { X, Award, FileText, Plus, BookOpen, Users, Clock, DollarSign, ImageIcon, Calendar, MapPin, ExternalLink, Eye } from "lucide-react";
+import { formatTimeRange } from "@/lib/appointmentDisplay";
 import { adminUploadsApi } from "@/api/adminUploadsApi";
 import { trainerPrepApi } from "@/api/trainerPrepApi";
+import { base44 } from "@/api/base44Client";
+import { hasCertificateDocument, openCertificateDocument, previewNoviCertificateTemplate } from "@/lib/certificateDocument";
+import { isNoviIssuedCert } from "@/lib/certificationBuckets";
 import {
-  isMembershipPlan,
-  serviceDisplayName,
-  servicesInMembership,
-} from "@/lib/serviceTypeMembershipModel";
+  buildCertAwardsFromLinkedServices,
+  resolveCourseCompletionCertificateName,
+} from "@/lib/courseCertAwards";
 
 export const EMPTY_TEMPLATE = {
   type: "template",
@@ -32,9 +35,31 @@ export const EMPTY_TEMPLATE = {
   is_active: true, is_featured: false,
 };
 
-export default function CourseTemplateForm({ open, onOpenChange, form, setForm, onSave, saving, editing, serviceTypes }) {
+function scheduledCourseSummary(course) {
+  const sessions = Array.isArray(course?.session_dates) ? course.session_dates.filter((d) => d?.date) : [];
+  if (sessions.length === 0) {
+    return { primary: "Dates not scheduled yet", secondary: course?.location || "" };
+  }
+  const first = sessions[0];
+  const more = sessions.length > 1 ? ` +${sessions.length - 1} more date${sessions.length > 2 ? "s" : ""}` : "";
+  const time = formatTimeRange(first.start_time, first.end_time, "–");
+  const primary = `${first.date}${time ? ` · ${time}` : ""}${more}`;
+  const secondary = [course?.location, first.location].filter(Boolean).join(" · ");
+  return { primary, secondary };
+}
+
+export default function CourseTemplateForm({
+  open,
+  onOpenChange,
+  form,
+  setForm,
+  onSave,
+  saving,
+  editing,
+  serviceTypes,
+  scheduledCourses = [],
+}) {
   const queryClient = useQueryClient();
-  const [newCert, setNewCert] = useState({ service_type_id: "", cert_name: "" });
   const [newMaterial, setNewMaterial] = useState({ title: "", type: "pdf", url: "", content: "", required: true });
   const [newCoverage, setNewCoverage] = useState("");
   const [uploadingCover, setUploadingCover] = useState(false);
@@ -44,6 +69,8 @@ export default function CourseTemplateForm({ open, onOpenChange, form, setForm, 
   const [addingSupplyItem, setAddingSupplyItem] = useState(false);
   const [supplyItemError, setSupplyItemError] = useState("");
   const [supplyItemSuccess, setSupplyItemSuccess] = useState("");
+  const [previewingCertificate, setPreviewingCertificate] = useState(false);
+  const [certificatePreviewError, setCertificatePreviewError] = useState("");
   const { data: supplyLists = [] } = useQuery({
     queryKey: ["trainer-prep-supply-lists"],
     queryFn: () => trainerPrepApi.listSupplyLists(),
@@ -70,74 +97,78 @@ export default function CourseTemplateForm({ open, onOpenChange, form, setForm, 
         ((s?.scope_rules?.length > 0) || (s?.allowed_areas?.length > 0))
     );
 
-  const dedupeCertAwards = (awards = []) => {
-    const seen = new Set();
-    return (awards || []).filter((cert) => {
-      const key = String(cert?.service_type_id || "");
-      if (!key || seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-  };
+  const scopeCertAwards = useMemo(
+    () => buildCertAwardsFromLinkedServices(form.linked_service_type_ids, serviceTypes),
+    [form.linked_service_type_ids, serviceTypes]
+  );
 
-  const duplicateCertCount = useMemo(() => {
-    const ids = (form.certifications_awarded || []).map((c) => String(c?.service_type_id || "")).filter(Boolean);
-    return ids.length - new Set(ids).size;
-  }, [form.certifications_awarded]);
+  const scheduledUsingTemplate = useMemo(() => {
+    if (!editing) return [];
+    return (scheduledCourses || [])
+      .filter((course) => String(course?.template_id) === String(editing))
+      .sort((a, b) => String(a?.title || "").localeCompare(String(b?.title || "")));
+  }, [editing, scheduledCourses]);
 
-  const addCert = () => {
-    if (!newCert.service_type_id) return;
-    const st = serviceTypes.find(s => s.id === newCert.service_type_id);
-    const entry = {
-      service_type_id: newCert.service_type_id,
-      service_type_name: st?.name,
-      cert_name: newCert.cert_name || st?.name,
-    };
-    setForm(f => {
-      const existing = f.certifications_awarded || [];
-      const withoutDup = existing.filter((c) => String(c.service_type_id) !== String(newCert.service_type_id));
+  const noviCertificateName = String(form.certification_name || "").trim()
+    || resolveCourseCompletionCertificateName(form, serviceTypes);
+
+  const scheduledCourseIds = useMemo(
+    () => scheduledUsingTemplate.map((course) => String(course.id)),
+    [scheduledUsingTemplate]
+  );
+
+  const { data: issuedTemplateCerts = [] } = useQuery({
+    queryKey: ["template-issued-certs", editing, scheduledCourseIds.join("|")],
+    queryFn: async () => {
+      const [certs, enrollments] = await Promise.all([
+        base44.entities.Certification.list("-created_date"),
+        base44.entities.Enrollment.list("-created_date"),
+      ]);
+      const enrollmentIds = new Set(
+        (enrollments || [])
+          .filter((row) => scheduledCourseIds.includes(String(row?.course_id || "")))
+          .map((row) => String(row.id))
+      );
+      return (certs || []).filter(
+        (cert) =>
+          enrollmentIds.has(String(cert?.enrollment_id || "")) &&
+          isNoviIssuedCert(cert) &&
+          hasCertificateDocument(cert)
+      );
+    },
+    enabled: open && Boolean(editing) && scheduledCourseIds.length > 0,
+  });
+
+  async function handlePreviewCertificate() {
+    setCertificatePreviewError("");
+    setPreviewingCertificate(true);
+    try {
+      await previewNoviCertificateTemplate({
+        certificationName: noviCertificateName,
+        courseTitle: noviCertificateName,
+      });
+    } catch (error) {
+      setCertificatePreviewError(error?.message || "Unable to open certificate preview.");
+    } finally {
+      setPreviewingCertificate(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    setForm((f) => {
+      const nextScopeJson = JSON.stringify(scopeCertAwards);
+      const currentScopeJson = JSON.stringify(f.certifications_awarded || []);
+      const nextCertName = resolveCourseCompletionCertificateName(f, serviceTypes);
+      const certNameChanged = !String(f.certification_name || "").trim() && nextCertName !== f.certification_name;
+      if (nextScopeJson === currentScopeJson && !certNameChanged) return f;
       return {
         ...f,
-        certifications_awarded: [...withoutDup, entry],
-        linked_service_type_ids: (f.linked_service_type_ids || []).includes(newCert.service_type_id)
-          ? (f.linked_service_type_ids || [])
-          : [...(f.linked_service_type_ids || []), newCert.service_type_id],
+        certifications_awarded: scopeCertAwards,
+        certification_name: String(f.certification_name || "").trim() ? f.certification_name : nextCertName,
       };
     });
-    setNewCert({ service_type_id: "", cert_name: "" });
-  };
-
-  const removeDuplicateCerts = () => {
-    setForm((f) => ({ ...f, certifications_awarded: dedupeCertAwards(f.certifications_awarded) }));
-  };
-
-  const syncCertsFromLinkedServices = () => {
-    const linkedIds = form.linked_service_type_ids || [];
-    const awards = [];
-    for (const id of linkedIds) {
-      const st = serviceTypes.find((s) => s.id === id);
-      if (!st) continue;
-      if (isMembershipPlan(st)) {
-        for (const child of servicesInMembership(st, serviceTypes)) {
-          const label = serviceDisplayName(child, serviceTypes);
-          awards.push({
-            service_type_id: child.id,
-            service_type_name: child.name,
-            cert_name: `${label} Certification`,
-          });
-        }
-        continue;
-      }
-      awards.push({
-        service_type_id: st.id,
-        service_type_name: st.name,
-        cert_name: `${serviceDisplayName(st, serviceTypes)} Certification`,
-      });
-    }
-    setForm((f) => ({ ...f, certifications_awarded: dedupeCertAwards(awards) }));
-  };
-
-  const removeCert = (i) => setForm(f => ({ ...f, certifications_awarded: f.certifications_awarded.filter((_, idx) => idx !== i) }));
+  }, [open, scopeCertAwards, serviceTypes, setForm]);
 
   const addMaterial = () => {
     if (!newMaterial.title) return;
@@ -153,9 +184,21 @@ export default function CourseTemplateForm({ open, onOpenChange, form, setForm, 
   };
   const removeCoverage = (i) => setForm(f => ({ ...f, platform_coverage: f.platform_coverage.filter((_, idx) => idx !== i) }));
 
-  const toggleServiceType = (id) => setForm(f => {
+  const toggleServiceType = (id) => setForm((f) => {
     const ids = f.linked_service_type_ids || [];
-    return { ...f, linked_service_type_ids: ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id] };
+    const linked_service_type_ids = ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id];
+    const certifications_awarded = buildCertAwardsFromLinkedServices(linked_service_type_ids, serviceTypes);
+    const next = {
+      ...f,
+      linked_service_type_ids,
+      certifications_awarded,
+    };
+    return {
+      ...next,
+      certification_name: String(f.certification_name || "").trim()
+        ? f.certification_name
+        : resolveCourseCompletionCertificateName(next, serviceTypes),
+    };
   });
 
   const uploadCover = async (event) => {
@@ -541,55 +584,111 @@ export default function CourseTemplateForm({ open, onOpenChange, form, setForm, 
               )}
             </div>
 
-            {/* Certifications */}
-            {(form.certifications_awarded || []).some(c => !(form.linked_service_type_ids || []).includes(c.service_type_id)) && (
-              <div className="md:col-span-2 rounded-xl px-4 py-3 text-sm font-medium" style={{ background: "rgba(250,111,48,0.1)", border: "1px solid rgba(250,111,48,0.3)", color: "#c2440a" }}>
-                ⚠️ Some certifications are not linked to a service type — providers won't trigger the class-day onboarding wizard. Adding a cert now auto-links it.
-              </div>
-            )}
+            {/* NOVI Issued Certificate (class code → Certifications tab) */}
             <div className="md:col-span-2 border rounded-xl p-4 space-y-3 bg-amber-50/50">
-              <div className="flex items-center gap-2"><Award className="w-4 h-4 text-amber-600" /><p className="font-semibold text-sm text-amber-900">Certifications Awarded</p></div>
-              <div className="text-xs text-slate-600 space-y-1.5 rounded-lg bg-white/80 border border-amber-100 px-3 py-2.5">
-                <p><strong>What this list is:</strong> the certificate(s) a provider earns when they complete this course — one row per <em>treatment</em> service (e.g. Botox, Dermal Filler), not per membership plan.</p>
-                <p><strong>Not auto-created:</strong> linking services above only sets MD scope. Each cert here was added manually with <strong>+ Add Cert</strong> (or use <strong>Sync from linked services</strong> below).</p>
-                <p><strong>Typical setup:</strong> link the membership → sync certs → you should see 1 cert per included treatment, then save.</p>
+              <div className="flex items-center gap-2">
+                <Award className="w-4 h-4 text-amber-600" />
+                <p className="font-semibold text-sm text-amber-900">NOVI Issued Certificate</p>
               </div>
-              {duplicateCertCount > 0 && (
-                <div className="rounded-lg px-3 py-2 text-xs font-medium flex flex-wrap items-center gap-2" style={{ background: "rgba(250,111,48,0.1)", border: "1px solid rgba(250,111,48,0.25)", color: "#c2440a" }}>
-                  <span>{duplicateCertCount} duplicate service{duplicateCertCount !== 1 ? "s" : ""} in this list (from repeated testing).</span>
-                  <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={removeDuplicateCerts}>
-                    Keep one per service
+              <p className="text-xs text-slate-600">
+                When a provider redeems their in-class code, NOVI Society issues this certificate. Every scheduled class
+                below uses the <strong>same certificate name</strong> from this template. Manage issued copies under
+                {" "}<strong>Admin Licenses and Certification → Certificates → NOVI Issued Certificates</strong>.
+              </p>
+
+              <div className="rounded-lg bg-white border border-amber-100 px-3 py-2.5 space-y-2">
+                <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Scheduled classes using this template</p>
+                <p className="text-[11px] text-slate-500">All classes listed here award the same NOVI certificate when providers complete class code redemption.</p>
+                {!editing ? (
+                  <p className="text-xs text-amber-800">Save the template first, then schedule classes from the Scheduled tab.</p>
+                ) : scheduledUsingTemplate.length === 0 ? (
+                  <p className="text-xs text-amber-800">No scheduled classes yet. Create one from the Scheduled tab using this template.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {scheduledUsingTemplate.map((course) => {
+                      const summary = scheduledCourseSummary(course);
+                      return (
+                        <div key={course.id} className="rounded-lg border border-slate-100 px-3 py-2">
+                          <p className="text-sm font-medium text-slate-800">{course.title}</p>
+                          <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-1">
+                            <Calendar className="w-3 h-3 shrink-0" />
+                            {summary.primary}
+                          </p>
+                          {summary.secondary && (
+                            <p className="text-xs text-slate-400 mt-0.5 flex items-center gap-1">
+                              <MapPin className="w-3 h-3 shrink-0" />
+                              {summary.secondary}
+                            </p>
+                          )}
+                          {!course.is_active && (
+                            <p className="text-[11px] font-medium text-amber-700 mt-1">Inactive</p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <Label className="text-xs font-semibold text-slate-600">Certificate NOVI will issue</Label>
+                <Input
+                  className="mt-1"
+                  value={form.certification_name || ""}
+                  onChange={(e) => setForm({ ...form, certification_name: e.target.value })}
+                  placeholder={resolveCourseCompletionCertificateName(form, serviceTypes)}
+                />
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <div className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold"
+                    style={{ background: "rgba(200,230,60,0.12)", border: "1px solid rgba(200,230,60,0.3)", color: "#1e2535" }}>
+                    <Award className="w-4 h-4" style={{ color: "#5a7a20" }} />
+                    {noviCertificateName}
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-8 gap-1.5 text-xs"
+                    onClick={handlePreviewCertificate}
+                    disabled={previewingCertificate || !noviCertificateName}
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    {previewingCertificate ? "Opening…" : "Preview certificate"}
                   </Button>
                 </div>
-              )}
-              <div className="flex flex-wrap gap-2">
-                <Button type="button" variant="outline" size="sm" className="border-amber-300 text-amber-800" onClick={syncCertsFromLinkedServices}>
-                  Sync from linked services
-                </Button>
+                {certificatePreviewError && (
+                  <p className="text-xs text-red-600 mt-2">{certificatePreviewError}</p>
+                )}
+                <p className="text-xs text-slate-500 mt-2">
+                  Shown at checkout for scheduled classes above and used when issuing the provider&apos;s NOVI certificate after class code redemption.
+                </p>
               </div>
-              <div className="space-y-2">
-                {(form.certifications_awarded || []).map((cert, i) => (
-                  <div key={i} className="flex items-center gap-2 bg-white rounded-lg px-3 py-2 border">
-                    <Award className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
-                    <div className="flex-1"><span className="text-sm font-medium block">{cert.cert_name || cert.service_type_name}</span><span className="text-xs text-slate-400">{cert.service_type_name}</span></div>
-                    <button onClick={() => removeCert(i)} className="text-slate-300 hover:text-red-400"><X className="w-3.5 h-3.5" /></button>
-                  </div>
-                ))}
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <Select value={newCert.service_type_id} onValueChange={v => setNewCert(c => ({ ...c, service_type_id: v }))}>
-                  <SelectTrigger><SelectValue placeholder="Select Service Type *" /></SelectTrigger>
-                  <SelectContent>
-                    {liveServiceTypes.map((st) => (
-                      <SelectItem key={st.id} value={st.id}>
-                        {st.name}
-                      </SelectItem>
+
+              {issuedTemplateCerts.length > 0 && (
+                <div className="rounded-lg bg-white border border-amber-100 px-3 py-2.5 space-y-2">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Issued certificates from these classes</p>
+                  <div className="space-y-2">
+                    {issuedTemplateCerts.map((cert) => (
+                      <div key={cert.id} className="flex items-center justify-between gap-3 rounded-lg border border-slate-100 px-3 py-2">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-slate-800 truncate">{cert.provider_name || cert.provider_email || "Provider"}</p>
+                          <p className="text-xs text-slate-500 truncate">{cert.certification_name || noviCertificateName}</p>
+                        </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="h-7 gap-1 text-xs shrink-0"
+                          onClick={() => openCertificateDocument(cert)}
+                        >
+                          <ExternalLink className="w-3 h-3" />
+                          View
+                        </Button>
+                      </div>
                     ))}
-                  </SelectContent>
-                </Select>
-                <Input placeholder="Custom cert name (optional)" value={newCert.cert_name} onChange={e => setNewCert(c => ({ ...c, cert_name: e.target.value }))} />
-                <Button variant="outline" size="sm" onClick={addCert} className="col-span-2 border-amber-300 text-amber-700">+ Add Cert</Button>
-              </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Pre-Course Materials */}
@@ -686,16 +785,6 @@ export default function CourseTemplateForm({ open, onOpenChange, form, setForm, 
                 placeholder="e.g. hands-on, certification"
               />
             </div>
-            <div className="md:col-span-2">
-              <Label className="text-xs font-semibold text-slate-600">Certification name (legacy)</Label>
-              <Input
-                className="mt-1"
-                value={form.certification_name || ""}
-                onChange={(e) => setForm({ ...form, certification_name: e.target.value })}
-                placeholder="Optional single cert label for older flows"
-              />
-            </div>
-
             {/* ── SECTION: Visibility ── */}
             <div className="md:col-span-2 flex items-center gap-2 pb-1 border-b border-slate-100 pt-2">
               <span className="text-base">👁</span>

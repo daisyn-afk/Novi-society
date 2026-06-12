@@ -21,6 +21,7 @@ import { EMPTY_SCHEDULED } from "@/components/admin/scheduleScheduledCourseConst
 import TrainingCalendarView from "@/components/admin/TrainingCalendarView";
 import TrainerPrepView from "@/components/admin/TrainerPrepView";
 import { effectiveAvailableSeats, hasValidSessionSeatEntry } from "@/lib/sessionDateSeats";
+import { normalizeTemplateCertFields } from "@/lib/courseCertAwards";
 
 function generateCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -170,17 +171,35 @@ export default function Admincourses() {
     };
   };
 
+  const openTemplateEditor = (template) => {
+    setTemplateForm(
+      normalizeTemplateCertFields(
+        {
+          ...template,
+          certifications_awarded: template.certifications_awarded || [],
+          linked_service_type_ids: template.linked_service_type_ids || [],
+          pre_course_materials: template.pre_course_materials || [],
+          platform_coverage: template.platform_coverage || [],
+        },
+        serviceTypes
+      )
+    );
+    setEditingTemplate(template.id);
+    setTemplateOpen(true);
+  };
+
   const saveTemplate = useMutation({
     mutationFn: ({ data, editingId }) => {
+      const normalizedData = normalizeTemplateCertFields(data, serviceTypes);
       const usedServiceTypeIds = new Set([
-        ...(data.linked_service_type_ids || []),
-        ...((data.certifications_awarded || []).map((c) => c?.service_type_id).filter(Boolean)),
+        ...(normalizedData.linked_service_type_ids || []),
+        ...((normalizedData.certifications_awarded || []).map((c) => c?.service_type_id).filter(Boolean)),
       ]);
       const relevantServiceTypes = (serviceTypes || [])
         .filter((s) => usedServiceTypeIds.has(s.id))
         .map((s) => ({ id: s.id, name: s.name, category: s.category }));
       const payload = {
-        ...data,
+        ...normalizedData,
         _service_types: relevantServiceTypes,
       };
       delete payload.type;
@@ -513,13 +532,12 @@ export default function Admincourses() {
                   {c.price && <span className="font-semibold flex items-center gap-1" style={{ color: "#1a2540" }}><DollarSign className="w-3.5 h-3.5" />{Number(c.price || 0).toLocaleString()}</span>}
                   {c.duration_hours && <span className="flex items-center gap-1" style={{ color: "#8891a8", fontSize: 12 }}><Clock className="w-3 h-3" />{c.duration_hours}h</span>}
                 </div>
-                {c.certifications_awarded?.length > 0 && (
+                {(c.certification_name || c.title) && (
                   <div className="flex flex-wrap gap-1 mb-3">
-                    {c.certifications_awarded.map((cert, i) => (
-                      <span key={i} className="text-xs px-2 py-0.5 rounded-full flex items-center gap-1" style={{ background: "rgba(218,106,99,0.08)", color: "#DA6A63" }}>
-                        <Award className="w-2.5 h-2.5" />{cert.cert_name || cert.service_type_name}
-                      </span>
-                    ))}
+                    <span className="text-xs px-2 py-0.5 rounded-full flex items-center gap-1" style={{ background: "rgba(218,106,99,0.08)", color: "#DA6A63" }}>
+                      <Award className="w-2.5 h-2.5" />
+                      {c.certification_name || `${c.title} Certification`}
+                    </span>
                   </div>
                 )}
                 {c.linked_service_type_ids?.length > 0 && (
@@ -527,7 +545,7 @@ export default function Admincourses() {
                 )}
                 <div className="flex gap-2 pt-2 border-t" style={{ borderColor: "rgba(0,0,0,0.05)" }}>
                   <button className="flex-1 flex items-center justify-center gap-1 py-2 text-xs font-semibold rounded-xl transition-opacity hover:opacity-70" style={{ background: "rgba(74,95,160,0.08)", color: "#4a5fa0" }}
-                    onClick={() => { setTemplateForm({ ...c, certifications_awarded: c.certifications_awarded||[], linked_service_type_ids: c.linked_service_type_ids||[], pre_course_materials: c.pre_course_materials||[], platform_coverage: c.platform_coverage||[] }); setEditingTemplate(c.id); setTemplateOpen(true); }}>
+                    onClick={() => openTemplateEditor(c)}>
                     <Pencil className="w-3.5 h-3.5" /> Edit
                   </button>
                   <button className="py-2 px-3 text-xs font-semibold rounded-xl transition-opacity hover:opacity-70" style={{ background: "rgba(218,106,99,0.08)", color: "#DA6A63" }} onClick={() => setDeleteTarget({ id: c.id, type: "template", label: c.title })}>
@@ -728,6 +746,7 @@ export default function Admincourses() {
         onSave={() => saveTemplate.mutate({ data: templateForm, editingId: editingTemplate })}
         saving={saveTemplate.isPending} editing={editingTemplate}
         serviceTypes={serviceTypes}
+        scheduledCourses={scheduledCourses}
       />
       <ScheduleCourseForm
         open={scheduleOpen}

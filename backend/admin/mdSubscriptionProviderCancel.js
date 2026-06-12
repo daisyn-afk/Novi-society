@@ -2,9 +2,8 @@ import { processMdMembershipCancellation } from "./mdMembershipCancellationServi
 
 /**
  * Provider-initiated cancel. Thin wrapper around the shared cancellation
- * cascade (relationship teardown, appointment cancellation, manufacturer
- * revocation, notifications). Does NOT call Stripe — admins cancel billing in
- * the Stripe dashboard.
+ * cascade (Stripe billing stop, relationship teardown, appointment cancellation,
+ * manufacturer revocation, notifications).
  *
  * @deprecated Prefer calling processMdMembershipCancellation directly so admin
  * and Stripe-webhook callers share the same code path.
