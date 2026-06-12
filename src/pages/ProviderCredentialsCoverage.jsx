@@ -2007,7 +2007,7 @@ export default function ProviderCredentialsCoverage() {
                         {/* Status + CTA */}
                         {isEligible ? (
                           <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-xs font-semibold px-2.5 py-1 rounded-full" style={{ background: "rgba(200,230,60,0.15)", color: "#5a7a20", border: "1px solid rgba(200,230,60,0.35)" }}>✓ Training Complete — Ready to Apply</span>
+                            <span className="text-xs font-semibold px-2.5 py-1 rounded-full" style={{ background: "rgba(200,230,60,0.15)", color: "#5a7a20", border: "1px solid rgba(200,230,60,0.35)" }}>✓ Certified — Ready to Apply</span>
                             <Button size="sm" className="font-bold gap-1.5 h-8" style={{ background: "#FA6F30", color: "#fff" }}
                               onClick={() => openApplyForCoverage({ serviceTypeId: service.id, jumpToSign: false })}>
                               <Zap className="w-3.5 h-3.5" /> Apply for Coverage
