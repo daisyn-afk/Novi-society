@@ -14,6 +14,7 @@ import {
 import { listEligibleMedicalDirectorsForService } from "../mdEligibleDirectors.js";
 import { submitMdBoardCoverageAssignment } from "../mdAssignmentService.js";
 import { formatDisplayTime } from "../timeDisplay.js";
+import { isWithinRedeemWindow, toDateOnly } from "../lib/classCodeWindow.js";
 import {
   attachCheckoutSessionToMdSubscription,
   createPendingMdSubscriptionForCheckout,
@@ -812,85 +813,6 @@ functionsRouter.post("/validateScopeEligibility", async (req, res, next) => {
   }
 });
 
-function parseClassDateTime(dateValue, timeValue, fallbackHour, fallbackMinute) {
-  if (!dateValue) return null;
-  const date = String(dateValue).slice(0, 10);
-  const time = String(timeValue || "").trim();
-  const [hhRaw, mmRaw] = time.split(":");
-  const hh = Number.isFinite(Number(hhRaw)) ? Number(hhRaw) : fallbackHour;
-  const mm = Number.isFinite(Number(mmRaw)) ? Number(mmRaw) : fallbackMinute;
-  return zonedDateTimeToUtc(date, hh, mm, "Etc/GMT+5");
-}
-
-function getPartsInTimeZone(date, timeZone) {
-  const formatter = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false
-  });
-  const parts = formatter.formatToParts(date);
-  const map = {};
-  for (const part of parts) {
-    if (part.type !== "literal") map[part.type] = part.value;
-  }
-  return {
-    year: Number(map.year),
-    month: Number(map.month),
-    day: Number(map.day),
-    hour: Number(map.hour),
-    minute: Number(map.minute),
-    second: Number(map.second)
-  };
-}
-
-function zonedDateTimeToUtc(dateString, hour, minute, timeZone) {
-  const [yearRaw, monthRaw, dayRaw] = String(dateString || "").slice(0, 10).split("-");
-  const year = Number(yearRaw);
-  const month = Number(monthRaw);
-  const day = Number(dayRaw);
-  if (!year || !month || !day) return null;
-
-  const utcGuess = new Date(Date.UTC(year, month - 1, day, hour, minute, 0));
-  const tzParts = getPartsInTimeZone(utcGuess, timeZone);
-  const asIfUtc = Date.UTC(
-    tzParts.year,
-    tzParts.month - 1,
-    tzParts.day,
-    tzParts.hour,
-    tzParts.minute,
-    tzParts.second
-  );
-  const offsetMs = asIfUtc - utcGuess.getTime();
-  return new Date(utcGuess.getTime() - offsetMs);
-}
-
-function toDateOnly(value) {
-  const raw = String(value || "").trim();
-  if (!raw) return "";
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
-  const parsed = new Date(raw);
-  if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
-  return raw.slice(0, 10);
-}
-
-function isWithinRedeemWindow(sessionDate, sessionDates) {
-  const dateOnly = toDateOnly(sessionDate);
-  if (!dateOnly) return false;
-  const config = Array.isArray(sessionDates)
-    ? sessionDates.find((entry) => toDateOnly(entry?.date) === dateOnly)
-    : null;
-  const startAt = parseClassDateTime(dateOnly, config?.start_time, 0, 0);
-  const endAt = parseClassDateTime(dateOnly, config?.end_time, 23, 59);
-  if (!startAt || !endAt) return { ok: false, startAt: null, endAt: null, expiresAt: null, now: new Date() };
-  const expiresAt = new Date(endAt.getTime() + (24 * 60 * 60 * 1000));
-  const now = new Date();
-  return { ok: now >= startAt && now <= expiresAt, startAt, endAt, expiresAt, now };
-}
 
 async function createCertificationsForEnrollment(enrollment, course, me) {
   const awarded = Array.isArray(course?.certifications_awarded) ? course.certifications_awarded : [];
@@ -1165,6 +1087,40 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
       })
     );
 
+    const billingAnchorUnix = nextMdCoverageBillingAnchorUnix();
+    const proratedCents = Math.max(0, Math.round(billingPreview.dueTodayProrated * 100));
+    const monthLabel = billingPreview.proration?.currentMonthLabel || "this month";
+    const lineItems = [];
+
+    // Explicit prorated charge for the partial month (signup day → month end).
+    if (proratedCents > 0) {
+      lineItems.push({
+        quantity: 1,
+        price_data: {
+          currency: "usd",
+          unit_amount: proratedCents,
+          product_data: {
+            name: `NOVI MD Board Coverage — ${serviceTypeName} (prorated)`,
+            description: `Prorated ${billingPreview.proration?.daysRemaining || ""} day(s) through end of ${monthLabel}`,
+          },
+        },
+      });
+    }
+
+    // Full monthly rate begins on the 1st of the next calendar month.
+    lineItems.push({
+      quantity: 1,
+      price_data: {
+        currency: "usd",
+        unit_amount: amountCents,
+        recurring: { interval: "month" },
+        product_data: {
+          name: `NOVI MD Board Coverage — ${serviceTypeName}`,
+          description: `Monthly MD supervision — $${monthlyFeeUsd}/mo from the 1st`,
+        },
+      },
+    });
+
     const checkoutSession = await stripe.checkout.sessions.create({
       mode: "subscription",
       payment_method_types: ["card"],
@@ -1176,33 +1132,20 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
         md_subscription_id: String(pending.id || ""),
         provider_auth_user_id: String(me.id || ""),
         service_type_id: serviceTypeId,
-        enrollment_id: enrollmentId || ""
+        enrollment_id: enrollmentId || "",
+        prorated_due_usd: String(billingPreview.dueTodayProrated),
       },
       subscription_data: {
-        billing_cycle_anchor: nextMdCoverageBillingAnchorUnix(),
-        proration_behavior: "create_prorations",
+        trial_end: billingAnchorUnix,
         metadata: {
           checkout_type: "md_board_coverage",
           md_subscription_id: String(pending.id || ""),
           provider_auth_user_id: String(me.id || ""),
           service_type_id: serviceTypeId,
-          enrollment_id: enrollmentId || ""
-        }
+          enrollment_id: enrollmentId || "",
+        },
       },
-      line_items: [
-        {
-          quantity: 1,
-          price_data: {
-            currency: "usd",
-            unit_amount: amountCents,
-            recurring: { interval: "month" },
-            product_data: {
-              name: `NOVI MD Board Coverage — ${serviceTypeName}`,
-              description: "Monthly NOVI Board medical director supervision membership"
-            }
-          }
-        }
-      ]
+      line_items: lineItems,
     });
 
     await attachCheckoutSessionToMdSubscription(pending.id, checkoutSession.id, {
@@ -1251,10 +1194,9 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
 
 /**
  * Cancel an MD membership (provider self-serve or admin). Runs the full
- * cancellation cascade: relationship teardown, future appointment cancellation,
- * manufacturer access revocation + rep notifications, and a soft account reset
- * once the provider's last active membership is gone. Stripe is not modified —
- * admins cancel billing manually in the Stripe dashboard.
+ * cancellation cascade: stops Stripe billing, relationship teardown, future
+ * appointment cancellation, manufacturer access revocation + rep notifications,
+ * and a soft account reset once the provider's last active membership is gone.
  */
 functionsRouter.post("/cancelMDSubscription", async (req, res, next) => {
   try {

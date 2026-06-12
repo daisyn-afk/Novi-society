@@ -23,11 +23,8 @@ import { providerReviewAverage } from "@/lib/providerRating";
 import { galleryPairsForPatientDisplay } from "@/lib/galleryPhotos";
 import { BeforeAfterGallery } from "@/components/marketplace/BeforeAfterGallery";
 import { referralCodeMatchesProvider } from "@/lib/referralCode";
-import {
-  currentTimeInputValue,
-  isAppointmentInPast,
-  todayDateInputValue,
-} from "@/lib/repCallScheduling";
+import { isAppointmentInPast, todayDateInputValue } from "@/lib/repCallScheduling";
+import { AppointmentTimeField, currentTimeInputValue } from "@/components/appointments/AppointmentTimePicker";
 import {
   providerBookableServiceNames,
   providerBookableServices,
@@ -1194,16 +1191,11 @@ function BookingForm({ provider, bookForm, setBookForm, services, bookingError, 
             onChange={(e) => setBookForm({ ...bookForm, appointment_date: e.target.value })}
           />
         </div>
-        <div className="min-w-0 space-y-2">
-          <Label>Time</Label>
-          <Input
-            type="time"
-            className="w-full min-w-0 max-w-full box-border"
-            min={bookForm.appointment_date === today ? currentTimeInputValue() : undefined}
-            value={bookForm.appointment_time}
-            onChange={(e) => setBookForm({ ...bookForm, appointment_time: e.target.value })}
-          />
-        </div>
+        <AppointmentTimeField
+          min={bookForm.appointment_date === today ? currentTimeInputValue() : undefined}
+          value={bookForm.appointment_time}
+          onChange={(appointment_time) => setBookForm({ ...bookForm, appointment_time })}
+        />
       </div>
       <div>
         <Label>Notes</Label>

@@ -12,6 +12,9 @@ import {
   serviceDisplayName,
   treatmentMenuServiceTypes,
 } from "@/lib/serviceTypeMembershipModel";
+import { seedMembershipTreatmentOfferings } from "@/lib/providerTreatmentOfferings";
+import { evaluateServiceAttestation } from "@/lib/serviceAttestation";
+import ServiceAttestationStatus from "@/components/provider/ServiceAttestationStatus";
 
 const GLASS = {
   background: "rgba(255,255,255,0.5)",
@@ -700,7 +703,7 @@ function PackagesRewardsSection({ packages, onChange }) {
   );
 }
 
-export default function PracticeTreatmentsTab({ me, serviceTypes, activeServiceIds, mdSubs, onSave, saving, saved }) {
+export default function PracticeTreatmentsTab({ me, serviceTypes, activeServiceIds, mdSubs, attestationContext, onSave, saving, saved }) {
   const [offerings, setOfferings] = useState({});
   const [packages, setPackages] = useState([]);
   const [initialized, setInitialized] = useState(false);
@@ -708,21 +711,32 @@ export default function PracticeTreatmentsTab({ me, serviceTypes, activeServiceI
   useEffect(() => {
     if (me && !initialized) {
       const rawOfferings = me.service_offerings_v2 || {};
+      const seeded = seedMembershipTreatmentOfferings({
+        existingOfferings: rawOfferings,
+        activeSubscriptions: mdSubs || [],
+        serviceTypes: serviceTypes || [],
+      });
       setOfferings(
         Object.fromEntries(
-          Object.entries(rawOfferings).map(([key, value]) => [key, sanitizeOfferingPrices(value)])
+          Object.entries(seeded).map(([key, value]) => [key, sanitizeOfferingPrices(value)])
         )
       );
       setPackages((me.practice_packages || []).map(sanitizePackagePrices));
       setInitialized(true);
     }
-  }, [me, initialized]);
+  }, [me, initialized, mdSubs, serviceTypes]);
 
   const updateOffering = (key, data) => {
     setOfferings(prev => ({ ...prev, [key]: data }));
   };
 
-  const activeSubs = treatmentMenuServiceTypes(serviceTypes, activeServiceIds);
+  const coveredSubs = treatmentMenuServiceTypes(serviceTypes, activeServiceIds);
+  const activeSubs = attestationContext
+    ? coveredSubs.filter((st) => evaluateServiceAttestation(st, attestationContext, serviceTypes).complete)
+    : coveredSubs;
+  const attestationPendingSubs = attestationContext
+    ? coveredSubs.filter((st) => !evaluateServiceAttestation(st, attestationContext, serviceTypes).complete)
+    : [];
   const inactiveSubs = lockedTreatmentMenuServices(serviceTypes, activeServiceIds);
 
   return (
@@ -759,6 +773,29 @@ export default function PracticeTreatmentsTab({ me, serviceTypes, activeServiceI
               onChange={data => updateOffering(st.id, data)}
             />
           ))}
+        </div>
+      )}
+
+      {/* Attestation required before practice */}
+      {attestationPendingSubs.length > 0 && (
+        <div className="space-y-3">
+          <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "#FA6F30" }}>
+            Complete Training to Practice ({attestationPendingSubs.length})
+          </p>
+          <div className="rounded-2xl px-5 py-4 space-y-3" style={{ ...GLASS, border: "1px solid rgba(250,111,48,0.25)" }}>
+            <p className="text-xs" style={{ color: "rgba(30,37,53,0.55)" }}>
+              MD coverage is active, but these services need training or certification before patients can book them.
+            </p>
+            {attestationPendingSubs.map((st) => {
+              const evaluation = evaluateServiceAttestation(st, attestationContext, serviceTypes);
+              return (
+                <div key={st.id} className="rounded-xl px-4 py-3 space-y-2" style={{ background: "rgba(255,255,255,0.55)", border: "1px solid rgba(30,37,53,0.08)" }}>
+                  <p className="text-sm font-semibold" style={{ color: "#1e2535" }}>{serviceDisplayName(st, serviceTypes)}</p>
+                  <ServiceAttestationStatus evaluation={evaluation} />
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 

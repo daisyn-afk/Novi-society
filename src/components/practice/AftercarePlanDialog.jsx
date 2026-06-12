@@ -9,6 +9,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Plus, Trash2, Send, Sparkles, Package, Calendar, AlertTriangle, CheckCircle, MessageSquare } from "lucide-react";
+import {
+  formatProtocolDocumentsForPrompt,
+  formatScopeRulesForPrompt,
+} from "@/lib/treatmentScopeValidation";
 
 export default function AftercarePlanDialog({ open, onClose, treatmentRecord }) {
   const qc = useQueryClient();
@@ -25,6 +29,39 @@ export default function AftercarePlanDialog({ open, onClose, treatmentRecord }) 
     provider_notes: "",
     checkin_questions: [],
     checkin_recovery_days: 14,
+  });
+
+  const { data: linkedAppointment } = useQuery({
+    queryKey: ["aftercare-appointment", treatmentRecord?.appointment_id],
+    queryFn: async () => {
+      if (!treatmentRecord?.appointment_id) return null;
+      const rows = await base44.entities.Appointment.filter({ id: treatmentRecord.appointment_id });
+      return rows?.[0] || null;
+    },
+    enabled: !!treatmentRecord?.appointment_id && open,
+  });
+
+  const { data: serviceTypeScope } = useQuery({
+    queryKey: [
+      "aftercare-service-scope",
+      linkedAppointment?.service_type_id,
+      treatmentRecord?.service,
+    ],
+    queryFn: async () => {
+      const types = await base44.entities.ServiceType.filter({ is_active: true });
+      const list = Array.isArray(types) ? types : [];
+      const byId = list.find((st) => String(st.id) === String(linkedAppointment?.service_type_id || ""));
+      if (byId && !byId.is_membership) return byId;
+      const serviceName = String(treatmentRecord?.service || linkedAppointment?.service || "")
+        .trim()
+        .toLowerCase();
+      return (
+        list.find(
+          (st) => !st.is_membership && String(st.name || "").trim().toLowerCase() === serviceName
+        ) || null
+      );
+    },
+    enabled: open && Boolean(linkedAppointment?.service_type_id || treatmentRecord?.service),
   });
 
   // Fetch provider's active services for treatment recommendations
@@ -73,6 +110,11 @@ export default function AftercarePlanDialog({ open, onClose, treatmentRecord }) 
     setGenerating(true);
     try {
       const servicesList = providerServices.map(s => s.service_type_name).join(", ");
+      const protocolDocs = formatProtocolDocumentsForPrompt(serviceTypeScope?.protocol_document_urls);
+      const scopeRules = formatScopeRulesForPrompt(serviceTypeScope?.scope_rules);
+      const allowedAreas = Array.isArray(serviceTypeScope?.allowed_areas)
+        ? serviceTypeScope.allowed_areas.join(", ")
+        : "";
       
       const prompt = `You are creating a post-treatment aftercare plan for a patient who just received "${treatmentRecord.service}" treatment.
 
@@ -83,9 +125,15 @@ Treatment details:
 - Products used: ${treatmentRecord.products_used?.map(p => p.product_name).join(", ") || "standard products"}
 - Clinical notes: ${treatmentRecord.clinical_notes || "standard procedure"}
 
+NOVI service protocol context for ${serviceTypeScope?.name || treatmentRecord.service}:
+${protocolDocs ? `- Admin protocol documents: ${protocolDocs}` : "- Admin protocol documents: (none on file)"}
+${allowedAreas ? `- Allowed treatment areas: ${allowedAreas}` : ""}
+${serviceTypeScope?.max_units_per_session ? `- Max units per session: ${serviceTypeScope.max_units_per_session}` : ""}
+${scopeRules ? `- Scope / clinical rules:\n${scopeRules}` : ""}
+
 Provider's available services for follow-up recommendations: ${servicesList || "various aesthetic services"}
 
-IMPORTANT: Base ALL recommendations specifically on "${treatmentRecord.service}" treatment protocols and the actual treatment details above.
+IMPORTANT: Base ALL recommendations on the admin protocol documents and scope rules above, plus the actual treatment details. Align aftercare with documented clinical protocols for this service.
 
 Create a comprehensive aftercare plan that:
 1. Immediate care (first 24-48 hours) - 3-5 bullet points

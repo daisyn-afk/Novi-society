@@ -59,6 +59,55 @@ export function formatAppointmentTime(timeValue) {
 /** Alias for `formatAppointmentTime` — preferred name for non-appointment clock times. */
 export const formatDisplayTime = formatAppointmentTime;
 
+/** `HH:mm` (24h) → `{ hour12: 1-12, minute: 0-59, period: 'AM'|'PM' }`. */
+export function parseTime24To12Parts(timeValue) {
+  if (timeValue == null || timeValue === "") {
+    return { hour12: "", minute: "", period: "AM" };
+  }
+  const raw = String(timeValue).trim().slice(0, 5);
+  const [hRaw, mRaw] = raw.split(":");
+  let h24 = Number(hRaw);
+  const minute = Number(mRaw);
+  if (!Number.isFinite(h24) || !Number.isFinite(minute)) {
+    return { hour12: "", minute: "", period: "AM" };
+  }
+  const period = h24 >= 12 ? "PM" : "AM";
+  let hour12 = h24 % 12;
+  if (hour12 === 0) hour12 = 12;
+  return { hour12: String(hour12), minute: String(minute).padStart(2, "0"), period };
+}
+
+/** 12h parts → `HH:mm` for storage/API. Returns "" when hour is unset. */
+export function format12PartsToTime24({ hour12, minute, period }) {
+  const h12 = Number(hour12);
+  if (!Number.isFinite(h12) || h12 < 1 || h12 > 12) return "";
+  const m = Number(minute);
+  const minuteSafe = Number.isFinite(m) ? Math.min(59, Math.max(0, m)) : 0;
+  let h24 = h12 % 12;
+  if (String(period || "").toUpperCase() === "PM") h24 += 12;
+  return `${String(h24).padStart(2, "0")}:${String(minuteSafe).padStart(2, "0")}`;
+}
+
+/** Parse typed clock like `1:00` or `12:30` (12-hour, no AM/PM). */
+export function parseClock12String(clock) {
+  const m = String(clock || "").trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  const hour12 = Number(m[1]);
+  const minute = Number(m[2]);
+  if (!Number.isFinite(hour12) || hour12 < 1 || hour12 > 12) return null;
+  if (!Number.isFinite(minute) || minute < 0 || minute > 59) return null;
+  return {
+    hour12: String(hour12),
+    minute: String(minute).padStart(2, "0"),
+  };
+}
+
+export function format12PartsToClockLabel({ hour12, minute }) {
+  if (!hour12) return "";
+  const m = minute !== "" && minute != null ? String(minute).padStart(2, "0") : "00";
+  return `${hour12}:${m}`;
+}
+
 /** ISO timestamp / Date → `h:mm AM/PM` (or custom pattern). */
 export function formatTimestampTime(value, pattern = "h:mm a") {
   if (value == null || value === "") return "";

@@ -19,6 +19,7 @@ import AftercarePlanDialog from "./AftercarePlanDialog";
 import TreatmentCheckoutDialog from "./TreatmentCheckoutDialog";
 import AreasTreatedField from "./AreasTreatedField";
 import { appointmentDepositBlocksProvider } from "@/lib/appointmentDisplay";
+import { validateTreatmentAgainstServiceScope } from "@/lib/treatmentScopeValidation";
 import { appointmentGfeBlockMessage, appointmentGfeBlocksTreatment } from "@/lib/appointmentGfe";
 import {
   areasForInjectableOffering,
@@ -99,6 +100,23 @@ export default function TreatmentDocumentDialog({
     enabled: open && Boolean(providerProfile?.id),
   });
 
+  const { data: serviceTypeScope } = useQuery({
+    queryKey: ["service-type-scope", appointment?.service_type_id, appointment?.service],
+    queryFn: async () => {
+      const types = await base44.entities.ServiceType.filter({ is_active: true });
+      const list = Array.isArray(types) ? types : [];
+      const byId = list.find((st) => String(st.id) === String(appointment?.service_type_id || ""));
+      if (byId && !byId.is_membership) return byId;
+      const serviceName = String(appointment?.service || "").trim().toLowerCase();
+      return list.find(
+        (st) =>
+          !st.is_membership &&
+          String(st.name || "").trim().toLowerCase() === serviceName
+      ) || null;
+    },
+    enabled: open && Boolean(appointment?.service_type_id || appointment?.service),
+  });
+
   const { data: linkedRecords = [], isFetching: linkedRecordsFetching } = useQuery({
     queryKey: ["treatment-record-for-appointment", appointment?.id],
     queryFn: async () => {
@@ -163,11 +181,17 @@ export default function TreatmentDocumentDialog({
   }, [isCombinedInjectable, menuOffering?.data?.pricing_model, appointment?.service]);
 
   const areaSuggestions = useMemo(() => {
+    const scopeAreas = Array.isArray(serviceTypeScope?.allowed_areas)
+      ? serviceTypeScope.allowed_areas.filter(Boolean)
+      : [];
     if (isCombinedInjectable) {
-      return combinedInjectableAreaSuggestions(offerings, appointment?.service_type_id);
+      return [...new Set([
+        ...combinedInjectableAreaSuggestions(offerings, appointment?.service_type_id),
+        ...scopeAreas,
+      ])];
     }
-    return areasForInjectableOffering(menuOffering);
-  }, [isCombinedInjectable, offerings, appointment?.service_type_id, menuOffering]);
+    return [...new Set([...areasForInjectableOffering(menuOffering), ...scopeAreas])];
+  }, [isCombinedInjectable, offerings, appointment?.service_type_id, menuOffering, serviceTypeScope?.allowed_areas]);
 
   const liveEstimate = useMemo(() => {
     if (isCombinedInjectable && combinedBundle) {
@@ -347,6 +371,21 @@ export default function TreatmentDocumentDialog({
   const save = useMutation({
     mutationFn: async (status) => {
       const me = await base44.auth.me();
+      const serializedUnits = serializeBillingQuantities({
+        units: form.units_used,
+        syringes: form.syringes_used,
+        isCombined: isCombinedInjectable,
+      });
+      if (status === "submitted" && serviceTypeScope) {
+        const scopeCheck = validateTreatmentAgainstServiceScope(serviceTypeScope, {
+          areas_treated: areas,
+          units_used: serializedUnits,
+          units_label: isCombinedInjectable ? "units" : form.units_label,
+        });
+        if (!scopeCheck.ok) {
+          throw new Error(scopeCheck.violations[0] || "Treatment is outside the allowed scope for this service.");
+        }
+      }
       const {
         syringes_used: _syringes,
         units_used: _units,
@@ -372,11 +411,7 @@ export default function TreatmentDocumentDialog({
         status,
         ...restForm,
         units_label: isCombinedInjectable ? "units" : form.units_label,
-        units_used: serializeBillingQuantities({
-          units: form.units_used,
-          syringes: form.syringes_used,
-          isCombined: isCombinedInjectable,
-        }),
+        units_used: serializedUnits,
       };
       let record;
       if (resolvedExistingRecord) {
@@ -669,6 +704,21 @@ export default function TreatmentDocumentDialog({
                 <p className="text-[10px]" style={{ color: "#9a8f7e" }}>
                   {logForm.quantityBillingNote}
                 </p>
+              )}
+            </div>
+          )}
+
+          {serviceTypeScope && (serviceTypeScope.allowed_areas?.length > 0 || serviceTypeScope.max_units_per_session) && (
+            <div
+              className="rounded-xl px-3 py-2.5 text-xs space-y-1"
+              style={{ background: "rgba(123,142,200,0.08)", border: "1px solid rgba(123,142,200,0.18)", color: "rgba(30,37,53,0.65)" }}
+            >
+              <p className="font-semibold" style={{ color: "#1e2535" }}>Service scope ({serviceTypeScope.name})</p>
+              {serviceTypeScope.allowed_areas?.length > 0 && (
+                <p>Allowed areas: {serviceTypeScope.allowed_areas.join(", ")}</p>
+              )}
+              {serviceTypeScope.max_units_per_session != null && serviceTypeScope.max_units_per_session !== "" && (
+                <p>Max per session: {serviceTypeScope.max_units_per_session} {form.units_label || "units"}</p>
               )}
             </div>
           )}

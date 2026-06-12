@@ -4,6 +4,7 @@ import { Users, ShieldCheck, AlertTriangle, ChevronRight, CheckCircle2 } from "l
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { format } from "date-fns";
+import { groupRelationshipsByProvider } from "@/lib/mdRelationships";
 
 export default function MDDashboard() {
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => base44.auth.me() });
@@ -21,7 +22,7 @@ export default function MDDashboard() {
     queryFn: () => base44.entities.ComplianceLog.list("-created_date", 4),
   });
 
-  const activeRelationships = relationships.filter(r => r.status === "active");
+  const activeRelationships = groupRelationshipsByProvider(relationships, { status: "active" });
   const pendingActions = complianceLogs.filter(l => l.action_required && !l.resolved_at);
 
   const glassCard = {
@@ -72,12 +73,12 @@ export default function MDDashboard() {
             </Link>
           </div>
           <div className="p-5">
-            {relationships.length === 0 ? (
+            {activeRelationships.length === 0 ? (
               <p className="text-sm text-center py-6" style={{ color: "rgba(30,37,53,0.4)" }}>No providers yet</p>
             ) : (
               <div className="space-y-2">
-                {relationships.slice(0, 5).map(r => (
-                  <div key={r.id} className="flex items-center justify-between px-3 py-2.5 rounded-xl" style={{ background: "rgba(30,37,53,0.04)" }}>
+                {activeRelationships.slice(0, 5).map(r => (
+                  <div key={r.provider_id || r.id} className="flex items-center justify-between px-3 py-2.5 rounded-xl" style={{ background: "rgba(30,37,53,0.04)" }}>
                     <div>
                       <p className="text-sm font-medium" style={{ color: "#1e2535" }}>{r.provider_name || r.provider_email}</p>
                       <p className="text-xs" style={{ color: "rgba(30,37,53,0.5)" }}>{r.provider_email}</p>

@@ -3,6 +3,8 @@ import {
   activeNonExpiredCertSql,
   verifiedNonExpiredLicenseSql,
 } from "./lib/providerCredentialEligibility.js";
+import { resolveBookableTreatmentService } from "./lib/serviceTypeMembershipModel.js";
+import { assertProviderCanPracticeService } from "./lib/serviceAttestation.js";
 
 function normalizeStatus(value) {
   return String(value || "").trim().toLowerCase();
@@ -85,8 +87,13 @@ export async function validateBookingScope({ providerId, service, referral_code 
     return { eligible: false, reason: "This provider is not accepting new patients right now." };
   }
 
-  const [{ rows: licenseRows }, { rows: expiredLicenseRows }, { rows: subRows }, { rows: relRows }] =
-    await Promise.all([
+  const [
+    { rows: licenseRows },
+    { rows: expiredLicenseRows },
+    { rows: activeSubRows },
+    { rows: relRows },
+    { rows: serviceTypeRows },
+  ] = await Promise.all([
     query(
       `select id from public.licenses l
         where l.provider_id = $1
@@ -106,31 +113,9 @@ export async function validateBookingScope({ providerId, service, referral_code 
     query(
       `select ms.id, ms.service_type_id, ms.service_type_name, ms.status
          from public.md_subscription ms
-         left join public.service_type membership on membership.id::text = ms.service_type_id::text
         where ms.provider_id = $1
-          and lower(ms.status) = 'active'
-          and (
-            lower(trim(coalesce(ms.service_type_name, ''))) = lower($2)
-            or lower(trim(coalesce(membership.name, ''))) = lower($2)
-            or exists (
-              select 1
-                from public.service_type child
-               where coalesce(child.is_membership, false) = false
-                 and lower(trim(child.name)) = lower($2)
-                 and (
-                   child.id::text = ms.service_type_id::text
-                   or exists (
-                     select 1
-                       from jsonb_array_elements_text(
-                         coalesce(membership.included_service_ids, '[]'::jsonb)
-                       ) as inc(inc_id)
-                      where child.id::text = inc.inc_id
-                   )
-                 )
-            )
-          )
-        limit 1`,
-      [pid, serviceName]
+          and lower(ms.status) = 'active'`,
+      [pid]
     ),
     query(
       `select id from public.medical_director_relationship
@@ -138,7 +123,43 @@ export async function validateBookingScope({ providerId, service, referral_code 
         limit 1`,
       [pid]
     ),
+    query(
+      `select id, name, is_membership, is_active, included_service_ids, legacy_parent_membership_id
+         from public.service_type`
+    ),
   ]);
+
+  const serviceTypes = (serviceTypeRows || []).map((row) => ({
+    ...row,
+    included_service_ids: Array.isArray(row.included_service_ids) ? row.included_service_ids : [],
+  }));
+
+  const resolvedTreatment = resolveBookableTreatmentService({
+    serviceName,
+    activeSubscriptions: activeSubRows,
+    serviceTypes,
+  });
+
+  const subRows = resolvedTreatment
+    ? activeSubRows.filter((sub) => {
+        const membership = serviceTypes.find((st) => String(st.id) === String(sub.service_type_id));
+        if (!membership) return String(sub.service_type_id) === String(resolvedTreatment.id);
+        const included = (membership.included_service_ids || []).map(String);
+        if (included.includes(String(resolvedTreatment.id))) return true;
+        return (
+          String(resolvedTreatment.legacy_parent_membership_id || "") === String(sub.service_type_id)
+        );
+      })
+    : activeSubRows.filter((sub) => {
+        const membership = serviceTypes.find((st) => String(st.id) === String(sub.service_type_id));
+        const names = [
+          sub.service_type_name,
+          membership?.name,
+        ]
+          .map((n) => String(n || "").trim().toLowerCase())
+          .filter(Boolean);
+        return names.includes(serviceName.toLowerCase());
+      });
 
   if (!licenseRows.length) {
     if (expiredLicenseRows.length) {
@@ -181,7 +202,8 @@ export async function validateBookingScope({ providerId, service, referral_code 
     };
   }
 
-  const serviceTypeId = String(subRows[0].service_type_id || "").trim();
+  const resolvedServiceTypeId = resolvedTreatment?.id || subRows[0]?.service_type_id || null;
+  const serviceTypeId = String(resolvedServiceTypeId || subRows[0]?.service_type_id || "").trim();
   const serviceCertFilterSql = `(
     ($2::text <> '' and c.service_type_id = $2)
     or lower(trim(coalesce(c.service_type_name, ''))) = lower($3)
@@ -225,16 +247,18 @@ export async function validateBookingScope({ providerId, service, referral_code 
     return { eligible: false, reason: referralCheck.reason };
   }
 
-  const { rows: treatmentSvcRows } = await query(
-    `select id
-       from public.service_type
-      where coalesce(is_membership, false) = false
-        and lower(trim(name)) = lower($1)
-      limit 1`,
-    [serviceName]
-  );
-  const resolvedServiceTypeId =
-    treatmentSvcRows[0]?.id || subRows[0].service_type_id || null;
+  const practiceCheck = await assertProviderCanPracticeService({
+    providerId: pid,
+    serviceTypeId: resolvedServiceTypeId,
+  });
+  if (!practiceCheck.ok) {
+    return {
+      eligible: false,
+      reason:
+        practiceCheck.reason ||
+        "This provider has not completed required training for this service yet.",
+    };
+  }
 
   return {
     eligible: true,

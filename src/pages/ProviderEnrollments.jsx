@@ -6,15 +6,12 @@ import { Search, BookOpen, Award } from "lucide-react";
 import React from "react";
 import { createPageUrl } from "@/utils";
 import { useNavigate } from "react-router-dom";
-import { isToday, isPast } from "date-fns";
 import ProviderLockGate from "@/components/ProviderLockGate";
 import PreCourseMaterials from "@/components/PreCourseMaterials";
 import ProviderSalesLock from "@/components/ProviderSalesLock";
 import { useProviderAccess } from "@/components/useProviderAccess";
-import ClassDayOnboardingWizard from "@/components/provider/ClassDayOnboardingWizard";
 import CourseEnrollmentCard from "@/components/provider/CourseEnrollmentCard";
 import CertificationPathway from "@/components/provider/CertificationPathway";
-import { isNowWithinSessionRedeemWindow } from "@/lib/classCodeWindow";
 import CourseCardDeck from "@/components/provider/CourseCardDeck";
 import { adminCoursesApi } from "@/api/adminCoursesApi";
 import { useAttendanceContext } from "@/components/provider/useAttendanceContext";
@@ -50,7 +47,6 @@ export default function ProviderEnrollments() {
   const [activeTab, setActiveTab] = useState("browse");
   const [search, setSearch] = useState("");
   const [preMaterialsCourse, setPreMaterialsCourse] = useState(null);
-  const [onboardingEnrollment, setOnboardingEnrollment] = useState(null);
   const cancelEnrollment = useMutation({
     mutationFn: ({ id }) => base44.entities.Enrollment.update(id, {
       status: "cancelled",
@@ -218,26 +214,6 @@ export default function ProviderEnrollments() {
   const activeEnrollments = myEnrollments.filter(e => e.status !== "cancelled");
   const enrolledCourseIds = new Set(activeEnrollments.map(e => e.course_id));
   const shouldShowEnrollmentStatusLoading = !hasFetchedEnrollments;
-
-  const todayEnrollment = activeEnrollments.find(e => {
-    const course = courseMap[e.course_id];
-    const sessionDates = (course?.session_dates || []).sort((a, b) => a.date > b.date ? 1 : -1);
-    const nextDate = sessionDates.find(d => d.date && !isPast(new Date(d.date + "T23:59:59")));
-    const classDate = e.session_date || nextDate?.date;
-    const classIsToday = classDate && isToday(new Date(classDate));
-    const isWithinRedeemWindow = classDate && isNowWithinSessionRedeemWindow(course, classDate);
-    const session = sessionByEnrollment[e.id];
-    const isAttended = session?.code_used || ["attended", "completed"].includes(e.status);
-    const linkedServiceIds = getCourseServiceTypeIds(course);
-    const needsMDSub = linkedServiceIds.some(id => !activeSubServiceIds.has(id));
-    return (classIsToday || isWithinRedeemWindow) && !isAttended && needsMDSub && ["confirmed", "paid"].includes(e.status);
-  });
-
-  React.useEffect(() => {
-    if (todayEnrollment && !onboardingEnrollment && activeTab === "my") {
-      setOnboardingEnrollment(todayEnrollment);
-    }
-  }, [todayEnrollment, activeTab]);
 
   const filteredCourses = enrichedCourses.filter((course) => {
     if (!search) return true;
@@ -412,13 +388,6 @@ export default function ProviderEnrollments() {
                         certifications_awarded: [],
                         pre_course_materials: [],
                       };
-                    const classDate = e.session_date || course?.session_dates?.find((d) => d?.date)?.date;
-                    const showWizard = Boolean(
-                      classDate &&
-                      isNowWithinSessionRedeemWindow(course, classDate) &&
-                      !sessionByEnrollment[e.id]?.code_used &&
-                      ["confirmed", "paid"].includes(e.status)
-                    );
                     return (
                   <CourseEnrollmentCard
                     key={e.id}
@@ -429,8 +398,6 @@ export default function ProviderEnrollments() {
                     activeSubServiceIds={activeSubServiceIds}
                     onViewMaterials={() => setPreMaterialsCourse(course)}
                     onCancel={() => { if (window.confirm("Cancel this enrollment?")) cancelEnrollment.mutate({ id: e.id }); }}
-                    showClassWizardCta={showWizard}
-                    onOpenClassWizard={() => setOnboardingEnrollment(e)}
                     attendanceWindow={attendance.getWindowByEnrollment(e)}
                     isSubmittingAttendance={attendance.isSubmitting}
                     onSubmitAttendance={({ code, windowEntry }) =>
@@ -453,14 +420,6 @@ export default function ProviderEnrollments() {
           />
         )}
 
-        {onboardingEnrollment && (
-          <ClassDayOnboardingWizard
-            enrollment={onboardingEnrollment}
-            course={courseMap[onboardingEnrollment.course_id]}
-            open={!!onboardingEnrollment}
-            onClose={() => setOnboardingEnrollment(null)}
-          />
-        )}
       </div>
     </ProviderLockGate>
     </ProviderSalesLock>

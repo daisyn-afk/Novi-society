@@ -213,11 +213,13 @@ function Bubble({ msg, onChoice, onScanUpload, isPremium, onUpgrade, journey, la
                   <div className="text-center px-4">
                     <Lock className="w-4 h-4 text-white/60 mx-auto mb-1.5" />
                     <p className="text-xs text-white/80 font-semibold mb-2">Unlock full analysis</p>
-                    <button onClick={onUpgrade}
-                      className="text-xs px-4 py-1.5 rounded-full font-bold flex items-center gap-1.5 mx-auto"
-                      style={{ background: "#C8E63C", color: "#1e2535" }}>
-                      <Sparkles className="w-3 h-3" /> Premium — $19/mo
-                    </button>
+                    {onUpgrade && (
+                      <button onClick={onUpgrade}
+                        className="text-xs px-4 py-1.5 rounded-full font-bold flex items-center gap-1.5 mx-auto"
+                        style={{ background: "#C8E63C", color: "#1e2535" }}>
+                        <Sparkles className="w-3 h-3" /> Premium — $19/mo
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -285,10 +287,12 @@ function Bubble({ msg, onChoice, onScanUpload, isPremium, onUpgrade, journey, la
               <p className="text-xs font-bold uppercase tracking-widest text-yellow-300">Novi Premium</p>
             </div>
             <p className="text-sm text-white/90 leading-relaxed">{msg.content}</p>
-            <Button onClick={msg.onAction} className="w-full gap-2 font-bold rounded-full"
-              style={{ background: "#C8E63C", color: "#1e2535" }}>
-              <Sparkles className="w-4 h-4" /> Unlock Premium — $19/mo
-            </Button>
+            {msg.onAction && (
+              <Button onClick={msg.onAction} className="w-full gap-2 font-bold rounded-full"
+                style={{ background: "#C8E63C", color: "#1e2535" }}>
+                <Sparkles className="w-4 h-4" /> Unlock Premium — $19/mo
+              </Button>
+            )}
             {msg.onSkip && (
               <button onClick={msg.onSkip} className="w-full text-center text-xs text-white/40 hover:text-white/60 transition-colors">
                 Not right now
@@ -314,6 +318,9 @@ function Bubble({ msg, onChoice, onScanUpload, isPremium, onUpgrade, journey, la
     </div>
   );
 }
+
+/** Set to true to restore Novi Premium upgrade buttons and Stripe checkout. */
+const PATIENT_JOURNEY_UPGRADE_ENABLED = false;
 
 export default function PatientJourney() {
   const qc = useQueryClient();
@@ -416,7 +423,7 @@ export default function PatientJourney() {
             ]
           : [
               { label: "Find me a provider", value: "find_provider" },
-              { label: "Unlock my full roadmap", value: "upgrade" },
+              ...(PATIENT_JOURNEY_UPGRADE_ENABLED ? [{ label: "Unlock my full roadmap", value: "upgrade" }] : []),
               { label: "Add another scan", value: "new_scan" },
               { label: "View scan history", value: "scan_history" },
             ]
@@ -484,7 +491,7 @@ export default function PatientJourney() {
     } else if (choice.value === "scan_history") {
       setShowScanHistory(true);
       setViewingScanIndex(Math.max(0, (journey?.scans?.length || 1) - 1));
-    } else if (choice.value === "upgrade") {
+    } else if (choice.value === "upgrade" && PATIENT_JOURNEY_UPGRADE_ENABLED) {
       addMsg({
         role: "ai", type: "upgrade_cta",
         content: "With Premium, I'll give you a full wrinkle depth map, volume loss analysis, symmetry scoring, AND a step-by-step treatment plan with real cost estimates.",
@@ -589,7 +596,7 @@ export default function PatientJourney() {
         ]
       : [
           { label: "Find me a provider", value: "find_provider" },
-          { label: "Unlock my full roadmap", value: "upgrade" },
+          ...(PATIENT_JOURNEY_UPGRADE_ENABLED ? [{ label: "Unlock my full roadmap", value: "upgrade" }] : []),
           { label: "Add another scan", value: "new_scan" },
           { label: "View scan history", value: "scan_history" },
         ]
@@ -597,6 +604,7 @@ export default function PatientJourney() {
   }
 
   async function handleUpgrade() {
+    if (!PATIENT_JOURNEY_UPGRADE_ENABLED) return;
     setUpgradingLoading(true);
     const res = await base44.functions.invoke("createPatientSubscription", {});
     setUpgradingLoading(false);
@@ -604,6 +612,8 @@ export default function PatientJourney() {
       window.location.href = res.data.url;
     }
   }
+
+  const onUpgrade = PATIENT_JOURNEY_UPGRADE_ENABLED ? handleUpgrade : undefined;
 
   async function handleCancel() {
     setCancellingLoading(true);
@@ -699,14 +709,14 @@ Example: If they ask about "looking tired under my eyes" → mention that tear t
             style={{ background: "rgba(200,230,60,0.35)", color: "#3D5600", border: "1px solid rgba(90,122,32,0.25)" }}>
             <Crown className="w-3 h-3" style={{ color: "#5a7a20" }} /> Premium
           </button>
-        ) : (
-          <button onClick={handleUpgrade} disabled={upgradingLoading}
+        ) : onUpgrade ? (
+          <button onClick={onUpgrade} disabled={upgradingLoading}
             className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full font-bold transition-all hover:opacity-90 disabled:opacity-50 ${journey?.scans?.length > 0 ? "" : "ml-auto"}`}
             style={{ background: "rgba(200,230,60,0.3)", color: "#3D5600", border: "1px solid rgba(90,122,32,0.3)" }}>
             <Sparkles className="w-3 h-3" style={{ color: "#5a7a20" }} />
             {upgradingLoading ? "Loading…" : "Upgrade $19/mo"}
           </button>
-        )}
+        ) : null}
       </div>
 
       {/* Manage subscription modal */}
@@ -774,7 +784,7 @@ Example: If they ask about "looking tired under my eyes" → mention that tear t
             journey={journey}
             appointments={myAppointments}
             isPremium={isPremium}
-            onUpgrade={handleUpgrade}
+            onUpgrade={onUpgrade}
             onNewScan={startNewScanFlow}
             scanTabNonce={scanTabNonce}
           />
@@ -802,7 +812,6 @@ Example: If they ask about "looking tired under my eyes" → mention that tear t
                 onChoice={handleChoice}
                 onScanUpload={handleScanUpload}
                 isPremium={isPremium}
-                onUpgrade={handleUpgrade}
                 journey={journey}
                 latestScan={journey.scans[viewingScanIndex]}
                 navigate={navigate}
@@ -811,7 +820,7 @@ Example: If they ask about "looking tired under my eyes" → mention that tear t
           </div>
         )}
         {!showJourneyDashboard && messages.map((msg, i) => (
-          <Bubble key={i} msg={msg} onChoice={handleChoice} onScanUpload={handleScanUpload} isPremium={isPremium} onUpgrade={handleUpgrade} journey={journey} latestScan={journey?.scans?.[journey.scans.length - 1]} navigate={navigate} />
+          <Bubble key={i} msg={msg} onChoice={handleChoice} onScanUpload={handleScanUpload} isPremium={isPremium} onUpgrade={onUpgrade} journey={journey} latestScan={journey?.scans?.[journey.scans.length - 1]} navigate={navigate} />
         ))}
         <div ref={bottomRef} />
       </div>

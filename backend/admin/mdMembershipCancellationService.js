@@ -2,6 +2,7 @@ import { query } from "./db.js";
 import { sendEmailFromTemplate } from "./emails/renderTemplate.js";
 import { notifyAdminsOfProviderMdCancellation } from "./adminNotifications.js";
 import { insertAppNotification, resolveNotificationRecipient } from "./certificationNotifications.js";
+import { stopMdSubscriptionStripeBilling } from "./mdBillingService.js";
 import {
   sendAppointmentCancelledPatientEmail,
   notifyPatientAppointmentCancelled,
@@ -20,9 +21,9 @@ import {
  * naturally drops back to the "Get License Verified by NOVI Admin" / md_eligible
  * dashboard state without destroying their history.
  *
- * Stripe is NOT modified here (existing ops pattern — admins cancel billing in
- * the Stripe dashboard). The Stripe `subscription.deleted` webhook calls this
- * same cascade so admin-side Stripe cancels do not leave stale access.
+ * Stripe billing is stopped here (subscription cancelled so there is no charge
+ * next month). The Stripe `subscription.deleted` webhook also calls this cascade
+ * with `skipStripeBilling: true` to avoid double-cancelling in Stripe.
  *
  * Best-effort: each side effect is isolated so one failure does not abort the
  * rest of the teardown. The core subscription cancel always runs first.
@@ -87,6 +88,7 @@ function manufacturerRequiredServiceTypeIds(manufacturer) {
  * @param {"provider"|"admin"|"stripe"} [params.cancelledBy]
  * @param {string|null} [params.cancelledByName]
  * @param {boolean} [params.enforceOwnership]   verify providerId owns the sub (true for self-serve)
+ * @param {boolean} [params.skipStripeBilling]  true when Stripe already ended the subscription
  * @returns {Promise<{success:boolean, error?:string, alreadyCancelled?:boolean, summary?:object}>}
  */
 export async function processMdMembershipCancellation({
@@ -97,6 +99,7 @@ export async function processMdMembershipCancellation({
   cancelledBy = "provider",
   cancelledByName = null,
   enforceOwnership = true,
+  skipStripeBilling = false,
 }) {
   const subId = s(subscriptionId);
   if (!subId) {
@@ -127,14 +130,34 @@ export async function processMdMembershipCancellation({
   const cancelledServiceName = s(sub.service_type_name) || "MD Board Coverage";
   const nowIso = new Date().toISOString();
 
-  // ── 1. Cancel the subscription (DB only; Stripe handled separately) ───────
+  // ── 1. Stop Stripe billing (no charge next month) ─────────────────────────
+  let stripeBilling = { skipped: true };
+  if (!skipStripeBilling) {
+    stripeBilling = await stopMdSubscriptionStripeBilling(sub, {
+      cancelImmediately: true,
+      reason,
+      notes,
+      cancelledByName,
+    });
+    if (stripeBilling.ok === false && stripeBilling.error) {
+      console.warn(
+        "[mdCancellation] Stripe billing stop failed; continuing DB cancel:",
+        stripeBilling.error
+      );
+    }
+  }
+
+  // ── 2. Cancel the subscription in NOVI ────────────────────────────────────
   await query(
     `update public.md_subscription
         set status = 'cancelled',
+            billing_status = 'cancelled',
+            cancel_at_period_end = false,
             cancellation_reason = $2,
             cancellation_notes = $3,
             cancelled_at = coalesce(cancelled_at, $4::timestamptz),
             cancelled_by_name = coalesce($5, cancelled_by_name),
+            billing_updated_at = now(),
             updated_at = now()
       where id = $1::uuid`,
     [subId, reason, notes, nowIso, cancelledByName]
@@ -182,6 +205,7 @@ export async function processMdMembershipCancellation({
     cancelledServiceName,
     isFullExit,
     serviceFullyCancelled,
+    stripeBillingStopped: stripeBilling.ok === true && !stripeBilling.skipped,
     terminatedRelationships: 0,
     cancelledAppointments: 0,
     revokedManufacturers: 0,
@@ -413,11 +437,11 @@ export async function processMdMembershipCancellation({
     const recipient = await resolveNotificationRecipient({ providerId: pid, providerEmail });
     let message;
     if (isFullExit) {
-      message = `Your last active NOVI MD membership (${cancelledServiceName}) has been cancelled. Your platform access is now locked — your verified license is kept, so you can reactivate MD coverage anytime to restore access.`;
+      message = `Your last active NOVI MD membership (${cancelledServiceName}) has been cancelled. Monthly billing has been stopped. Your verified license is kept — reactivate MD coverage anytime ($279/mo for your first membership, $129/mo for each additional).`;
     } else if (!serviceFullyCancelled) {
-      message = `One of your ${cancelledServiceName} memberships has been cancelled. You still have active coverage for ${cancelledServiceName}, so your access is unaffected. Stripe billing may continue until NOVI deactivates it — contact support if needed.`;
+      message = `One of your ${cancelledServiceName} memberships has been cancelled. You still have active coverage for ${cancelledServiceName}. Monthly billing for the cancelled membership has been stopped.`;
     } else {
-      message = `Your MD coverage for ${cancelledServiceName} has been cancelled. Your other active memberships are unaffected. Stripe billing may continue until NOVI deactivates it — contact support if needed.`;
+      message = `Your MD coverage for ${cancelledServiceName} has been cancelled. Your other active memberships are unaffected. Monthly billing for this membership has been stopped — you will not be charged again next month.`;
     }
     await insertAppNotification({
       user_id: recipient.userId,
