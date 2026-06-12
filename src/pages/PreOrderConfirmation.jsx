@@ -6,6 +6,7 @@ import { adminApiRequest } from "@/api/adminApiRequest";
 import { adminCoursesApi } from "@/api/adminCoursesApi";
 import { queryClientAdmincourses } from "@/lib/query-client";
 import { resolvePostCheckoutReturnPath } from "@/lib/checkoutReturnPath";
+import { formatCourseSessionDate } from "@/lib/sessionDateSeats";
 import { createPageUrl } from "@/utils";
 
 const normalizeLandingCourse = (course) => ({
@@ -212,7 +213,7 @@ export default function PreOrderConfirmation() {
                   <Calendar className="w-5 h-5 flex-shrink-0" style={{ color: "#7B8EC8" }} />
                   <div>
                     <p className="text-xs font-bold uppercase tracking-wide" style={{ color: "rgba(30,37,53,0.5)" }}>Date</p>
-                    <p className="font-semibold" style={{ color: "#1e2535" }}>{new Date(order.course_date).toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}</p>
+                    <p className="font-semibold" style={{ color: "#1e2535" }}>{formatCourseSessionDate(order.course_date)}</p>
                   </div>
                 </div>
               )}

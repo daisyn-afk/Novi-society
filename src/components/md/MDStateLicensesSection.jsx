@@ -51,6 +51,7 @@ export default function MDStateLicensesSection({
 
       onChange(rowsFromImportedEntries(result.entries));
       if (result.npi && onNpiDetected) onNpiDetected(result.npi);
+      if (onNationwideChange) onNationwideChange(false);
 
       const label = /\.xlsx?$/i.test(file.name) ? "Excel" : "CSV";
       const npiNote = result.npi ? " NPI was filled in too." : "";
@@ -203,7 +204,8 @@ export default function MDStateLicensesSection({
       <div className="pt-2 border-t border-slate-100 space-y-2">
         <p className="text-xs font-semibold text-slate-700">Supervision coverage</p>
         <p className="text-xs text-slate-500" style={{ lineHeight: 1.6 }}>
-          When state matching is enabled, NOVI uses this to limit which providers you can supervise.
+          Choose Nationwide or add state licenses below. Until one is configured, providers in any state
+          cannot be assigned to you for supervision.
         </p>
         <label className="flex items-center gap-2 cursor-pointer">
           <Checkbox

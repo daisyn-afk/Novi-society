@@ -36,7 +36,7 @@ async function getProfileRow(medicalDirectorId) {
   const { rows } = await query(
     `select medical_director_id, phone, city, state, bio, specialty, avatar_url,
             npi, medical_license_number, license_state, board_certifications,
-            coalesce(supervision_nationwide, true) as supervision_nationwide,
+            coalesce(supervision_nationwide, false) as supervision_nationwide,
             created_at, updated_at
      from public.medical_director_profiles
      where medical_director_id = $1
@@ -109,7 +109,7 @@ function licensedStatesFromEntries(stateLicenses) {
 
 function profilePayload(row, me, stateLicenses) {
   const base = row || {};
-  const supervisionNationwide = base.supervision_nationwide !== false;
+  const supervisionNationwide = base.supervision_nationwide === true;
   const licensedStates = licensedStatesFromEntries(stateLicenses);
   return {
     medical_director_id: String(me.id || ""),
@@ -189,7 +189,7 @@ mdProfileRouter.patch("/me", async (req, res, next) => {
     }
 
     if (Object.prototype.hasOwnProperty.call(body, "supervision_nationwide")) {
-      const nationwide = body.supervision_nationwide !== false;
+      const nationwide = body.supervision_nationwide === true;
       await query(
         `insert into public.medical_director_profiles (medical_director_id, supervision_nationwide)
          values ($1, $2)
