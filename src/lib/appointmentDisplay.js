@@ -1,4 +1,4 @@
-import { format, isSameDay, isToday, isTomorrow, isYesterday } from "date-fns";
+import { format, isSameDay, isToday, isTomorrow, isYesterday, isWithinInterval, startOfMonth, endOfMonth } from "date-fns";
 
 /**
  * Parse appointment calendar date as a local day (not UTC).
@@ -257,6 +257,30 @@ export function appointmentProviderPaymentSummary(appt) {
     treatmentAwaiting,
     detailLines,
   };
+}
+
+/** Completed visits in the current calendar month (by appointment_date). */
+export function appointmentsThisMonthRevenue(appointments, referenceDate = new Date()) {
+  const monthStart = startOfMonth(referenceDate);
+  const monthEnd = endOfMonth(referenceDate);
+  return (appointments || [])
+    .filter((a) => {
+      const d = parseAppointmentDateLocal(a.appointment_date);
+      return a.status === "completed" && d && isWithinInterval(d, { start: monthStart, end: monthEnd });
+    })
+    .sort((a, b) => {
+      const da = parseAppointmentDateLocal(a.appointment_date)?.getTime() || 0;
+      const db = parseAppointmentDateLocal(b.appointment_date)?.getTime() || 0;
+      if (db !== da) return db - da;
+      return String(b.appointment_time || "").localeCompare(String(a.appointment_time || ""));
+    });
+}
+
+export function thisMonthRevenueTotal(appointments, referenceDate = new Date()) {
+  return appointmentsThisMonthRevenue(appointments, referenceDate).reduce(
+    (sum, a) => sum + (Number(a.amount_paid) || 0),
+    0
+  );
 }
 
 export const APPOINTMENT_PAYMENT_STATUS_STYLES = {

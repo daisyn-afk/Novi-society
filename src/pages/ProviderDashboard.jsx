@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { useMemo, useState } from "react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   Award, BookOpen, Calendar, ShieldCheck, AlertTriangle, CheckCircle,
   ArrowRight, Clock, Zap, Users, FileText, Star, ChevronRight,
@@ -10,12 +11,14 @@ import {
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { useProviderAccess } from "@/components/useProviderAccess";
-import { format, isWithinInterval, startOfMonth, endOfMonth } from "date-fns";
+import { format } from "date-fns";
 import {
+  appointmentServiceLabel,
+  appointmentsThisMonthRevenue,
   formatAppointmentDate,
   isAppointmentDateToday,
   isAppointmentDateTomorrow,
-  parseAppointmentDateLocal,
+  thisMonthRevenueTotal,
 } from "@/lib/appointmentDisplay";
 import { useAttendanceContext } from "@/components/provider/useAttendanceContext";
 import { Input } from "@/components/ui/input";
@@ -31,6 +34,77 @@ const GLASS = {
   boxShadow: "0 2px 12px rgba(30,37,53,0.06)",
   borderRadius: 16,
 };
+
+function formatRevenueAmount(amount) {
+  const n = Number(amount);
+  if (!Number.isFinite(n) || n <= 0) return "$0";
+  return `$${n.toLocaleString(undefined, {
+    minimumFractionDigits: Number.isInteger(n) ? 0 : 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+function MonthRevenueDialog({ open, onOpenChange, appointments, monthLabel, totalRevenue, allTimeTotal }) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg max-h-[85vh] flex flex-col p-0 gap-0 overflow-hidden">
+        <DialogHeader className="px-6 pt-6 pb-4 border-b border-slate-100 flex-shrink-0">
+          <DialogTitle style={{ fontFamily: "'DM Serif Display', serif", color: "#1e2535" }}>
+            Revenue — {monthLabel}
+          </DialogTitle>
+          <p className="text-sm mt-1" style={{ color: "rgba(30,37,53,0.55)" }}>
+            Collected from completed visits this month. All-time total: {formatRevenueAmount(allTimeTotal)}.
+          </p>
+          <p className="text-2xl font-bold mt-2" style={{ color: "#4a6b10", fontFamily: "'DM Serif Display', serif" }}>
+            {formatRevenueAmount(totalRevenue)}
+          </p>
+        </DialogHeader>
+        <div className="flex-1 overflow-y-auto px-6 py-4">
+          {appointments.length === 0 ? (
+            <div className="text-center py-12 rounded-2xl" style={{ background: "rgba(30,37,53,0.03)", border: "1px solid rgba(30,37,53,0.06)" }}>
+              <DollarSign className="w-8 h-8 mx-auto mb-2" style={{ color: "rgba(30,37,53,0.2)" }} />
+              <p className="font-semibold text-sm" style={{ color: "#1e2535" }}>No revenue this month yet</p>
+              <p className="text-xs mt-1" style={{ color: "rgba(30,37,53,0.45)" }}>
+                Completed visits with collected payments will appear here.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {appointments.map((appt) => {
+                const paid = Number(appt.amount_paid) || 0;
+                const service = appointmentServiceLabel(appt);
+                return (
+                  <Link
+                    key={appt.id}
+                    to={createPageUrl("ProviderPractice") + "?tab=appointments"}
+                    onClick={() => onOpenChange(false)}
+                    className="flex items-center gap-3 p-3 rounded-xl transition-all hover:shadow-sm"
+                    style={{ background: "rgba(255,255,255,0.8)", border: "1px solid rgba(30,37,53,0.08)" }}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-sm truncate" style={{ color: "#1e2535" }}>
+                        {appt.patient_name || appt.patient_email || "Patient"}
+                      </p>
+                      {service ? (
+                        <p className="text-xs truncate mt-0.5" style={{ color: "rgba(30,37,53,0.5)" }}>{service}</p>
+                      ) : null}
+                      <p className="text-[11px] mt-0.5" style={{ color: "rgba(30,37,53,0.4)" }}>
+                        {formatAppointmentDate(appt.appointment_date, "MMM d, yyyy")}
+                      </p>
+                    </div>
+                    <p className="text-sm font-bold flex-shrink-0" style={{ color: paid > 0 ? "#4a6b10" : "rgba(30,37,53,0.35)" }}>
+                      {formatRevenueAmount(paid)}
+                    </p>
+                  </Link>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 function SectionLabel({ children }) {
   return (
@@ -98,6 +172,7 @@ function ProviderActiveDashboard({ hasCompletedBasic = true }) {
   const [selectedAttendanceKey, setSelectedAttendanceKey] = useState("");
   const [attendanceCode, setAttendanceCode] = useState("");
   const [attendanceMessage, setAttendanceMessage] = useState("");
+  const [revenueDialogOpen, setRevenueDialogOpen] = useState(false);
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => base44.auth.me() });
 
   const { data: myEnrollments = [] } = useQuery({
@@ -209,13 +284,10 @@ function ProviderActiveDashboard({ hasCompletedBasic = true }) {
   const completedAppts = myAppointments.filter(a => a.status === "completed");
 
   // ── Revenue this month (collected payments only, not invoice totals)
-  const thisMonthRevenue = myAppointments
-    .filter((a) => {
-      const d = parseAppointmentDateLocal(a.appointment_date);
-      return a.status === "completed" && d && isWithinInterval(d, { start: startOfMonth(today), end: endOfMonth(today) });
-    })
-    .reduce((s, a) => s + (Number(a.amount_paid) || 0), 0);
+  const thisMonthRevenueAppointments = appointmentsThisMonthRevenue(myAppointments, today);
+  const thisMonthRevenue = thisMonthRevenueTotal(myAppointments, today);
   const totalRevenue = completedAppts.reduce((s, a) => s + (Number(a.amount_paid) || 0), 0);
+  const monthLabel = format(today, "MMMM yyyy");
 
   // ── Reviews
   const avgRating = myReviews.length ? (myReviews.reduce((s, r) => s + r.rating, 0) / myReviews.length).toFixed(1) : null;
@@ -546,7 +618,6 @@ function ProviderActiveDashboard({ hasCompletedBasic = true }) {
           { icon: Calendar, label: "Upcoming", value: upcomingConfirmed.length, sub: `${pendingRequests.length} pending`, color: "#7B8EC8", page: "ProviderPractice" },
           { icon: Users, label: "Patients", value: totalPatients, sub: `${retentionRate}% returning`, color: "#2D6B7F", page: "ProviderPractice" },
           { icon: Star, label: "Avg Rating", value: avgRating || "—", sub: `${myReviews.length} reviews`, color: "#FA6F30", page: "ProviderPractice" },
-          { icon: DollarSign, label: "This Month", value: thisMonthRevenue > 0 ? `$${thisMonthRevenue.toLocaleString()}` : "—", sub: `$${totalRevenue.toLocaleString()} total`, color: "#C8E63C", page: "ProviderPractice" },
         ].map(({ icon: Icon, label, value, sub, color, page }) => (
           <Link key={label} to={createPageUrl(page)}>
             <div className="py-4 px-3 rounded-2xl text-center transition-all hover:scale-[1.02]" style={GLASS}>
@@ -559,7 +630,31 @@ function ProviderActiveDashboard({ hasCompletedBasic = true }) {
             </div>
           </Link>
         ))}
+        <button
+          type="button"
+          onClick={() => setRevenueDialogOpen(true)}
+          className="py-4 px-3 rounded-2xl text-center transition-all hover:scale-[1.02] w-full"
+          style={{ ...GLASS, cursor: "pointer" }}
+        >
+          <div className="w-8 h-8 rounded-xl flex items-center justify-center mx-auto mb-2" style={{ background: "rgba(200,230,60,0.09)" }}>
+            <DollarSign className="w-4 h-4" style={{ color: "#C8E63C" }} />
+          </div>
+          <p className="text-2xl font-bold leading-tight" style={{ color: "#1e2535", fontFamily: "'DM Serif Display', serif" }}>
+            {thisMonthRevenue > 0 ? `$${thisMonthRevenue.toLocaleString()}` : "—"}
+          </p>
+          <p className="text-xs font-semibold mt-0.5" style={{ color: "rgba(30,37,53,0.55)" }}>This Month</p>
+          <p style={{ fontSize: 10, color: "rgba(30,37,53,0.4)", marginTop: 2 }}>${totalRevenue.toLocaleString()} total</p>
+        </button>
       </div>
+
+      <MonthRevenueDialog
+        open={revenueDialogOpen}
+        onOpenChange={setRevenueDialogOpen}
+        appointments={thisMonthRevenueAppointments}
+        monthLabel={monthLabel}
+        totalRevenue={thisMonthRevenue}
+        allTimeTotal={totalRevenue}
+      />
 
       {/* ── Today's Focus ── */}
       {todayTasks.length > 0 && (
