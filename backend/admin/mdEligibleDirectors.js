@@ -22,8 +22,9 @@ async function runSql(client, text, params) {
 }
 
 /**
- * When state matching is on: MDs with `supervision_nationwide` (or no license rows) are treated as
- * nationwide; otherwise MDs must have a license row for `providerState`.
+ * When state matching is on: only MDs with `supervision_nationwide = true` cover all states;
+ * otherwise MDs must have a license row with a number for `providerState`.
+ * MDs with no nationwide flag and no state licenses are not assignable.
  */
 async function filterEligibleByProviderState(client, mdList, providerState) {
   const st = normalizeProviderState(providerState);
@@ -33,13 +34,13 @@ async function filterEligibleByProviderState(client, mdList, providerState) {
 
   const { rows: profileRows } = await runSql(
     client,
-    `select medical_director_id, coalesce(supervision_nationwide, true) as supervision_nationwide
+    `select medical_director_id, coalesce(supervision_nationwide, false) as supervision_nationwide
      from public.medical_director_profiles
      where medical_director_id = any($1::text[])`,
     [ids]
   );
   const nationwideById = new Map(
-    (profileRows || []).map((r) => [String(r.medical_director_id), r.supervision_nationwide !== false])
+    (profileRows || []).map((r) => [String(r.medical_director_id), r.supervision_nationwide === true])
   );
 
   const { rows: counts } = await runSql(
@@ -65,13 +66,9 @@ async function filterEligibleByProviderState(client, mdList, providerState) {
   const stateOk = new Set((matchRows || []).map((r) => String(r.medical_director_id)));
 
   return mdList.filter((m) => {
-    const hasProfileFlag = nationwideById.has(m.id);
-    const isNationwide = hasProfileFlag
-      ? nationwideById.get(m.id) !== false
-      : (licensedCount.get(m.id) ?? 0) === 0;
-    if (isNationwide) return true;
+    if (nationwideById.get(m.id) === true) return true;
     const n = licensedCount.get(m.id) ?? 0;
-    if (n === 0) return true;
+    if (n === 0) return false;
     return stateOk.has(m.id);
   });
 }

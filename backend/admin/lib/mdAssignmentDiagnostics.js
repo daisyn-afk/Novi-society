@@ -60,7 +60,7 @@ export async function explainMdAssignmentBlocker(serviceTypeId, serviceTypeName,
     const beforeState = await listEligibleMedicalDirectorsForService(serviceTypeId, {});
     const afterState = await listEligibleMedicalDirectorsForService(serviceTypeId, { providerState: pState });
     if (beforeState.length > 0 && afterState.length === 0) {
-      return `${prefix}Board MDs offer this service, but none cover your practice state (${pState}). The supervising MD may need Nationwide supervision enabled or a state license on file for ${pState}.`;
+      return `${prefix}Board MDs offer this service, but none cover your practice state (${pState}). The supervising MD must enable Nationwide supervision or add a state license for ${pState}.`;
     }
   }
 

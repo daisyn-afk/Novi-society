@@ -184,10 +184,35 @@ async function authRequest(path, options = {}, retryOnAuthError = true) {
   };
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  const response = await fetch(`${ADMIN_API_BASE_URL}${toApiPath(path)}`, {
-    ...options,
-    headers
-  });
+  const timeoutMs = Number(options.timeoutMs || 0);
+  const { timeoutMs: _timeoutMs, ...fetchOptions } = options;
+  let signal = fetchOptions.signal;
+  if (timeoutMs > 0) {
+    const timeoutSignal = AbortSignal.timeout(timeoutMs);
+    signal =
+      signal && typeof AbortSignal.any === "function"
+        ? AbortSignal.any([signal, timeoutSignal])
+        : timeoutSignal;
+  }
+
+  let response;
+  try {
+    response = await fetch(`${ADMIN_API_BASE_URL}${toApiPath(path)}`, {
+      ...fetchOptions,
+      headers,
+      signal,
+    });
+  } catch (error) {
+    const isTimeout =
+      String(error?.name || "").toLowerCase() === "timeouterror" ||
+      String(error?.message || "").toLowerCase().includes("timeout");
+    if (isTimeout) {
+      const timeoutError = new Error(`Request timed out after ${timeoutMs}ms`);
+      timeoutError.name = "TimeoutError";
+      throw timeoutError;
+    }
+    throw error;
+  }
 
   if (!response.ok) {
     const raw = await response.text().catch(() => "");
@@ -610,10 +635,18 @@ export function createLovableProviderClient() {
         };
       }
       if (name === "Course") {
+        const listAllCourses = async () => {
+          const [templates, scheduled] = await Promise.all([
+            authRequest("/admin/template-courses", { method: "GET" }),
+            authRequest("/admin/courses", { method: "GET" }),
+          ]);
+          return [...(Array.isArray(templates) ? templates : []), ...(Array.isArray(scheduled) ? scheduled : [])];
+        };
+        const templateWriteOptions = { timeoutMs: 60_000 };
         return {
-          list: () => authRequest("/admin/courses", { method: "GET" }),
+          list: listAllCourses,
           filter: async (filters = {}) => {
-            const all = await authRequest("/admin/courses", { method: "GET" });
+            const all = await listAllCourses();
             const rows = Array.isArray(all) ? all : [];
             const type = filters?.type ? String(filters.type) : "";
             const requireActive = filters?.is_active === true;
@@ -623,16 +656,49 @@ export function createLovableProviderClient() {
               return true;
             });
           },
-          get: (id) => authRequest(`/admin/courses/${encodeURIComponent(id)}`, { method: "GET" }),
-          create: (payload) => authRequest("/admin/courses", {
-            method: "POST",
-            body: JSON.stringify(payload || {})
-          }),
-          update: (id, payload) => authRequest(`/admin/courses/${encodeURIComponent(id)}`, {
-            method: "PUT",
-            body: JSON.stringify(payload || {})
-          }),
-          delete: (id) => authRequest(`/admin/courses/${encodeURIComponent(id)}`, { method: "DELETE" })
+          get: async (id) => {
+            try {
+              return await authRequest(`/admin/template-courses/${encodeURIComponent(id)}`, { method: "GET" });
+            } catch (error) {
+              if (error?.status !== 404) throw error;
+              return authRequest(`/admin/courses/${encodeURIComponent(id)}`, { method: "GET" });
+            }
+          },
+          create: (payload = {}) => {
+            if (payload.type === "template") {
+              return authRequest("/admin/template-courses", {
+                method: "POST",
+                body: JSON.stringify(payload),
+                ...templateWriteOptions,
+              });
+            }
+            return authRequest("/admin/courses", {
+              method: "POST",
+              body: JSON.stringify(payload),
+            });
+          },
+          update: (id, payload = {}) => {
+            if (payload.type === "template") {
+              return authRequest(`/admin/template-courses/${encodeURIComponent(id)}`, {
+                method: "PUT",
+                body: JSON.stringify(payload),
+                ...templateWriteOptions,
+              });
+            }
+            return authRequest(`/admin/courses/${encodeURIComponent(id)}`, {
+              method: "PUT",
+              body: JSON.stringify(payload),
+            });
+          },
+          delete: async (id) => {
+            try {
+              await authRequest(`/admin/template-courses/${encodeURIComponent(id)}`, { method: "DELETE" });
+              return null;
+            } catch (error) {
+              if (error?.status !== 404) throw error;
+              return authRequest(`/admin/courses/${encodeURIComponent(id)}`, { method: "DELETE" });
+            }
+          },
         };
       }
       if (name === "Enrollment") {

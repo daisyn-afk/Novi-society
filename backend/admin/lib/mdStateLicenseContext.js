@@ -65,12 +65,12 @@ export function formatMdLicenseEmailLine(license) {
 export async function fetchMdProfileAndStateLicenses(medicalDirectorId) {
   const mid = asTrimmed(medicalDirectorId);
   if (!mid) {
-    return { npi: null, supervision_nationwide: true, state_licenses: [] };
+    return { npi: null, supervision_nationwide: false, state_licenses: [] };
   }
 
   const [profileRows, licenseRows] = await Promise.all([
     safeQuery(
-      `select npi, coalesce(supervision_nationwide, true) as supervision_nationwide
+      `select npi, coalesce(supervision_nationwide, false) as supervision_nationwide
        from public.medical_director_profiles
        where medical_director_id = $1
        limit 1`,
@@ -88,7 +88,7 @@ export async function fetchMdProfileAndStateLicenses(medicalDirectorId) {
   const profile = profileRows[0] || {};
   return {
     npi: profile.npi ? asTrimmed(profile.npi) : null,
-    supervision_nationwide: profile.supervision_nationwide !== false,
+    supervision_nationwide: profile.supervision_nationwide === true,
     state_licenses: (licenseRows || []).map((row) => ({
       us_state: normalizeUsState(row.us_state) || asTrimmed(row.us_state).toUpperCase(),
       license_number: row.license_number != null ? asTrimmed(row.license_number) : "",
@@ -114,7 +114,7 @@ export function buildSupervisingMdCoverageContext({ mdProfile, providerStates, m
   });
 
   const hasAssignedMd = Boolean(asTrimmed(mdRelationship?.medical_director_id));
-  const isNationwide = hasAssignedMd && mdProfile?.supervision_nationwide !== false;
+  const isNationwide = hasAssignedMd && mdProfile?.supervision_nationwide === true;
 
   const email_summary_lines = [];
   if (mdProfile?.npi) email_summary_lines.push(`MD NPI: ${mdProfile.npi}`);
@@ -144,7 +144,7 @@ export function buildSupervisingMdCoverageContext({ mdProfile, providerStates, m
     medical_director_email:
       asTrimmed(mdRelationship?.medical_director_email) || null,
     npi: mdProfile?.npi || null,
-    supervision_nationwide: mdProfile?.supervision_nationwide !== false,
+    supervision_nationwide: mdProfile?.supervision_nationwide === true,
     provider_states: states,
     relevant_state_licenses,
     all_state_licenses_count: allLicenses.length,

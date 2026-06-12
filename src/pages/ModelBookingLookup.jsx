@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Calendar, Mail, Phone, Clock, MapPin, AlertCircle, CheckCircle2, XCircle, Search, Copy } from "lucide-react";
 import NoviFooter from "@/components/NoviFooter";
 import { formatDisplayTime } from "@/lib/appointmentDisplay";
+import { formatCourseSessionDate } from "@/lib/sessionDateSeats";
 
 export default function ModelBookingLookup() {
   const queryClient = useQueryClient();
@@ -173,7 +174,7 @@ export default function ModelBookingLookup() {
                       {booking.course_date && (
                         <div className="flex items-center gap-2" style={{ color: "rgba(30,37,53,0.65)" }}>
                           <Calendar className="w-4 h-4 flex-shrink-0" />
-                          {new Date(booking.course_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                          {formatCourseSessionDate(booking.course_date, { month: "short", day: "numeric", year: "numeric" })}
                         </div>
                       )}
                       {booking.model_time_slot && !booking.is_waitlist && (
@@ -232,7 +233,7 @@ export default function ModelBookingLookup() {
                     <div className="flex justify-between">
                       <span style={{ color: "rgba(30,37,53,0.6)" }}>Training Date:</span>
                       <span className="font-semibold" style={{ color: "#1e2535" }}>
-                        {new Date(selectedBooking.course_date).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
+                        {formatCourseSessionDate(selectedBooking.course_date)}
                       </span>
                     </div>
                   )}

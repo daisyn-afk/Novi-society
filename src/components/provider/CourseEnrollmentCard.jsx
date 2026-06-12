@@ -3,7 +3,7 @@ import PreCourseMaterialsStudyBlock from "@/components/provider/PreCourseMateria
 import { coursePreCourseMaterials } from "@/lib/preCourseMaterials";
 import { format, differenceInDays } from "date-fns";
 import { useState } from "react";
-import { sessionDateSeatsSummaryForEnrollment } from "@/lib/sessionDateSeats";
+import { sessionDateSeatsSummaryForEnrollment, parseCourseSessionDateLocal } from "@/lib/sessionDateSeats";
 import { formatSessionScheduleLine, sessionEntryForDate } from "@/lib/appointmentDisplay";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -48,7 +48,8 @@ export default function CourseEnrollmentCard({
   };
 
   const cfg = statusConfig[enrollment.status] || statusConfig.confirmed;
-  const daysUntilClass = scheduledDate ? differenceInDays(new Date(scheduledDate), new Date()) : null;
+  const scheduledDateLocal = scheduledDate ? parseCourseSessionDateLocal(scheduledDate) : null;
+  const daysUntilClass = scheduledDateLocal ? differenceInDays(scheduledDateLocal, new Date()) : null;
   const isStudying = ["paid", "confirmed"].includes(enrollment.status) && scheduledDate;
   const isCompleted = ["attended", "completed"].includes(enrollment.status);
   const attendanceIsOpen = Boolean(attendanceWindow?.isOpen && !attendanceWindow?.isAttended);
@@ -113,11 +114,11 @@ export default function CourseEnrollmentCard({
               <div>
                 <p className="text-xs uppercase tracking-widest font-bold" style={{ color: "#FA6F30" }}>Time to Class</p>
                 <p className="text-3xl font-bold mt-1" style={{ color: "#1e2535" }}>{Math.max(daysUntilClass, 0)}</p>
-                <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.5)" }}>days until {scheduledDate ? format(new Date(scheduledDate), "MMM d") : "class"}</p>
+                <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.5)" }}>days until {scheduledDateLocal ? format(scheduledDateLocal, "MMM d") : "class"}</p>
               </div>
               <div className="text-right">
                 <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "rgba(30,37,53,0.4)" }}>Class Date</p>
-                <p className="font-bold text-sm mt-1" style={{ color: "#1e2535" }}>{scheduledDate ? format(new Date(scheduledDate), "MMM d, yyyy") : "TBD"}</p>
+                <p className="font-bold text-sm mt-1" style={{ color: "#1e2535" }}>{scheduledDateLocal ? format(scheduledDateLocal, "MMM d, yyyy") : "TBD"}</p>
               </div>
             </div>
           </div>
@@ -134,7 +135,7 @@ export default function CourseEnrollmentCard({
            <div className="col-span-2 flex items-start gap-2.5 text-xs p-2.5 rounded-lg" style={{ background: "rgba(250,111,48,0.08)", border: "1px solid rgba(250,111,48,0.2)", color: "rgba(30,37,53,0.65)" }}>
              <Calendar className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: "#FA6F30" }} />
              <div className="min-w-0">
-               <span className="font-medium block">{format(new Date(scheduledDate), "MMM d, yyyy")}</span>
+               <span className="font-medium block">{format(scheduledDateLocal, "MMM d, yyyy")}</span>
                {scheduleLine ? (
                  <span className="block mt-0.5 whitespace-nowrap overflow-hidden text-ellipsis">{scheduleLine}</span>
                ) : null}

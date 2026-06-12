@@ -2017,17 +2017,22 @@ functionsRouter.post("/modelCheckoutWebhook", async (req, res, next) => {
       console.error("[webhook/modelCheckoutWebhook] signature verification FAILED:", verifyError?.message || verifyError);
       return res.status(400).json({ error: `Signature verification failed: ${verifyError?.message || "unknown"}` });
     }
-    if (MODEL_WEBHOOK_TRACKED_EVENTS.has(event.type)) {
-      await recordStripeWebhookEvent(event);
+    try {
+      if (MODEL_WEBHOOK_TRACKED_EVENTS.has(event.type)) {
+        await recordStripeWebhookEvent(event);
+      }
+      if (event.type === "checkout.session.completed") {
+        const session = event.data?.object || {};
+        if (String(session?.metadata?.checkout_type || "") === "model") {
+          await processModelCheckoutCompletedSession(session);
+        }
+      }
+    } catch (handlerError) {
+      // eslint-disable-next-line no-console
+      console.error("[webhook/modelCheckoutWebhook] business handler failed:", handlerError?.message || handlerError);
     }
     // eslint-disable-next-line no-console
-    console.log("[webhook/modelCheckoutWebhook] processed", event.type, event.id);
-    if (event.type === "checkout.session.completed") {
-      const session = event.data?.object || {};
-      if (String(session?.metadata?.checkout_type || "") === "model") {
-        await processModelCheckoutCompletedSession(session);
-      }
-    }
+    console.log("[webhook/modelCheckoutWebhook] acknowledged", event.type, event.id);
     return res.json({ received: true });
   } catch (error) {
     // eslint-disable-next-line no-console
