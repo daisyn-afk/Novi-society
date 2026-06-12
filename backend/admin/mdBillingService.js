@@ -10,7 +10,6 @@ import { submitMdBoardCoverageAssignment } from "./mdAssignmentService.js";
 import { attachSignedContractToSubscription, getServiceTypeContractInfo } from "./mdContractPdfService.js";
 import { snapshotProtocolDocumentsOnSubscription } from "./lib/mdSubscriptionProtocolDocs.js";
 import { seedProviderTreatmentOfferingsForMembership } from "./lib/providerTreatmentOfferings.js";
-import { assertMembershipAttestationComplete } from "./lib/serviceAttestation.js";
 import { getProviderIdAliases } from "./mdSupervisedAccess.js";
 
 async function seedTreatmentMenuForMdSubscription(row) {
@@ -561,14 +560,6 @@ export async function finalizeMdBoardCoverage({
   const stId = s(serviceTypeId);
   if (!pid || !stId) {
     return { ok: false, error: "provider_id and service_type_id are required." };
-  }
-
-  const attestationCheck = await assertMembershipAttestationComplete({
-    providerId: pid,
-    membershipServiceTypeId: stId,
-  });
-  if (!attestationCheck.ok) {
-    return { ok: false, error: attestationCheck.error };
   }
 
   let row = await getLatestMdSubscriptionForService(pid, stId);

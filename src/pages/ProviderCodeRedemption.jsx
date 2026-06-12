@@ -18,6 +18,10 @@ import {
   isNowWithinSessionRedeemWindow,
 } from "@/lib/classCodeWindow";
 import { resolveProviderTimeZone } from "@/lib/providerTimezone";
+import {
+  hasProviderAttendedCourseWindow,
+  isSharedClassDateSession,
+} from "@/lib/classCodeRedemption";
 
 function toDateOnly(value) {
   const raw = String(value || "").trim();
@@ -148,7 +152,9 @@ export default function ProviderCodeRedemption() {
   });
 
   const courseMap = Object.fromEntries(courses.map(c => [c.id, c]));
-  const redeemed = sessions.filter(s => s.code_used);
+  const redeemed = myEnrollments.filter((enrollment) =>
+    ["attended", "completed"].includes(String(enrollment?.status || "").toLowerCase())
+  );
   const codeWindowEnrollments = Array.from(
     [...myEnrollments, ...sessions.map((session) => {
       const rawEnrollmentKey = String(session?.enrollment_id || "");
@@ -159,7 +165,7 @@ export default function ProviderCodeRedemption() {
         id: session?.enrollment_id || `class-session:${session?.id || ""}`,
         course_id: session?.course_id || classDateCourseId || null,
         session_date: classDateSessionDate || toDateOnly(session?.session_date) || null,
-        status: session?.code_used ? "attended" : "paid",
+        status: (!isSharedClassDateSession(session) && session?.code_used) ? "attended" : "paid",
         course_title: session?.course_title || null,
       };
     })]
@@ -185,27 +191,12 @@ export default function ProviderCodeRedemption() {
       }, new Map())
       .values()
   );
-  const redeemedSessionKeys = new Set(
-    (sessions || [])
-      .filter((session) => Boolean(session?.code_used))
-      .map((session) => {
-        const classDateParts = String(session?.enrollment_id || "").startsWith("class_date:")
-          ? String(session.enrollment_id).split(":")
-          : [];
-        const sessionDate = toDateOnly(session?.session_date) || (classDateParts.length >= 3 ? toDateOnly(classDateParts[2]) : "");
-        const sessionCourseId = String(session?.course_id || (classDateParts.length >= 3 ? classDateParts[1] : "") || "");
-        if (!sessionCourseId || !sessionDate) return "";
-        return `${sessionCourseId}:${sessionDate}`;
-      })
-      .filter(Boolean)
-  );
   const enrollmentWindows = codeWindowEnrollments.map((enrollment) => {
     const course = courseMap[enrollment.course_id];
     const sessionDate = String(enrollment.session_date || "").slice(0, 10);
     const windowDisplay = describeSessionWindowForProvider(course, sessionDate, providerTimeZone);
     const isOpen = windowDisplay ? isNowWithinSessionRedeemWindow(course, sessionDate) : false;
-    const key = `${enrollment.course_id}:${sessionDate}`;
-    const isAttended = redeemedSessionKeys.has(key);
+    const isAttended = hasProviderAttendedCourseWindow({ enrollment, myEnrollments });
     return { key, enrollment, course, window: windowDisplay, isOpen, isAttended };
   });
   const selectedWindow = enrollmentWindows.find((entry) => entry.key === selectedCourseWindowKey) || null;
@@ -217,28 +208,6 @@ export default function ProviderCodeRedemption() {
     if (selectedWindow.isAttended) return "Attendance is already marked for this session.";
     if (!selectedWindow.isOpen) return "Selected course window is currently closed.";
 
-    const matchingSession = sessions.find((session) => String(session.session_code || "").toUpperCase() === normalizedCode);
-    if (!matchingSession) return "That code is not assigned to your class session.";
-    if (matchingSession.code_used) return "This class code has already been redeemed.";
-
-    const selectedCourseId = String(selectedWindow.enrollment.course_id || "");
-    const selectedDate = String(selectedWindow.enrollment.session_date || "").slice(0, 10);
-    const sessionCourseId = String(matchingSession.course_id || "");
-    const sessionDate = String(matchingSession.session_date || "").slice(0, 10);
-    if (selectedCourseId && sessionCourseId && selectedCourseId !== sessionCourseId) {
-      return "This code does not belong to the selected course.";
-    }
-    if (selectedDate && sessionDate && selectedDate !== sessionDate) {
-      return "This code does not belong to the selected course date.";
-    }
-
-    const relatedEnrollment = myEnrollments.find((enrollment) => enrollment.id === matchingSession.enrollment_id);
-    const matchingSessionDate = matchingSession.session_date || relatedEnrollment?.session_date;
-    const course = courseMap[matchingSession.course_id || relatedEnrollment?.course_id];
-    if (!matchingSessionDate || !course) return null;
-    if (!isNowWithinSessionRedeemWindow(course, matchingSessionDate)) {
-      return "This code is only valid from class start time until 24 hours after class end.";
-    }
     return null;
   };
 

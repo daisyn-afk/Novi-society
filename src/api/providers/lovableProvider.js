@@ -657,12 +657,13 @@ export function createLovableProviderClient() {
             });
           },
           get: async (id) => {
+            // Scheduled course IDs live in scheduled_courses (`/admin/courses`), not template_courses.
             try {
-              return await authRequest(`/admin/template-courses/${encodeURIComponent(id)}`, { method: "GET" });
+              return await authRequest(`/admin/courses/${encodeURIComponent(id)}`, { method: "GET" });
             } catch (error) {
               if (error?.status !== 404) throw error;
-              return authRequest(`/admin/courses/${encodeURIComponent(id)}`, { method: "GET" });
             }
+            return authRequest(`/admin/template-courses/${encodeURIComponent(id)}`, { method: "GET" });
           },
           create: (payload = {}) => {
             if (payload.type === "template") {
@@ -692,12 +693,13 @@ export function createLovableProviderClient() {
           },
           delete: async (id) => {
             try {
-              await authRequest(`/admin/template-courses/${encodeURIComponent(id)}`, { method: "DELETE" });
+              await authRequest(`/admin/courses/${encodeURIComponent(id)}`, { method: "DELETE" });
               return null;
             } catch (error) {
               if (error?.status !== 404) throw error;
-              return authRequest(`/admin/courses/${encodeURIComponent(id)}`, { method: "DELETE" });
             }
+            await authRequest(`/admin/template-courses/${encodeURIComponent(id)}`, { method: "DELETE" });
+            return null;
           },
         };
       }
