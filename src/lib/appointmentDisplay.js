@@ -144,7 +144,8 @@ export function formatTimeRange(startTime, endTime, separator = " – ") {
   return start || end || "";
 }
 
-export function formatSessionScheduleLine({ start_time, end_time, location } = {}) {
+export function formatSessionScheduleLine(entry) {
+  const { start_time, end_time, location } = entry || {};
   const time = formatTimeRange(start_time, end_time);
   if (!time && !location) return "";
   if (!time) return String(location || "");

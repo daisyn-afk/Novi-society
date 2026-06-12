@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { adminLocationsApi } from "@/api/adminLocationsApi";
-import { normalizeScheduledSessionDatesEntries, isDisallowedPastSessionDate, todaySessionDateKey } from "@/lib/sessionDateSeats";
+import { normalizeScheduledSessionDatesEntries } from "@/lib/sessionDateSeats";
 import { formatTimeRange } from "@/lib/appointmentDisplay";
 import { X, Calendar, Plus, ChevronDown, ChevronRight, Check, Loader2 } from "lucide-react";
 
@@ -247,10 +247,6 @@ export default function ScheduleCourseForm({
   const addDateToSession = (sessionId) => {
     const newDate = newDatesBySession[sessionId] || EMPTY_DATE_DRAFT;
     if (!newDate.date) return;
-    if (isDisallowedPastSessionDate(newDate, previousSessionDatesForNormalize)) {
-      setSeatErrors("Session dates cannot be scheduled in the past.");
-      return;
-    }
     if (!String(newDate.location || "").trim()) {
       setSeatErrors("Location is required. Select a saved location or add a new one.");
       return;
@@ -340,10 +336,6 @@ export default function ScheduleCourseForm({
     for (const d of dates) {
       if (!d?.date?.trim()) {
         setSeatErrors("Every session date must have a calendar date.");
-        return false;
-      }
-      if (isDisallowedPastSessionDate(d, previousSessionDatesForNormalize)) {
-        setSeatErrors("Session dates cannot be scheduled in the past.");
         return false;
       }
       if (!String(d.location || "").trim()) {
@@ -466,28 +458,64 @@ export default function ScheduleCourseForm({
                       <div className="space-y-2">
                         {(session.dates || []).map((s) => (
                           <div key={s._localId} className="space-y-2 bg-white rounded-xl px-3 py-2.5 border text-sm">
-                            <div className="flex items-center gap-2">
-                              <Calendar className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#4a5fa0" }} />
-                              <div className="flex-1 min-w-0">
-                                {s.label && <span className="font-semibold text-xs mr-2" style={{ color: "#4a5fa0" }}>{s.label}</span>}
-                                <span className="font-medium" style={{ color: "#1a2540" }}>{s.date}</span>
-                                {(s.start_time || s.end_time) && <span className="ml-2 whitespace-nowrap" style={{ color: "#8891a8" }}>{formatTimeRange(s.start_time, s.end_time)}</span>}
-                                {s.location && <span className="ml-2" style={{ color: "#8891a8" }}>· {s.location}</span>}
-                                {Number.isFinite(Number(s.max_seats)) && Number.isFinite(Number(s.available_seats)) && (
-                                  <span
-                                    className="ml-2 text-[10px] font-semibold rounded px-1.5 py-0.5 align-middle"
-                                    style={{ background: "rgba(74,95,160,0.12)", color: "#2f437d" }}
-                                    title="Remaining bookable seats vs capacity for this date (updates after enrollments)"
-                                  >
-                                    Seats: {s.available_seats} / {s.max_seats}
-                                  </span>
-                                )}
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <Calendar className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#4a5fa0" }} />
+                                <span className="text-xs font-semibold truncate" style={{ color: "#4a5fa0" }}>
+                                  {s.date || "Session date"}
+                                  {(s.start_time || s.end_time) ? ` · ${formatTimeRange(s.start_time, s.end_time)}` : ""}
+                                </span>
                               </div>
                               <button type="button" onClick={() => removeDateFromSession(session.id, s._localId)} className="text-slate-300 hover:text-red-400 flex-shrink-0">
                                 <X className="w-3.5 h-3.5" />
                               </button>
                             </div>
-                            <div className="grid grid-cols-2 gap-2 pl-6">
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <Label className="text-[10px] uppercase tracking-wide">Date *</Label>
+                                <Input
+                                  type="date"
+                                  className="h-8 text-xs"
+                                  value={s.date || ""}
+                                  onChange={(e) => updateDateEntryInSession(session.id, s._localId, { date: e.target.value })}
+                                />
+                              </div>
+                              <div>
+                                <Label className="text-[10px] uppercase tracking-wide">Label</Label>
+                                <Input
+                                  className="h-8 text-xs"
+                                  placeholder="e.g. Day 1"
+                                  value={s.label || ""}
+                                  onChange={(e) => updateDateEntryInSession(session.id, s._localId, { label: e.target.value })}
+                                />
+                              </div>
+                              <div>
+                                <Label className="text-[10px] uppercase tracking-wide">Start (US Eastern)</Label>
+                                <Input
+                                  type="time"
+                                  className="h-8 text-xs"
+                                  value={s.start_time || ""}
+                                  onChange={(e) => updateDateEntryInSession(session.id, s._localId, { start_time: e.target.value })}
+                                />
+                              </div>
+                              <div>
+                                <Label className="text-[10px] uppercase tracking-wide">End (US Eastern)</Label>
+                                <Input
+                                  type="time"
+                                  className="h-8 text-xs"
+                                  value={s.end_time || ""}
+                                  onChange={(e) => updateDateEntryInSession(session.id, s._localId, { end_time: e.target.value })}
+                                />
+                              </div>
+                              <div className="col-span-2">
+                                <Label className="text-[10px] uppercase tracking-wide">Location *</Label>
+                                <Input
+                                  className="h-8 text-xs"
+                                  placeholder="Venue, city, state"
+                                  value={s.location || ""}
+                                  onChange={(e) => updateDateEntryInSession(session.id, s._localId, { location: e.target.value })}
+                                />
+                              </div>
                               <div>
                                 <Label className="text-[10px] uppercase tracking-wide">Max seats *</Label>
                                 <Input
@@ -544,8 +572,8 @@ export default function ScheduleCourseForm({
                                 />
                               </div>
                             </div>
-                            <p className="text-[10px] pl-6" style={{ color: "#8891a8" }}>
-                              Location, max seats, and available seats are required on every date. Use 0 / 0 for no capacity. Available cannot exceed max.
+                            <p className="text-[10px]" style={{ color: "#8891a8" }}>
+                              Past dates are allowed for testing (e.g. class code redemption). Set start/end times so providers see the live class window.
                             </p>
                           </div>
                         ))}
@@ -559,7 +587,6 @@ export default function ScheduleCourseForm({
                           <Label className="text-xs">Date *</Label>
                           <Input
                             type="date"
-                            min={todaySessionDateKey()}
                             value={(newDatesBySession[session.id] || EMPTY_DATE_DRAFT).date}
                             onChange={(e) => updateDateDraft(session.id, { date: e.target.value })}
                           />

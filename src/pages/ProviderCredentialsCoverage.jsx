@@ -29,6 +29,10 @@ import {
   isNowWithinSessionRedeemWindow,
 } from "@/lib/classCodeWindow";
 import { resolveProviderTimeZone } from "@/lib/providerTimezone";
+import {
+  hasProviderAttendedCourseWindow,
+  isSharedClassDateSession,
+} from "@/lib/classCodeRedemption";
 import { downloadCertificateDocument, hasCertificateDocument, openCertificateDocument } from "@/lib/certificateDocument";
 import {
   getMdContractUrl,
@@ -58,7 +62,6 @@ import {
 import {
   buildProviderAttestationContext,
   evaluateServiceAttestation,
-  isMembershipReadyForMdApply,
   membershipAttestationSummary,
 } from "@/lib/serviceAttestation";
 import ServiceAttestationStatus from "@/components/provider/ServiceAttestationStatus";
@@ -159,6 +162,14 @@ function readAllMdCoveragePending() {
     /* ignore */
   }
   return entries;
+}
+
+/** In-flight Stripe checkout rows are merged as active for UI, but not billed yet. */
+function isConfirmedActiveMdSubscription(sub) {
+  if (String(sub?.status || "").toLowerCase() !== "active") return false;
+  const stId = String(sub?.service_type_id || "").trim();
+  if (stId && readMdCoveragePending(stId)) return false;
+  return true;
 }
 
 /** Keep signed PDF + active status visible while Stripe checkout is finishing server-side. */
@@ -448,7 +459,7 @@ export default function ProviderCredentialsCoverage() {
     staleTime: 60_000,
     refetchOnWindowFocus: true,
   });
-  const { data: myEnrollments = [], isLoading: loadingMyEnrollments, isFetching: fetchingMyEnrollments } = useQuery({
+  const { data: myEnrollments = [], isLoading: loadingMyEnrollments } = useQuery({
     queryKey: ["my-enrollments-coverage"],
     queryFn: async () => {
       const u = await base44.auth.me();
@@ -482,10 +493,23 @@ export default function ProviderCredentialsCoverage() {
             created_date: p.created_date || p.created_at || null,
           }))
         : [];
+      const statusRank = (status) => {
+        const normalized = String(status || "").toLowerCase();
+        if (normalized === "completed") return 3;
+        if (normalized === "attended") return 2;
+        if (["paid", "confirmed"].includes(normalized)) return 1;
+        return 0;
+      };
       const map = new Map();
       [...byProviderId, ...byEmail, ...derivedFromPreOrders].forEach((row) => {
         const dedupeKey = row?.pre_order_id || row?.id || `${row?.course_id || ""}:${row?.session_date || ""}`;
-        if (dedupeKey) map.set(String(dedupeKey), row);
+        if (!dedupeKey) return;
+        const existing = map.get(String(dedupeKey));
+        // Keep the row with the most advanced status (e.g. real enrollment marked
+        // "attended" must not be overwritten by a preorder-derived "paid" row).
+        if (!existing || statusRank(row?.status) > statusRank(existing?.status)) {
+          map.set(String(dedupeKey), row);
+        }
       });
       return Array.from(map.values());
     },
@@ -495,7 +519,7 @@ export default function ProviderCredentialsCoverage() {
     refetchOnWindowFocus: true,
     refetchInterval: 10000,
   });
-  const { data: mySessions = [], isLoading: loadingMySessions, isFetching: fetchingMySessions } = useQuery({
+  const { data: mySessions = [], isLoading: loadingMySessions } = useQuery({
     queryKey: ["my-sessions-coverage", myEnrollments.map((e) => `${e.id}:${e.course_id}:${e.session_date || ""}`).join("|")],
     queryFn: async () => {
       const u = await base44.auth.me();
@@ -687,10 +711,11 @@ export default function ProviderCredentialsCoverage() {
   const pendingCerts = myCerts.filter(c => c.status === "pending");
   const otherCerts = myCerts.filter(c => c.status !== "active" && c.status !== "pending");
   const activeSubscriptions = mySubscriptions.filter((s) => s.status === "active");
+  const confirmedActiveSubscriptions = mySubscriptions.filter(isConfirmedActiveMdSubscription);
   const globalMdContractUrl = pickGlobalMdContractUrl(serviceTypes);
   const documentSubscriptions = mySubscriptions.filter((s) => subscriptionHasMdAgreement(s));
 
-  const alreadyActiveServices = activeSubscriptions.map(s => s.service_type_id);
+  const alreadyActiveServices = confirmedActiveSubscriptions.map((s) => s.service_type_id);
   const activeRelationships = relationships.filter(r => r.status === "active");
   const pendingRelationships = relationships.filter(r => r.status === "pending");
   const verifiedLicenses = licenses.filter(l => l.status === "verified");
@@ -724,9 +749,6 @@ export default function ProviderCredentialsCoverage() {
   );
   const mdCoveragePlans = serviceTypes.filter(isMdPurchasablePlan);
   const applyableServiceTypes = mdCoveragePlans.filter((s) => !alreadyActiveServices.includes(s.id));
-  const availableServices = applyableServiceTypes.filter((s) =>
-    isMembershipReadyForMdApply(s, serviceTypes, attestationContext)
-  );
   const certSubmissionServices = useMemo(() => {
     return serviceTypes
       .filter((st) => st.is_membership !== true && st.is_active !== false)
@@ -760,6 +782,13 @@ export default function ProviderCredentialsCoverage() {
       return next;
     });
   };
+  const enrollmentStatusRank = (status) => {
+    const normalized = String(status || "").toLowerCase();
+    if (normalized === "completed") return 3;
+    if (normalized === "attended") return 2;
+    if (["paid", "confirmed"].includes(normalized)) return 1;
+    return 0;
+  };
   const classCodeEligibleEnrollments = Array.from(
     [...myEnrollments, ...mySessions.map((session) => {
       const rawEnrollmentKey = String(session?.enrollment_id || "");
@@ -770,38 +799,22 @@ export default function ProviderCredentialsCoverage() {
         id: session?.enrollment_id || `class-session:${session?.id || ""}`,
         course_id: session?.course_id || classDateCourseId || null,
         session_date: classDateSessionDate || toDateOnly(session?.session_date) || null,
-        status: session?.code_used ? "attended" : "paid",
+        status: (!isSharedClassDateSession(session) && session?.code_used) ? "attended" : "paid",
         course_title: session?.course_title || null,
       };
     })]
-      .filter((e) => e?.course_id && e?.session_date && ["paid", "confirmed", "attended"].includes(String(e.status || "").toLowerCase()))
+      .filter((e) => e?.course_id && e?.session_date && ["paid", "confirmed", "attended", "completed"].includes(String(e.status || "").toLowerCase()))
       .reduce((acc, enrollment) => {
         const dateOnly = toDateOnly(enrollment.session_date);
         const dedupeKey = `${enrollment.course_id}:${dateOnly}`;
         const normalized = { ...enrollment, session_date: dateOnly };
         const existing = acc.get(dedupeKey);
-        const existingStatus = String(existing?.status || "").toLowerCase();
-        const incomingStatus = String(normalized?.status || "").toLowerCase();
-        if (!existing || (existingStatus !== "attended" && incomingStatus === "attended")) {
+        if (!existing || enrollmentStatusRank(normalized.status) > enrollmentStatusRank(existing.status)) {
           acc.set(dedupeKey, normalized);
         }
         return acc;
       }, new Map())
       .values()
-  );
-  const redeemedSessionKeys = new Set(
-    (mySessions || [])
-      .filter((session) => Boolean(session?.code_used))
-      .map((session) => {
-        const classDateParts = String(session?.enrollment_id || "").startsWith("class_date:")
-          ? String(session.enrollment_id).split(":")
-          : [];
-        const sessionDate = toDateOnly(session?.session_date) || (classDateParts.length >= 3 ? toDateOnly(classDateParts[2]) : "");
-        const sessionCourseId = String(session?.course_id || (classDateParts.length >= 3 ? classDateParts[1] : "") || "");
-        if (!sessionCourseId || !sessionDate) return "";
-        return `${sessionCourseId}:${sessionDate}`;
-      })
-      .filter(Boolean)
   );
   const attendedEnrollmentKeys = new Set(
     (myEnrollments || [])
@@ -819,14 +832,22 @@ export default function ProviderCredentialsCoverage() {
     const sessionDate = toDateOnly(enrollment?.session_date);
     const classDateKey = courseId && sessionDate ? `class_date:${courseId}:${sessionDate}` : "";
 
+    if (hasProviderAttendedCourseWindow({
+      enrollment,
+      myEnrollments,
+      attendedWindowKeys,
+    })) {
+      return true;
+    }
+
     return (mySessions || []).some((session) => {
+      if (isSharedClassDateSession(session)) return false;
       if (!session?.code_used) return false;
       const sessionEnrollmentId = String(session?.enrollment_id || "");
-      const classDateParts = sessionEnrollmentId.startsWith("class_date:") ? sessionEnrollmentId.split(":") : [];
-      const sessionCourseId = String(session?.course_id || (classDateParts.length >= 3 ? classDateParts[1] : "") || "");
-      const sessionDateOnly = toDateOnly(session?.session_date) || (classDateParts.length >= 3 ? toDateOnly(classDateParts[2]) : "");
+      const sessionCourseId = String(session?.course_id || "");
+      const sessionDateOnly = toDateOnly(session?.session_date);
       if (!courseId || !sessionDate) return false;
-      if (classDateKey && sessionEnrollmentId === classDateKey) return true;
+      if (sessionEnrollmentId && sessionEnrollmentId === String(enrollment?.id || "")) return true;
       return sessionCourseId === courseId && sessionDateOnly === sessionDate;
     });
   };
@@ -837,13 +858,27 @@ export default function ProviderCredentialsCoverage() {
     const isOpen = window ? isNowWithinSessionRedeemWindow(course, sessionDate) : false;
     const key = `${enrollment.course_id}:${sessionDate}`;
     const isAttended =
-      redeemedSessionKeys.has(key) ||
       attendedEnrollmentKeys.has(key) ||
       attendedWindowKeys.has(key) ||
+      hasProviderAttendedCourseWindow({ enrollment, myEnrollments, attendedWindowKeys }) ||
       hasRedeemedSessionForWindow(enrollment);
-    return { key, enrollment, course, window, isOpen, isAttended };
+    const isCompleted = String(enrollment?.status || "").toLowerCase() === "completed";
+    return { key, enrollment, course, window, isOpen, isAttended, isCompleted };
   });
   const selectedCoverageWindow = classCodeEnrollmentWindows.find((entry) => entry.key === selectedCoverageCourseKey) || null;
+  const continueWithVerifiedTraining = () => {
+    if (!selectedCoverageWindow?.isAttended) return;
+    setVerifiedSession({
+      id: null,
+      enrollment_id: selectedCoverageWindow.enrollment?.id || null,
+      certifications: [],
+    });
+    if (selectedCoverageWindow.key) {
+      setAttendedWindowKeys((prev) => new Set([...prev, selectedCoverageWindow.key]));
+    }
+    setCodeError("");
+    setStep(1);
+  };
 
   // Mutations
   const resetActivation = () => {
@@ -863,12 +898,6 @@ export default function ProviderCredentialsCoverage() {
     setActivateError("");
     resetActivation();
     if (serviceTypeId) {
-      const membership = serviceTypes.find((s) => s.id === serviceTypeId);
-      if (membership && !isMembershipReadyForMdApply(membership, serviceTypes, attestationContext)) {
-        setActivateError("Complete required training or certification for all included services before applying for MD coverage.");
-        setActiveTab("coverage");
-        return;
-      }
       setSelectedServiceTypeId(serviceTypeId);
       setStep(jumpToSign ? 2 : 1);
     }
@@ -1152,35 +1181,23 @@ export default function ProviderCredentialsCoverage() {
   const verifyCodeMutation = useMutation({
     mutationFn: async () => {
       if (!selectedCoverageWindow) throw new Error("Select your enrolled course first.");
+      if (selectedCoverageWindow.isAttended) throw new Error("You have already redeemed this class code.");
       if (!selectedCoverageWindow.isOpen) throw new Error("Selected course window is closed. You can enter code only during its active time.");
       const normalizedCode = String(classCode || "").trim().toUpperCase();
-      const selectedCourseId = String(selectedCoverageWindow.enrollment.course_id || "");
-      const selectedDate = String(selectedCoverageWindow.enrollment.session_date || "").slice(0, 10);
-      const codeMatches = mySessions.filter((session) => String(session.session_code || "").toUpperCase() === normalizedCode);
-      if (codeMatches.length === 0) throw new Error("This code does not match any session assigned to you.");
-      const sessionMeta = codeMatches.map((session) => {
-        const sessionCourseId = String(session.course_id || "");
-        const classDateKey = String(session.enrollment_id || "");
-        const classDateParts = classDateKey.startsWith("class_date:") ? classDateKey.split(":") : [];
-        const classDateCourseId = classDateParts.length >= 3 ? String(classDateParts[1] || "") : "";
-        const classDateSessionDate = classDateParts.length >= 3 ? String(classDateParts[2] || "").slice(0, 10) : "";
-        const enrollmentForSession = myEnrollments.find((enrollment) => enrollment.id === session.enrollment_id);
-        const sessionDateOnly = String(
-          session.session_date ||
-          enrollmentForSession?.session_date ||
-          classDateSessionDate ||
-          ""
-        ).slice(0, 10);
-        const effectiveSessionCourseId = sessionCourseId || classDateCourseId || String(enrollmentForSession?.course_id || "");
-        return { session, enrollmentForSession, sessionDateOnly, effectiveSessionCourseId };
-      });
-      const selectedMatch = sessionMeta.find(({ effectiveSessionCourseId, sessionDateOnly }) =>
-        (!selectedCourseId || !effectiveSessionCourseId || effectiveSessionCourseId === selectedCourseId) &&
-        (!selectedDate || !sessionDateOnly || sessionDateOnly === selectedDate)
-      );
-      const matchingSession = (selectedMatch || sessionMeta[0]).session;
-      if (matchingSession.code_used) throw new Error("This class code was already redeemed.");
-      const enrollmentForSession = (selectedMatch || sessionMeta[0]).enrollmentForSession;
+      if (normalizedCode.length !== 6) throw new Error("Please enter the full 6-character class code.");
+
+      const markAlreadyRedeemed = () => {
+        setVerifiedSession({
+          id: null,
+          enrollment_id: selectedCoverageWindow?.enrollment?.id || null,
+          certifications: [],
+        });
+        if (selectedCoverageWindow?.key) {
+          setAttendedWindowKeys((prev) => new Set([...prev, selectedCoverageWindow.key]));
+        }
+        return { alreadyRedeemed: true };
+      };
+
       let res;
       try {
         res = await base44.functions.invoke('redeemClassCode', {
@@ -1189,9 +1206,17 @@ export default function ProviderCredentialsCoverage() {
           selected_session_date: String(selectedCoverageWindow?.enrollment?.session_date || "").slice(0, 10) || null,
         });
       } catch (err) {
+        // The API client throws on 400 responses; "already redeemed" still
+        // means training is verified, so continue instead of blocking.
+        if (/already redeemed/i.test(String(err?.message || ""))) {
+          return markAlreadyRedeemed();
+        }
         throw err;
       }
       if (!res.data.success) {
+        if (/already redeemed/i.test(String(res.data.error || ""))) {
+          return markAlreadyRedeemed();
+        }
         const debugWindow = res.data?.debug_window;
         const debugText = debugWindow
           ? `\nNow: ${debugWindow.now || "n/a"}\nStart: ${debugWindow.start_at || "n/a"}\nEnd: ${debugWindow.end_at || "n/a"}\nExpires: ${debugWindow.expires_at || "n/a"}\nSelected Course: ${debugWindow.selected_course_id || "n/a"}\nSelected Session Date: ${debugWindow.selected_session_date || "n/a"}\nMatched Course: ${debugWindow.matched_course_id || "n/a"}\nMatched Session Date: ${debugWindow.matched_session_date || "n/a"}`
@@ -1201,17 +1226,24 @@ export default function ProviderCredentialsCoverage() {
       return res.data;
     },
     onSuccess: async (data) => {
-      setVerifiedSession({ id: data.session_id, enrollment_id: data.enrollment_id, certifications: data.certifications });
-      if (selectedCoverageWindow?.key) {
-        setAttendedWindowKeys((prev) => new Set([...prev, selectedCoverageWindow.key]));
+      if (data?.alreadyRedeemed) {
+        setCodeError("");
+        setStep(1);
+      } else {
+        setVerifiedSession({ id: data.session_id, enrollment_id: data.enrollment_id, certifications: data.certifications });
+        if (selectedCoverageWindow?.key) {
+          setAttendedWindowKeys((prev) => new Set([...prev, selectedCoverageWindow.key]));
+        }
+        setCodeError("");
+        setStep(1);
       }
-      setCodeError("");
-      // Move forward immediately; refresh data in background.
-      setStep(1);
+      // Refresh data in background.
       Promise.all([
         qc.invalidateQueries({ queryKey: ["my-certs"] }),
         qc.invalidateQueries({ queryKey: ["my-enrollments-coverage"] }),
         qc.invalidateQueries({ queryKey: ["my-sessions-coverage"] }),
+        qc.invalidateQueries({ queryKey: ["attendance-my-enrollments"] }),
+        qc.invalidateQueries({ queryKey: ["attendance-my-sessions"] }),
       ]);
     },
     onError: (err) => setCodeError(err.message),
@@ -1987,7 +2019,7 @@ export default function ProviderCredentialsCoverage() {
                 const includedServices = servicesInMembership(service, serviceTypes);
                 const hasIncludedServices = includedServices.length > 0;
                 const isExpanded = expandedServiceCard === service.id;
-                const price = activeSubscriptions.length === 0 ? FIRST_SERVICE_PRICE : ADDON_SERVICE_PRICE;
+                const price = FIRST_SERVICE_PRICE;
                 return (
                   <GlassCard key={service.id}>
                     <div className="px-5 py-4 flex items-start gap-4">
@@ -2005,37 +2037,39 @@ export default function ProviderCredentialsCoverage() {
                           {hasIncludedServices ? ` · ${includedServices.length} service${includedServices.length !== 1 ? "s" : ""} included` : ""}
                         </p>
                         {/* Status + CTA */}
-                        {isEligible ? (
+                        <div className="space-y-2">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-xs font-semibold px-2.5 py-1 rounded-full" style={{ background: "rgba(200,230,60,0.15)", color: "#5a7a20", border: "1px solid rgba(200,230,60,0.35)" }}>✓ Certified — Ready to Apply</span>
+                            {isEligible && (
+                              <span className="text-xs font-semibold px-2.5 py-1 rounded-full" style={{ background: "rgba(200,230,60,0.15)", color: "#5a7a20", border: "1px solid rgba(200,230,60,0.35)" }}>✓ Certified — Ready to Apply</span>
+                            )}
                             <Button size="sm" className="font-bold gap-1.5 h-8" style={{ background: "#FA6F30", color: "#fff" }}
                               onClick={() => openApplyForCoverage({ serviceTypeId: service.id, jumpToSign: false })}>
                               <Zap className="w-3.5 h-3.5" /> Apply for Coverage
                             </Button>
                           </div>
-                        ) : (
-                          <div className="space-y-2">
-                            <p className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>
-                              Complete attestation for all included services before applying:
-                            </p>
+                          {!isEligible && attestationSummary.services.length > 0 && (
                             <div className="space-y-2">
-                              {attestationSummary.services.map((row) => (
-                                <div key={row.serviceTypeId}>
-                                  <p className="text-xs font-semibold mb-1" style={{ color: "#1e2535" }}>{row.serviceName}</p>
-                                  <ServiceAttestationStatus
-                                    evaluation={row}
-                                    onSubmitCert={openSubmitCertForService}
-                                  />
-                                </div>
-                              ))}
+                              <p className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>
+                                Training & certification status for included services:
+                              </p>
+                              <div className="space-y-2">
+                                {attestationSummary.services.map((row) => (
+                                  <div key={row.serviceTypeId}>
+                                    <p className="text-xs font-semibold mb-1" style={{ color: "#1e2535" }}>{row.serviceName}</p>
+                                    <ServiceAttestationStatus
+                                      evaluation={row}
+                                      onSubmitCert={openSubmitCertForService}
+                                    />
+                                  </div>
+                                ))}
+                              </div>
                             </div>
-                          </div>
-                        )}
+                          )}
+                        </div>
                       </div>
                       {/* Right: price */}
                       <div className="text-right flex-shrink-0">
                         <p className="text-xl font-bold" style={{ color: "#1e2535" }}>${price}<span className="text-xs font-normal" style={{ color: "rgba(30,37,53,0.4)" }}>/mo</span></p>
-                        {activeSubscriptions.length > 0 && <p className="text-xs font-semibold" style={{ color: "#5a7a20" }}>add-on</p>}
                       </div>
                     </div>
                     {hasIncludedServices && (
@@ -2478,10 +2512,10 @@ export default function ProviderCredentialsCoverage() {
               </div>
 
               {!useExternalCert ? (
-                (loadingMyEnrollments || loadingMySessions || fetchingMyEnrollments || fetchingMySessions) ? (
+                (loadingMyEnrollments || loadingMySessions) && myEnrollments.length === 0 && mySessions.length === 0 ? (
                   <div className="rounded-xl p-5 space-y-2 text-center" style={{ background: "rgba(123,142,200,0.07)", border: "1px solid rgba(123,142,200,0.2)" }}>
                     <p className="text-sm font-semibold text-slate-900">Loading your course windows...</p>
-                    <p className="text-xs text-slate-500">Please wait while we refresh your enrollment and class session data.</p>
+                    <p className="text-xs text-slate-500">Please wait while we load your enrollment and class session data.</p>
                   </div>
                 ) : (
                 myEnrollments.length === 0 ? (
@@ -2501,7 +2535,7 @@ export default function ProviderCredentialsCoverage() {
                       <p className="text-sm font-semibold text-slate-900">Select your enrolled course and date</p>
                     </div>
                     <div className="rounded-lg divide-y divide-slate-100 overflow-hidden border border-slate-100">
-                      {classCodeEnrollmentWindows.map(({ key, enrollment, course, window, isOpen, isAttended }) => (
+                      {classCodeEnrollmentWindows.map(({ key, enrollment, course, window, isOpen, isAttended, isCompleted }) => (
                         <button
                           key={key}
                           type="button"
@@ -2517,7 +2551,7 @@ export default function ProviderCredentialsCoverage() {
                                   ? "bg-green-100 text-green-700"
                                   : "bg-slate-100 text-slate-600"
                             }`}>
-                              {isAttended ? "Attended" : isOpen ? "Class is on" : "Class not started"}
+                              {isCompleted ? "Completed" : isAttended ? "Training verified" : isOpen ? "Class is on" : "Class not started"}
                             </span>
                           </div>
                           <p className="text-xs text-slate-500 mt-1">
@@ -2532,7 +2566,13 @@ export default function ProviderCredentialsCoverage() {
                           ) : (
                             <p className="text-xs text-amber-700 mt-1">Session timing not configured by admin yet.</p>
                           )}
-                          {!isAttended && (
+                          {isAttended ? (
+                            <p className="text-xs mt-1 text-blue-700">
+                              {isCompleted
+                                ? "Course completed. Continue below to unlock MD coverage."
+                                : "Attendance verified. Continue below to unlock MD coverage."}
+                            </p>
+                          ) : (
                             <p className={`text-xs mt-1 ${isOpen ? "text-green-700" : "text-slate-500"}`}>
                               {isOpen ? "Class is on for this course. Enter code below." : "Class not started for this course yet."}
                             </p>
@@ -2547,7 +2587,7 @@ export default function ProviderCredentialsCoverage() {
                     </div>
                     {selectedCoverageWindow ? (
                       <p className="text-xs text-slate-600">
-                        Selected: {selectedCoverageWindow.course?.title || selectedCoverageWindow.enrollment.course_title || "Course"} ({formatSessionDateLabel(selectedCoverageWindow.enrollment.session_date)}) - {selectedCoverageWindow.isAttended ? "Attended" : selectedCoverageWindow.isOpen ? "Class is on" : "Class not started"}
+                        Selected: {selectedCoverageWindow.course?.title || selectedCoverageWindow.enrollment.course_title || "Course"} ({formatSessionDateLabel(selectedCoverageWindow.enrollment.session_date)}) - {selectedCoverageWindow.isCompleted ? "Completed" : selectedCoverageWindow.isAttended ? "Training verified" : selectedCoverageWindow.isOpen ? "Class is on" : "Class not started"}
                       </p>
                     ) : (
                       <div className="rounded-lg px-3 py-2.5 border border-amber-300 bg-amber-50 text-amber-800 text-xs font-semibold flex items-center gap-2">
@@ -2555,11 +2595,29 @@ export default function ProviderCredentialsCoverage() {
                         Select a course row first to enable code entry.
                       </div>
                     )}
-                    <Input placeholder="Enter class code..." value={classCode} onChange={e => { setClassCode(e.target.value.toUpperCase()); setCodeError(""); }} className="text-lg font-mono tracking-widest text-center" disabled={!selectedCoverageWindow || selectedCoverageWindow.isAttended || !selectedCoverageWindow.isOpen} />
-                    {codeError && <p className="text-sm text-red-500 whitespace-pre-line">{codeError}</p>}
-                    <Button onClick={() => verifyCodeMutation.mutate()} disabled={!selectedCoverageWindow || selectedCoverageWindow.isAttended || !selectedCoverageWindow.isOpen || !classCode || verifyCodeMutation.isPending} className="w-full" style={{ background: "#FA6F30", color: "#fff" }}>
-                      {selectedCoverageWindow?.isAttended ? "Already Attended" : verifyCodeMutation.isPending ? "Verifying..." : "Verify Code"}
-                    </Button>
+                    {selectedCoverageWindow?.isAttended ? (
+                      <div className="space-y-3">
+                        <div className="rounded-lg px-3 py-3 border border-green-200 bg-green-50 text-green-800 text-sm flex items-start gap-2">
+                          <CheckCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                          <span>
+                            {selectedCoverageWindow.isCompleted
+                              ? "This course is marked completed. Your training qualifies you to apply for MD coverage."
+                              : "Your attendance is already verified for this course. Continue to apply for MD coverage."}
+                          </span>
+                        </div>
+                        <Button onClick={continueWithVerifiedTraining} className="w-full" style={{ background: "#FA6F30", color: "#fff" }}>
+                          Continue to Select Service
+                        </Button>
+                      </div>
+                    ) : (
+                      <>
+                        <Input placeholder="Enter class code..." value={classCode} onChange={e => { setClassCode(e.target.value.toUpperCase()); setCodeError(""); }} className="text-lg font-mono tracking-widest text-center" disabled={!selectedCoverageWindow || !selectedCoverageWindow.isOpen} />
+                        {codeError && <p className="text-sm text-red-500 whitespace-pre-line">{codeError}</p>}
+                        <Button onClick={() => verifyCodeMutation.mutate()} disabled={!selectedCoverageWindow || !selectedCoverageWindow.isOpen || !classCode || verifyCodeMutation.isPending} className="w-full" style={{ background: "#FA6F30", color: "#fff" }}>
+                          {verifyCodeMutation.isPending ? "Verifying..." : "Verify Code"}
+                        </Button>
+                      </>
+                    )}
                     <p className="text-xs text-center" style={{ color: "rgba(0,0,0,0.4)" }}>Don't have a class yet? <Link to={createPageUrl("ProviderEnrollments")} onClick={() => setActivateDialog(false)} className="underline font-semibold" style={{ color: "#FA6F30" }}>Browse courses →</Link></p>
                   </div>
                 ))
@@ -2611,7 +2669,7 @@ export default function ProviderCredentialsCoverage() {
           {step === 1 && (
             <div className="space-y-3">
               <p className="text-sm text-slate-500">Select the service you want MD Board coverage for.</p>
-              {availableServices.length === 0 ? (
+              {applyableServiceTypes.length === 0 ? (
                 <div className="text-center py-4 space-y-3">
                   <p className="font-semibold text-slate-900">No eligible services yet</p>
                   <p className="text-sm text-slate-500">
@@ -2623,12 +2681,23 @@ export default function ProviderCredentialsCoverage() {
                     <Link to={createPageUrl("ProviderEnrollments")}><Button style={{ background: "#FA6F30", color: "#fff" }} className="w-full">Browse Courses</Button></Link>
                   )}
                 </div>
-              ) : availableServices.map(s => (
-                <div key={s.id} onClick={() => setSelectedServiceTypeId(s.id)} className={`border-2 rounded-xl p-4 cursor-pointer transition-all ${selectedServiceTypeId === s.id ? "border-orange-400 bg-orange-50" : "border-slate-100 hover:border-slate-300"}`}>
+              ) : applyableServiceTypes.map(s => (
+                <div
+                  key={s.id}
+                  onClick={() => setSelectedServiceTypeId(s.id)}
+                  className={`border-2 rounded-xl p-4 transition-all cursor-pointer ${
+                    selectedServiceTypeId === s.id
+                      ? "border-orange-400 bg-orange-50"
+                      : "border-slate-100 hover:border-slate-300"
+                  }`}
+                >
                   <div className="flex items-center justify-between">
-                    <div><p className="font-semibold text-slate-900">{s.name}</p><p className="text-xs text-slate-500 capitalize">{s.category?.replace("_", " ")}</p></div>
+                    <div>
+                      <p className="font-semibold text-slate-900">{s.name}</p>
+                      <p className="text-xs text-slate-500 capitalize">{s.category?.replace("_", " ")}</p>
+                    </div>
                     <div className="flex items-center gap-3">
-                      <div className="text-right"><span className="font-bold text-slate-900">${formatMdCoverageUsd(getMembershipPrice())}</span><span className="text-xs text-slate-400">/mo</span></div>
+                      <div className="text-right"><span className="font-bold text-slate-900">${formatMdCoverageUsd(FIRST_SERVICE_PRICE)}</span><span className="text-xs text-slate-400">/mo</span></div>
                       {selectedServiceTypeId === s.id && <CheckCircle className="w-5 h-5 text-orange-500" />}
                     </div>
                   </div>

@@ -3,6 +3,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { describeSessionWindowForProvider, isNowWithinSessionRedeemWindow } from "@/lib/classCodeWindow";
 import { resolveProviderTimeZone } from "@/lib/providerTimezone";
+import {
+  hasProviderAttendedCourseWindow,
+  isSharedClassDateSession,
+} from "@/lib/classCodeRedemption";
 
 function toDateOnly(value) {
   const raw = String(value || "").trim();
@@ -119,25 +123,6 @@ export function useAttendanceContext() {
 
   const courseMap = useMemo(() => Object.fromEntries(courses.map((c) => [c.id, c])), [courses]);
 
-  const redeemedSessionKeys = useMemo(
-    () =>
-      new Set(
-        sessions
-          .filter((session) => Boolean(session?.code_used))
-          .map((session) => {
-            const classDateParts = String(session?.enrollment_id || "").startsWith("class_date:")
-              ? String(session.enrollment_id).split(":")
-              : [];
-            const sessionDate = toDateOnly(session?.session_date) || (classDateParts.length >= 3 ? toDateOnly(classDateParts[2]) : "");
-            const sessionCourseId = String(session?.course_id || (classDateParts.length >= 3 ? classDateParts[1] : "") || "");
-            if (!sessionCourseId || !sessionDate) return "";
-            return `${sessionCourseId}:${sessionDate}`;
-          })
-          .filter(Boolean)
-      ),
-    [sessions]
-  );
-
   const enrollmentWindows = useMemo(() => {
     const merged = [
       ...myEnrollments,
@@ -150,7 +135,7 @@ export function useAttendanceContext() {
           id: session?.enrollment_id || `class-session:${session?.id || ""}`,
           course_id: session?.course_id || classDateCourseId || null,
           session_date: classDateSessionDate || toDateOnly(session?.session_date) || null,
-          status: session?.code_used ? "attended" : "paid",
+          status: (!isSharedClassDateSession(session) && session?.code_used) ? "attended" : "paid",
           course_title: session?.course_title || null,
         };
       }),
@@ -185,10 +170,12 @@ export function useAttendanceContext() {
       const key = `${enrollment.course_id}:${sessionDate}`;
       const window = describeSessionWindowForProvider(course, sessionDate, providerTimeZone);
       const isOpen = window ? isNowWithinSessionRedeemWindow(course, sessionDate) : false;
-      const isAttended = redeemedSessionKeys.has(key) || ["attended", "completed"].includes(normalizeStatus(enrollment.status));
+      const isAttended =
+        ["attended", "completed"].includes(normalizeStatus(enrollment.status)) ||
+        hasProviderAttendedCourseWindow({ enrollment, myEnrollments });
       return { key, enrollment, course, window, isOpen, isAttended };
     });
-  }, [courseMap, myEnrollments, providerTimeZone, redeemedSessionKeys, sessions]);
+  }, [courseMap, myEnrollments, providerTimeZone, sessions]);
 
   const activeWindows = useMemo(
     () => enrollmentWindows.filter((entry) => entry.isOpen && !entry.isAttended),
@@ -199,14 +186,20 @@ export function useAttendanceContext() {
     const courseId = String(enrollment?.course_id || "");
     const sessionDate = toDateOnly(enrollment?.session_date);
     if (!courseId || !sessionDate) return null;
-    return enrollmentWindows.find((entry) => entry.key === `${courseId}:${sessionDate}`) || null;
+    const entry = enrollmentWindows.find((item) => item.key === `${courseId}:${sessionDate}`) || null;
+    if (!entry) return null;
+    const enrollmentAttended = ["attended", "completed"].includes(normalizeStatus(enrollment?.status));
+    if (enrollmentAttended && !entry.isAttended) {
+      return { ...entry, isAttended: true };
+    }
+    return entry;
   }
 
   function getLocalValidationError(code, windowEntry) {
     const normalizedCode = String(code || "").trim().toUpperCase();
     if (normalizedCode.length !== 6) return "Please enter the full 6-character class code.";
     if (!windowEntry) return "No class session is linked to this enrollment yet.";
-    if (windowEntry.isAttended) return "Attendance is already marked for this session.";
+    if (windowEntry.isAttended) return "You have already redeemed this class code.";
     if (!windowEntry.isOpen) return "Attendance opens only during the active class window.";
     return null;
   }

@@ -103,6 +103,13 @@ import {
   processAppointmentCheckoutCompletedSession,
 } from "../appointments/paymentService.js";
 import { resolveCheckoutReturnBaseUrl } from "../lib/frontendBaseUrl.js";
+import {
+  countRedemptionsForSession,
+  insertClassCodeRedemption,
+  isSharedClassDateSession,
+  providerHasRedeemedSession,
+  resolveRedemptionCap,
+} from "../class-sessions/redemptions.js";
 
 export { processAppointmentCheckoutCompletedSession };
 
@@ -1380,7 +1387,10 @@ functionsRouter.post("/redeemClassCode", async (req, res, next) => {
     const { rows: sessionRows } = await query(sessionQueryParts.join("\n"), params);
     const session = sessionRows[0];
     if (!session) return res.status(404).json({ success: false, error: "Invalid class code." });
-    if (session.code_used) return res.status(400).json({ success: false, error: "This class code was already redeemed." });
+    const sharedClassDateSession = isSharedClassDateSession(session);
+    if (!sharedClassDateSession && session.code_used) {
+      return res.status(400).json({ success: false, error: "This class code was already redeemed." });
+    }
 
     const normalizedSessionDate = selectedSessionDate || toDateOnly(session.session_date);
     const { rows: userRows } = await query(
@@ -1547,6 +1557,33 @@ functionsRouter.post("/redeemClassCode", async (req, res, next) => {
     );
     const course = courseRows[0] || null;
     if (!course) return res.status(404).json({ success: false, error: "Course not found for this class code." });
+
+    const providerIdentity = {
+      authUserId: me.id || null,
+      appUserId: appUserId || null,
+      providerId: enrollmentProviderId || meId || meAppId || null,
+      emails: [me.email, appUserEmail].filter(Boolean),
+    };
+
+    if (sharedClassDateSession) {
+      const alreadyRedeemed = await providerHasRedeemedSession(session.id, providerIdentity);
+      if (alreadyRedeemed) {
+        return res.status(400).json({ success: false, error: "You have already redeemed this class code." });
+      }
+      const redemptionCap = await resolveRedemptionCap({
+        courseId: session.course_id,
+        sessionDate: normalizedSessionDate || session.session_date,
+        sessionDates: course.session_dates,
+      });
+      const redemptionCount = await countRedemptionsForSession(session.id);
+      if (redemptionCap > 0 && redemptionCount >= redemptionCap) {
+        return res.status(400).json({
+          success: false,
+          error: "This class code has been fully redeemed for all enrolled seats.",
+        });
+      }
+    }
+
     const effectiveSessionDate = normalizedSessionDate || toDateOnly(enrollment?.session_date);
     const windowCheck = isWithinRedeemWindow(effectiveSessionDate, course.session_dates);
     if (!windowCheck.ok) {
@@ -1567,12 +1604,29 @@ functionsRouter.post("/redeemClassCode", async (req, res, next) => {
       });
     }
 
-    await query(
-      `update public.class_session
-       set code_used = true, code_used_at = now()
-       where id = $1`,
-      [session.id]
-    );
+    if (sharedClassDateSession) {
+      await insertClassCodeRedemption({
+        classSessionId: session.id,
+        courseId: session.course_id,
+        sessionDate: effectiveSessionDate || session.session_date,
+        enrollmentId: String(enrollment.id || ""),
+        identity: providerIdentity,
+      });
+      await query(
+        `update public.class_session
+         set code_used = true,
+             code_used_at = coalesce(code_used_at, now())
+         where id = $1`,
+        [session.id]
+      );
+    } else {
+      await query(
+        `update public.class_session
+         set code_used = true, code_used_at = now()
+         where id = $1`,
+        [session.id]
+      );
+    }
 
     if (!String(enrollment.id || "").startsWith("preorder:")) {
       await query(

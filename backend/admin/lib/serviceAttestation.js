@@ -24,12 +24,10 @@ function buildUnlockedCourseIds({ enrollments = [], sessions = [], courses = [] 
   }
 
   for (const session of sessions || []) {
-    if (!session?.code_used) continue;
     const enrollmentKey = String(session?.enrollment_id || "");
-    const classDateParts = enrollmentKey.startsWith("class_date:") ? enrollmentKey.split(":") : [];
-    const courseId = String(
-      session?.course_id || (classDateParts.length >= 3 ? classDateParts[1] : "") || ""
-    ).trim();
+    if (enrollmentKey.startsWith("class_date:")) continue;
+    if (!session?.code_used) continue;
+    const courseId = String(session?.course_id || "").trim();
     if (courseId) unlocked.add(courseId);
   }
 
@@ -74,12 +72,30 @@ function hasNoviTrainingCert(serviceTypeId, certifications = []) {
   return certsForService(serviceTypeId, certifications).some((c) => isNoviIssuedCert(c));
 }
 
-function hasCompletedCourseForService(serviceTypeId, context) {
+function courseServiceTypeIds(course) {
+  const linked = (course?.linked_service_type_ids || []).map(String).filter(Boolean);
+  if (linked.length > 0) return linked;
+  return (course?.certifications_awarded || [])
+    .map((award) => String(award?.service_type_id || ""))
+    .filter(Boolean);
+}
+
+/**
+ * Course templates link to membership plans (Admin → Service Types), so a
+ * completed course unlocks both the linked id itself and, when the linked id
+ * is a membership, every service included in that membership.
+ */
+function hasCompletedCourseForService(serviceTypeId, context, allServiceTypes = []) {
   const sid = String(serviceTypeId || "");
+  const membershipIdsIncludingService = (allServiceTypes || [])
+    .filter((st) => st?.is_membership === true)
+    .filter((m) => servicesInMembership(m, allServiceTypes).some((c) => String(c.id) === sid))
+    .map((m) => String(m.id));
+  const matchIds = new Set([sid, ...membershipIdsIncludingService]);
+
   for (const courseId of context.unlockedCourseIds || []) {
     const course = context.courseMap?.[courseId];
-    const linked = (course?.linked_service_type_ids || []).map(String);
-    if (linked.includes(sid)) return true;
+    if (courseServiceTypeIds(course).some((id) => matchIds.has(id))) return true;
   }
   return false;
 }
@@ -91,7 +107,7 @@ function additionalCertMatches(service, cert) {
   return certName.includes(label) || label.includes(certName);
 }
 
-function evaluateTrainingRequirement(service, context) {
+function evaluateTrainingRequirement(service, context, allServiceTypes = []) {
   if (service?.requires_novi_course !== true) {
     return { required: false, met: true, pending: false };
   }
@@ -99,7 +115,7 @@ function evaluateTrainingRequirement(service, context) {
   if (hasNoviTrainingCert(service.id, context.certifications)) {
     return { required: true, met: true, pending: false };
   }
-  if (hasCompletedCourseForService(service.id, context)) {
+  if (hasCompletedCourseForService(service.id, context, allServiceTypes)) {
     return { required: true, met: true, pending: false };
   }
   if (service.allow_external_cert === true) {
@@ -135,9 +151,9 @@ function evaluateAdditionalCertRequirement(service, context) {
   return { required: true, met: false, pending: false };
 }
 
-export function evaluateServiceAttestation(serviceType, context) {
+export function evaluateServiceAttestation(serviceType, context, allServiceTypes = []) {
   const service = serviceType || {};
-  const training = evaluateTrainingRequirement(service, context);
+  const training = evaluateTrainingRequirement(service, context, allServiceTypes);
   const additionalCert = evaluateAdditionalCertRequirement(service, context);
   const complete = training.met && additionalCert.met;
   const pending = (training.pending || additionalCert.pending) && !complete;
@@ -186,17 +202,20 @@ async function loadProviderAttestationRows(providerId) {
       ).catch(() => ({ rows: [] })),
       query(
         `select id, course_id, status, session_date
-           from public.course_enrollment
-          where provider_id = $1`,
+           from public.enrollments
+          where provider_id::text = $1`,
         [pid]
       ).catch(() => ({ rows: [] })),
       query(
         `select id, course_id, enrollment_id, code_used
-           from public.attendance_session
-          where provider_id = $1`,
+           from public.class_session
+          where provider_id::text = $1`,
         [pid]
       ).catch(() => ({ rows: [] })),
-      query(`select id, linked_service_type_ids from public.course`).catch(() => ({ rows: [] })),
+      query(
+        `select id, linked_service_type_ids, certifications_awarded
+           from public.scheduled_courses`
+      ).catch(() => ({ rows: [] })),
     ]);
 
   return buildProviderAttestationContext({
@@ -207,6 +226,9 @@ async function loadProviderAttestationRows(providerId) {
       ...row,
       linked_service_type_ids: Array.isArray(row.linked_service_type_ids)
         ? row.linked_service_type_ids
+        : [],
+      certifications_awarded: Array.isArray(row.certifications_awarded)
+        ? row.certifications_awarded
         : [],
     })),
   });
@@ -228,8 +250,11 @@ export async function assertProviderCanPracticeService({ providerId, serviceType
   const service = await loadServiceTypeRow(serviceTypeId);
   if (!service || service.is_membership === true) return { ok: true };
 
-  const context = await loadProviderAttestationRows(providerId);
-  const evaluation = evaluateServiceAttestation(service, context);
+  const [context, allServiceTypes] = await Promise.all([
+    loadProviderAttestationRows(providerId),
+    loadAllServiceTypes().catch(() => []),
+  ]);
+  const evaluation = evaluateServiceAttestation(service, context, allServiceTypes);
   if (evaluation.complete) return { ok: true, evaluation };
 
   const step = evaluation.nextSteps[0];
@@ -269,11 +294,24 @@ export async function assertMembershipAttestationComplete({ providerId, membersh
   if (!membership) return { ok: true };
 
   const children = servicesInMembership(membership, serviceTypes);
-  if (!children.length) return { ok: true };
-
   const context = await loadProviderAttestationRows(providerId);
+
+  if (!children.length) {
+    // No included services configured — require direct training/cert proof
+    // for this plan so providers only activate coverage they qualified for.
+    const qualifies =
+      hasCompletedCourseForService(membershipId, context, serviceTypes) ||
+      hasNoviTrainingCert(membershipId, context.certifications) ||
+      hasActiveCert(membershipId, context.certifications);
+    if (qualifies) return { ok: true };
+    return {
+      ok: false,
+      error: `Complete required training or certification for ${String(membership.name || "this plan").trim()} before activating MD coverage.`,
+    };
+  }
+
   const incomplete = children
-    .map((st) => ({ service: st, evaluation: evaluateServiceAttestation(st, context) }))
+    .map((st) => ({ service: st, evaluation: evaluateServiceAttestation(st, context, serviceTypes) }))
     .filter(({ evaluation }) => !evaluation.complete);
 
   if (!incomplete.length) return { ok: true };
