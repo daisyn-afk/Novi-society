@@ -123,8 +123,32 @@ async function fetchCertificationsForTemplate(client, templateId) {
   return rows.map((r) => ({
     service_type_id: r.service_type_id,
     service_type_name: r.service_type_name,
-    cert_name: r.cert_name
+    cert_name: r.cert_name,
   }));
+}
+
+async function fetchCertificationsForTemplateIds(templateIds = []) {
+  if (!templateIds.length) return new Map();
+  const { rows } = await query(
+    `select template_course_id, service_type_id, service_type_name, cert_name, sort_order
+     from public.certification
+     where template_course_id = any($1::uuid[])
+       and provider_id is null
+       and coalesce(nullif(trim(enrollment_id), ''), null) is null
+     order by sort_order asc, id asc`,
+    [templateIds]
+  );
+  const byTemplateId = new Map();
+  for (const row of rows) {
+    const key = String(row.template_course_id);
+    if (!byTemplateId.has(key)) byTemplateId.set(key, []);
+    byTemplateId.get(key).push({
+      service_type_id: row.service_type_id,
+      service_type_name: row.service_type_name,
+      cert_name: row.cert_name,
+    });
+  }
+  return byTemplateId;
 }
 
 async function upsertServiceTypes(client, payload, serviceTypeNameLookup) {
@@ -200,18 +224,18 @@ export async function listTemplateCourses() {
   );
   if (!rows.length) return [];
 
-  const client = await pool.connect();
-  try {
-    const out = [];
-    for (const row of rows) {
-      const stored = await fetchCertificationsForTemplate(client, row.id);
-      const derived = await repairTemplateCertificationsIfNeeded(client, row, stored);
-      out.push(rowToApi(row, derived));
-    }
-    return out;
-  } finally {
-    client.release();
-  }
+  const certMap = await fetchCertificationsForTemplateIds(rows.map((row) => row.id));
+  const serviceTypes = await loadServiceTypesForCertDerivation();
+
+  return rows.map((row) => {
+    const stored = certMap.get(String(row.id)) || [];
+    const certifications = stored.length
+      ? stored
+      : normalizeAwardsForApi(
+          buildCertAwardsFromLinkedServices(row.linked_service_type_ids ?? [], serviceTypes)
+        );
+    return rowToApi(row, certifications);
+  });
 }
 
 export async function getTemplateCourseById(id) {
