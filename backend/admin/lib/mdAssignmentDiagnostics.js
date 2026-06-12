@@ -33,7 +33,7 @@ async function countServiceOfferings(serviceTypeId) {
 }
 
 /**
- * User-facing explanation when auto-assignment would fail for one sz
+ * User-facing explanation when auto-rassignment would fail for one sz
  * resrvice.
  */
 export async function explainMdAssignmentBlocker(serviceTypeId, serviceTypeName, providerState, { brief = false } = {}) {
