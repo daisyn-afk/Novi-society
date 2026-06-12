@@ -1,7 +1,8 @@
 import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
-import { getSessionWindowForDate, isNowWithinSessionRedeemWindow } from "@/lib/classCodeWindow";
+import { describeSessionWindowForProvider, isNowWithinSessionRedeemWindow } from "@/lib/classCodeWindow";
+import { resolveProviderTimeZone } from "@/lib/providerTimezone";
 
 function toDateOnly(value) {
   const raw = String(value || "").trim();
@@ -18,6 +19,15 @@ function normalizeStatus(value) {
 
 export function useAttendanceContext() {
   const queryClient = useQueryClient();
+  const browserTimeZone = typeof Intl !== "undefined"
+    ? Intl.DateTimeFormat().resolvedOptions().timeZone
+    : "";
+
+  const { data: me } = useQuery({
+    queryKey: ["attendance-provider-me"],
+    queryFn: () => base44.auth.me(),
+  });
+  const providerTimeZone = resolveProviderTimeZone(me, browserTimeZone);
 
   const { data: myEnrollments = [], isLoading: loadingEnrollments } = useQuery({
     queryKey: ["attendance-my-enrollments"],
@@ -173,12 +183,12 @@ export function useAttendanceContext() {
       const course = courseMap[enrollment.course_id];
       const sessionDate = String(enrollment.session_date || "").slice(0, 10);
       const key = `${enrollment.course_id}:${sessionDate}`;
-      const window = getSessionWindowForDate(course, sessionDate);
+      const window = describeSessionWindowForProvider(course, sessionDate, providerTimeZone);
       const isOpen = window ? isNowWithinSessionRedeemWindow(course, sessionDate) : false;
       const isAttended = redeemedSessionKeys.has(key) || ["attended", "completed"].includes(normalizeStatus(enrollment.status));
       return { key, enrollment, course, window, isOpen, isAttended };
     });
-  }, [courseMap, myEnrollments, redeemedSessionKeys, sessions]);
+  }, [courseMap, myEnrollments, providerTimeZone, redeemedSessionKeys, sessions]);
 
   const activeWindows = useMemo(
     () => enrollmentWindows.filter((entry) => entry.isOpen && !entry.isAttended),
@@ -227,6 +237,7 @@ export function useAttendanceContext() {
     courses,
     enrollmentWindows,
     activeWindows,
+    providerTimeZone,
     getWindowByEnrollment,
     getLocalValidationError,
     submitAttendance,

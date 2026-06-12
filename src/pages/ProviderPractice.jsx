@@ -7,6 +7,7 @@ import ProviderSalesLock from "@/components/ProviderSalesLock";
 import { useProviderAccess } from "@/components/useProviderAccess";
 import { useServiceAccess } from "@/components/useServiceAccess";
 import { treatmentMenuServiceTypes } from "@/lib/serviceTypeMembershipModel";
+import { useProviderAttestation } from "@/hooks/useProviderAttestation";
 import PracticeProfileTab from "@/components/practice/PracticeProfileTab.jsx";
 import PracticeTreatmentsTab from "@/components/practice/PracticeTreatmentsTab.jsx";
 import PracticeAppointmentsTab from "@/components/practice/PracticeAppointmentsTab.jsx";
@@ -165,6 +166,7 @@ export default function ProviderPractice() {
   useEffect(() => subscribeAppointmentsRefresh(refetchAppointments), [refetchAppointments]);
 
   const { activeServiceIds, activeSubscriptions: mdSubs } = useServiceAccess();
+  const { context: attestationContext } = useProviderAttestation();
 
   const { data: serviceTypes = [] } = useQuery({
     queryKey: ["service-types"],
@@ -701,6 +703,7 @@ export default function ProviderPractice() {
         <PracticeTreatmentsTab
           me={me} serviceTypes={serviceTypes}
           activeServiceIds={activeServiceIds} mdSubs={mdSubs}
+          attestationContext={attestationContext}
           onSave={handleSave} saving={saveMutation.isPending} saved={saved}
         />
       </PanelModal>

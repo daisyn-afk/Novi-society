@@ -33,7 +33,8 @@ async function countServiceOfferings(serviceTypeId) {
 }
 
 /**
- * User-facing explanation when auto-assignment would fail for one service.
+ * User-facing explanation when auto-assignment would fail for one sz
+ * resrvice.
  */
 export async function explainMdAssignmentBlocker(serviceTypeId, serviceTypeName, providerState, { brief = false } = {}) {
   const label = String(serviceTypeName || serviceTypeId || "this service").trim();
@@ -44,7 +45,7 @@ export async function explainMdAssignmentBlocker(serviceTypeId, serviceTypeName,
 
   if (eligibleRole === 0) {
     if (wrongRole > 0) {
-      return `${prefix}Someone is listed under Services I cover, but their account is not set up as a medical director. Ask NOVI admin to correct the MD account role.`;
+      return `${prefix}Someone is listed under Services I cover, but their account is not set up as a medical director. Contact NOVI support to correct the MD account role.`;
     }
     if (total === 0 && !usePoolFallback()) {
       return `${prefix}No Board MD lists this service under Services I cover in their MD Profile.`;

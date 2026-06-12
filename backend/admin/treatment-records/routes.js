@@ -7,6 +7,10 @@ import {
   notifyProviderOfTreatmentRecordReview,
 } from "./notifications.js";
 import { assertGfePrerequisiteForAppointment } from "../gfe/patientGfeService.js";
+import {
+  loadServiceTypeScopeForTreatment,
+  validateTreatmentAgainstServiceScope,
+} from "../lib/treatmentScopeValidation.js";
 
 export const treatmentRecordsRouter = Router();
 
@@ -85,6 +89,40 @@ async function providerOwnsRecord(me, providerId) {
   if (String(providerId || "") === String(me.id || "")) return true;
   const { aliases } = await getProviderIdAliases(providerId);
   return aliases.includes(String(me.id || ""));
+}
+
+async function assertTreatmentWithinServiceScope(body, appointmentId) {
+  let serviceTypeId = null;
+  let serviceName = String(body?.service || "").trim();
+  const apptId = String(appointmentId || body?.appointment_id || "").trim();
+  if (apptId) {
+    const { rows } = await query(
+      `select service, service_type_id from public.appointments where id = $1 limit 1`,
+      [apptId]
+    );
+    if (rows[0]) {
+      serviceTypeId = rows[0].service_type_id;
+      serviceName = serviceName || String(rows[0].service || "").trim();
+    }
+  }
+  const serviceType = await loadServiceTypeScopeForTreatment(query, {
+    serviceTypeId,
+    serviceName,
+  });
+  if (!serviceType) return;
+
+  const areasTreated = Array.isArray(body?.areas_treated) ? body.areas_treated : [];
+  const check = validateTreatmentAgainstServiceScope(serviceType, {
+    areas_treated: areasTreated,
+    units_used: body?.units_used,
+    units_label: body?.units_label,
+  });
+  if (!check.ok) {
+    const err = new Error(check.violations[0] || "Treatment is outside the allowed scope for this service.");
+    err.statusCode = 400;
+    err.violations = check.violations;
+    throw err;
+  }
 }
 
 async function assertBookingDepositPaidForAppointment(appointmentId) {
@@ -214,6 +252,7 @@ treatmentRecordsRouter.post("/", async (req, res, next) => {
       await assertBookingDepositPaidForAppointment(p.appointment_id);
       if (String(p.status || "").trim() === "submitted") {
         await assertGfePrerequisiteForAppointment(p.appointment_id);
+        await assertTreatmentWithinServiceScope(body, p.appointment_id);
       }
     }
     if (p.appointment_id) {
@@ -339,6 +378,17 @@ treatmentRecordsRouter.patch("/:id", async (req, res, next) => {
         const nextStatus = String(body.status || "").trim();
         if (!hasAdminAccess(me.role) && nextStatus === "submitted") {
           await assertGfePrerequisiteForAppointment(existing.appointment_id);
+          await assertTreatmentWithinServiceScope(
+            {
+              ...existing,
+              ...body,
+              areas_treated: body.areas_treated ?? existing.areas_treated,
+              units_used: body.units_used ?? existing.units_used,
+              units_label: body.units_label ?? existing.units_label,
+              service: body.service ?? existing.service,
+            },
+            existing.appointment_id
+          );
         }
         const allowedStatuses = new Set(["draft", "submitted"]);
         if (!allowedStatuses.has(nextStatus)) {

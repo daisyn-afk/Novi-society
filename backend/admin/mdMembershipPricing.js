@@ -40,6 +40,10 @@ export function calcMdCoverageMonthlyTotal(
   return Math.min(total, MD_MAX_MONTHLY_CAP);
 }
 
+/**
+ * Prorate one new MD service from signup day through month-end.
+ * Mid-month signup ≈ half month (e.g. day 15 of 30 → 16/30 of monthly fee).
+ */
 export function calcMdCoverageProration(monthlyFee, referenceDate = new Date()) {
   const fee = Number(monthlyFee) || 0;
   const today = referenceDate instanceof Date ? referenceDate : new Date(referenceDate);
@@ -54,6 +58,7 @@ export function calcMdCoverageProration(monthlyFee, referenceDate = new Date()) 
     periodStart: new Date(today.getFullYear(), today.getMonth(), dayOfMonth),
     periodEnd: new Date(today.getFullYear(), today.getMonth() + 1, 0),
     nextBillingDate: new Date(today.getFullYear(), today.getMonth() + 1, 1),
+    currentMonthLabel: today.toLocaleString("en-US", { month: "long" }),
   };
 }
 

@@ -5,10 +5,15 @@ function asString(value, fallback = "") {
 }
 
 function normalizeProtocolDocument(doc = {}) {
-  return {
+  const normalized = {
     name: asString(doc.name, "").trim(),
     url: asString(doc.url, "").trim(),
   };
+  const serviceTypeId = asString(doc.service_type_id, "").trim();
+  const serviceName = asString(doc.service_name, "").trim();
+  if (serviceTypeId) normalized.service_type_id = serviceTypeId;
+  if (serviceName) normalized.service_name = serviceName;
+  return normalized;
 }
 
 function isUsableDocumentUrl(value) {
@@ -22,6 +27,16 @@ export function filterProtocolDocuments(docs) {
     .filter((doc) => doc.name && isUsableDocumentUrl(doc.url));
 }
 
+function tagProtocolDocument(doc, childRow) {
+  const serviceId = String(childRow?.id || doc?.service_type_id || "").trim();
+  const serviceName = String(childRow?.name || doc?.service_name || "").trim();
+  return {
+    ...doc,
+    ...(serviceId ? { service_type_id: serviceId } : {}),
+    ...(serviceName ? { service_name: serviceName } : {}),
+  };
+}
+
 /** Protocol docs for a membership (merged from included services) or a single service. */
 export function resolveProtocolDocumentsFromServiceType(serviceTypeRow, childRows = []) {
   const includedIds = Array.isArray(serviceTypeRow?.included_service_ids)
@@ -32,17 +47,20 @@ export function resolveProtocolDocumentsFromServiceType(serviceTypeRow, childRow
     const merged = [];
     const seen = new Set();
     for (const child of childRows) {
+      const childId = String(child?.id || "").trim();
       for (const doc of filterProtocolDocuments(child?.protocol_document_urls)) {
-        const key = `${doc.name}::${doc.url}`;
+        const key = `${childId}::${doc.name}::${doc.url}`;
         if (seen.has(key)) continue;
         seen.add(key);
-        merged.push(doc);
+        merged.push(tagProtocolDocument(doc, child));
       }
     }
     if (merged.length) return merged;
   }
 
-  return filterProtocolDocuments(serviceTypeRow?.protocol_document_urls);
+  return filterProtocolDocuments(serviceTypeRow?.protocol_document_urls).map((doc) =>
+    tagProtocolDocument(doc, serviceTypeRow)
+  );
 }
 
 export async function fetchServiceTypeProtocolSnapshot(serviceTypeId) {
@@ -66,7 +84,7 @@ export async function fetchServiceTypeProtocolSnapshot(serviceTypeId) {
   let childRows = [];
   if (row.is_membership && includedIds.length > 0) {
     const { rows: children } = await query(
-      `select protocol_document_urls
+      `select id, name, protocol_document_urls
          from public.service_type
         where id = any($1::text[])`,
       [includedIds]

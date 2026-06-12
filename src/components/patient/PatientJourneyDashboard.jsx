@@ -145,13 +145,13 @@ export default function PatientJourneyDashboard({
                 <Crown className="w-3 h-3" style={{ color: "#7B8EC8" }} />
                 <span className="text-xs font-semibold" style={{ color: "#7B8EC8" }}>Premium</span>
               </div>
-            ) : (
+            ) : onUpgrade ? (
               <button onClick={onUpgrade} className="inline-flex items-center gap-1.5 mt-2 ml-2 px-3 py-1.5 rounded-full"
                 style={{ background: "rgba(123,142,200,0.08)", border: "1px solid rgba(123,142,200,0.18)" }}>
                 <Sparkles className="w-3 h-3" style={{ color: "#7B8EC8" }} />
                 <span className="text-xs font-semibold" style={{ color: "#7B8EC8" }}>Upgrade</span>
               </button>
-            )}
+            ) : null}
           </div>
 
           {/* Recovery ring */}
@@ -401,11 +401,13 @@ export default function PatientJourneyDashboard({
                     <p className="text-sm leading-relaxed" style={{ color: "rgba(42,48,80,0.6)" }}>
                       Check in each day and NOVI tracks your healing, flags anything worth noting, and keeps your provider in the loop.
                     </p>
-                    <button onClick={onUpgrade}
-                      className="mt-4 flex items-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-sm"
-                      style={{ background: "#7B8EC8", color: "white" }}>
-                      <Lock className="w-3.5 h-3.5" /> Unlock Recovery Tracking ✨
-                    </button>
+                    {onUpgrade && (
+                      <button onClick={onUpgrade}
+                        className="mt-4 flex items-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-sm"
+                        style={{ background: "#7B8EC8", color: "white" }}>
+                        <Lock className="w-3.5 h-3.5" /> Unlock Recovery Tracking ✨
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -503,7 +505,7 @@ export default function PatientJourneyDashboard({
                 </div>
               )}
 
-              {!isPremium && (
+              {!isPremium && onUpgrade && (
                 <button onClick={onUpgrade}
                   className="w-full p-5 rounded-2xl flex items-center gap-4"
                   style={{ background: "rgba(123,142,200,0.07)", border: "1.5px solid rgba(123,142,200,0.2)" }}>

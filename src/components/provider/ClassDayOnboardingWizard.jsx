@@ -75,7 +75,7 @@ export default function ClassDayOnboardingWizard({ enrollment, course, open, onC
 
     const now = new Date();
     const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-    const daysRemaining = daysInMonth - now.getDate();
+    const daysRemaining = daysInMonth - now.getDate() + 1;
     const prorated = (newMonthly / daysInMonth) * daysRemaining;
 
     return {

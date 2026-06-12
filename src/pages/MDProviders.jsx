@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Users } from "lucide-react";
 import { format } from "date-fns";
+import { groupRelationshipsByProvider } from "@/lib/mdRelationships";
 
 const statusColor = { pending: "bg-yellow-100 text-yellow-700", active: "bg-green-100 text-green-700", suspended: "bg-red-100 text-red-700", terminated: "bg-slate-100 text-slate-600" };
 const statusLabel = { pending: "Active", active: "Active", suspended: "Suspended", terminated: "Terminated" };
@@ -18,24 +19,28 @@ export default function MDProviders() {
     },
   });
 
+  const providers = groupRelationshipsByProvider(
+    relationships.filter((r) => String(r.status || "").toLowerCase() === "active")
+  );
+
   return (
     <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-bold text-slate-900">My Providers</h2>
-        <p className="text-slate-500 text-sm mt-1">{relationships.length} providers under supervision</p>
+        <p className="text-slate-500 text-sm mt-1">{providers.length} providers under supervision</p>
       </div>
 
       {isLoading ? (
         <div className="space-y-3">{[1,2].map(i => <Card key={i} className="h-20 animate-pulse bg-slate-100" />)}</div>
-      ) : relationships.length === 0 ? (
+      ) : providers.length === 0 ? (
         <div className="text-center py-16">
           <Users className="w-12 h-12 mx-auto text-slate-200 mb-3" />
           <p className="text-slate-400">No providers assigned yet</p>
         </div>
       ) : (
         <div className="space-y-3">
-          {relationships.map(r => (
-            <Card key={r.id}>
+          {providers.map(r => (
+            <Card key={r.provider_id || r.id}>
               <CardContent className="pt-4 pb-4">
                 <div className="flex items-center gap-4">
                   <Avatar>
@@ -47,6 +52,9 @@ export default function MDProviders() {
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-semibold text-slate-900">{r.provider_name}</span>
                       <Badge className={statusColor[r.status]}>{statusLabel[r.status] || r.status}</Badge>
+                      {r.serviceCount > 1 && (
+                        <Badge variant="outline" className="text-slate-600">{r.serviceCount} services</Badge>
+                      )}
                     </div>
                     <p className="text-sm text-slate-500">{r.provider_email}</p>
                     <div className="flex gap-3 text-xs text-slate-400 mt-1">

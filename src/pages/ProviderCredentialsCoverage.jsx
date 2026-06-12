@@ -23,8 +23,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { format } from "date-fns";
-import { getSessionWindowForDate, isNowWithinSessionRedeemWindow } from "@/lib/classCodeWindow";
-import { CLASS_TIME_ZONE } from "@/lib/classCodeWindow";
+import {
+  describeSessionWindowForProvider,
+  formatProviderWindowRange,
+  isNowWithinSessionRedeemWindow,
+} from "@/lib/classCodeWindow";
+import { resolveProviderTimeZone } from "@/lib/providerTimezone";
 import { downloadCertificateDocument, hasCertificateDocument, openCertificateDocument } from "@/lib/certificateDocument";
 import {
   getMdContractUrl,
@@ -32,15 +36,15 @@ import {
   getSignedMdContractFileName,
   getMdContractPreviewFileName,
   findServiceTypeForSubscription,
-  getProtocolDocumentsForSubscription,
   resolveProtocolDocumentsFromServiceType,
+  buildServiceWiseDocumentBundles,
   subscriptionHasMdAgreement,
   pickGlobalMdContractUrl,
   filterProtocolDocuments,
   isUsableDocumentUrl,
 } from "@/lib/serviceTypeDocuments";
 import MdAgreementDocument from "@/components/provider/MdAgreementDocument";
-import SupervisingMdCoveragePanel, { resolveUnassignedMessage } from "@/components/provider/SupervisingMdCoveragePanel";
+import SupervisingMdCoveragePanel from "@/components/provider/SupervisingMdCoveragePanel";
 import {
   buildAgreementContextFromProfile,
   mergeAgreementContext,
@@ -51,6 +55,13 @@ import {
   servicesUnlockedForSubscription,
   serviceDisplayName,
 } from "@/lib/serviceTypeMembershipModel";
+import {
+  buildProviderAttestationContext,
+  evaluateServiceAttestation,
+  isMembershipReadyForMdApply,
+  membershipAttestationSummary,
+} from "@/lib/serviceAttestation";
+import ServiceAttestationStatus from "@/components/provider/ServiceAttestationStatus";
 import {
   MD_FIRST_SERVICE_MONTHLY_FEE as FIRST_SERVICE_PRICE,
   MD_ADDON_SERVICE_MONTHLY_FEE as ADDON_SERVICE_PRICE,
@@ -197,6 +208,64 @@ function GlassCard({ children, className = "", style = {} }) {
   );
 }
 
+function ServiceWiseDocumentsBlock({ bundles = [] }) {
+  if (!bundles.length) return null;
+  return (
+    <div className="space-y-3">
+      {bundles.map((bundle) => (
+        <div
+          key={bundle.serviceId}
+          className="rounded-lg px-3 py-3"
+          style={{ background: "rgba(30,37,53,0.02)", border: "1px solid rgba(30,37,53,0.07)" }}
+        >
+          <p className="text-xs font-bold uppercase tracking-wider mb-2" style={{ color: "#1e2535" }}>
+            {bundle.serviceName}
+          </p>
+          {bundle.mdContractUrl && (
+            <div className="mb-2">
+              <p className="text-[10px] font-semibold uppercase tracking-wider mb-1.5" style={{ color: "rgba(30,37,53,0.45)" }}>
+                MD Contract
+              </p>
+              <a
+                href={bundle.mdContractUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all hover:brightness-95"
+                style={{ background: "rgba(123,142,200,0.12)", color: "#7B8EC8", border: "1px solid rgba(123,142,200,0.25)" }}
+              >
+                <FileText className="w-3 h-3" />
+                {bundle.mdContractLabel}
+              </a>
+            </div>
+          )}
+          {bundle.protocols.length > 0 && (
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wider mb-1.5" style={{ color: "rgba(30,37,53,0.45)" }}>
+                Protocol Documents
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {bundle.protocols.map((doc, i) => (
+                  <a
+                    key={`${bundle.serviceId}-${i}`}
+                    href={doc.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all hover:brightness-95"
+                    style={{ background: "rgba(123,142,200,0.12)", color: "#7B8EC8", border: "1px solid rgba(123,142,200,0.25)" }}
+                  >
+                    <FileText className="w-3 h-3" />
+                    {doc.name}
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function CertRow({ cert: c, muted = false }) {
   const canViewCertificate = hasCertificateDocument(c);
   const configs = {
@@ -337,6 +406,10 @@ export default function ProviderCredentialsCoverage() {
     staleTime: 120000,
     refetchOnWindowFocus: false,
   });
+  const browserTimeZone = typeof Intl !== "undefined"
+    ? Intl.DateTimeFormat().resolvedOptions().timeZone
+    : "";
+  const providerTimeZone = resolveProviderTimeZone(me, browserTimeZone);
   const { data: licenses = [], isLoading: loadingLicenses } = useQuery({
     queryKey: ["my-licenses"],
     queryFn: async () => { const u = await base44.auth.me(); return base44.entities.License.filter({ provider_id: u.id }); },
@@ -514,6 +587,8 @@ export default function ProviderCredentialsCoverage() {
     clearMdCoveragePending(stId);
     qc.invalidateQueries({ queryKey: ["my-md-relationships"] });
     qc.invalidateQueries({ queryKey: ["my-md-subscriptions"] });
+    qc.invalidateQueries({ queryKey: ["me"] });
+    qc.invalidateQueries({ queryKey: ["marketplace-catalog"] });
     return data;
   }
 
@@ -637,33 +712,30 @@ export default function ProviderCredentialsCoverage() {
   const getMembershipPrice = () => feeForMdSlot(alreadyActiveServices.length);
   const isAtCap = alreadyActiveServices.length >= MAX_SERVICES;
   const calcMonthlyTotal = (count) => calcMdCoverageMonthlyTotal(count, feeForMdSlot);
-  const completedEnrollments = myEnrollments.filter((e) => ["completed", "attended"].includes(String(e?.status || "").toLowerCase()));
-  const unlockedCourseIds = new Set(
-    completedEnrollments
-      .map((e) => String(e?.course_id || ""))
-      .filter(Boolean)
+  const attestationContext = useMemo(
+    () =>
+      buildProviderAttestationContext({
+        certifications: myCerts,
+        enrollments: myEnrollments,
+        sessions: mySessions,
+        courses,
+      }),
+    [myCerts, myEnrollments, mySessions, courses]
   );
-  (mySessions || [])
-    .filter((session) => Boolean(session?.code_used))
-    .forEach((session) => {
-      const enrollmentKey = String(session?.enrollment_id || "");
-      const classDateParts = enrollmentKey.startsWith("class_date:") ? enrollmentKey.split(":") : [];
-      const courseId = String(session?.course_id || (classDateParts.length >= 3 ? classDateParts[1] : "") || "");
-      if (courseId) unlockedCourseIds.add(courseId);
-    });
-  const earnedServiceTypeIds = new Set(
-    Array.from(unlockedCourseIds).flatMap((courseId) => courseMap[courseId]?.linked_service_type_ids || [])
-  );
-  const activeCertServiceTypeIds = new Set(
-    (myCerts || [])
-      .filter((cert) => String(cert?.status || "").toLowerCase() === "active")
-      .map((cert) => String(cert?.service_type_id || ""))
-      .filter(Boolean)
-  );
-  const unlockedServiceTypeIds = new Set([...earnedServiceTypeIds, ...activeCertServiceTypeIds]);
   const mdCoveragePlans = serviceTypes.filter(isMdPurchasablePlan);
   const applyableServiceTypes = mdCoveragePlans.filter((s) => !alreadyActiveServices.includes(s.id));
-  const availableServices = applyableServiceTypes.filter((s) => unlockedServiceTypeIds.has(s.id));
+  const availableServices = applyableServiceTypes.filter((s) =>
+    isMembershipReadyForMdApply(s, serviceTypes, attestationContext)
+  );
+  const certSubmissionServices = useMemo(() => {
+    return serviceTypes
+      .filter((st) => st.is_membership !== true && st.is_active !== false)
+      .filter((st) => {
+        const evaluation = evaluateServiceAttestation(st, attestationContext, serviceTypes);
+        if (evaluation.complete || evaluation.pending) return false;
+        return st.allow_external_cert || st.requires_additional_provider_cert;
+      });
+  }, [serviceTypes, attestationContext]);
   const selectedService = serviceTypes.find(s => s.id === selectedServiceTypeId);
   const agreementFields = useMemo(
     () => mergeAgreementContext(buildAgreementContextFromProfile(me), agreementContext),
@@ -717,13 +789,6 @@ export default function ProviderCredentialsCoverage() {
       }, new Map())
       .values()
   );
-  const formatEstClockTime = (dateValue) =>
-    new Intl.DateTimeFormat("en-US", {
-      timeZone: CLASS_TIME_ZONE,
-      hour: "numeric",
-      minute: "2-digit",
-      hour12: true,
-    }).format(dateValue);
   const redeemedSessionKeys = new Set(
     (mySessions || [])
       .filter((session) => Boolean(session?.code_used))
@@ -768,7 +833,7 @@ export default function ProviderCredentialsCoverage() {
   const classCodeEnrollmentWindows = classCodeEligibleEnrollments.map((enrollment) => {
     const course = courseMap[enrollment.course_id];
     const sessionDate = toDateOnly(enrollment.session_date);
-    const window = getSessionWindowForDate(course, sessionDate);
+    const window = describeSessionWindowForProvider(course, sessionDate, providerTimeZone);
     const isOpen = window ? isNowWithinSessionRedeemWindow(course, sessionDate) : false;
     const key = `${enrollment.course_id}:${sessionDate}`;
     const isAttended =
@@ -798,6 +863,12 @@ export default function ProviderCredentialsCoverage() {
     setActivateError("");
     resetActivation();
     if (serviceTypeId) {
+      const membership = serviceTypes.find((s) => s.id === serviceTypeId);
+      if (membership && !isMembershipReadyForMdApply(membership, serviceTypes, attestationContext)) {
+        setActivateError("Complete required training or certification for all included services before applying for MD coverage.");
+        setActiveTab("coverage");
+        return;
+      }
       setSelectedServiceTypeId(serviceTypeId);
       setStep(jumpToSign ? 2 : 1);
     }
@@ -808,6 +879,20 @@ export default function ProviderCredentialsCoverage() {
     setExtCertForm({ cert_name: "", issuing_school: "", cert_type: "RN", service_type_id: "", service_type_name: "", certificate_number: "" });
     setExtCertFileUrl(""); setExtLicenseFileUrl("");
     setUploadExtCertError(""); setUploadExtLicenseError(""); setSubmitExtCertError("");
+  };
+  const openSubmitCertForService = (evaluation) => {
+    const st = serviceTypes.find((s) => String(s.id) === String(evaluation?.serviceTypeId || ""));
+    if (!st) return;
+    resetExtCertForm();
+    setCertSubmitOpen(true);
+    setExtCertForm({
+      cert_type: "RN",
+      issuing_school: "",
+      cert_name: st.additional_cert_label || evaluation.serviceName || st.name,
+      service_type_id: st.id,
+      service_type_name: serviceDisplayName(st, serviceTypes),
+      certificate_number: "",
+    });
   };
   const isExpiredLicenseDate = (dateValue) => {
     const raw = String(dateValue || "").trim();
@@ -1281,7 +1366,11 @@ export default function ProviderCredentialsCoverage() {
       });
       if (res.data?.success) {
         qc.invalidateQueries({ queryKey: ["my-md-subscriptions"] });
+        qc.invalidateQueries({ queryKey: ["me"] });
+        qc.invalidateQueries({ queryKey: ["marketplace-catalog"] });
         setCancelStep(2);
+      } else {
+        console.error(res.data?.error || "Cancellation failed.");
       }
     } catch (e) {
       console.error(e);
@@ -1457,12 +1546,8 @@ export default function ProviderCredentialsCoverage() {
           { label: "MD Coverage", value: activeSubscriptions.length, sub: "services active", tab: "coverage" },
           {
             label: "Assigned MD",
-            value: activeRelationships[0]?.medical_director_name || "—",
-            sub: activeRelationships.length > 0
-              ? "Supervising physician"
-              : (resolveUnassignedMessage(supervisingMdCoverage, {
-                  hasActiveMdCoverage: activeSubscriptions.length > 0,
-                }) || "Not yet assigned"),
+            value: activeRelationships.length > 0 ? "✓" : "—",
+            sub: activeRelationships[0]?.medical_director_name || "Not yet assigned",
             tab: "coverage",
             subIsError: activeRelationships.length === 0,
           },
@@ -1470,9 +1555,9 @@ export default function ProviderCredentialsCoverage() {
           <button key={label} onClick={() => setActiveTab(tab)}
             className="text-left px-4 py-4 transition-all hover:bg-white/50 min-w-0"
             style={{ borderLeft: i % 2 === 0 ? "none" : "1px solid rgba(30,37,53,0.07)", borderTop: i >= 2 ? "1px solid rgba(30,37,53,0.07)" : "none" }}>
-            <p className="truncate" style={{ fontFamily: "'DM Serif Display', serif", fontSize: label === "Assigned MD" && value !== "—" ? 16 : 22, color: "#1e2535", lineHeight: 1.2, fontWeight: 400 }}>{value}</p>
+            <p style={{ fontFamily: "'DM Serif Display', serif", fontSize: 22, color: "#1e2535", lineHeight: 1, fontWeight: 400 }}>{value}</p>
             <p className="text-xs font-semibold mt-1" style={{ color: "#1e2535" }}>{label}</p>
-            <p className="text-[10px] mt-0.5 line-clamp-3" style={{ color: subIsError ? "#DC2626" : "rgba(30,37,53,0.4)" }}>{sub}</p>
+            <p className="text-[10px] mt-0.5 truncate" style={{ color: subIsError ? "#DC2626" : "rgba(30,37,53,0.4)" }}>{sub}</p>
           </button>
         ))}
       </div>
@@ -1801,7 +1886,9 @@ export default function ProviderCredentialsCoverage() {
                     </button>
                     {isExp && st && (() => {
                       const includedServices = servicesUnlockedForSubscription(sub, st, serviceTypes);
-                      const effectiveDocs = getProtocolDocumentsForSubscription(sub);
+                      const serviceWiseDocs = buildServiceWiseDocumentBundles(sub, serviceTypes, {
+                        globalContractUrl: globalMdContractUrl,
+                      });
                       const activatedDate = sub.activated_at ? new Date(sub.activated_at) : null;
                       const monthlyAmount = Number(sub.service_type_monthly_fee ?? (idx === 0 ? FIRST_SERVICE_PRICE : ADDON_SERVICE_PRICE));
                       const checkoutPaid = sub.checkout_amount_paid != null ? Number(sub.checkout_amount_paid) : null;
@@ -1833,26 +1920,37 @@ export default function ProviderCredentialsCoverage() {
                                   Services included ({includedServices.length})
                                 </p>
                                 <div className="space-y-2">
-                                  {includedServices.map((svc) => (
-                                    <div key={svc.id} className="rounded-xl px-3 py-2.5" style={{ background: "rgba(30,37,53,0.03)", border: "1px solid rgba(30,37,53,0.07)" }}>
-                                      <p className="text-sm font-bold" style={{ color: "#1e2535" }}>{serviceDisplayName(svc, serviceTypes)}</p>
-                                      {svc.description && <p className="text-xs mt-0.5" style={{ color: "rgba(30,37,53,0.5)" }}>{svc.description}</p>}
-                                      {svc.allowed_areas?.length > 0 && (
-                                        <p className="text-xs mt-1 font-medium" style={{ color: "#2D6B7F" }}>{svc.allowed_areas.join(", ")}</p>
-                                      )}
-                                    </div>
-                                  ))}
+                                  {includedServices.map((svc) => {
+                                    const svcAttestation = evaluateServiceAttestation(svc, attestationContext, serviceTypes);
+                                    return (
+                                      <div key={svc.id} className="rounded-xl px-3 py-2.5 space-y-2" style={{ background: "rgba(30,37,53,0.03)", border: "1px solid rgba(30,37,53,0.07)" }}>
+                                        <div className="flex items-start justify-between gap-2">
+                                          <p className="text-sm font-bold" style={{ color: "#1e2535" }}>{serviceDisplayName(svc, serviceTypes)}</p>
+                                          <ServiceAttestationStatus evaluation={svcAttestation} compact />
+                                        </div>
+                                        {svc.description && <p className="text-xs" style={{ color: "rgba(30,37,53,0.5)" }}>{svc.description}</p>}
+                                        {svc.allowed_areas?.length > 0 && (
+                                          <p className="text-xs font-medium" style={{ color: "#2D6B7F" }}>{svc.allowed_areas.join(", ")}</p>
+                                        )}
+                                        {!svcAttestation.complete && (
+                                          <ServiceAttestationStatus
+                                            evaluation={svcAttestation}
+                                            onSubmitCert={openSubmitCertForService}
+                                          />
+                                        )}
+                                      </div>
+                                    );
+                                  })}
                                 </div>
                               </div>
                             )}
 
-                            {effectiveDocs.length > 0 && (
-                              <div className="flex flex-wrap gap-2">
-                                {effectiveDocs.map((doc, i) => (
-                                  <a key={i} href={doc.url} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs" style={{ background: "rgba(123,142,200,0.12)", color: "#7B8EC8", border: "1px solid rgba(123,142,200,0.2)" }}>
-                                    <FileText className="w-3 h-3" /> {doc.name}
-                                  </a>
-                                ))}
+                            {serviceWiseDocs.length > 0 && (
+                              <div>
+                                <p className="text-[10px] font-bold uppercase tracking-widest mb-2" style={{ color: "rgba(30,37,53,0.4)" }}>
+                                  Service documents
+                                </p>
+                                <ServiceWiseDocumentsBlock bundles={serviceWiseDocs} />
                               </div>
                             )}
                           </div>
@@ -1884,7 +1982,8 @@ export default function ProviderCredentialsCoverage() {
             <div className="space-y-3">
               <SectionLabel>{activeSubscriptions.length === 0 ? "Available Coverage Plans" : "Add More Services"}</SectionLabel>
               {mdCoveragePlans.filter(s => !alreadyActiveServices.includes(s.id)).map(service => {
-                const isEligible = unlockedServiceTypeIds.has(service.id);
+                const attestationSummary = membershipAttestationSummary(service, serviceTypes, attestationContext);
+                const isEligible = attestationSummary.complete;
                 const includedServices = servicesInMembership(service, serviceTypes);
                 const hasIncludedServices = includedServices.length > 0;
                 const isExpanded = expandedServiceCard === service.id;
@@ -1916,15 +2015,19 @@ export default function ProviderCredentialsCoverage() {
                           </div>
                         ) : (
                           <div className="space-y-2">
-                            <p className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>To apply for this service, you need to complete training first:</p>
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <Button size="sm" className="h-8 text-xs font-semibold gap-1.5" style={{ background: "#2d3d66", color: "#fff" }} onClick={() => navigate(createPageUrl("ProviderEnrollments"))}>
-                                <BookOpen className="w-3.5 h-3.5" /> Browse NOVI Courses
-                              </Button>
-                              <span className="text-xs" style={{ color: "rgba(30,37,53,0.4)" }}>or</span>
-                              <button className="text-xs font-semibold underline" style={{ color: "#7B8EC8" }} onClick={() => { setCertSubmitOpen(true); resetExtCertForm(); }}>
-                                Submit existing certification
-                              </button>
+                            <p className="text-xs" style={{ color: "rgba(30,37,53,0.6)" }}>
+                              Complete attestation for all included services before applying:
+                            </p>
+                            <div className="space-y-2">
+                              {attestationSummary.services.map((row) => (
+                                <div key={row.serviceTypeId}>
+                                  <p className="text-xs font-semibold mb-1" style={{ color: "#1e2535" }}>{row.serviceName}</p>
+                                  <ServiceAttestationStatus
+                                    evaluation={row}
+                                    onSubmitCert={openSubmitCertForService}
+                                  />
+                                </div>
+                              ))}
                             </div>
                           </div>
                         )}
@@ -1947,16 +2050,26 @@ export default function ProviderCredentialsCoverage() {
                         </button>
                         {isExpanded && (
                           <div className="px-5 pb-4 space-y-2">
-                            {includedServices.map((svc) => (
-                              <div key={svc.id} className="flex items-start gap-3 rounded-xl px-3 py-2.5" style={{ background: "rgba(30,37,53,0.03)", border: "1px solid rgba(30,37,53,0.07)" }}>
-                                <div className="flex-1 min-w-0">
-                                  <p className="font-semibold text-sm" style={{ color: "#1e2535" }}>{serviceDisplayName(svc, serviceTypes)}</p>
+                            {includedServices.map((svc) => {
+                              const svcAttestation = evaluateServiceAttestation(svc, attestationContext, serviceTypes);
+                              return (
+                                <div key={svc.id} className="rounded-xl px-3 py-2.5 space-y-2" style={{ background: "rgba(30,37,53,0.03)", border: "1px solid rgba(30,37,53,0.07)" }}>
+                                  <div className="flex items-start justify-between gap-2">
+                                    <p className="font-semibold text-sm" style={{ color: "#1e2535" }}>{serviceDisplayName(svc, serviceTypes)}</p>
+                                    <ServiceAttestationStatus evaluation={svcAttestation} compact />
+                                  </div>
                                   {svc.allowed_areas?.length > 0 && (
-                                    <p className="text-xs mt-0.5 font-medium" style={{ color: "#2D6B7F" }}>{svc.allowed_areas.join(", ")}</p>
+                                    <p className="text-xs font-medium" style={{ color: "#2D6B7F" }}>{svc.allowed_areas.join(", ")}</p>
+                                  )}
+                                  {!svcAttestation.complete && (
+                                    <ServiceAttestationStatus
+                                      evaluation={svcAttestation}
+                                      onSubmitCert={openSubmitCertForService}
+                                    />
                                   )}
                                 </div>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         )}
                       </div>
@@ -2000,6 +2113,9 @@ export default function ProviderCredentialsCoverage() {
                       ? sub.signed_contract_url
                       : null;
                     const contractLabel = getMdContractDisplayName(contractMeta);
+                    const serviceWiseDocs = buildServiceWiseDocumentBundles(sub, serviceTypes, {
+                      globalContractUrl: globalMdContractUrl,
+                    });
                     return (
                       <div key={sub.id} className="rounded-xl overflow-hidden" style={{ border: "1px solid rgba(30,37,53,0.08)" }}>
                         <div className="px-4 py-3 flex items-center gap-3" style={{ background: "rgba(30,37,53,0.03)" }}>
@@ -2029,41 +2145,30 @@ export default function ProviderCredentialsCoverage() {
                               {agreementText}
                             </div>
                           )}
-                          {(signedPdfUrl || getMdContractUrl(contractMeta, { allServiceTypes: serviceTypes, globalContractUrl: globalMdContractUrl })) && (
+                          {signedPdfUrl && (
                             <div>
                               <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: "rgba(30,37,53,0.45)" }}>
-                                MD Contract
+                                Signed membership agreement
                               </p>
-                              {signedPdfUrl ? (
-                                <button
-                                  type="button"
-                                  onClick={() => downloadSignedMdContract(sub, contractMeta)}
-                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all hover:brightness-95"
-                                  style={{ background: "rgba(123,142,200,0.12)", color: "#7B8EC8", border: "1px solid rgba(123,142,200,0.25)" }}
-                                >
-                                  <FileText className="w-3 h-3" />
-                                  {contractLabel} — signed by {sub.signed_by_name || "you"}
-                                </button>
-                              ) : null}
+                              <button
+                                type="button"
+                                onClick={() => downloadSignedMdContract(sub, contractMeta)}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all hover:brightness-95"
+                                style={{ background: "rgba(123,142,200,0.12)", color: "#7B8EC8", border: "1px solid rgba(123,142,200,0.25)" }}
+                              >
+                                <FileText className="w-3 h-3" />
+                                {contractLabel} — signed by {sub.signed_by_name || "you"}
+                              </button>
                             </div>
                           )}
-                          {(() => {
-                            const docs = getProtocolDocumentsForSubscription(sub);
-                            return docs.length > 0 ? (
-                              <div>
-                                <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: "rgba(30,37,53,0.45)" }}>Protocol Documents</p>
-                                <div className="flex flex-wrap gap-2">
-                                  {docs.map((doc, i) => (
-                                    <a key={i} href={doc.url} target="_blank" rel="noreferrer"
-                                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all hover:brightness-95"
-                                      style={{ background: "rgba(123,142,200,0.12)", color: "#7B8EC8", border: "1px solid rgba(123,142,200,0.25)" }}>
-                                      <FileText className="w-3 h-3" /> {doc.name}
-                                    </a>
-                                  ))}
-                                </div>
-                              </div>
-                            ) : null;
-                          })()}
+                          {serviceWiseDocs.length > 0 ? (
+                            <div>
+                              <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: "rgba(30,37,53,0.45)" }}>
+                                Documents by service
+                              </p>
+                              <ServiceWiseDocumentsBlock bundles={serviceWiseDocs} />
+                            </div>
+                          ) : null}
                           {sub.signed_by_name && (
                             <div className="flex items-center gap-2 text-xs" style={{ color: "rgba(30,37,53,0.5)" }}>
                               <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#C8E63C" }} />
@@ -2420,7 +2525,9 @@ export default function ProviderCredentialsCoverage() {
                           </p>
                           {window ? (
                             <p className="text-xs text-slate-500 mt-1">
-                              Time (EST): {formatEstClockTime(window.startAt)} - {formatEstClockTime(window.endAt)}
+                              Your time: {formatProviderWindowRange(window)}
+                              <br />
+                              Class schedule (US Eastern): {window.startLabelAdmin} – {window.endLabelAdmin}
                             </p>
                           ) : (
                             <p className="text-xs text-amber-700 mt-1">Session timing not configured by admin yet.</p>
@@ -2470,13 +2577,13 @@ export default function ProviderCredentialsCoverage() {
                     <div className="col-span-2">
                       <label className="text-xs font-semibold text-slate-600 mb-1.5 block">Service Applying For *</label>
                       <div className="space-y-1.5 max-h-40 overflow-y-auto">
-                        {applyableServiceTypes.length === 0 ? (
+                        {certSubmissionServices.length === 0 ? (
                           <p className="text-xs text-slate-500 px-3 py-2.5 rounded-lg border border-slate-200 bg-slate-50">
-                            You already have active MD coverage for all available services.
+                            No services need certificate submission right now.
                           </p>
-                        ) : applyableServiceTypes.map(s => (
-                          <button key={s.id} onClick={() => setCertForm(f => ({ ...f, service_type_id: s.id, service_type_name: s.name }))} className={`w-full text-left px-3 py-2.5 rounded-lg border transition-all ${certForm.service_type_id === s.id ? "border-orange-400 bg-orange-50" : "border-slate-200 hover:border-slate-300"}`}>
-                            <p className="text-sm font-medium text-slate-900">{s.name}</p>
+                        ) : certSubmissionServices.map(s => (
+                          <button key={s.id} onClick={() => setCertForm(f => ({ ...f, service_type_id: s.id, service_type_name: serviceDisplayName(s, serviceTypes) }))} className={`w-full text-left px-3 py-2.5 rounded-lg border transition-all ${certForm.service_type_id === s.id ? "border-orange-400 bg-orange-50" : "border-slate-200 hover:border-slate-300"}`}>
+                            <p className="text-sm font-medium text-slate-900">{serviceDisplayName(s, serviceTypes)}</p>
                             <p className="text-xs text-slate-400 capitalize">{s.category?.replace("_", " ")}</p>
                           </button>
                         ))}
@@ -2493,7 +2600,7 @@ export default function ProviderCredentialsCoverage() {
                   {!isUsableUploadedUrl(certFileUrl) && !uploadingCert && !uploadCertError && (
                     <p className="text-xs text-slate-500">Certification file is required before submit.</p>
                   )}
-                  <Button onClick={() => submitExternalCertMutation.mutate()} disabled={!certForm.cert_name || !certForm.issuing_school || !isUsableUploadedUrl(certFileUrl) || !certForm.service_type_id || applyableServiceTypes.length === 0 || submitExternalCertMutation.isPending} className="w-full" style={{ background: "#FA6F30", color: "#fff" }}>
+                  <Button onClick={() => submitExternalCertMutation.mutate()} disabled={!certForm.cert_name || !certForm.issuing_school || !isUsableUploadedUrl(certFileUrl) || !certForm.service_type_id || certSubmissionServices.length === 0 || submitExternalCertMutation.isPending} className="w-full" style={{ background: "#FA6F30", color: "#fff" }}>
                     {submitExternalCertMutation.isPending ? "Submitting..." : "Submit for Review"}
                   </Button>
                 </div>
@@ -2509,8 +2616,8 @@ export default function ProviderCredentialsCoverage() {
                   <p className="font-semibold text-slate-900">No eligible services yet</p>
                   <p className="text-sm text-slate-500">
                     {verifiedSession
-                      ? "Code verified. No service is unlocked yet for MD coverage from this course."
-                      : "Complete a NOVI course to unlock specific services."}
+                      ? "Code verified. Finish any remaining attestation steps for included services before applying."
+                      : "Complete required training and certification for each included service in a membership plan."}
                   </p>
                   {!verifiedSession && (
                     <Link to={createPageUrl("ProviderEnrollments")}><Button style={{ background: "#FA6F30", color: "#fff" }} className="w-full">Browse Courses</Button></Link>
@@ -2733,10 +2840,11 @@ export default function ProviderCredentialsCoverage() {
                 <p className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: "rgba(30,37,53,0.45)" }}>What Happens When You Cancel</p>
                 {[
                   "Your MD Board coverage is deactivated immediately",
+                  "Monthly billing stops — you will not be charged again next month for this membership",
                   "NOVI admin team is notified of your cancellation",
                   "All manufacturers you applied to are notified you can no longer order product under NOVI oversight",
                   "Your certifications and licenses remain on file",
-                  "You can reapply for coverage in the future",
+                  "You can reapply anytime — first membership is $279/mo, each additional is $129/mo",
                 ].map((item, i) => (
                   <div key={i} className="flex items-start gap-2">
                     <div className="w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0" style={{ background: "rgba(30,37,53,0.4)" }} />
@@ -2837,8 +2945,8 @@ export default function ProviderCredentialsCoverage() {
               </div>
               <p className="font-bold text-lg" style={{ color: "#1e2535", fontFamily: "'DM Serif Display', serif" }}>Cancellation Processed</p>
               <p className="text-sm" style={{ color: "rgba(30,37,53,0.6)" }}>
-                Your <strong>{cancelDialog.sub?.service_type_name}</strong> MD coverage has been cancelled. 
-                NOVI admin and any applicable manufacturers have been notified.
+                Your <strong>{cancelDialog.sub?.service_type_name}</strong> MD coverage has been cancelled.
+                Monthly billing for this membership has been stopped. NOVI admin and any applicable manufacturers have been notified.
               </p>
               <Button style={{ background: "#FA6F30", color: "#fff" }} onClick={() => { setCancelDialog({ open: false, sub: null }); setCancelStep(0); }}>
                 Done
@@ -2916,13 +3024,13 @@ export default function ProviderCredentialsCoverage() {
             <div className="space-y-4 pt-1">
               <p className="text-sm text-slate-500">Which service are you applying to provide on NOVI?</p>
               <div className="space-y-2 max-h-64 overflow-y-auto">
-                {applyableServiceTypes.length === 0 ? (
+                {certSubmissionServices.length === 0 ? (
                   <p className="text-sm text-slate-500 px-4 py-3 rounded-xl border border-slate-200 bg-slate-50">
-                    You already have active MD coverage for all available services.
+                    No services need certificate submission right now.
                   </p>
-                ) : applyableServiceTypes.map(s => (
-                  <button key={s.id} onClick={() => { setSubmitExtCertError(""); setExtCertForm(f => ({ ...f, service_type_id: s.id, service_type_name: s.name })); }} className={`w-full text-left px-4 py-3 rounded-xl border-2 transition-all flex items-center justify-between ${extCertForm.service_type_id === s.id ? "border-orange-400 bg-orange-50" : "border-slate-100 hover:border-slate-300"}`}>
-                    <div><p className="text-sm font-semibold text-slate-900">{s.name}</p><p className="text-xs text-slate-400 capitalize">{s.category?.replace("_", " ")}</p></div>
+                ) : certSubmissionServices.map(s => (
+                  <button key={s.id} onClick={() => { setSubmitExtCertError(""); setExtCertForm(f => ({ ...f, service_type_id: s.id, service_type_name: serviceDisplayName(s, serviceTypes) })); }} className={`w-full text-left px-4 py-3 rounded-xl border-2 transition-all flex items-center justify-between ${extCertForm.service_type_id === s.id ? "border-orange-400 bg-orange-50" : "border-slate-100 hover:border-slate-300"}`}>
+                    <div><p className="text-sm font-semibold text-slate-900">{serviceDisplayName(s, serviceTypes)}</p><p className="text-xs text-slate-400 capitalize">{s.category?.replace("_", " ")}</p></div>
                     {extCertForm.service_type_id === s.id && <CheckCircle className="w-5 h-5 text-orange-500 flex-shrink-0" />}
                   </button>
                 ))}
@@ -2930,7 +3038,7 @@ export default function ProviderCredentialsCoverage() {
               {submitExtCertError && <p className="text-xs text-red-500">{submitExtCertError}</p>}
               <div className="flex gap-2">
                 <Button variant="outline" onClick={() => { setSubmitExtCertError(""); setCertSubmitStep(0); }} className="flex-1">Back</Button>
-                <Button onClick={() => submitExtCertMutation.mutate()} disabled={!extCertForm.service_type_id || applyableServiceTypes.length === 0 || submitExtCertMutation.isPending} className="flex-1" style={{ background: "#FA6F30", color: "#fff" }}>
+                <Button onClick={() => submitExtCertMutation.mutate()} disabled={!extCertForm.service_type_id || certSubmissionServices.length === 0 || submitExtCertMutation.isPending} className="flex-1" style={{ background: "#FA6F30", color: "#fff" }}>
                   {submitExtCertMutation.isPending ? "Submitting..." : "Submit for Review"}
                 </Button>
               </div>

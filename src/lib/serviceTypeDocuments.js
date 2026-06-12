@@ -1,3 +1,9 @@
+import {
+  isMembershipPlan,
+  serviceDisplayName,
+  servicesInMembership,
+} from "@/lib/serviceTypeMembershipModel";
+
 /** True when a service-type document URL is a real uploaded http(s) link. */
 export function isUsableDocumentUrl(value) {
   const raw = String(value || "").trim();
@@ -47,6 +53,19 @@ export function findServiceTypeForSubscription(subscription, serviceTypes = []) 
   );
 }
 
+function tagProtocolDocument(doc, serviceType, allServiceTypes = []) {
+  if (!doc) return null;
+  const serviceId = String(serviceType?.id || doc?.service_type_id || "").trim();
+  const serviceName = String(
+    doc?.service_name || serviceDisplayName(serviceType, allServiceTypes) || serviceType?.name || ""
+  ).trim();
+  return {
+    ...doc,
+    ...(serviceId ? { service_type_id: serviceId } : {}),
+    ...(serviceName ? { service_name: serviceName } : {}),
+  };
+}
+
 /** Protocol docs for a membership (merged from included services) or a single service row. */
 export function resolveProtocolDocumentsFromServiceType(serviceType, allServiceTypes = []) {
   if (!serviceType) return [];
@@ -57,17 +76,71 @@ export function resolveProtocolDocumentsFromServiceType(serviceType, allServiceT
     const seen = new Set();
     for (const id of includedIds) {
       const child = (allServiceTypes || []).find((st) => String(st.id) === String(id));
+      if (!child) continue;
       for (const doc of filterProtocolDocuments(child?.protocol_document_urls)) {
-        const key = `${doc.name}::${doc.url}`;
+        const key = `${child.id}::${doc.name}::${doc.url}`;
         if (seen.has(key)) continue;
         seen.add(key);
-        merged.push(doc);
+        merged.push(tagProtocolDocument(doc, child, allServiceTypes));
       }
     }
     if (merged.length) return merged;
   }
 
-  return filterProtocolDocuments(serviceType.protocol_document_urls);
+  return filterProtocolDocuments(serviceType.protocol_document_urls).map((doc) =>
+    tagProtocolDocument(doc, serviceType, allServiceTypes)
+  );
+}
+
+/**
+ * Per-service MD contract + protocol docs for a membership subscription.
+ * Membership IV → IV Therapy, IV Inject each with their own admin uploads.
+ */
+export function buildServiceWiseDocumentBundles(subscription, allServiceTypes = [], options = {}) {
+  const membership = findServiceTypeForSubscription(subscription, allServiceTypes);
+  if (!membership) return [];
+
+  const globalContractUrl =
+    options.globalContractUrl || pickGlobalMdContractUrl(allServiceTypes);
+  const frozenProtocols = getProtocolDocumentsForSubscription(subscription);
+  const protocolsByServiceId = new Map();
+  for (const doc of frozenProtocols) {
+    const serviceId = String(doc?.service_type_id || "").trim() || "__ungrouped__";
+    if (!protocolsByServiceId.has(serviceId)) protocolsByServiceId.set(serviceId, []);
+    protocolsByServiceId.get(serviceId).push(doc);
+  }
+
+  const includedServices = servicesInMembership(membership, allServiceTypes);
+  const servicesToShow =
+    includedServices.length > 0
+      ? includedServices
+      : isMembershipPlan(membership)
+        ? []
+        : [membership];
+
+  return servicesToShow
+    .map((service) => {
+      const serviceId = String(service.id);
+      let protocols = protocolsByServiceId.get(serviceId) || [];
+      if (protocols.length === 0) {
+        protocols = filterProtocolDocuments(service.protocol_document_urls).map((doc) =>
+          tagProtocolDocument(doc, service, allServiceTypes)
+        );
+      }
+      const mdContractUrl = getMdContractUrl(service, {
+        allServiceTypes,
+        globalContractUrl,
+      });
+      if (!mdContractUrl && protocols.length === 0) return null;
+      return {
+        serviceId,
+        serviceName: serviceDisplayName(service, allServiceTypes),
+        mdContractUrl,
+        mdContractLabel: getMdContractDisplayName(service),
+        protocols,
+      };
+    })
+    .filter(Boolean);
 }
 
 /**

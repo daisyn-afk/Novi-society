@@ -91,7 +91,8 @@ const TEMPLATE_COURSE_COLUMNS = `
   getting_ready_info,
   pre_course_materials,
   tags,
-  linked_service_type_ids
+  linked_service_type_ids,
+  certification_name
 `;
 
 function serializeValueForColumn(column, value) {
@@ -135,6 +136,8 @@ function mergeScheduledWithTemplate(scheduled, template) {
     duration_hours: template.duration_hours != null ? template.duration_hours : scheduled.duration_hours,
     linked_service_type_ids:
       template.linked_service_type_ids != null ? template.linked_service_type_ids : scheduled.linked_service_type_ids,
+    certification_name:
+      nonempty(template.certification_name) ? template.certification_name : scheduled.certification_name,
     price: scheduled.price != null ? scheduled.price : template.price,
     location: nonempty(scheduled.location) ? scheduled.location : template.location,
   };

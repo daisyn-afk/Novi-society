@@ -20,6 +20,7 @@ import {
   enrichAppointmentGfeFields,
   enrichAppointmentsGfeFields,
 } from "../gfe/patientGfeService.js";
+import { autoSendAppointmentGfeBestEffort } from "../gfe/autoSendAppointmentGfe.js";
 import {
   sendAppointmentConfirmedPatientEmail,
   sendAppointmentCancelledPatientEmail,
@@ -454,9 +455,17 @@ appointmentsRouter.post("/", async (req, res, next) => {
           where a.id = $1`,
         [createdId]
       );
-      return res.status(201).json(await enrichAppointmentForClient(enriched[0] || rows[0]));
+      const created = await enrichAppointmentForClient(enriched[0] || rows[0]);
+      if (initialGfeStatus === "not_sent" && createdId) {
+        void autoSendAppointmentGfeBestEffort(createdId);
+      }
+      return res.status(201).json(created);
     }
-    return res.status(201).json(await enrichAppointmentForClient(rows[0]));
+    const created = await enrichAppointmentForClient(rows[0]);
+    if (initialGfeStatus === "not_sent" && created?.id) {
+      void autoSendAppointmentGfeBestEffort(created.id);
+    }
+    return res.status(201).json(created);
   } catch (error) {
     return next(error);
   }
