@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { adminApiRequest } from "@/api/adminApiRequest";
@@ -46,17 +46,24 @@ export default function MDProfile() {
     queryKey: ["md-profile-me"],
     queryFn: () => adminApiRequest("/admin/md-profile/me", { method: "GET" }),
   });
-  const { data: serviceOfferings } = useQuery({
-    queryKey: ["md-service-offerings-me"],
-    queryFn: () => adminApiRequest("/admin/md-service-offerings/me", { method: "GET" }),
-  });
 
   const [form, setForm] = useState({});
   const [stateLicenseRows, setStateLicenseRows] = useState([createEmptyStateLicenseRow()]);
   const [nationwide, setNationwide] = useState(false);
+  const [selectedServiceIds, setSelectedServiceIds] = useState([]);
+  const [servicesHydrated, setServicesHydrated] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [errors, setErrors] = useState({});
   const [submitAttempted, setSubmitAttempted] = useState(false);
+  const [saveError, setSaveError] = useState("");
+
+  const handleServiceSelectionChange = useCallback((ids) => {
+    setSelectedServiceIds(ids);
+  }, []);
+
+  const handleServicesHydrated = useCallback((ready) => {
+    setServicesHydrated(ready);
+  }, []);
 
   useEffect(() => {
     if (!profile) return;
@@ -77,19 +84,30 @@ export default function MDProfile() {
   }, [profile]);
 
   const save = useMutation({
-    mutationFn: () =>
-      adminApiRequest("/admin/md-profile/me", {
+    mutationFn: async () => {
+      const profile = await adminApiRequest("/admin/md-profile/me", {
         method: "PATCH",
         body: JSON.stringify({
           ...form,
           state_licenses: stateLicensesToPayload(stateLicenseRows),
           supervision_nationwide: nationwide,
         }),
-      }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["md-profile-me"] });
+      });
+      const services = await adminApiRequest("/admin/md-service-offerings/me", {
+        method: "PUT",
+        body: JSON.stringify({ service_type_ids: selectedServiceIds }),
+      });
+      return { profile, services };
+    },
+    onSuccess: ({ profile, services }) => {
+      qc.setQueryData(["md-profile-me"], profile);
+      qc.setQueryData(["md-service-offerings-me"], services);
       setErrors({});
+      setSaveError("");
       setSubmitAttempted(false);
+    },
+    onError: (error) => {
+      setSaveError(String(error?.message || "Save failed."));
     },
   });
 
@@ -113,8 +131,8 @@ export default function MDProfile() {
 
   useEffect(() => {
     if (!submitAttempted) return;
-    setErrors(validateForm(form));
-  }, [stateLicenseRows, nationwide, serviceOfferings, submitAttempted]); // eslint-disable-line react-hooks/exhaustive-deps
+    setErrors(validateForm(form, selectedServiceIds));
+  }, [stateLicenseRows, nationwide, selectedServiceIds, submitAttempted, form]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const requiredFieldKeys = new Set([
     "phone",
@@ -125,7 +143,7 @@ export default function MDProfile() {
     "medical_license_number",
   ]);
 
-  const validateForm = (data) => {
+  const validateForm = (data, serviceIds = selectedServiceIds) => {
     const nextErrors = {};
     const requiredMessage = "This field is required";
 
@@ -146,8 +164,8 @@ export default function MDProfile() {
         "Select Nationwide supervision or enter at least one state license before saving.";
     }
 
-    if (!serviceOfferings?.service_type_ids?.length) {
-      nextErrors.service_type_ids = "Select at least one supervised service and save it.";
+    if (!serviceIds.length) {
+      nextErrors.service_type_ids = "Select at least one supervised service.";
     }
 
     return nextErrors;
@@ -164,11 +182,14 @@ export default function MDProfile() {
 
   const handleSave = () => {
     setSubmitAttempted(true);
-    const validationErrors = validateForm(form);
+    setSaveError("");
+    const validationErrors = validateForm(form, selectedServiceIds);
     setErrors(validationErrors);
     if (Object.keys(validationErrors).length > 0) return;
     save.mutate();
   };
+
+  const validationErrorCount = Object.keys(errors).length;
 
   const initials =
     profile?.full_name
@@ -340,20 +361,30 @@ export default function MDProfile() {
           </div>
         </div>
         <div className="p-6">
-          <MDServiceOfferingsSection />
+          <MDServiceOfferingsSection
+            hideSaveButton
+            onSelectionChange={handleServiceSelectionChange}
+            onHydratedChange={handleServicesHydrated}
+          />
           {errors.service_type_ids && (
             <p className="text-xs text-red-600 mt-3">{errors.service_type_ids}</p>
           )}
         </div>
       </div>
 
+      {submitAttempted && validationErrorCount > 0 && (
+        <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          Fix {validationErrorCount} required field{validationErrorCount === 1 ? "" : "s"} above before saving.
+        </div>
+      )}
+
       <Button
         className="w-full h-12 font-bold text-base rounded-2xl"
         style={{ background: "#FA6F30", color: "#fff" }}
         onClick={handleSave}
-        disabled={save.isPending}
+        disabled={save.isPending || !servicesHydrated}
       >
-        {save.isPending ? "Saving…" : (
+        {save.isPending ? "Saving…" : !servicesHydrated ? "Loading services…" : (
           <>
             <Save className="w-4 h-4 mr-2" /> Save profile
           </>
@@ -364,8 +395,8 @@ export default function MDProfile() {
           <CheckCircle className="w-4 h-4" /> Profile saved
         </div>
       )}
-      {save.isError && (
-        <p className="text-sm text-center text-red-600">{String(save.error?.message || "Save failed.")}</p>
+      {save.isError && saveError && (
+        <p className="text-sm text-center text-red-600">{saveError}</p>
       )}
     </div>
   );
