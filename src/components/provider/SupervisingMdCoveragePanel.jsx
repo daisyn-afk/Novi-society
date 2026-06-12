@@ -44,7 +44,7 @@ export default function SupervisingMdCoveragePanel({
   const mdEmail = coverage.medical_director_email || "";
   const providerStates = coverage.provider_states || [];
   const licenses = coverage.relevant_state_licenses || [];
-  const isNationwide = assigned && coverage.supervision_nationwide !== false;
+  const isNationwide = assigned && coverage.supervision_nationwide === true;
 
   if (compact) {
     return (

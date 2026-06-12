@@ -20,6 +20,8 @@ import {
   isSessionDateEntrySoldOut,
   normalizeScheduledSessionDatesEntries,
   parseSessionDatesField,
+  formatCourseSessionDate,
+  parseCourseSessionDateLocal,
 } from "@/lib/sessionDateSeats";
 import { formatSessionScheduleLine } from "@/lib/appointmentDisplay";
 import {
@@ -453,8 +455,8 @@ export default function NoviOfferingsPortal({ children }) {
                 {(() => {
                   const upcomingDates = getUpcomingSessionEntries(selectedCourse.session_dates).sort(
                     (a, b) =>
-                      new Date(String(a?.date || a?.session_date || "").split("T")[0] + "T12:00:00") -
-                      new Date(String(b?.date || b?.session_date || "").split("T")[0] + "T12:00:00")
+                      (parseCourseSessionDateLocal(a?.date || a?.session_date)?.getTime() || 0) -
+                      (parseCourseSessionDateLocal(b?.date || b?.session_date)?.getTime() || 0)
                   );
 
                   if (upcomingDates.length === 0) {
@@ -514,7 +516,7 @@ export default function NoviOfferingsPortal({ children }) {
                                   </p>
                                 )}
                                 <p className="font-semibold text-sm" style={{ color: dateSoldOut ? muted : strong }}>
-                                  {new Date(String(session.date || session.session_date || "").split("T")[0] + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
+                                  {formatCourseSessionDate(session.date || session.session_date)}
                                 </p>
                                 {(session.start_time || session.end_time || session.location) && (
                                   <p className="text-xs mt-0.5 whitespace-nowrap overflow-hidden text-ellipsis" style={{ color: dateSoldOut ? muted : "rgba(30,37,53,0.5)" }}>
@@ -581,7 +583,7 @@ export default function NoviOfferingsPortal({ children }) {
                 <div className="flex items-center gap-3 p-3 rounded-xl" style={{ background: "rgba(200,230,60,0.08)", border: "1px solid rgba(200,230,60,0.25)" }}>
                   <Calendar className="w-4 h-4 flex-shrink-0" style={{ color: "#5a7a20" }} />
                   <p className="text-sm font-semibold" style={{ color: "#3d5a0a" }}>
-                    {new Date(selectedCourseDate).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
+                    {formatCourseSessionDate(selectedCourseDate)}
                   </p>
                   <button type="button" onClick={() => setCourseStep("dates")} className="ml-auto text-xs underline" style={{ color: "rgba(30,37,53,0.45)" }}>
                     Change
@@ -794,7 +796,7 @@ export default function NoviOfferingsPortal({ children }) {
                 <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full" style={{ background: "rgba(200,230,60,0.1)", border: "1px solid rgba(200,230,60,0.25)" }}>
                   <Calendar className="w-4 h-4" style={{ color: "#5a7a20" }} />
                   <span className="text-sm font-semibold" style={{ color: "#3d5a0a" }}>
-                    {new Date(selectedCourseDate).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}
+                    {formatCourseSessionDate(selectedCourseDate, { month: "long", day: "numeric", year: "numeric" })}
                   </span>
                 </div>
               )}

@@ -154,13 +154,22 @@ export default function AdminCourses() {
   const saveTemplate = useMutation({
     mutationFn: (data) =>
       editingTemplate
-        ? base44.entities.Course.update(editingTemplate, data)
+        ? base44.entities.Course.update(editingTemplate, { ...data, type: "template" })
         : base44.entities.Course.create({ ...data, type: "template" }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["courses", "base44"] });
       setTemplateOpen(false);
       setTemplateForm(EMPTY_TEMPLATE);
       setEditingTemplate(null);
+      toast({ title: editingTemplate ? "Template updated" : "Template created" });
+    },
+    onError: (err) => {
+      toast({
+        title: "Could not save template",
+        description: err?.message || "Try again.",
+        variant: "destructive",
+      });
+      void qc.invalidateQueries({ queryKey: ["courses", "base44"] });
     },
   });
   const removeTemplate = useMutation({

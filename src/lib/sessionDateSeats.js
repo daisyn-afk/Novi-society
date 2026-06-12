@@ -1,5 +1,32 @@
 /** Seat counts on each `session_dates[]` entry — mirrors backend/admin/lib/sessionDateSeats.js */
 
+/** Parse a course session `YYYY-MM-DD` (or ISO prefix) as a local calendar day — avoids UTC shift in US TZ. */
+export function parseCourseSessionDateLocal(value) {
+  if (value == null || value === "") return null;
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    return new Date(value.getFullYear(), value.getMonth(), value.getDate());
+  }
+  const head = String(value).trim().split("T")[0];
+  const m = head.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const dt = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return Number.isNaN(dt.getTime()) ? null : dt;
+}
+
+/** Format a course session date for display (defaults to full weekday + month + day + year). */
+export function formatCourseSessionDate(value, localeOptions) {
+  const dt = parseCourseSessionDateLocal(value);
+  if (!dt) {
+    const head = String(value || "").trim().split("T")[0];
+    return head || "";
+  }
+  return dt.toLocaleDateString(
+    "en-US",
+    localeOptions || { weekday: "long", month: "long", day: "numeric", year: "numeric" }
+  );
+}
+
 export function normalizeCourseDateInput(value) {
   if (value == null) return null;
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
@@ -12,9 +39,9 @@ export function normalizeCourseDateInput(value) {
 export function toSessionDateKey(value) {
   if (value == null || value === "") return null;
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    const y = value.getUTCFullYear();
-    const m = String(value.getUTCMonth() + 1).padStart(2, "0");
-    const d = String(value.getUTCDate()).padStart(2, "0");
+    const y = value.getFullYear();
+    const m = String(value.getMonth() + 1).padStart(2, "0");
+    const d = String(value.getDate()).padStart(2, "0");
     return `${y}-${m}-${d}`;
   }
   const s = String(value).trim();
@@ -213,8 +240,8 @@ export function findSessionEntryByDate(sessionDates, courseDate) {
 export function isUpcomingSessionDateEntry(entry, now = new Date()) {
   const raw = entry?.date || entry?.session_date;
   if (!raw) return false;
-  const d = new Date(String(raw).split("T")[0] + "T12:00:00");
-  if (Number.isNaN(d.getTime())) return false;
+  const d = parseCourseSessionDateLocal(raw);
+  if (!d) return false;
   const t = new Date(now);
   t.setHours(0, 0, 0, 0);
   d.setHours(0, 0, 0, 0);
@@ -253,9 +280,9 @@ export function isCourseDateSoldOut(course, courseDate, now = new Date()) {
 export function formatMinAvailableSeatsLabel(course) {
   const sessions = Array.isArray(course?.session_dates) ? course.session_dates : [];
   const upcoming = getUpcomingSessionEntries(sessions).sort((a, b) => {
-    const da = new Date(String(a?.date || a?.session_date || "").split("T")[0] + "T12:00:00");
-    const db = new Date(String(b?.date || b?.session_date || "").split("T")[0] + "T12:00:00");
-    return da.getTime() - db.getTime();
+    const da = parseCourseSessionDateLocal(a?.date || a?.session_date);
+    const db = parseCourseSessionDateLocal(b?.date || b?.session_date);
+    return (da?.getTime() || 0) - (db?.getTime() || 0);
   });
   const valid = upcoming.filter(hasValidSessionSeatEntry);
   if (valid.length > 0) {

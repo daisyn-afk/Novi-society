@@ -119,9 +119,15 @@ export default function Admincourses() {
   const [regenErrorDialog, setRegenErrorDialog] = useState({ open: false, title: "", description: "" });
   const [sessionForm, setSessionForm] = useState({ enrollment_id: "", course_id: "", course_title: "", provider_id: "", provider_name: "", provider_email: "", session_date: "", session_code: generateCode() });
 
-  const { data: templates = [], isLoading: loadingTemplates } = useQuery({
+  const {
+    data: templates = [],
+    isLoading: loadingTemplates,
+    isError: templatesError,
+    error: templatesLoadError,
+  } = useQuery({
     queryKey: ["template-courses"],
-    queryFn: () => templateCoursesApi.list()
+    queryFn: () => templateCoursesApi.list(),
+    refetchOnWindowFocus: true,
   });
   const { data: allCourses = [], isLoading: loadingCourses } = useQuery({
     queryKey: ["courses", "admin-api-scheduled"],
@@ -207,52 +213,32 @@ export default function Admincourses() {
         ? templateCoursesApi.update(editingId, payload)
         : templateCoursesApi.create(payload);
     },
-    onMutate: async ({ data, editingId }) => {
-      const isEditing = Boolean(editingId);
-      const tempId = `temp-${Date.now()}`;
-      await qc.cancelQueries({ queryKey: ["template-courses"] });
-      const previousTemplates = qc.getQueryData(["template-courses"]) || [];
-
-      const optimisticTemplate = {
-        ...data,
-        id: editingId || tempId,
-        type: "template",
-        template_id: null,
-        updated_date: new Date().toISOString(),
-      };
-
+    onSuccess: (savedTemplate, { editingId }) => {
       qc.setQueryData(["template-courses"], (current = []) => {
-        if (isEditing) {
-          return current.map((t) => (t.id === editingId ? { ...t, ...optimisticTemplate } : t));
+        if (editingId) {
+          return current.map((t) => (t.id === editingId ? savedTemplate : t));
         }
-        return [optimisticTemplate, ...current];
+        const withoutDup = current.filter((t) => t.id !== savedTemplate.id);
+        return [savedTemplate, ...withoutDup];
       });
-
       setTemplateOpen(false);
       setTemplateForm(EMPTY_TEMPLATE);
       setEditingTemplate(null);
-      return { previousTemplates, tempId, isEditing, editingId };
+      toast({ title: editingId ? "Template updated" : "Template created" });
     },
-    onSuccess: (savedTemplate, _vars, context) => {
-      qc.setQueryData(["template-courses"], (current = []) => {
-        if (context?.isEditing) {
-          return current.map((t) => (t.id === context.editingId ? savedTemplate : t));
-        }
-        return current.map((t) => (t.id === context?.tempId ? savedTemplate : t));
-      });
-    },
-    onError: (err, _vars, context) => {
-      if (context?.previousTemplates) {
-        qc.setQueryData(["template-courses"], context.previousTemplates);
-      }
+    onError: (err) => {
+      const isTimeout =
+        String(err?.name || "").toLowerCase() === "timeouterror" ||
+        String(err?.message || "").toLowerCase().includes("timed out");
       toast({
-        title: "Could not save template",
-        description: err?.message || "Check that migrations are applied, DATABASE_URL is set, and the admin API is running (port 8787).",
+        title: isTimeout ? "Save is still processing" : "Could not save template",
+        description: isTimeout
+          ? "The server may still be saving. Refreshing the list to check…"
+          : err?.message || "Check that migrations are applied, DATABASE_URL is set, and the admin API is running.",
         variant: "destructive",
       });
-    },
-    onSettled: () => {
-      qc.invalidateQueries({ queryKey: ["template-courses"] });
+      // Reconcile with the server — a client timeout does not mean the write failed.
+      void qc.invalidateQueries({ queryKey: ["template-courses"] });
     },
   });
   const removeTemplate = useMutation({
@@ -501,9 +487,21 @@ export default function Admincourses() {
       </div>
 
       {/* ── TEMPLATES TAB ── */}
+      {tab === "templates" && templatesError && (
+        <div className="rounded-2xl px-4 py-3 mb-4 text-sm" style={{ background: "rgba(218,106,99,0.08)", color: "#DA6A63", border: "1px solid rgba(218,106,99,0.2)" }}>
+          Could not load templates: {templatesLoadError?.message || "API error"}. If this persists on Vercel, redeploy the latest backend.
+        </div>
+      )}
+
       {tab === "templates" && (
         loadingTemplates ? (
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">{[1,2,3].map(i => <div key={i} className="h-48 rounded-3xl animate-pulse" style={{ background: "rgba(0,0,0,0.05)" }} />)}</div>
+        ) : templatesError && templates.length === 0 ? (
+          <div className="rounded-3xl py-16 text-center" style={{ background: "#fff", border: "1px solid rgba(0,0,0,0.06)" }}>
+            <LayoutTemplate className="w-10 h-10 mx-auto mb-3" style={{ color: "#d0d5e0" }} />
+            <p className="font-semibold mb-1" style={{ color: "#1a2540" }}>Could not load templates</p>
+            <p className="text-sm mb-4" style={{ color: "#b0b8cc" }}>{templatesLoadError?.message || "API error"}</p>
+          </div>
         ) : templates.length === 0 ? (
           <div className="rounded-3xl py-16 text-center" style={{ background: "#fff", border: "1px solid rgba(0,0,0,0.06)" }}>
             <LayoutTemplate className="w-10 h-10 mx-auto mb-3" style={{ color: "#d0d5e0" }} />

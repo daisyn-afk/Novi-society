@@ -1494,13 +1494,14 @@ async function inviteUserIfNeeded(
 }
 
 export function getStripeWebhookSecret() {
-  return stripeWebhookSecret;
+  return process.env.STRIPE_WEBHOOK_SECRET || "";
 }
 
 export function verifyStripeWebhook(rawBodyBuffer, signatureHeader) {
+  const secret = getStripeWebhookSecret();
   if (!stripe) throw new Error("STRIPE_SECRET_KEY is not configured.");
-  if (!stripeWebhookSecret) throw new Error("STRIPE_WEBHOOK_SECRET is not configured.");
-  return stripe.webhooks.constructEvent(rawBodyBuffer, signatureHeader, stripeWebhookSecret);
+  if (!secret) throw new Error("STRIPE_WEBHOOK_SECRET is not configured.");
+  return stripe.webhooks.constructEvent(rawBodyBuffer, signatureHeader, secret);
 }
 
 export async function processCompletedCheckoutSession(session) {

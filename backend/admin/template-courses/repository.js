@@ -151,6 +151,10 @@ async function fetchCertificationsForTemplateIds(templateIds = []) {
   return byTemplateId;
 }
 
+function runDb(client, text, params = []) {
+  return client ? client.query(text, params) : query(text, params);
+}
+
 async function upsertServiceTypes(client, payload, serviceTypeNameLookup) {
   const ids = new Set([
     ...(payload.linked_service_type_ids || []),
@@ -176,7 +180,8 @@ async function upsertServiceTypes(client, payload, serviceTypeNameLookup) {
     return `($${base + 1}, $${base + 2}, $${base + 3}, now())`;
   });
 
-  await client.query(
+  await runDb(
+    client,
     `insert into public.service_type (id, name, category, updated_at)
      values ${tuples.join(", ")}
      on conflict (id) do update set
@@ -187,7 +192,8 @@ async function upsertServiceTypes(client, payload, serviceTypeNameLookup) {
 }
 
 async function replaceCertifications(client, templateCourseId, awards) {
-  await client.query(
+  await runDb(
+    client,
     `delete from public.certification
       where template_course_id = $1
         and provider_id is null
@@ -210,7 +216,8 @@ async function replaceCertifications(client, templateCourseId, awards) {
     return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5})`;
   });
 
-  await client.query(
+  await runDb(
+    client,
     `insert into public.certification
       (template_course_id, service_type_id, service_type_name, cert_name, sort_order)
      values ${tuples.join(", ")}`,
@@ -253,200 +260,162 @@ export async function getTemplateCourseById(id) {
 }
 
 export async function createTemplateCourse(payload, createdByEmail, serviceTypeNameLookup) {
-  const client = await pool.connect();
   const lookup =
     serviceTypeNameLookup instanceof Map
       ? serviceTypeNameLookup
       : new Map(Object.entries(serviceTypeNameLookup || {}));
 
-  try {
-    await client.query("begin");
-    await upsertServiceTypes(client, payload, lookup);
+  // No explicit BEGIN/COMMIT — Supabase transaction pooler (port 6543) used on
+  // Vercel does not reliably support multi-statement transactions. Each
+  // statement auto-commits via runDb(null, …) → pool.query().
+  await upsertServiceTypes(null, payload, lookup);
 
-    const { rows } = await client.query(
-      `insert into public.template_courses (
-        created_by, title, description, category, level,
-        price, duration_hours, location, max_seats, available_seats,
-        instructor_name, instructor_bio, cover_image_url,
-        syllabus, requirements, what_to_bring, getting_ready_info,
-        pre_course_materials, session_dates, tags, is_active, is_featured,
-        platform_coverage, linked_service_type_ids, trainer_prep_supply_list_id, trainer_prep_supply_item_ids, certification_name
-      ) values (
-        $1,$2,$3,$4::course_category_enum,$5::course_level_enum,
-        $6,$7,$8,$9,$10,
-        $11,$12,$13,
-        $14,$15,$16,$17,
-        $18::jsonb,$19::jsonb,$20,$21,$22,
-        $23,$24,$25,$26,$27
-      )
-      returning *`,
-      [
-        createdByEmail ?? null,
-        payload.title,
-        payload.description,
-        payload.category,
-        payload.level,
-        payload.price,
-        payload.duration_hours,
-        payload.location,
-        payload.max_seats,
-        payload.available_seats,
-        payload.instructor_name,
-        payload.instructor_bio,
-        payload.cover_image_url,
-        payload.syllabus,
-        payload.requirements,
-        payload.what_to_bring,
-        payload.getting_ready_info,
-        JSON.stringify(payload.pre_course_materials || []),
-        JSON.stringify(payload.session_dates || []),
-        payload.tags || [],
-        payload.is_active,
-        payload.is_featured,
-        payload.platform_coverage || [],
-        payload.linked_service_type_ids || [],
-        payload.trainer_prep_supply_list_id,
-        payload.trainer_prep_supply_item_ids || [],
-        payload.certification_name
-      ]
-    );
+  const { rows } = await query(
+    `insert into public.template_courses (
+      created_by, title, description, category, level,
+      price, duration_hours, location, max_seats, available_seats,
+      instructor_name, instructor_bio, cover_image_url,
+      syllabus, requirements, what_to_bring, getting_ready_info,
+      pre_course_materials, session_dates, tags, is_active, is_featured,
+      platform_coverage, linked_service_type_ids, trainer_prep_supply_list_id, trainer_prep_supply_item_ids, certification_name
+    ) values (
+      $1,$2,$3,$4::course_category_enum,$5::course_level_enum,
+      $6,$7,$8,$9,$10,
+      $11,$12,$13,
+      $14,$15,$16,$17,
+      $18::jsonb,$19::jsonb,$20,$21,$22,
+      $23,$24,$25,$26,$27
+    )
+    returning *`,
+    [
+      createdByEmail ?? null,
+      payload.title,
+      payload.description,
+      payload.category,
+      payload.level,
+      payload.price,
+      payload.duration_hours,
+      payload.location,
+      payload.max_seats,
+      payload.available_seats,
+      payload.instructor_name,
+      payload.instructor_bio,
+      payload.cover_image_url,
+      payload.syllabus,
+      payload.requirements,
+      payload.what_to_bring,
+      payload.getting_ready_info,
+      JSON.stringify(payload.pre_course_materials || []),
+      JSON.stringify(payload.session_dates || []),
+      payload.tags || [],
+      payload.is_active,
+      payload.is_featured,
+      payload.platform_coverage || [],
+      payload.linked_service_type_ids || [],
+      payload.trainer_prep_supply_list_id,
+      payload.trainer_prep_supply_item_ids || [],
+      payload.certification_name
+    ]
+  );
 
-    const row = rows[0];
-    const serviceTypes = await loadServiceTypesForCertDerivation();
-    const derivedAwards = buildCertAwardsFromLinkedServices(payload.linked_service_type_ids || [], serviceTypes);
-    const normalizedAwards = normalizeAwardsForApi(derivedAwards);
-    const certificationName =
-      String(payload.certification_name || "").trim() ||
-      resolveCourseCompletionCertificateName({ ...row, ...payload }, serviceTypes);
-    await replaceCertifications(client, row.id, normalizedAwards);
-    if (certificationName) {
-      await client.query(
-        `update public.template_courses set certification_name = $2 where id = $1`,
-        [row.id, certificationName]
-      );
-      row.certification_name = certificationName;
-    }
-    await client.query("commit");
-    return rowToApi(row, normalizedAwards);
-  } catch (e) {
-    await client.query("rollback").catch(() => {});
-    throw e;
-  } finally {
-    client.release();
+  const row = rows[0];
+  const serviceTypes = await loadServiceTypesForCertDerivation();
+  const derivedAwards = buildCertAwardsFromLinkedServices(payload.linked_service_type_ids || [], serviceTypes);
+  const normalizedAwards = normalizeAwardsForApi(derivedAwards);
+  const certificationName =
+    String(payload.certification_name || "").trim() ||
+    resolveCourseCompletionCertificateName({ ...row, ...payload }, serviceTypes);
+  await replaceCertifications(null, row.id, normalizedAwards);
+  if (certificationName) {
+    await query(`update public.template_courses set certification_name = $2 where id = $1`, [
+      row.id,
+      certificationName
+    ]);
+    row.certification_name = certificationName;
   }
+  return rowToApi(row, normalizedAwards);
 }
 
 export async function updateTemplateCourse(id, payload, serviceTypeNameLookup) {
-  const client = await pool.connect();
   const lookup =
     serviceTypeNameLookup instanceof Map
       ? serviceTypeNameLookup
       : new Map(Object.entries(serviceTypeNameLookup || {}));
 
-  try {
-    await client.query("begin");
-    await upsertServiceTypes(client, payload, lookup);
+  await upsertServiceTypes(null, payload, lookup);
 
-    const { rows } = await client.query(
-      `update public.template_courses set
-        title = $2, description = $3, category = $4::course_category_enum, level = $5::course_level_enum,
-        price = $6, duration_hours = $7, location = $8, max_seats = $9, available_seats = $10,
-        instructor_name = $11, instructor_bio = $12, cover_image_url = $13,
-        syllabus = $14, requirements = $15, what_to_bring = $16, getting_ready_info = $17,
-        pre_course_materials = $18::jsonb, session_dates = $19::jsonb, tags = $20,
-        is_active = $21, is_featured = $22,
-        platform_coverage = $23, linked_service_type_ids = $24, trainer_prep_supply_list_id = $25, trainer_prep_supply_item_ids = $26, certification_name = $27
-      where id = $1
-      returning *`,
-      [
-        id,
-        payload.title,
-        payload.description,
-        payload.category,
-        payload.level,
-        payload.price,
-        payload.duration_hours,
-        payload.location,
-        payload.max_seats,
-        payload.available_seats,
-        payload.instructor_name,
-        payload.instructor_bio,
-        payload.cover_image_url,
-        payload.syllabus,
-        payload.requirements,
-        payload.what_to_bring,
-        payload.getting_ready_info,
-        JSON.stringify(payload.pre_course_materials || []),
-        JSON.stringify(payload.session_dates || []),
-        payload.tags || [],
-        payload.is_active,
-        payload.is_featured,
-        payload.platform_coverage || [],
-        payload.linked_service_type_ids || [],
-        payload.trainer_prep_supply_list_id,
-        payload.trainer_prep_supply_item_ids || [],
-        payload.certification_name
-      ]
-    );
-    const row = rows[0];
-    if (!row) {
-      await client.query("rollback");
-      return null;
-    }
+  const { rows } = await query(
+    `update public.template_courses set
+      title = $2, description = $3, category = $4::course_category_enum, level = $5::course_level_enum,
+      price = $6, duration_hours = $7, location = $8, max_seats = $9, available_seats = $10,
+      instructor_name = $11, instructor_bio = $12, cover_image_url = $13,
+      syllabus = $14, requirements = $15, what_to_bring = $16, getting_ready_info = $17,
+      pre_course_materials = $18::jsonb, session_dates = $19::jsonb, tags = $20,
+      is_active = $21, is_featured = $22,
+      platform_coverage = $23, linked_service_type_ids = $24, trainer_prep_supply_list_id = $25, trainer_prep_supply_item_ids = $26, certification_name = $27
+    where id = $1
+    returning *`,
+    [
+      id,
+      payload.title,
+      payload.description,
+      payload.category,
+      payload.level,
+      payload.price,
+      payload.duration_hours,
+      payload.location,
+      payload.max_seats,
+      payload.available_seats,
+      payload.instructor_name,
+      payload.instructor_bio,
+      payload.cover_image_url,
+      payload.syllabus,
+      payload.requirements,
+      payload.what_to_bring,
+      payload.getting_ready_info,
+      JSON.stringify(payload.pre_course_materials || []),
+      JSON.stringify(payload.session_dates || []),
+      payload.tags || [],
+      payload.is_active,
+      payload.is_featured,
+      payload.platform_coverage || [],
+      payload.linked_service_type_ids || [],
+      payload.trainer_prep_supply_list_id,
+      payload.trainer_prep_supply_item_ids || [],
+      payload.certification_name
+    ]
+  );
+  const row = rows[0];
+  if (!row) return null;
 
-    const serviceTypes = await loadServiceTypesForCertDerivation();
-    const derivedAwards = buildCertAwardsFromLinkedServices(payload.linked_service_type_ids || [], serviceTypes);
-    const normalizedAwards = normalizeAwardsForApi(derivedAwards);
-    const certificationName =
-      String(payload.certification_name || "").trim() ||
-      resolveCourseCompletionCertificateName({ ...row, ...payload }, serviceTypes);
-    await replaceCertifications(client, id, normalizedAwards);
-    if (certificationName) {
-      await client.query(
-        `update public.template_courses set certification_name = $2 where id = $1`,
-        [id, certificationName]
-      );
-      row.certification_name = certificationName;
-    }
-    await client.query(
-      `update public.scheduled_courses
-       set pre_course_materials = $2::jsonb
-       where template_id = $1`,
-      [id, JSON.stringify(payload.pre_course_materials || [])]
-    );
-    await client.query("commit");
-    return rowToApi(row, normalizedAwards);
-  } catch (e) {
-    await client.query("rollback").catch(() => {});
-    throw e;
-  } finally {
-    client.release();
+  const serviceTypes = await loadServiceTypesForCertDerivation();
+  const derivedAwards = buildCertAwardsFromLinkedServices(payload.linked_service_type_ids || [], serviceTypes);
+  const normalizedAwards = normalizeAwardsForApi(derivedAwards);
+  const certificationName =
+    String(payload.certification_name || "").trim() ||
+    resolveCourseCompletionCertificateName({ ...row, ...payload }, serviceTypes);
+  await replaceCertifications(null, id, normalizedAwards);
+  if (certificationName) {
+    await query(`update public.template_courses set certification_name = $2 where id = $1`, [
+      id,
+      certificationName
+    ]);
+    row.certification_name = certificationName;
   }
+  await query(
+    `update public.scheduled_courses
+     set pre_course_materials = $2::jsonb
+     where template_id = $1`,
+    [id, JSON.stringify(payload.pre_course_materials || [])]
+  );
+  return rowToApi(row, normalizedAwards);
 }
 
 export async function deleteTemplateCourse(id) {
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
+  // Remove scheduled courses linked to this template first so template delete
+  // cannot violate scheduled_courses_template_id_fkey.
+  await query(`delete from public.scheduled_courses where template_id = $1`, [id]);
 
-    // Remove scheduled courses linked to this template first so template delete
-    // cannot violate scheduled_courses_template_id_fkey.
-    await client.query(
-      `delete from public.scheduled_courses where template_id = $1`,
-      [id]
-    );
-
-    const { rowCount } = await client.query(
-      `delete from public.template_courses where id = $1`,
-      [id]
-    );
-
-    await client.query("commit");
-    return rowCount > 0;
-  } catch (error) {
-    await client.query("rollback").catch(() => {});
-    throw error;
-  } finally {
-    client.release();
-  }
+  const { rowCount } = await query(`delete from public.template_courses where id = $1`, [id]);
+  return rowCount > 0;
 }

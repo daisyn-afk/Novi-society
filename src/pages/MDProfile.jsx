@@ -53,7 +53,7 @@ export default function MDProfile() {
 
   const [form, setForm] = useState({});
   const [stateLicenseRows, setStateLicenseRows] = useState([createEmptyStateLicenseRow()]);
-  const [nationwide, setNationwide] = useState(true);
+  const [nationwide, setNationwide] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [errors, setErrors] = useState({});
   const [submitAttempted, setSubmitAttempted] = useState(false);
@@ -73,7 +73,7 @@ export default function MDProfile() {
       board_certifications: profile.board_certifications || "",
     });
     setStateLicenseRows(stateLicensesFromProfile(profile));
-    setNationwide(profile.supervision_nationwide !== false);
+    setNationwide(profile.supervision_nationwide === true);
   }, [profile]);
 
   const save = useMutation({
@@ -142,7 +142,8 @@ export default function MDProfile() {
     if (!data.medical_license_number?.trim()) nextErrors.medical_license_number = requiredMessage;
 
     if (!nationwide && licensedStatesFromRows(stateLicenseRows).length === 0) {
-      nextErrors.licensed_states = "Enter at least one state license or enable Nationwide supervision.";
+      nextErrors.licensed_states =
+        "Select Nationwide supervision or enter at least one state license before saving.";
     }
 
     if (!serviceOfferings?.service_type_ids?.length) {

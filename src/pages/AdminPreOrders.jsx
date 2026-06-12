@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/use-toast";
 import { format } from "date-fns";
+import { formatCourseSessionDate } from "@/lib/sessionDateSeats";
 
 const STATUS_COLORS = {
   pending_approval: { bg: "rgba(250,111,48,0.15)", color: "#FA6F30", label: "Pending Approval" },
@@ -136,7 +137,7 @@ function PreOrderRow({ order, onApprove, onReject, onSendPasswordReset, isProces
                 <>
                   {order.customer_email} · {order.order_type === "course" ? order.course_title : order.service_name}
                   {order.course_date
-                    ? ` · ${new Date(order.course_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`
+                    ? ` · ${formatCourseSessionDate(order.course_date, { month: "short", day: "numeric", year: "numeric" })}`
                     : ""}
                 </>
               )}
@@ -173,7 +174,7 @@ function PreOrderRow({ order, onApprove, onReject, onSendPasswordReset, isProces
               <p className="text-sm font-semibold" style={{ color: "#1e2535" }}>{order.course_title || order.service_name}</p>
               {order.course_date && (
                 <p className="text-xs" style={{ color: "rgba(30,37,53,0.55)" }}>
-                  {new Date(order.course_date).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
+                  {formatCourseSessionDate(order.course_date)}
                 </p>
               )}
             </div>

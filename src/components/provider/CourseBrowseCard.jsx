@@ -1,5 +1,5 @@
 import { Clock, MapPin, Award } from "lucide-react";
-import { formatMinAvailableSeatsLabel, isCourseFullySoldOut } from "@/lib/sessionDateSeats";
+import { formatMinAvailableSeatsLabel, isCourseFullySoldOut, formatCourseSessionDate } from "@/lib/sessionDateSeats";
 import { formatSessionScheduleLine } from "@/lib/appointmentDisplay";
 
 const categoryMeta = {
@@ -96,7 +96,7 @@ export default function CourseBrowseCard({ course, isEnrolled, onSelect, enrollm
             </span>
           )}
           {nextDate && (
-            <span>{new Date(nextDate).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
+            <span>{formatCourseSessionDate(nextDate, { month: "short", day: "numeric" })}</span>
           )}
         </div>
         {nextScheduleLine && (
