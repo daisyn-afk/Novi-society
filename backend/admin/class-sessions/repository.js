@@ -1,4 +1,9 @@
 import { query } from "../db.js";
+import {
+  attachRedemptionStatsToSessions,
+  countRedemptionsForSession,
+  isSharedClassDateSession,
+} from "./redemptions.js";
 
 let ensureTablePromise = null;
 
@@ -114,7 +119,25 @@ export async function listClassSessions(filters = {}) {
      order by created_date desc`,
     params
   );
-  return rows.map(rowToApi);
+  const sessions = rows.map(rowToApi);
+  const sharedCourseIds = [
+    ...new Set(
+      sessions
+        .filter(isSharedClassDateSession)
+        .map((session) => String(session.course_id || ""))
+        .filter(Boolean)
+    ),
+  ];
+  if (!sharedCourseIds.length) return sessions;
+
+  const { rows: courseRows } = await query(
+    `select id, session_dates
+     from public.scheduled_courses
+     where id = any($1::uuid[])`,
+    [sharedCourseIds]
+  );
+  const coursesById = new Map(courseRows.map((row) => [String(row.id), row]));
+  return attachRedemptionStatsToSessions(sessions, coursesById);
 }
 
 export async function createClassSession(body) {
@@ -182,10 +205,19 @@ export async function updateClassSession(id, patch) {
   }
 
   // Once redeemed, class code must not be regenerated.
-  if (keys.includes("session_code") && existing.code_used) {
-    const err = new Error("Cannot regenerate class code after it has been redeemed.");
-    err.statusCode = 400;
-    throw err;
+  if (keys.includes("session_code")) {
+    if (isSharedClassDateSession(existing)) {
+      const redemptionCount = await countRedemptionsForSession(existing.id);
+      if (redemptionCount > 0) {
+        const err = new Error("Cannot regenerate class code after it has been redeemed.");
+        err.statusCode = 400;
+        throw err;
+      }
+    } else if (existing.code_used) {
+      const err = new Error("Cannot regenerate class code after it has been redeemed.");
+      err.statusCode = 400;
+      throw err;
+    }
   }
 
   const sets = [];

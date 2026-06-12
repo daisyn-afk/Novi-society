@@ -14,12 +14,10 @@ export function buildUnlockedCourseIds({ enrollments = [], sessions = [], course
   }
 
   for (const session of sessions || []) {
-    if (!session?.code_used) continue;
     const enrollmentKey = String(session?.enrollment_id || "");
-    const classDateParts = enrollmentKey.startsWith("class_date:") ? enrollmentKey.split(":") : [];
-    const courseId = String(
-      session?.course_id || (classDateParts.length >= 3 ? classDateParts[1] : "") || ""
-    ).trim();
+    if (enrollmentKey.startsWith("class_date:")) continue;
+    if (!session?.code_used) continue;
+    const courseId = String(session?.course_id || "").trim();
     if (courseId) unlocked.add(courseId);
   }
 
@@ -64,12 +62,30 @@ function hasNoviTrainingCert(serviceTypeId, certifications = []) {
   return certsForService(serviceTypeId, certifications).some((c) => isNoviIssuedCert(c));
 }
 
-function hasCompletedCourseForService(serviceTypeId, context) {
+function courseServiceTypeIds(course) {
+  const linked = (course?.linked_service_type_ids || []).map(String).filter(Boolean);
+  if (linked.length > 0) return linked;
+  return (course?.certifications_awarded || [])
+    .map((award) => String(award?.service_type_id || ""))
+    .filter(Boolean);
+}
+
+/**
+ * Course templates link to membership plans (Admin → Service Types), so a
+ * completed course unlocks both the linked id itself and, when the linked id
+ * is a membership, every service included in that membership.
+ */
+function hasCompletedCourseForService(serviceTypeId, context, allServiceTypes = []) {
   const sid = String(serviceTypeId || "");
+  const membershipIdsIncludingService = (allServiceTypes || [])
+    .filter((st) => st?.is_membership === true)
+    .filter((m) => servicesInMembership(m, allServiceTypes).some((c) => String(c.id) === sid))
+    .map((m) => String(m.id));
+  const matchIds = new Set([sid, ...membershipIdsIncludingService]);
+
   for (const courseId of context.unlockedCourseIds || []) {
     const course = context.courseMap?.[courseId];
-    const linked = (course?.linked_service_type_ids || []).map(String);
-    if (linked.includes(sid)) return true;
+    if (courseServiceTypeIds(course).some((id) => matchIds.has(id))) return true;
   }
   return false;
 }
@@ -81,7 +97,7 @@ function additionalCertMatches(service, cert) {
   return certName.includes(label) || label.includes(certName);
 }
 
-function evaluateTrainingRequirement(service, context) {
+function evaluateTrainingRequirement(service, context, allServiceTypes = []) {
   if (service?.requires_novi_course !== true) {
     return { required: false, met: true, pending: false };
   }
@@ -89,7 +105,7 @@ function evaluateTrainingRequirement(service, context) {
   if (hasNoviTrainingCert(service.id, context.certifications)) {
     return { required: true, met: true, pending: false, via: "novi_cert" };
   }
-  if (hasCompletedCourseForService(service.id, context)) {
+  if (hasCompletedCourseForService(service.id, context, allServiceTypes)) {
     return { required: true, met: true, pending: false, via: "course" };
   }
   if (service.allow_external_cert === true) {
@@ -137,7 +153,7 @@ function evaluateAdditionalCertRequirement(service, context) {
  */
 export function evaluateServiceAttestation(serviceType, context, allServiceTypes = []) {
   const service = serviceType || {};
-  const training = evaluateTrainingRequirement(service, context);
+  const training = evaluateTrainingRequirement(service, context, allServiceTypes);
   const additionalCert = evaluateAdditionalCertRequirement(service, context);
   const complete = training.met && additionalCert.met;
   const pending = (training.pending || additionalCert.pending) && !complete;
@@ -225,7 +241,15 @@ export function membershipAttestationSummary(membership, serviceTypes = [], cont
 
 export function isMembershipReadyForMdApply(membership, serviceTypes = [], context) {
   const children = servicesInMembership(membership, serviceTypes);
-  if (!children.length) return true;
+  if (!children.length) {
+    // No included services configured — require direct training/cert proof
+    // for this plan so providers only activate coverage they qualified for.
+    return (
+      hasCompletedCourseForService(membership?.id, context, serviceTypes) ||
+      hasNoviTrainingCert(membership?.id, context?.certifications) ||
+      hasActiveCert(membership?.id, context?.certifications)
+    );
+  }
   return membershipAttestationSummary(membership, serviceTypes, context).complete;
 }
 
@@ -239,8 +263,8 @@ export function attestableIndividualServices(serviceTypes = [], context, { exclu
     .filter((row) => !row.complete);
 }
 
-export function isServicePracticable(serviceType, context) {
-  return evaluateServiceAttestation(serviceType, context).complete;
+export function isServicePracticable(serviceType, context, allServiceTypes = []) {
+  return evaluateServiceAttestation(serviceType, context, allServiceTypes).complete;
 }
 
 export function filterPracticableServices(serviceTypes = [], activeServiceIds, context) {
@@ -253,6 +277,6 @@ export function filterPracticableServices(serviceTypes = [], activeServiceIds, c
     if (!active.has(String(st.id))) return false;
     if (st.is_membership === true) return false;
     if (st.is_active === false) return false;
-    return isServicePracticable(st, context);
+    return isServicePracticable(st, context, serviceTypes);
   });
 }
