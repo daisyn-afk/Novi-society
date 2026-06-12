@@ -208,14 +208,10 @@ export async function notifyAdminsOfProviderMdCancellation({
       linkPage: "AdminLicenses",
     });
 
-    await sendAdminEmail({
-      adminEmail,
-      subject: `MD coverage cancellation — deactivate in Stripe (${serviceTypeName || "service"})`,
-      html: buildAdminSubmissionEmailHtml({
-        adminName: admin?.first_name || admin?.full_name || "Admin",
-        title: "Provider requested MD coverage cancellation",
-        summaryLines,
-      }),
+    await sendEmailFromTemplate("admin_md_coverage_cancellation", {
+      to: adminEmail,
+      first_name: admin?.first_name || admin?.full_name || "Admin",
+      summary_lines: summaryLines,
     });
   }
 }

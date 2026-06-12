@@ -36,7 +36,7 @@ async function persistMdSubscriptionSignature(row, { signatureData, signedByName
   return rows[0] || row;
 }
 
-async function maybeStoreSignedContract(subscriptionRow, { signatureData, signedByName, signedAtIso, force = false } = {}) {
+async function maybeStoreSignedContract(subscriptionRow, { signatureData, signedByName, signedAtIso, force = false, profileSnapshot = null } = {}) {
   let row = subscriptionRow;
   if (signatureData && row?.id && !row.signature_data) {
     row = await persistMdSubscriptionSignature(row, { signatureData, signedByName, signedAtIso });
@@ -67,6 +67,7 @@ async function maybeStoreSignedContract(subscriptionRow, { signatureData, signed
       providerName: signedByName || row.signed_by_name || row.provider_name,
       signedAtIso: signedAtIso || row.signed_at || new Date().toISOString(),
       signatureDataUrl: sig,
+      profileSnapshot,
       contractPdfUrl,
       agreementText,
     });
@@ -89,6 +90,7 @@ export async function ensureSignedContractForSubscription(subscriptionRowOrId, o
     signedByName: overrides.signedByName || row.signed_by_name,
     signedAtIso: overrides.signedAtIso || row.signed_at,
     force: Boolean(overrides.force),
+    profileSnapshot: overrides.profileSnapshot || null,
   });
   if (url) {
     row = { ...row, signed_contract_url: url };
@@ -536,6 +538,7 @@ export async function finalizeMdBoardCoverage({
   enrollmentId = null,
   signatureData = null,
   signedByName = null,
+  profileSnapshot = null,
 }) {
   const pid = s(providerId);
   const stId = s(serviceTypeId);
@@ -577,6 +580,7 @@ export async function finalizeMdBoardCoverage({
       signatureData: signatureData || row.signature_data,
       signedByName: signedByName || row.signed_by_name || providerName,
       signedAtIso: row.signed_at,
+      profileSnapshot,
     });
     await ensureMdAssignment(pid, providerEmail, providerName, stId, serviceTypeName);
     return {
@@ -665,6 +669,7 @@ export async function finalizeMdBoardCoverage({
     signatureData: signatureData || row.signature_data,
     signedByName: signedByName || row.signed_by_name,
     signedAtIso: row.signed_at || nowIso,
+    profileSnapshot,
   });
 
   const assignResult = await ensureMdAssignment(pid, providerEmail, providerName, stId, serviceTypeName);
@@ -857,6 +862,28 @@ export async function handleMdSubscriptionDeleted(subscription, stripeEventId = 
 
   const nowIso = new Date().toISOString();
 
+  // Run the full cancellation cascade (relationship teardown, future appointment
+  // cancellation, manufacturer revocation + rep notifications, soft account
+  // reset, provider notification). Runs before the billing-specific update below
+  // because the cascade short-circuits if the row is already cancelled.
+  let cascadeSummary = null;
+  try {
+    const { processMdMembershipCancellation } = await import(
+      "./mdMembershipCancellationService.js"
+    );
+    const result = await processMdMembershipCancellation({
+      subscriptionId: row.id,
+      providerId: row.provider_id,
+      reason: "Stripe subscription ended",
+      cancelledBy: "stripe",
+      enforceOwnership: false,
+    });
+    cascadeSummary = result?.summary || null;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn("[handleMdSubscriptionDeleted] cancellation cascade failed:", err?.message || err);
+  }
+
   await query(
     `update public.md_subscription
         set status = 'cancelled',
@@ -874,15 +901,7 @@ export async function handleMdSubscriptionDeleted(subscription, stripeEventId = 
     eventType: "subscription_ended",
     stripeEventId,
     stripeSubscriptionId,
-    metadata: { ended_by: "stripe_subscription_deleted" },
-  });
-
-  await insertAppNotification({
-    user_id: row.provider_id,
-    user_email: row.provider_email,
-    type: "general",
-    message: `MD Board coverage for ${row.service_type_name || "your service"} has ended.`,
-    link_page: "ProviderCredentialsCoverage",
+    metadata: { ended_by: "stripe_subscription_deleted", cascade: cascadeSummary },
   });
 
   return { ok: true };

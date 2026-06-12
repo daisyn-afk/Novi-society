@@ -412,7 +412,7 @@ export default function AdminPreOrders() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [mainTab, setMainTab] = useState("applications");
-  const [statusFilter, setStatusFilter] = useState("pending_approval");
+  const [statusFilter, setStatusFilter] = useState("all");
   const { data: preOrders = [], isLoading } = useQuery({
     queryKey: ["pre-orders"],
     queryFn: () => base44.entities.PreOrder.list("-created_date", 200),
@@ -422,7 +422,6 @@ export default function AdminPreOrders() {
   const { data: coursePayments = [], isLoading: loadingPayments } = useQuery({
     queryKey: ["admin-course-payments"],
     queryFn: () => coursePaymentsAdminApi.list(500),
-    enabled: mainTab === "course_payments",
   });
 
   const [sendingPasswordResetId, setSendingPasswordResetId] = useState(null);
@@ -497,6 +496,7 @@ export default function AdminPreOrders() {
   });
 
   const signupLinkSentCount = preOrders.filter((o) => SIGNUP_LINK_SENT_STATUSES.has(o.status)).length;
+  const paidCourseCount = preOrders.filter((o) => o.order_type === "course" && PAID_STATUSES.has(o.status)).length;
 
   const filtered = statusFilter === "all"
     ? preOrders
@@ -522,7 +522,7 @@ export default function AdminPreOrders() {
         <p className="text-xs font-semibold uppercase tracking-widest mb-1" style={{ color: "rgba(218,106,99,0.9)", letterSpacing: "0.14em" }}>Admin</p>
         <h1 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 28, color: "#1e2535", lineHeight: 1.15 }}>Pre-Order Applications</h1>
         <p style={{ color: "rgba(30,37,53,0.58)", fontSize: 13, marginTop: 6, fontFamily: "'DM Sans', sans-serif" }}>
-          Review and approve course & service enrollment applications from the landing page
+          Review service applications and paid course enrollments. Direct course checkouts appear under Paid or Course Payments.
         </p>
       </div>
 
@@ -530,7 +530,7 @@ export default function AdminPreOrders() {
       <div className="inline-flex gap-2 flex-wrap font-sans">
         {[
           { id: "applications", label: "Applications", Icon: Clock },
-          { id: "course_payments", label: "Course Payments", Icon: Wallet },
+          { id: "course_payments", label: "Course Payments", Icon: Wallet, count: coursePayments.length },
         ].map((t) => {
           const active = mainTab === t.id;
           const Icon = t.Icon;
@@ -557,11 +557,30 @@ export default function AdminPreOrders() {
               }
             >
               <Icon className="w-4 h-4 shrink-0" strokeWidth={2} />
-              {t.label}
+              {t.label}{t.count > 0 ? ` (${t.count})` : ""}
             </button>
           );
         })}
       </div>
+
+      {mainTab === "applications" && paidCourseCount > 0 && statusFilter !== "paid" && (
+        <div
+          className="rounded-2xl px-4 py-3 text-sm"
+          style={{ background: "rgba(123,142,200,0.12)", border: "1px solid rgba(123,142,200,0.25)", color: "rgba(30,37,53,0.75)" }}
+        >
+          {paidCourseCount} paid course enrollment{paidCourseCount === 1 ? "" : "s"} on record.
+          {" "}
+          <button
+            type="button"
+            onClick={() => setStatusFilter("paid")}
+            className="font-bold underline underline-offset-2"
+            style={{ color: "#5f73b3" }}
+          >
+            View paid enrollments
+          </button>
+          {" "}or open the Course Payments tab for Stripe checkout details.
+        </div>
+      )}
 
       {mainTab === "applications" && (
         <>

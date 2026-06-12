@@ -177,6 +177,7 @@ mdSubscriptionsRouter.post("/:id/signed-contract", async (req, res, next) => {
       signatureData: bodySignature || sub.signature_data,
       signedByName: sub.signed_by_name,
       signedAtIso: sub.signed_at,
+      profileSnapshot: isOwner ? me : null,
     });
     if (!signedContractUrl) {
       return res.status(502).json({ error: "Could not generate signed contract PDF." });

@@ -44,6 +44,19 @@ export default function Signup() {
       setForm((prev) => ({ ...prev, role: "provider" }));
     }
   }, [intentProvider]);
+
+  useEffect(() => {
+    const email = String(searchParams.get("email") || "").trim();
+    const firstName = String(searchParams.get("first_name") || "").trim();
+    const lastName = String(searchParams.get("last_name") || "").trim();
+    if (!email && !firstName && !lastName) return;
+    setForm((prev) => ({
+      ...prev,
+      ...(email ? { email } : {}),
+      ...(firstName ? { first_name: firstName } : {}),
+      ...(lastName ? { last_name: lastName } : {}),
+    }));
+  }, [searchParams]);
   const [fieldErrors, setFieldErrors] = useState({});
   const [formError, setFormError] = useState("");
   const [submitting, setSubmitting] = useState(false);

@@ -1,20 +1,62 @@
 import { providerLookupKeys } from "@/lib/providerMembershipSummary";
 
 export const ADMIN_PROVIDER_LIFECYCLE_FILTERS = [
-  { id: "no_license", label: "No License Uploaded", color: "#DA6A63", bg: "rgba(218,106,99,0.1)" },
-  { id: "license_pending_review", label: "License Pending Review", color: "#FA6F30", bg: "rgba(250,111,48,0.1)" },
-  { id: "license_verified_no_course", label: "License Verified, No Course", color: "#7B8EC8", bg: "rgba(123,142,200,0.12)" },
-  { id: "cert_pending_review", label: "Certification Pending Review", color: "#9B8EC4", bg: "rgba(155,142,196,0.12)" },
-  { id: "applied_md_coverage", label: "Applied for MD Coverage", color: "#2D6B7F", bg: "rgba(45,107,127,0.12)" },
-  { id: "enrolled_no_subscription", label: "Enrolled, No Subscription", color: "#6b8f1a", bg: "rgba(200,230,60,0.12)" },
-  { id: "fully_active", label: "Fully Active", color: "#22c55e", bg: "rgba(34,197,94,0.1)" },
+  {
+    id: "no_license",
+    label: "Exploring",
+    color: "#94a3b8",
+    bg: "rgba(148,163,184,0.1)",
+    description: "Provider has signed up but hasn't uploaded a license, enrolled in courses, or submitted any documents yet. They are still exploring the platform.",
+  },
+  {
+    id: "license_pending_review",
+    label: "License Pending Review",
+    color: "#FA6F30",
+    bg: "rgba(250,111,48,0.1)",
+    description: "Provider has uploaded their state license and it's awaiting admin verification.",
+  },
+  {
+    id: "license_verified_no_course",
+    label: "License Verified, No Course",
+    color: "#7B8EC8",
+    bg: "rgba(123,142,200,0.12)",
+    description: "Provider's license has been verified by admin. They can now browse and purchase training courses.",
+  },
+  {
+    id: "cert_pending_review",
+    label: "Certification Pending Review",
+    color: "#9B8EC4",
+    bg: "rgba(155,142,196,0.12)",
+    description: "Provider has completed a course or uploaded an external certification that's awaiting admin approval.",
+  },
+  {
+    id: "applied_md_coverage",
+    label: "Applied for MD Coverage",
+    color: "#2D6B7F",
+    bg: "rgba(45,107,127,0.12)",
+    description: "Provider has an approved certification and has applied for Medical Director coverage. Pending MD approval or payment.",
+  },
+  {
+    id: "enrolled_no_subscription",
+    label: "Enrolled, No Subscription",
+    color: "#6b8f1a",
+    bg: "rgba(200,230,60,0.12)",
+    description: "Provider has paid for a course enrollment but hasn't yet activated their MD coverage subscription.",
+  },
+  {
+    id: "fully_active",
+    label: "Fully Active",
+    color: "#22c55e",
+    bg: "rgba(34,197,94,0.1)",
+    description: "Provider has at least one active, fully paid MD coverage subscription. They have full platform access.",
+  },
 ];
 
 function norm(value) {
   return String(value || "").trim().toLowerCase();
 }
 
-function rowsForProvider(provider, rows = [], { idField = "provider_id", emailField = "provider_email" } = {}) {
+export function rowsForProvider(provider, rows = [], { idField = "provider_id", emailField = "provider_email" } = {}) {
   const keys = providerLookupKeys(provider);
   const email = norm(provider?.email);
   return (rows || []).filter((row) => {

@@ -507,6 +507,31 @@ Please review it in the admin portal.`,
       ],
     },
   },
+  {
+    template_key: "admin_md_coverage_cancellation",
+    name: "Admin: provider MD coverage cancellation",
+    category: "admin_alert",
+    recipient_type: "admin",
+    subject: "MD coverage cancellation — deactivate in Stripe",
+    body_html: `**Provider requested MD coverage cancellation**
+
+{{summary_list}}
+
+Please deactivate billing in the Stripe dashboard if it should stop.`,
+    placeholders: [
+      { tag: "{{first_name}}", desc: "Admin first name" },
+      { tag: "{{summary_list}}", desc: "Cancellation summary bullets" },
+    ],
+    sample_vars: {
+      first_name: "Admin",
+      summary_lines: [
+        "Provider: Sam Provider",
+        "Email: sam@example.com",
+        "Service: Laser & Energy Treatments",
+        "Stripe subscription id: sub_123",
+      ],
+    },
+  },
 
   // -------------------------------------------------------------------------
   // Supplier / Manufacturer
@@ -645,6 +670,75 @@ A verified NOVI provider has applied to open an account with {{manufacturer_name
       summary_lines: ["Supplier: Allergan"],
       order_items: [{ product: "Botox 100u", quantity: 2, unit_price: "$525" }],
       message: "Please confirm pricing and ETA.",
+    },
+  },
+  {
+    template_key: "manufacturer_provider_cancellation_rep",
+    name: "Rep: provider membership cancellation",
+    category: "supplier",
+    recipient_type: "manufacturer_rep",
+    subject: "NOVI provider membership termination — {{provider_full_name}}",
+    body_html: `We hope you are doing well.
+
+As a courtesy notification, NOVI Society would like to inform your team that the provider listed below is no longer an active NOVI member and has terminated their membership and associated medical oversight services.
+
+**Provider Information**
+
+{{details_block}}
+
+**NOVI Membership Information**
+
+Membership Type: {{membership_type}}
+Approved Service Categories: {{approved_service_categories}}
+Medical Director: {{medical_director_name}}
+Membership Effective Date: {{membership_effective_date}}
+Termination Date: {{termination_date}}
+
+Effective on the termination date listed above, the provider's NOVI membership, medical oversight coverage, compliance support, platform access, and associated NOVI benefits have ended.
+
+As a result, the provider should no longer be considered an active NOVI-affiliated provider. Any manufacturer pricing programs, preferred partner benefits, account privileges, credential-based access, purchasing opportunities, or NOVI-related programs extended through active membership should be reviewed and updated in accordance with your organization's policies.
+
+This notice is being provided to ensure accurate records, maintain compliance, and prevent any confusion regarding the provider's current oversight and membership status.
+
+Should the provider reactivate their membership in the future, NOVI Society will issue a new activation notice confirming reinstatement of membership, oversight eligibility, and provider status.
+
+If you have any questions regarding this provider's status, please do not hesitate to contact our team.
+
+Thank you for your partnership and continued support of NOVI Society providers.
+
+Warm regards,
+
+**NOVI Society Provider Success Team**
+[support@novisociety.com](mailto:support@novisociety.com)
+[www.novisociety.com](https://www.novisociety.com)`,
+    placeholders: [
+      { tag: "{{first_name}}", desc: "Manufacturer rep first name" },
+      { tag: "{{provider_full_name}}", desc: "Provider full name" },
+      { tag: "{{details_block}}", desc: "Provider information detail rows" },
+      { tag: "{{membership_type}}", desc: "Membership type" },
+      { tag: "{{approved_service_categories}}", desc: "Approved service categories" },
+      { tag: "{{medical_director_name}}", desc: "Medical director name" },
+      { tag: "{{membership_effective_date}}", desc: "Original membership start date" },
+      { tag: "{{termination_date}}", desc: "Membership termination date" },
+    ],
+    include_signoff: false,
+    sample_vars: {
+      first_name: "Alex",
+      provider_full_name: "Sam Provider",
+      membership_type: "MD Board Coverage",
+      approved_service_categories: "Injectables, IV Therapy, Microneedling, Regenerative Aesthetics",
+      medical_director_name: "Dr. Jane Smith",
+      membership_effective_date: "January 15, 2025",
+      termination_date: "June 10, 2026",
+      details: [
+        { label: "Provider Name", value: "Sam Provider" },
+        { label: "License Type", value: "RN" },
+        { label: "License Number", value: "LIC-12345" },
+        { label: "Practice Name", value: "Glow Med Spa" },
+        { label: "Practice Address", value: "123 Main St, Austin, TX 78701" },
+        { label: "Provider Email", value: "sam@example.com" },
+        { label: "Provider Phone", value: "(555) 555-0100" },
+      ],
     },
   },
 

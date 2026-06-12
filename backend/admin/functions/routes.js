@@ -90,6 +90,10 @@ import {
   isGfeSimulationEnabled,
 } from "../qualiphy/gfeSimulation.js";
 import {
+  normalizeQualiphyExamIds,
+  resolveQualiphyExamIdForAppointment,
+} from "../gfe/qualiphyExamId.js";
+import {
   runCheckExpirations,
   runComplianceChecks,
 } from "../compliance-logs/expirationService.js";
@@ -166,13 +170,6 @@ async function getCoursePromoColumnsSet() {
 async function hasCoursePromoColumn(name) {
   const cols = await getCoursePromoColumnsSet();
   return cols.has(String(name || "").toLowerCase());
-}
-
-function normalizeExamIds(value) {
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((x) => String(x ?? "").trim())
-    .filter(Boolean);
 }
 
 function splitNameParts(fullName) {
@@ -314,7 +311,7 @@ async function resolveQualiphyExamIdForCourse({ courseId, treatmentType }) {
   const withExamIds = serviceRows
     .map((row) => ({
       ...row,
-      examIds: normalizeExamIds(row.qualiphy_exam_ids)
+      examIds: normalizeQualiphyExamIds(row.qualiphy_exam_ids)
     }))
     .filter((row) => row.examIds.length > 0);
   if (withExamIds.length === 0) return null;
@@ -328,35 +325,6 @@ async function resolveQualiphyExamIdForCourse({ courseId, treatmentType }) {
     if (preferred) return preferred.examIds[0];
   }
   return candidates[0].examIds[0];
-}
-
-async function resolveQualiphyExamIdForAppointment({ serviceTypeId, serviceName, qualiphyExamIds }) {
-  const fromJoin = normalizeExamIds(qualiphyExamIds);
-  if (fromJoin.length > 0) return fromJoin[0];
-  const stId = String(serviceTypeId || "").trim();
-  const treatmentSvc = await resolveTreatmentServiceType(query, {
-    serviceName,
-    serviceTypeId: stId,
-  });
-  if (treatmentSvc) {
-    const ids = normalizeExamIds(treatmentSvc.qualiphy_exam_ids);
-    if (ids.length > 0) return ids[0];
-  }
-  const service = String(serviceName || "").trim();
-  if (service) {
-    const { rows } = await query(
-      `select qualiphy_exam_ids
-         from public.service_type
-        where lower(trim(name)) = lower(trim($1))
-          and coalesce(is_membership, false) = false
-          and requires_gfe = true
-        limit 1`,
-      [service]
-    );
-    const ids = normalizeExamIds(rows[0]?.qualiphy_exam_ids);
-    if (ids.length > 0) return ids[0];
-  }
-  return null;
 }
 
 async function resolveTeleStateForAppointment({ appointment, patientState }) {
@@ -1007,6 +975,7 @@ functionsRouter.post("/previewMdBoardContract", async (req, res, next) => {
       providerId: me.id,
       providerName: me.full_name,
       serviceTypeName: String(req.body?.service_type_name || "").trim(),
+      profileSnapshot: me,
     });
     if (!bytes) {
       return res.json({ success: false, error: "No MD contract is available for this service yet." });
@@ -1108,6 +1077,7 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
         enrollmentId: enrollmentId || null,
         signatureData,
         signedByName: me.full_name,
+        profileSnapshot: me,
       });
       if (!result.ok) {
         return res.status(400).json({ success: false, error: result.error || "Unable to activate MD coverage." });
@@ -1170,6 +1140,7 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
     const signedContractUrl = await ensureSignedContractForSubscription(pending, {
       signatureData,
       signedByName: me.full_name,
+      profileSnapshot: me,
     });
 
     const base = resolveCheckoutReturnBaseUrl(req).replace(/\/$/, "");
@@ -1278,28 +1249,38 @@ functionsRouter.post("/createMDSubscriptionCheckout", async (req, res, next) => 
   }
 });
 
-/** Provider cancel: DB + admin email only. Stripe must be cancelled manually in dashboard. */
+/**
+ * Cancel an MD membership (provider self-serve or admin). Runs the full
+ * cancellation cascade: relationship teardown, future appointment cancellation,
+ * manufacturer access revocation + rep notifications, and a soft account reset
+ * once the provider's last active membership is gone. Stripe is not modified —
+ * admins cancel billing manually in the Stripe dashboard.
+ */
 functionsRouter.post("/cancelMDSubscription", async (req, res, next) => {
   try {
     const token = getBearerToken(req);
     if (!token) return res.status(401).json({ success: false, error: "Missing bearer token." });
     const me = await getMeFromAccessToken(token);
     const role = String(me.role || "").toLowerCase();
-    if (role !== "provider" && !hasAdminAccess(me.role)) {
+    const isAdmin = hasAdminAccess(me.role);
+    if (role !== "provider" && !isAdmin) {
       return res.status(403).json({ success: false, error: "Forbidden." });
     }
     const subscriptionId = String(req.body?.subscription_id || "").trim();
     if (!subscriptionId) {
       return res.status(400).json({ success: false, error: "subscription_id is required." });
     }
-    const { requestProviderMdSubscriptionCancel } = await import(
-      "../mdSubscriptionProviderCancel.js"
+    const { processMdMembershipCancellation } = await import(
+      "../mdMembershipCancellationService.js"
     );
-    const result = await requestProviderMdSubscriptionCancel({
+    const result = await processMdMembershipCancellation({
       subscriptionId,
       providerId: me.id,
       reason: req.body?.reason || null,
       notes: req.body?.notes || null,
+      cancelledBy: isAdmin ? "admin" : "provider",
+      cancelledByName: me.full_name || null,
+      enforceOwnership: !isAdmin,
     });
     if (!result.success) {
       return res.status(result.error === "Forbidden." ? 403 : 400).json(result);
@@ -2557,6 +2538,10 @@ functionsRouter.post("/sendQualiphyGFE", async (req, res, next) => {
     if (invite.patientExamId && (await hasAppointmentColumn("qualiphy_patient_exam_id"))) {
       updateParams.push(invite.patientExamId);
       setParts.push(`qualiphy_patient_exam_id = $${updateParams.length}`);
+    }
+    if (qualiphyExamId && (await hasAppointmentColumn("qualiphy_exam_id"))) {
+      updateParams.push(String(qualiphyExamId));
+      setParts.push(`qualiphy_exam_id = $${updateParams.length}`);
     }
     await query(
       `update public.appointments set ${setParts.join(", ")} where id = $1`,

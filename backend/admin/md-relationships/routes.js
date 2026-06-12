@@ -131,6 +131,7 @@ mdRelationshipsRouter.get("/supervising-md-coverage", async (req, res, next) => 
       userState: me.state,
       licenses: licenseRows,
       practiceAddress,
+      lookupIds,
     });
 
     return res.json(coverage);

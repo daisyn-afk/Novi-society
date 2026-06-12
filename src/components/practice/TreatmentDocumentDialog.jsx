@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import {
@@ -99,6 +99,20 @@ export default function TreatmentDocumentDialog({
     enabled: open && Boolean(providerProfile?.id),
   });
 
+  const { data: linkedRecords = [], isFetching: linkedRecordsFetching } = useQuery({
+    queryKey: ["treatment-record-for-appointment", appointment?.id],
+    queryFn: async () => {
+      const rows = await base44.entities.TreatmentRecord.filter({ appointment_id: appointment.id });
+      return (Array.isArray(rows) ? rows : []).filter(
+        (row) => String(row?.appointment_id || "") === String(appointment.id)
+      );
+    },
+    enabled: open && Boolean(appointment?.id) && !existingRecord,
+    staleTime: 30_000,
+  });
+  const resolvedExistingRecord = existingRecord || linkedRecords[0] || null;
+  const formInitKeyRef = useRef(null);
+
   const inventoryOptions = useMemo(
     () => buildInventoryProductOptions(inventory),
     [inventory]
@@ -196,7 +210,7 @@ export default function TreatmentDocumentDialog({
   );
 
   useEffect(() => {
-    if (!open || !menuOffering || existingRecord) return;
+    if (!open || !menuOffering || resolvedExistingRecord) return;
     const defaultLabel = defaultUnitLabelForMenu(
       menuOffering?.pricingModel,
       menuOffering?.data?.pricing_model || ""
@@ -204,7 +218,7 @@ export default function TreatmentDocumentDialog({
     setForm((prev) =>
       prev.units_label === defaultLabel ? prev : { ...prev, units_label: defaultLabel }
     );
-  }, [open, menuOffering?.key, menuOffering?.pricingModel, menuOffering?.data?.pricing_model, existingRecord]);
+  }, [open, menuOffering?.key, menuOffering?.pricingModel, menuOffering?.data?.pricing_model, resolvedExistingRecord]);
 
   useEffect(() => {
     if (!open || !appointment?.patient_id) {
@@ -224,30 +238,37 @@ export default function TreatmentDocumentDialog({
     };
   }, [appointment?.patient_id, open]);
 
-  // Autofill from appointment
+  // Autofill from appointment / existing record once per open (not when menu offerings load).
   useEffect(() => {
-    if (!open) return;
-    if (existingRecord) {
-      const billing = billingQuantitiesForForm(
-        existingRecord.units_used || "",
-        isCombinedInjectableLog(offerings, appointment?.service_type_id)
-      );
+    if (!open) {
+      formInitKeyRef.current = null;
+      return;
+    }
+    if (!existingRecord && appointment?.id && linkedRecordsFetching) return;
+
+    const initKey = `${appointment?.id || ""}:${resolvedExistingRecord?.id || "new"}`;
+    if (formInitKeyRef.current === initKey) return;
+    formInitKeyRef.current = initKey;
+
+    const combined = isCombinedInjectableLog(offerings, appointment?.service_type_id);
+    if (resolvedExistingRecord) {
+      const billing = billingQuantitiesForForm(resolvedExistingRecord.units_used || "", combined);
       setForm({
         units_used: billing.units_used,
         syringes_used: billing.syringes_used,
-        units_label: existingRecord.units_label || "units",
-        clinical_notes: existingRecord.clinical_notes || "",
-        adverse_reaction: existingRecord.adverse_reaction || false,
-        adverse_reaction_notes: existingRecord.adverse_reaction_notes || "",
+        units_label: resolvedExistingRecord.units_label || "units",
+        clinical_notes: resolvedExistingRecord.clinical_notes || "",
+        adverse_reaction: resolvedExistingRecord.adverse_reaction || false,
+        adverse_reaction_notes: resolvedExistingRecord.adverse_reaction_notes || "",
       });
       setProducts(
-        existingRecord.products_used?.length
-          ? existingRecord.products_used.map((product) => ({ ...EMPTY_PRODUCT, ...product }))
+        resolvedExistingRecord.products_used?.length
+          ? resolvedExistingRecord.products_used.map((product) => ({ ...EMPTY_PRODUCT, ...product }))
           : [{ ...EMPTY_PRODUCT }]
       );
-      setAreas(existingRecord.areas_treated || []);
-      setBeforePhotos(existingRecord.before_photo_urls || []);
-      setAfterPhotos(existingRecord.after_photo_urls || []);
+      setAreas(resolvedExistingRecord.areas_treated || []);
+      setBeforePhotos(resolvedExistingRecord.before_photo_urls || []);
+      setAfterPhotos(resolvedExistingRecord.after_photo_urls || []);
     } else if (appointment) {
       setForm({
         units_used: "",
@@ -262,7 +283,15 @@ export default function TreatmentDocumentDialog({
       setBeforePhotos([]);
       setAfterPhotos([]);
     }
-  }, [open, appointment, existingRecord, offerings]);
+  }, [
+    open,
+    appointment,
+    resolvedExistingRecord,
+    existingRecord,
+    linkedRecordsFetching,
+    offerings,
+    appointment?.service_type_id,
+  ]);
 
   const f = (key, val) => setForm(prev => ({ ...prev, [key]: val }));
 
@@ -308,7 +337,12 @@ export default function TreatmentDocumentDialog({
   };
 
   const isResubmitMode =
-    existingRecord?.status === "flagged" || existingRecord?.status === "changes_requested";
+    resolvedExistingRecord?.status === "flagged" ||
+    resolvedExistingRecord?.status === "changes_requested";
+  const preserveStatusOnInvoiceEdit =
+    Boolean(resolvedExistingRecord) &&
+    ["submitted", "approved"].includes(String(resolvedExistingRecord?.status || "").trim()) &&
+    !isResubmitMode;
 
   const save = useMutation({
     mutationFn: async (status) => {
@@ -328,7 +362,7 @@ export default function TreatmentDocumentDialog({
         patient_name: appointment.patient_name,
         patient_email: appointment.patient_email,
         service: appointment.service,
-        treatment_date: appointment.appointment_date,
+        treatment_date: resolvedExistingRecord?.treatment_date || appointment.appointment_date,
         areas_treated: areas,
         products_used: sanitizeProductsUsed(products),
         before_photo_urls: beforePhotos,
@@ -345,13 +379,16 @@ export default function TreatmentDocumentDialog({
         }),
       };
       let record;
-      if (existingRecord) {
+      if (resolvedExistingRecord) {
         const updatePayload = { ...payload };
+        if (preserveStatusOnInvoiceEdit && status === "submitted") {
+          delete updatePayload.status;
+        }
         if (status === "submitted" && isResubmitMode) {
           updatePayload.md_reviewed_by = null;
           updatePayload.md_reviewed_at = null;
         }
-        record = await base44.entities.TreatmentRecord.update(existingRecord.id, updatePayload);
+        record = await base44.entities.TreatmentRecord.update(resolvedExistingRecord.id, updatePayload);
       } else {
         record = await base44.entities.TreatmentRecord.create(payload);
       }
@@ -365,8 +402,13 @@ export default function TreatmentDocumentDialog({
       qc.invalidateQueries({ queryKey: ["treatment-records"] });
       qc.invalidateQueries({ queryKey: ["md-treatment-records"] });
       qc.invalidateQueries({ queryKey: ["my-appointments"] });
+      qc.invalidateQueries({ queryKey: ["my-treatment-records"] });
       qc.invalidateQueries({ queryKey: ["my-treatment-records-mktplace"] });
       qc.invalidateQueries({ queryKey: ["my-treatment-records-spend"] });
+      if (appointment?.id) {
+        qc.setQueryData(["treatment-record-for-appointment", appointment.id], [record]);
+        qc.invalidateQueries({ queryKey: ["treatment-record-for-appointment", appointment.id] });
+      }
       if (status === "submitted" && !treatmentAlreadyPaid) {
         setSavedRecord(record);
         setShowCheckout(true);
@@ -403,8 +445,8 @@ export default function TreatmentDocumentDialog({
 
   if (!appointment) return null;
 
-  const depositBlocked = appointmentDepositBlocksProvider(appointment) && !existingRecord;
-  const gfeBlocked = appointmentGfeBlocksTreatment(appointment) && !existingRecord;
+  const depositBlocked = appointmentDepositBlocksProvider(appointment) && !resolvedExistingRecord;
+  const gfeBlocked = appointmentGfeBlocksTreatment(appointment) && !resolvedExistingRecord;
   const gfeBlockMessage = appointmentGfeBlockMessage(appointment);
   const clinicalBlocked = depositBlocked || gfeBlocked;
 
@@ -787,10 +829,10 @@ export default function TreatmentDocumentDialog({
         </div>
 
         {/* Show MD feedback if flagged/changes_requested */}
-        {existingRecord?.md_review_notes && ["flagged","changes_requested"].includes(existingRecord?.status) && (
+        {resolvedExistingRecord?.md_review_notes && ["flagged","changes_requested"].includes(resolvedExistingRecord?.status) && (
           <div className="px-4 py-3 rounded-xl" style={{ background: "rgba(250,111,48,0.06)", border: "1px solid rgba(250,111,48,0.25)" }}>
-            <p className="text-xs font-semibold mb-1" style={{ color: "#FA6F30" }}>MD Feedback ({existingRecord.status === "flagged" ? "Flagged" : "Changes Requested"})</p>
-            <p className="text-sm" style={{ color: "#243257" }}>{existingRecord.md_review_notes}</p>
+            <p className="text-xs font-semibold mb-1" style={{ color: "#FA6F30" }}>MD Feedback ({resolvedExistingRecord.status === "flagged" ? "Flagged" : "Changes Requested"})</p>
+            <p className="text-sm" style={{ color: "#243257" }}>{resolvedExistingRecord.md_review_notes}</p>
             <p className="text-xs mt-1" style={{ color: "#9a8f7e" }}>Address the feedback above then resubmit.</p>
           </div>
         )}
@@ -802,7 +844,7 @@ export default function TreatmentDocumentDialog({
           </Button>
           <Button style={{ background: "#FA6F30", color: "#fff" }} onClick={handleSubmitForInvoice} disabled={save.isPending || clinicalBlocked || (Boolean(maxPriceError) && !treatmentAlreadyPaid)}>
             <CheckCircle className="w-4 h-4 mr-1.5" />
-            {existingRecord?.status === "flagged" || existingRecord?.status === "changes_requested"
+            {resolvedExistingRecord?.status === "flagged" || resolvedExistingRecord?.status === "changes_requested"
               ? "Resubmit for MD Review"
               : treatmentAlreadyPaid
                 ? "Save treatment record"
