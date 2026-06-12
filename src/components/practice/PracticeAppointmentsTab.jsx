@@ -18,10 +18,12 @@ import TreatmentDocumentDialog from "@/components/practice/TreatmentDocumentDial
 import GFEStatusBadge from "@/components/GFEStatusBadge";
 import AppointmentGfeProviderControls from "@/components/appointments/AppointmentGfeProviderControls";
 import {
+  APPOINTMENT_PAYMENT_STATUS_STYLES,
   appointmentDateKey,
   appointmentDepositBlocksProvider,
   appointmentDepositPaid,
   appointmentHasBookingDeposit,
+  appointmentProviderPaymentSummary,
   appointmentServiceLabel,
   formatAppointmentDate,
   formatAppointmentTime,
@@ -87,6 +89,71 @@ function appointmentsOnDay(appointments, day) {
 
 function formatHourLabel(h) {
   return formatAppointmentTime(`${String(h).padStart(2, "0")}:00`);
+}
+
+function formatPaymentAmount(amount) {
+  const n = Number(amount);
+  if (!Number.isFinite(n) || n <= 0) return "—";
+  return `$${n.toLocaleString(undefined, { minimumFractionDigits: Number.isInteger(n) ? 0 : 2, maximumFractionDigits: 2 })}`;
+}
+
+function AppointmentPaymentDisplay({ appt, variant = "compact" }) {
+  const summary = appointmentProviderPaymentSummary(appt);
+  if (!summary) return null;
+
+  const styles = APPOINTMENT_PAYMENT_STATUS_STYLES[summary.status] || APPOINTMENT_PAYMENT_STATUS_STYLES.none;
+
+  if (variant === "detail") {
+    return (
+      <div
+        className="col-span-2 rounded-xl px-3 py-2.5 space-y-1.5"
+        style={{ background: styles.bg, border: `1px solid ${styles.border}` }}
+      >
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <span className="text-[11px] font-bold uppercase tracking-wide" style={{ color: styles.text }}>
+            {summary.statusLabel}
+          </span>
+          <span className="text-sm font-bold" style={{ color: "#1e2535" }}>
+            {formatPaymentAmount(summary.primaryAmount)}
+            {summary.amountCaption ? (
+              <span className="text-[11px] font-medium ml-1" style={{ color: "rgba(30,37,53,0.5)" }}>
+                {summary.amountCaption}
+              </span>
+            ) : null}
+          </span>
+        </div>
+        {summary.amountPaid > 0 && summary.status === "due" && (
+          <p className="text-[11px]" style={{ color: "rgba(30,37,53,0.55)" }}>
+            Collected so far: {formatPaymentAmount(summary.amountPaid)}
+          </p>
+        )}
+        {summary.detailLines.map((line) => (
+          <p key={line.label} className="text-[11px]" style={{ color: "rgba(30,37,53,0.55)" }}>
+            {line.label}: {line.text || formatPaymentAmount(line.amount)}
+          </p>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="text-right flex-shrink-0 min-w-[5.5rem]">
+      <p className="text-sm font-bold leading-tight" style={{ color: "#1e2535" }}>
+        {formatPaymentAmount(summary.primaryAmount)}
+      </p>
+      <span
+        className="inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded-full mt-0.5"
+        style={{ background: styles.bg, color: styles.text, border: `1px solid ${styles.border}` }}
+      >
+        {summary.statusLabel}
+      </span>
+      {summary.amountPaid > 0 && summary.status === "due" && (
+        <p className="text-[10px] mt-0.5" style={{ color: "rgba(30,37,53,0.45)" }}>
+          {formatPaymentAmount(summary.amountPaid)} collected
+        </p>
+      )}
+    </div>
+  );
 }
 
 // ── Stat card ──────────────────────────────────────────────────────
@@ -186,6 +253,7 @@ function ApptDetail({
   const gfeValidUntil = appointmentGfeValidityLabel(appt);
   const providerActionBlocked = depositBlocked || gfeBlocked;
   const depositPaid = appointmentDepositPaid(appt);
+  const paymentSummary = appointmentProviderPaymentSummary(appt);
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -244,11 +312,7 @@ function ApptDetail({
               <Clock className="w-3.5 h-3.5 flex-shrink-0" />{appt.duration_minutes} min
             </div>
           )}
-          {appt.total_amount && (
-            <div className="flex items-center gap-1.5 text-xs" style={{ color: "rgba(30,37,53,0.55)" }}>
-              <DollarSign className="w-3.5 h-3.5 flex-shrink-0" />${appt.total_amount}
-            </div>
-          )}
+          <AppointmentPaymentDisplay appt={appt} variant="detail" />
         </div>
       </div>
 
@@ -366,6 +430,33 @@ function ApptDetail({
             style={{ background: "rgba(74,222,128,0.12)", border: "1px solid rgba(74,222,128,0.35)", color: "#166534" }}
           >
             Booking deposit paid (${appt.amount_paid || appt.deposit_amount}). This amount will be applied to the final treatment checkout.
+          </div>
+        )}
+        {appt.status === "completed" && paymentSummary?.status === "due" && (
+          <div
+            className="px-3 py-2.5 rounded-xl text-xs"
+            style={{ background: "rgba(250,111,48,0.1)", border: "1px solid rgba(250,111,48,0.35)", color: "#c2410c" }}
+          >
+            Treatment balance of <strong>{formatPaymentAmount(paymentSummary.balanceDue)}</strong> is unpaid.
+            {paymentSummary.amountPaid > 0 && (
+              <> {formatPaymentAmount(paymentSummary.amountPaid)} has been collected and applied.</>
+            )}
+          </div>
+        )}
+        {appt.status === "completed" && paymentSummary?.status === "paid" && (
+          <div
+            className="px-3 py-2.5 rounded-xl text-xs"
+            style={{ background: "rgba(74,222,128,0.12)", border: "1px solid rgba(74,222,128,0.35)", color: "#166534" }}
+          >
+            Fully paid — {formatPaymentAmount(paymentSummary.amountPaid)} collected for this visit.
+          </div>
+        )}
+        {appt.status === "completed" && paymentSummary?.status === "partial" && (
+          <div
+            className="px-3 py-2.5 rounded-xl text-xs"
+            style={{ background: "rgba(251,191,36,0.12)", border: "1px solid rgba(251,191,36,0.35)", color: "#b45309" }}
+          >
+            Deposit paid ({formatPaymentAmount(paymentSummary.amountPaid)}). Final treatment checkout has not been sent or paid yet.
           </div>
         )}
         {gfeBlocked && gfeBlockMessage && (
@@ -790,13 +881,7 @@ export default function PracticeAppointmentsTab({
                             )}
                           </div>
 
-                          {/* Amount */}
-                          {a.total_amount > 0 && (
-                            <div className="text-right flex-shrink-0">
-                              <p className="text-sm font-bold" style={{ color: "#1e2535" }}>${a.total_amount}</p>
-                              {a.deposit_amount > 0 && <p className="text-[10px]" style={{ color: "rgba(30,37,53,0.4)" }}>${a.deposit_amount} dep</p>}
-                            </div>
-                          )}
+                          <AppointmentPaymentDisplay appt={a} />
 
                           <div className="flex gap-1.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
                             <button

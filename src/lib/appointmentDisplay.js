@@ -175,3 +175,94 @@ export function appointmentServiceLabel(appt) {
   if (fromType) return fromType;
   return String(appt.treatment || "").trim();
 }
+
+function appointmentMoney(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/**
+ * Provider-facing payment summary for appointment list/detail UI.
+ * Uses collected `amount_paid` and explicit payment statuses — not ambiguous `total_amount` alone.
+ */
+export function appointmentProviderPaymentSummary(appt) {
+  if (!appt) return null;
+
+  const amountPaid = appointmentMoney(appt.amount_paid);
+  const depositAmount = appointmentMoney(appt.deposit_amount);
+  const hasDeposit = appointmentHasBookingDeposit(appt);
+  const depositPaid = appointmentDepositPaid(appt);
+  const treatmentStatus = String(appt.treatment_payment_status || "unpaid").toLowerCase();
+  const treatmentAwaiting = treatmentStatus === "awaiting_payment";
+  const treatmentPaid = treatmentStatus === "paid";
+  const balanceDue = treatmentAwaiting
+    ? appointmentMoney(appt.treatment_amount) || appointmentMoney(appt.total_amount)
+    : 0;
+
+  let status = "none";
+  let statusLabel = "";
+  let primaryAmount = 0;
+  let amountCaption = "";
+  let detailLines = [];
+
+  if (treatmentPaid) {
+    status = "paid";
+    statusLabel = "Fully paid";
+    primaryAmount = amountPaid;
+    amountCaption = "collected";
+  } else if (treatmentAwaiting && balanceDue > 0) {
+    status = "due";
+    statusLabel = "Balance due";
+    primaryAmount = balanceDue;
+    amountCaption = "owed";
+    if (amountPaid > 0) {
+      detailLines.push({ label: "Collected", amount: amountPaid });
+    }
+  } else if (hasDeposit && !depositPaid) {
+    status = "unpaid";
+    statusLabel = "Deposit unpaid";
+    primaryAmount = depositAmount;
+    amountCaption = "deposit due";
+  } else if (depositPaid && amountPaid > 0) {
+    status = "partial";
+    statusLabel = "Deposit paid";
+    primaryAmount = amountPaid;
+    amountCaption = "collected";
+    if (!treatmentAwaiting && !treatmentPaid) {
+      detailLines.push({ label: "Treatment", amount: null, text: "Not billed yet" });
+    }
+  } else if (amountPaid > 0) {
+    status = "partial";
+    statusLabel = "Collected";
+    primaryAmount = amountPaid;
+    amountCaption = "collected";
+  } else if (hasDeposit) {
+    status = "unpaid";
+    statusLabel = "Deposit unpaid";
+    primaryAmount = depositAmount;
+    amountCaption = "deposit due";
+  }
+
+  if (!statusLabel || primaryAmount <= 0) return null;
+
+  return {
+    status,
+    statusLabel,
+    primaryAmount,
+    amountCaption,
+    amountPaid,
+    balanceDue,
+    depositPaid,
+    treatmentPaid,
+    treatmentAwaiting,
+    detailLines,
+  };
+}
+
+export const APPOINTMENT_PAYMENT_STATUS_STYLES = {
+  paid: { bg: "rgba(74,222,128,0.18)", text: "#16a34a", border: "rgba(74,222,128,0.45)" },
+  partial: { bg: "rgba(251,191,36,0.18)", text: "#d97706", border: "rgba(251,191,36,0.45)" },
+  due: { bg: "rgba(250,111,48,0.15)", text: "#c2410c", border: "rgba(250,111,48,0.35)" },
+  unpaid: { bg: "rgba(248,113,113,0.15)", text: "#dc2626", border: "rgba(248,113,113,0.35)" },
+  none: { bg: "rgba(30,37,53,0.06)", text: "rgba(30,37,53,0.5)", border: "rgba(30,37,53,0.12)" },
+};
