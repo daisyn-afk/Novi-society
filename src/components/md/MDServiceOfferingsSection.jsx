@@ -13,7 +13,11 @@ function setsEqual(a, b) {
 }
 
 /** Services the MD supervises — drives round-robin auto-assignment eligibility. */
-export default function MDServiceOfferingsSection() {
+export default function MDServiceOfferingsSection({
+  onSelectionChange,
+  onHydratedChange,
+  hideSaveButton = false,
+}) {
   const qc = useQueryClient();
   const { data: mine, isLoading: mineLoading } = useQuery({
     queryKey: ["md-service-offerings-me"],
@@ -34,16 +38,28 @@ export default function MDServiceOfferingsSection() {
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [hydrated, setHydrated] = useState(false);
 
+  function notifySelection(next) {
+    onSelectionChange?.([...next].filter(Boolean));
+  }
+
   useEffect(() => {
     if (mineLoading || hydrated) return;
-    setSelectedIds(new Set(savedIds));
+    const initial = new Set(savedIds);
+    setSelectedIds(initial);
     setHydrated(true);
-  }, [mineLoading, hydrated, savedIds]);
+    notifySelection(initial);
+    onHydratedChange?.(true);
+  }, [mineLoading, hydrated, savedIds]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!hydrated || mineLoading) return;
-    setSelectedIds((prev) => (setsEqual(prev, savedIds) ? prev : new Set(savedIds)));
-  }, [savedIds, hydrated, mineLoading]);
+    setSelectedIds((prev) => {
+      if (setsEqual(prev, savedIds)) return prev;
+      const next = new Set(savedIds);
+      notifySelection(next);
+      return next;
+    });
+  }, [savedIds, hydrated, mineLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const dirty = hydrated && !setsEqual(selectedIds, savedIds);
   const allServicesWildcard = selectedIds.has("*");
@@ -64,7 +80,9 @@ export default function MDServiceOfferingsSection() {
   const loading = mineLoading || typesLoading || !hydrated;
 
   function setSelection(next) {
-    setSelectedIds(next instanceof Set ? next : new Set(next));
+    const nextSet = next instanceof Set ? next : new Set(next);
+    setSelectedIds(nextSet);
+    notifySelection(nextSet);
   }
 
   function toggle(id) {
@@ -74,6 +92,7 @@ export default function MDServiceOfferingsSection() {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
       else next.add(key);
+      notifySelection(next);
       return next;
     });
   }
@@ -166,24 +185,33 @@ export default function MDServiceOfferingsSection() {
           })}
       </div>
 
-      <div className="flex items-center gap-3 flex-wrap">
-        <Button type="button" onClick={handleSave} disabled={saveMutation.isPending || !dirty}>
-          {saveMutation.isPending ? (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin mr-2" /> Saving…
-            </>
-          ) : (
-            "Save services"
+      {!hideSaveButton && (
+        <div className="flex items-center gap-3 flex-wrap">
+          <Button type="button" onClick={handleSave} disabled={saveMutation.isPending || !dirty}>
+            {saveMutation.isPending ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin mr-2" /> Saving…
+              </>
+            ) : (
+              "Save services"
+            )}
+          </Button>
+          {!dirty && savedIds.size > 0 && (
+            <Label className="text-xs font-normal text-slate-500">
+              {savedIds.has("*")
+                ? "All services selected."
+                : `${savedIds.size} service(s) saved.`}
+            </Label>
           )}
-        </Button>
-        {!dirty && savedIds.size > 0 && (
-          <Label className="text-xs font-normal text-slate-500">
-            {savedIds.has("*")
-              ? "All services selected."
-              : `${savedIds.size} service(s) saved.`}
-          </Label>
-        )}
-      </div>
+        </div>
+      )}
+      {hideSaveButton && !dirty && savedIds.size > 0 && (
+        <Label className="text-xs font-normal text-slate-500">
+          {savedIds.has("*")
+            ? "All services selected."
+            : `${savedIds.size} service(s) saved.`}
+        </Label>
+      )}
       {saveMutation.isError && (
         <p className="text-sm text-red-600">{String(saveMutation.error?.message || "Save failed.")}</p>
       )}
